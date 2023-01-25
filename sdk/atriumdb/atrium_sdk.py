@@ -1237,8 +1237,8 @@ class AtriumSDK:
                         encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b, lock=None)
 
     @sql_lock_wait
-    def insert_measure(self, measure_tag: str, freq_nhz, freq_units: str = "nHz", measure_name: str = None,
-                       units: str = None):
+    def insert_measure(self, measure_tag: str, freq_nhz: Union[int, float], units: str = None, freq_units: str = "nHz",
+                       measure_name: str = None):
         """
         Defines a new signal type to be stored in the dataset, as well as defining metadata related to the signal.
 
@@ -1255,7 +1255,7 @@ class AtriumSDK:
         >>> measure_tag = "ECG Lead II - 500 Hz"
         >>> measure_name = "Electrocardiogram Lead II Configuration 500 Hertz"
         >>> units = "mV"
-        >>> sdk.insert_measure(measure_tag=measure_tag,freq_nhz=freq_hz,freq_units=freq_units,measure_name=measure_name,units=units)
+        >>> sdk.insert_measure(measure_tag=measure_tag,freq_nhz=freq_hz,units=units,freq_units=freq_units,measure_name=measure_name)
 
         :param int measure_id: A number identifying a unique signal.
         :param freq_nhz: The sample frequency of the signal.
@@ -1280,7 +1280,7 @@ class AtriumSDK:
         kwargs = {k: v for k, v in optional_args.items() if v is not None}
 
         # check if measure is already in database and return it if it is
-        measure_id = self.sql_api.get_measure_id(measure_tag=measure_tag, freq=freq_nhz)
+        measure_id = self.sql_api.get_measure_id(measure_tag=measure_tag, freq=freq_nhz, units=units)
         if measure_id is not None:
             return measure_id
 
@@ -1329,9 +1329,9 @@ class AtriumSDK:
             result = self.sql_api.select_exists_signal_chunk(conn, measure_id, device_id, start_time_nano)
             return result.scalar_one_or_none()
 
-    def get_measure_id(self, measure_tag: str, freq, freq_units: str = "nHz"):
+    def get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = "nHz"):
         freq_nhz = convert_to_nanohz(freq, freq_units)
-        return self.sql_api.get_measure_id(measure_tag=measure_tag, freq=freq_nhz)
+        return self.sql_api.get_measure_id(measure_tag=measure_tag, freq=freq_nhz, units=units)
 
     def get_device_id(self, device_tag: str):
         return self.sql_api.get_device_id(device_tag=device_tag)

@@ -20,7 +20,7 @@ def generate_metadata():
           Column('measure_name', String(190), nullable=True),
           Column('freq_nhz', BigInteger),
           Column('units', String(64), nullable=True),
-          UniqueConstraint('measure_tag', 'freq_nhz'))
+          UniqueConstraint('measure_tag', 'freq_nhz', 'units'))
 
     Table(DEVICE_TABLE_NAME,
           metadata,

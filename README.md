@@ -44,6 +44,7 @@ record = wfdb.rdrecord("100", pn_dir="mitdb")
 freq_nhz = record.fs * 1_000_000_000
 value_data = record.p_signal.T[0]
 sig_name = record.sig_name[0]
+sig_units = record.units[0]
 
 # WFDB doesn't have time information associated with this data, so create some.
 period_ns = (10 ** 9) // record.fs
@@ -58,13 +59,11 @@ end_time_nano = start_time_nano + (period_ns * value_data.size)
 
 ```python
 # Define a new signal.
-new_measure_id = 17
-sdk.insert_measure(measure_tag=sig_name, freq_nhz=freq_nhz)
+new_measure_id = sdk.insert_measure(measure_tag=sig_name, freq_nhz=freq_nhz, units=sig_units)
 
 # Define a new source.
-new_device_id = 100
 device_tag = "MITDB_record_100"
-sdk.insert_device(device_tag=device_tag)
+new_device_id = sdk.insert_device(device_tag=device_tag)
 ```
 
 ### Read and Write Data
