@@ -1,10 +1,12 @@
 from sqlalchemy.exc import OperationalError
 import time
+import functools
 
 DB_LOCKED_STRING = "database is locked"
 
 
 def sql_lock_wait(fn):
+    @functools.wraps(fn)
     def wrap(*args, **kwargs):
         while True:
             try:

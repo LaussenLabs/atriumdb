@@ -96,6 +96,13 @@ database_uri = "mysql+pymysql://{}:{}@{}/{}".format(username, password, host, db
 sdk = AtriumSDK(dataset_location=dataset_location, database_uri=database_uri)
 ```
 
+### Generating The Docs
+
+```console
+$ cd sdk
+$ sphinx-build -b html .\docs\source\ .\docs\build\ ; .\docs\make html
+```
+
 ## The SDK
 
 The most fundamental component of AtriumDB, the SDK contains the storage, indexing and compression/decompression components.

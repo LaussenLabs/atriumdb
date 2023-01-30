@@ -376,7 +376,58 @@ class AtriumSDK:
     def write_data_file_only(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray,
                              freq_nhz: int, time_0: int, raw_time_type: int = None, raw_value_type: int = None,
                              encoded_time_type: int = None, encoded_value_type: int = None, scale_m: float = None,
-                             scale_b: float = None, lock=None):
+                             scale_b: float = None):
+        """
+        Advanced Function, Use with caution. Writes a tsc file to disk and returns relevant metadata needed to write to
+        the metadata table at a later time. Useful for performing encoding and disk io from a worker process and then
+        passing metadata to be written to sql table from main process.
+
+        >>> import numpy as np
+        >>> sdk = AtriumSDK(dataset_location='./example_dir')
+        >>> # Create some time data.
+        >>> time_data = np.arange(1234567890, 1234567890 + 3600, dtype=np.int64) * (10 ** 9)
+        >>> # Create some value data of equal dimension.
+        >>> value_data = np.sin(time_data)
+        >>> # Encode Data and Write To Disk.
+        >>> measure_id, device_id, filename, encode_headers, byte_start_array, intervals = sdk.write_data_file_only(measure_id=42, device_id=99, time_data=time_data, value_data=value_data, freq_nhz=1_000_000_000, time_0=int(time_data[0]), raw_time_type=1, raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_b=None, scale_m=None)
+        >>> # Add to metadata sql table.
+        >>> sdk.metadata_insert_sql(measure_id, device_id, filename, encode_headers, byte_start_array, intervals)
+
+        :param measure_id: The measure identifier corresponding to the measures table in the linked relational database.
+        :type measure_id: int
+        :param device_id: The device identifier corresponding to the devices table in the linked relational database.
+        :type device_id: int
+        :param time_data: A 1D numpy array representing the time information of the data to be written.
+        :type time_data: np.ndarray
+        :param value_data: A 1D numpy array representing the value information of the data to be written.
+        :type value_data: np.ndarray
+        :param freq_nhz: The sample frequency, in nanohertz, of the data to be written.
+        :type freq_nhz: int
+        :param time_0: Start time of the data.
+        :type time_0: int
+        :param raw_time_type: Type of raw time data, default is None.
+        :type raw_time_type: int, optional
+        :param raw_value_type: Type of raw value data, default is None.
+        :type raw_value_type: int, optional
+        :param encoded_time_type: Type of encoded time data, default is None.
+        :type encoded_time_type: int, optional
+        :param encoded_value_type: Type of encoded value data, default is None.
+        :type encoded_value_type: int, optional
+        :param scale_m: A constant factor to scale digital data to transform it to analog
+            (None if raw data is already analog). The slope (m) in y = mx + b, default is None.
+        :type scale_m: float, optional
+        :param scale_b: A constant factor to offset digital data to transform it to analog (None if raw data is already
+            analog). The y-intercept (b) in y = mx + b, default is None.
+        :type scale_b: float, optional
+        :rtype: Tuple[int, int, str, list, np.ndarry, list]
+        :returns: Measure identifier.\n
+            Device identifier.\n
+            TSC filename.\n
+            TSC header list.\n
+            Byte location of the start of each block.\n
+            List of calculated contiguous data intervals.
+
+        """
         assert self.mode == "local"
 
         # Block Encode
@@ -404,11 +455,12 @@ class AtriumSDK:
                         freq_units: str = "nHz"):
         """
         The simplified method for writing new data to the dataset
+
         >>> import numpy as np
         >>> new_measure_id = 21
         >>> new_device_id = 21
         >>> # Create some time data.
-        >>> time_data = np.arange(1669668855, 1669668855 + 3600, dtype=np.int64) * (10 ** 9)
+        >>> time_data = np.arange(1234567890, 1234567890 + 3600, dtype=np.int64) * (10 ** 9)
         >>> # Create some value data of equal dimension.
         >>> value_data = np.sin(time_data)
         >>> sdk.write_data(measure_id=new_measure_id,device_id=new_device_id,time_data=time_data,value_data=value_data,freq_nhz=,time_0=)
@@ -431,6 +483,7 @@ class AtriumSDK:
         :param str freq_units: The unit used for the specified frequency. This value can be one of ["nHz", "uHz", "mHz",
             "Hz", "kHz", "MHz"]. Keep in mind if you use extreemly large values for this it will be converted to nanohertz
             in the backend, and you may overflow 64bit integers.
+
         """
 
         # Check if they are using time units other than nanoseconds and if they are convert time_data to nanoseconds
@@ -707,6 +760,7 @@ class AtriumSDK:
         :returns: A list of the block header python objects.\n
             A numpy 1D array representing the time data (usually an array of timestamps).\n
             A numpy 1D array representing the value data.
+
         """
         # check that a correct unit type was entered
         time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
@@ -945,7 +999,8 @@ class AtriumSDK:
         return full_timestamps[:new_times_index + sorted_times.size], r_values
 
     @sql_lock_wait
-    def metadata_insert_sql(self, measure_id, device_id, path, metadata, start_bytes, intervals):
+    def metadata_insert_sql(self, measure_id: int, device_id: int, path: str, metadata: list, start_bytes: np.ndarray,
+                            intervals: list):
         with self.sql_api.connect() as conn:
             with self.sql_api.transaction(conn):
                 file_id = self.sql_api.insert_file_index(conn, measure_id, device_id, path)
@@ -995,6 +1050,7 @@ class AtriumSDK:
         :param int end: The maximum time epoch for which to include intervals.
         :rtype: numpy.ndarray
         :returns: A 2D array representing the availability of a specified measure.
+
         """
 
         with self.sql_api.connect() as conn:
@@ -1050,6 +1106,7 @@ class AtriumSDK:
             linked relational database.
         :rtype: int
         :return: The frequency in nanohertz.
+
         """
         if measure_id not in self.sql_api.measure_id_dict:
             raise ValueError(f"measure id {measure_id} not in sdk.")
@@ -1063,6 +1120,7 @@ class AtriumSDK:
             linked relational database.
         :rtype: float
         :return: The frequency in hertz.
+
         """
         return self.get_freq_nhz(measure_id) / (10 ** 9)
 
@@ -1266,6 +1324,7 @@ class AtriumSDK:
         :param str optional measure_tag: A unique string identifying the signal.
         :param str optional measure_name: A long form description of the signal.
         :param str optional units: The units of the signal.
+
         """
 
         # confirm the values are being entered as strings or none
@@ -1307,6 +1366,7 @@ class AtriumSDK:
         :param int device_id: A number identifying a unique source.
         :param str device_tag: A unique string identifying the source.
         :param str device_name: A long form description of the source.
+
         """
 
         assert isinstance(device_tag, str)
