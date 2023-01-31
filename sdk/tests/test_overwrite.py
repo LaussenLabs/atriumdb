@@ -22,7 +22,7 @@ def test_overwrite():
 
         device_tag = 'dev_1'
 
-        measure_id = sdk.insert_measure(measure_tag, freq_hz, freq_units="Hz")
+        measure_id = sdk.insert_measure(measure_tag, freq_hz, None, freq_units="Hz")
         device_id = sdk.insert_device(device_tag)
 
         og_time_data = np.array([1, 2, 3, 4, 5, 6, 7, 8], dtype=np.int64)

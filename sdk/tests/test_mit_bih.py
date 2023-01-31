@@ -34,10 +34,10 @@ def test_mit_bih():
                 for i in range(len(record.sig_name)):
 
                     # if the measure tag has already been entered into the DB find the associated measure ID
-                    measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano)
+                    measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i])
                     if measure_id is None:
                         # if the measure, frequency pair is not in the DB create a new entry
-                        measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq_nhz=freq_nano)
+                        measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq_nhz=freq_nano, units=record.units[i])
 
                     # write data
                     sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal.T[i],
@@ -45,9 +45,9 @@ def test_mit_bih():
 
             # if there is only one signal in the input file insert it
             else:
-                measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano)
+                measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, units=record.units)
                 if measure_id is None:
-                    measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq_nhz=freq_nano)
+                    measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq_nhz=freq_nano, units=record.units)
 
                 sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal,
                                     freq_nano, scale_m=None, scale_b=None)
@@ -64,7 +64,7 @@ def test_mit_bih():
             # If there are multiple signals in the record check both
             if record.n_sig > 1:
                 for i in range(len(record.sig_name)):
-                    measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano)
+                    measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i])
 
                     _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
 
@@ -73,7 +73,7 @@ def test_mit_bih():
 
             # If there is only one signal in the record
             else:
-                measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano)
+                measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, units=record.units)
 
                 _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
 

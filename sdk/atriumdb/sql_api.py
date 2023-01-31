@@ -43,7 +43,7 @@ class AtriumSql:
         self.engine = create_engine(
             db_uri,
             future=True,
-            echo=True,
+            # echo=True,
             **engine_kwargs)
 
         # Uncomment this code when sqlalchemy-utils becomes compatible with sqlalchemy 1.4 or greater.
@@ -122,18 +122,18 @@ class AtriumSql:
         self.measure_id_dict, self.measure_tag_dict = dict_result[:2]
         self.device_id_dict, self.device_tag_dict = dict_result[2:]
 
-    def get_measure_id(self, measure_tag, freq):
+    def get_measure_id(self, measure_tag, freq, units):
         # check if the measure_tag, freq pair is in the cached measure_tag_dict
-        if (measure_tag, freq) in self.measure_tag_dict:
-            return self.measure_tag_dict[(measure_tag, freq)]
+        if (measure_tag, freq, units) in self.measure_tag_dict:
+            return self.measure_tag_dict[(measure_tag, freq, units)]
 
         # if it's not in the dictionary repopulate the dict as the dictionary is only populated when the sdk object is
         # initially created so there may be more measure tags in the sql database
         self.populate_measure_device_cache()
 
         # check again and if its not there then return none
-        if (measure_tag, freq) in self.measure_tag_dict:
-            return self.measure_tag_dict[(measure_tag, freq)]
+        if (measure_tag, freq, units) in self.measure_tag_dict:
+            return self.measure_tag_dict[(measure_tag, freq, units)]
         else:
             return None
 
@@ -180,7 +180,7 @@ class AtriumSql:
             for row in measure_result:
                 measure_id_dict[row.id] = {'measure_tag': row.measure_tag, 'measure_name': row.measure_name,
                                            'freq_nhz': row.freq_nhz, 'units': row.units}
-                measure_tag_dict[(row.measure_tag, row.freq_nhz)] = row.id
+                measure_tag_dict[(row.measure_tag, row.freq_nhz, row.units)] = row.id
 
             device_result = self.select_device_id(conn)
             for row in device_result:

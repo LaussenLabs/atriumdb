@@ -1,3 +1,7 @@
-SQLAlchemy~=1.4.25
-numpy~=1.21.2
-PyMySQL~=0.9.3
+joblib==1.2.0
+numpy==1.21.6
+PyMySQL==1.0.2
+requests==2.28.2
+SQLAlchemy==1.4.46
+tomli==2.0.1
+wfdb==4.1.0

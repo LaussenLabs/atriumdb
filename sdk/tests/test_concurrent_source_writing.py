@@ -30,7 +30,7 @@ def test_concurrent_source_writing():
                 future.result()
 
         for (measure_tag, freq_hz) in test_measure_list:
-            measure_id = sdk.get_measure_id(measure_tag, freq_hz, freq_units="Hz")
+            measure_id = sdk.get_measure_id(measure_tag, freq_hz, None, freq_units="Hz")
             assert measure_id is not None
 
         for device_tag in test_device_list:
@@ -61,7 +61,7 @@ def write_source_info_process(measure_list, device_list):
         process_sdk = AtriumSDK(dataset_location=str(TSC_DATASET_DIR))
 
     for (measure_tag, freq_hz) in measure_list:
-        process_sdk.insert_measure(measure_tag, freq_hz, freq_units="Hz")
+        process_sdk.insert_measure(measure_tag, freq_hz, None, freq_units="Hz")
 
     for device_tag in device_list:
         process_sdk.insert_device(device_tag)

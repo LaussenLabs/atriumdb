@@ -173,7 +173,7 @@ def write_simple_dataset(sdk, filename):
     assert (10 ** 18) % period_nano == 0
 
     # add new identifiers
-    sdk.insert_measure(measure_tag='sin_wave', freq_nhz=freq_nano)
+    sdk.insert_measure(measure_tag='sin_wave', freq_nhz=freq_nano, units=None)
     sdk.insert_device(device_tag='device_1')
 
     # Create a start time, and number of samples.
