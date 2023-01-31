@@ -131,9 +131,23 @@ class AtriumSql:
         # initially created so there may be more measure tags in the sql database
         self.populate_measure_device_cache()
 
-        # check again and if its not there then return none
+        # check again and if it's not there then return none
         if (measure_tag, freq, units) in self.measure_tag_dict:
             return self.measure_tag_dict[(measure_tag, freq, units)]
+        else:
+            return None
+
+    def get_measure_info(self, measure_id: int):
+        # Check if the measure_id is in the cached measure_id_dict
+        if measure_id in self.measure_id_dict:
+            return self.measure_id_dict[measure_id]
+
+        # If it's not repopulate the cached dict as it may have changed since it was last populated
+        self.populate_measure_device_cache()
+
+        # Check again and if it's not there then return none
+        if measure_id in self.measure_id_dict:
+            return self.measure_id_dict[measure_id]
         else:
             return None
 
@@ -146,9 +160,23 @@ class AtriumSql:
         # initially created so there may be more device tags in the sql database
         self.populate_measure_device_cache()
 
-        # check again and if its not there then return none
+        # check again and if it's not there then return none
         if device_tag in self.device_tag_dict:
             return self.device_tag_dict[device_tag]
+        else:
+            return None
+
+    def get_device_info(self, device_id: int):
+        # Check if the measure_id is in the cached measure_id_dict
+        if device_id in self.device_id_dict:
+            return self.device_id_dict[device_id]
+
+        # If it's not repopulate the cached dict as it may have changed since it was last populated
+        self.populate_measure_device_cache()
+
+        # Check again and if it's not there then return none
+        if device_id in self.device_id_dict:
+            return self.device_id_dict[device_id]
         else:
             return None
 
