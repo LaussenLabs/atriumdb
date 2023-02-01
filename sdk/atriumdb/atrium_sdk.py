@@ -1329,12 +1329,19 @@ class AtriumSDK:
             result = self.sql_api.select_exists_signal_chunk(conn, measure_id, device_id, start_time_nano)
             return result.scalar_one_or_none()
 
-    def get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = "nHz"):
+    def get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None):
+        freq_units = "nHz" if freq_units is None else freq_units
         freq_nhz = convert_to_nanohz(freq, freq_units)
         return self.sql_api.get_measure_id(measure_tag=measure_tag, freq=freq_nhz, units=units)
 
+    def get_measure_info(self, measure_id: int):
+        return self.sql_api.get_measure_info(measure_id=measure_id)
+
     def get_device_id(self, device_tag: str):
         return self.sql_api.get_device_id(device_tag=device_tag)
+
+    def get_device_info(self, device_id: int):
+        return self.sql_api.get_device_info(device_id=device_id)
 
 
 def condense_byte_read_list(block_list):
