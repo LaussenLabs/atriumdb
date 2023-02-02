@@ -1,11 +1,12 @@
 import mariadb
 
 from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from_triplet_query, \
-    maria_select_measure_from_id_query, drop_insert_measure_function, insert_measure_func_query, call_insert_measure, \
+    maria_select_measure_from_id_query, \
     maria_insert_ignore_measure_query, maria_insert_ignore_device_query, maria_select_device_from_tag_query, maria_select_device_from_id_query
-from atriumdb.sql_handler.maria.maria_tables import measures_table_create_query, devices_table_create_query, \
-    file_index_create_query, block_index_create_query, interval_index_create_query, encounter_create_query, \
-    settings_create_query, DEFAULT_UNITS
+from atriumdb.sql_handler.maria.maria_tables import maria_measures_table_create_query, maria_devices_table_create_query, \
+    maria_file_index_create_query, maria_block_index_create_query, maria_interval_index_create_query, maria_encounter_create_query, \
+    maria_settings_create_query
+from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
 
 
@@ -38,18 +39,13 @@ class MariaDBHandler(SQLHandler):
         cursor = conn.cursor()
 
         # Create Tables
-        # cursor.execute("USE {}".format(self.dbname))
-        cursor.execute(measures_table_create_query)
-        cursor.execute(devices_table_create_query)
-        cursor.execute(file_index_create_query)
-        cursor.execute(block_index_create_query)
-        cursor.execute(interval_index_create_query)
-        cursor.execute(encounter_create_query)
-        cursor.execute(settings_create_query)
-
-        # Create Functions
-        # cursor.execute(drop_insert_measure_function)
-        # cursor.execute(insert_measure_func_query)
+        cursor.execute(maria_measures_table_create_query)
+        cursor.execute(maria_devices_table_create_query)
+        cursor.execute(maria_file_index_create_query)
+        cursor.execute(maria_block_index_create_query)
+        cursor.execute(maria_interval_index_create_query)
+        cursor.execute(maria_encounter_create_query)
+        cursor.execute(maria_settings_create_query)
 
         conn.commit()
         cursor.close()

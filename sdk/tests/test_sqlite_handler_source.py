@@ -1,23 +1,17 @@
-import os
 import pytest
-import mariadb
-from dotenv import load_dotenv
+from pathlib import Path
 
-from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
+from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 
-load_dotenv()
-
-# Get MariaDB connection details from .env file
-host = os.getenv("MARIA_DB_HOST")
-user = os.getenv("MARIA_DB_USER")
-password = os.getenv("MARIA_DB_PASSWORD")
-port = int(os.getenv("MARIA_DB_PORT"))
+TEST_META_FILE_PATH = Path(__file__).parent / "sqlite_source_test" / "meta" / "index.db"
 
 @pytest.fixture(scope="module")
 def sqlite_handler():
-    handler = MariaDBHandler(host, user, password, "measure_test", port)
-    handler.maria_connect().cursor().execute("DROP DATABASE IF EXISTS measure_test")
+    TEST_META_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if TEST_META_FILE_PATH.is_file():
+        TEST_META_FILE_PATH.unlink()
+    handler = SQLiteHandler(TEST_META_FILE_PATH)
     handler.create_schema()
     yield handler
 
