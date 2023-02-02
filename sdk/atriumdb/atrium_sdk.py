@@ -33,6 +33,9 @@ from multiprocessing import cpu_count
 import sys
 from typing import Union
 
+from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
+from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
+
 try:
     import importlib.resources as pkg_resources
 except ImportError:
@@ -103,6 +106,7 @@ class AtriumSDK:
             atriumdb_lib_path = this_file_path.parent.parent / shared_lib_filename
 
         self.block = Block(atriumdb_lib_path, num_threads)
+        self.sql_handler = None
 
         if dataset_location is not None or tsc_file_location is not None:
             self.mode = "local"
@@ -117,6 +121,7 @@ class AtriumSDK:
                 db_path.parent.mkdir(parents=True, exist_ok=True)
                 db_path_string = str(db_path.absolute())
                 database_uri = f"sqlite:///{db_path_string}"
+                self.sql_handler = SQLiteHandler(db_path_string)
 
             self.sql_api = AtriumSql(db_uri=database_uri)
 
@@ -128,6 +133,27 @@ class AtriumSDK:
             tsc_file_location.mkdir(parents=True, exist_ok=True)
             self.file_api = AtriumFileHandler(tsc_file_location)
             self.settings_dict = self._get_all_settings()
+
+        if self.sql_handler is None:
+            if self.sql_api.db_type == "mysql":
+                slash_split = database_uri.split('/')
+                colon_split = slash_split[2].split(":")
+                if len(colon_split) == 2:
+                    user, password_host = colon_split
+                    port = None
+                else:
+                    user, password_host, port = colon_split
+
+                db_name = slash_split[3]
+                password, host = password_host.split("@")
+                print()
+                print("host, user, password, db_name, port")
+                print(host, user, password, db_name, port)
+                self.sql_handler = MariaDBHandler(host, user, password, db_name, port)
+            else:
+                slash_split = database_uri.split('/')
+                db_file = '/'.join(slash_split[3:])
+                self.sql_handler = SQLiteHandler(db_file)
 
         elif api_url is not None:
             self.mode = "api"

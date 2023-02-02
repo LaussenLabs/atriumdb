@@ -43,7 +43,7 @@ class AtriumSql:
         self.engine = create_engine(
             db_uri,
             future=True,
-            echo=True,
+            echo=False,
             **engine_kwargs)
 
         # Uncomment this code when sqlalchemy-utils becomes compatible with sqlalchemy 1.4 or greater.
