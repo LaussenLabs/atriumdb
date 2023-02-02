@@ -42,9 +42,11 @@ def test_select_insert_measure(mariadb_handler):
     print(type(result))
 
     # Test for case where units=None
-    # example_units = None
-    # measure_id = mariadb_handler.insert_measure(test_measure_tag, test_freq_nhz, example_units, test_measure_name)
-    # result = mariadb_handler.select_measure(measure_id=measure_id)
+    example_units = None
+    measure_id = mariadb_handler.insert_measure(test_measure_tag, test_freq_nhz, example_units, test_measure_name)
+    result = mariadb_handler.select_measure(measure_id=measure_id)
+    print(result)
+    print(type(result))
     # assert result[1] == test_measure_tag
     # assert result[2] == test_freq_nhz
     # assert result[3] is None
