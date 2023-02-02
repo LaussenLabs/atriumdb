@@ -1,3 +1,5 @@
+DEFAULT_UNITS = ''
+
 measures_table_create_query = """CREATE TABLE IF NOT EXISTS measures(
     id INT PRIMARY KEY AUTO_INCREMENT,
     measure_tag VARCHAR(64) NOT NULL,
