@@ -146,9 +146,6 @@ class AtriumSDK:
 
                 db_name = slash_split[3]
                 password, host = password_host.split("@")
-                print()
-                print("host, user, password, db_name, port")
-                print(host, user, password, db_name, port)
                 self.sql_handler = MariaDBHandler(host, user, password, db_name, port)
             else:
                 slash_split = database_uri.split('/')
@@ -1361,17 +1358,7 @@ class AtriumSDK:
         if freq_units != "nHz":
             freq_nhz = convert_to_nanohz(freq_nhz, freq_units)
 
-        optional_args = {"measure_tag": measure_tag, "measure_name": measure_name, "units": units}
-        kwargs = {k: v for k, v in optional_args.items() if v is not None}
-
-        # check if measure is already in database and return it if it is
-        measure_id = self.sql_api.get_measure_id(measure_tag=measure_tag, freq=freq_nhz)
-        if measure_id is not None:
-            return measure_id
-
-        with self.sql_api.connect() as conn:
-            with self.sql_api.transaction(conn):
-                return self.sql_api.insert_measure_id(conn, freq_nhz, **kwargs)
+        return self.sql_handler.insert_measure(measure_tag, freq_nhz, units, measure_name)
 
     @sql_lock_wait
     def insert_device(self, device_tag: str, device_name: str = None):
@@ -1395,20 +1382,7 @@ class AtriumSDK:
 
         """
 
-        assert isinstance(device_tag, str)
-        assert isinstance(device_name, str) or device_name is None
-
-        # check if device is already in database and return it if it is
-        device_id = self.sql_api.get_device_id(device_tag=device_tag)
-        if device_id is not None:
-            return device_id
-
-        optional_args = {"device_tag": device_tag, "device_name": device_name}
-        kwargs = {k: v for k, v in optional_args.items() if v is not None}
-
-        with self.sql_api.connect() as conn:
-            with self.sql_api.transaction(conn):
-                return self.sql_api.insert_device_id(conn, **kwargs)
+        return self.sql_handler.insert_device(device_tag, device_name)
 
     def measure_device_start_time_exists(self, measure_id, device_id, start_time_nano):
         with self.sql_api.connect() as conn:

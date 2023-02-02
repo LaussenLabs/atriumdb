@@ -9,13 +9,15 @@ from atriumdb.sql_handler.maria.maria_tables import maria_measures_table_create_
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
 
+DEFAULT_PORT = 3306
+
 
 class MariaDBHandler(SQLHandler):
-    def __init__(self, host: str, user: str, password: str, dbname: str, port: int = 3306):
+    def __init__(self, host: str, user: str, password: str, dbname: str, port: int = None):
         self.host = host
         self.user = user
         self.password = password
-        self.port = port
+        self.port = DEFAULT_PORT if port is None else port
         self.dbname = dbname
 
     def maria_connect(self, db_name=None):
