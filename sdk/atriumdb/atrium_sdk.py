@@ -1348,10 +1348,10 @@ def condense_byte_read_list(block_list):
     result = []
 
     for row in block_list:
-        if len(result) == 0 or result[-1][1] != row['file_id'] or result[-1][2] + result[-1][3] != row['start_byte']:
-            result.append([row['device_id'], row['file_id'], row['start_byte'], row['num_bytes']])
+        if len(result) == 0 or result[-1][1] != row[3] or result[-1][2] + result[-1][3] != row[4]:
+            result.append([row[2], row[3], row[4], row[5]])
         else:
-            result[-1][3] += row['num_bytes']
+            result[-1][3] += row[5]
 
     return result
 
