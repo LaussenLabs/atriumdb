@@ -28,7 +28,7 @@ process_sdk = None
 
 def test_concurrent_source_writing():
     handler = MariaDBHandler(host, user, password, DB_NAME)
-    handler.maria_connect().cursor().execute(f"DROP DATABASE IF EXISTS {DB_NAME}")
+    handler.maria_connect_no_db().cursor().execute(f"DROP DATABASE IF EXISTS {DB_NAME}")
     handler.create_schema()
     shutil.rmtree(TSC_DATASET_DIR, ignore_errors=True)
     TSC_DATASET_DIR.mkdir(parents=True, exist_ok=True)
@@ -58,12 +58,12 @@ def test_concurrent_source_writing():
         assert device_id is not None
 
     read_measure_list = []
-    for measure_id in sdk.get_all_measure_ids():
+    for measure_id in sdk.get_all_measures():
         measure_info_dict = sdk.sql_api.measure_id_dict[measure_id]
         read_measure_list.append((measure_info_dict['measure_tag'], sdk.get_freq(measure_id, freq_units="Hz")))
 
     read_device_list = []
-    for device_id in sdk.get_all_device_ids():
+    for device_id in sdk.get_all_devices():
         device_info_dict = sdk.sql_api.device_id_dict[device_id]
         read_device_list.append(device_info_dict['device_tag'])
 

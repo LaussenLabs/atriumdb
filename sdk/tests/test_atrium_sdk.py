@@ -42,7 +42,7 @@ def write_test_data_multiple_times(atrium_sdk, chunk_sizes, device_id, encoded_v
             gap_arr = create_gap_arr(time_chunk, samples_per_message, freq_nhz)
             atrium_sdk.write_data(measure_id, device_id, gap_arr, value_chunk, freq_nhz, int(time_chunk[0]),
                                   raw_time_type=t_t, raw_value_type=raw_v_t, encoded_time_type=t_t,
-                                  encoded_value_type=encoded_v_t, lock=lock)
+                                  encoded_value_type=encoded_v_t)
 
             messages_written += chunk_size
 

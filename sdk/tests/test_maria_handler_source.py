@@ -17,7 +17,7 @@ port = int(os.getenv("MARIA_DB_PORT"))
 @pytest.fixture(scope="module")
 def sqlite_handler():
     handler = MariaDBHandler(host, user, password, "measure_test", port)
-    handler.maria_connect().cursor().execute("DROP DATABASE IF EXISTS measure_test")
+    handler.maria_connect_no_db().cursor().execute("DROP DATABASE IF EXISTS measure_test")
     handler.create_schema()
     yield handler
 
