@@ -1,11 +1,8 @@
-import os.path
-
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
-import pymysql
 
-from atriumdb.block import Block, interpret_gap_arr, convert_gap_array_to_intervals, \
-    convert_intervals_to_gap_array, create_gap_arr_fast
+from atriumdb.block import Block, convert_gap_array_to_intervals, \
+    convert_intervals_to_gap_array
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
 from atriumdb.file_api import AtriumFileHandler
@@ -14,20 +11,15 @@ from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_li
 from atriumdb.helpers.block_calculations import calc_time_by_freq, freq_nhz_to_period_ns
 from atriumdb.helpers.block_constants import TIME_TYPES
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME
-from atriumdb.helpers.sql_tables import MEASURE_TABLE_NAME, BLOCK_TABLE_NAME, FILE_TABLE_NAME, INTERVAL_TABLE_NAME
-from atriumdb.helpers.sql_wait_wrapper import sql_lock_wait
 from atriumdb.intervals.intervals import Intervals
-from atriumdb.mem_cache import cached
-from atriumdb.sql_api import AtriumSql, supported_db_types
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from atriumdb.old.sql_api import supported_db_types
+from concurrent.futures import ThreadPoolExecutor
 import time
 import bisect
-import warnings
 import requests
 import random
 from requests import Session
 import logging
-from contextlib import contextmanager, ExitStack
 from pathlib import Path, PurePath
 from multiprocessing import cpu_count
 import sys
