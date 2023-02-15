@@ -1,13 +1,10 @@
 from atriumdb import AtriumSDK
-from adb_credentials import DLL_PATH, phillips_database_uri, PHILLIPS_TSC_FILE_LOCATION
 
 from pathlib import Path
 import shutil
 import numpy as np
 import time
-from matplotlib import pyplot as plt
 import math
-from tqdm import tqdm
 import pickle
 import logging
 from concurrent.futures import ProcessPoolExecutor
