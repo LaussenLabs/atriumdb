@@ -121,6 +121,8 @@ class AtriumSDK:
         if dataset_location is None and tsc_file_location is None:
             raise ValueError("dataset_location or tsc_file_location must be specified.")
 
+        if isinstance(dataset_location, str):
+            dataset_location = Path(dataset_location)
         if tsc_file_location is None:
             tsc_file_location = dataset_location / 'tsc'
 
