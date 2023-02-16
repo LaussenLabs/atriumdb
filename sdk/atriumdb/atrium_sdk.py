@@ -1779,14 +1779,14 @@ def convert_to_nanoseconds(time_data, time_units):
     return np.around(time_data).astype("int64")
 
 
-def convert_to_nanohz(freq_nhz, freq_units):
+def convert_to_nanohz(freq, freq_units):
     freq_unit_options = {"nHz": 1, "uHz": 10 ** 3, "mHz": 10 ** 6, "Hz": 10 ** 9, "kHz": 10 ** 12, "MHz": 10 ** 15}
     if freq_units not in freq_unit_options.keys():
         raise ValueError("Invalid frequency units. Expected one of: %s" % freq_unit_options)
 
-    freq_nhz *= freq_unit_options[freq_units]
+    freq *= freq_unit_options[freq_units]
 
-    return round(freq_nhz)
+    return round(freq)
 
 
 def convert_from_nanohz(freq_nhz, freq_units):
