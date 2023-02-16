@@ -12,7 +12,6 @@ from atriumdb.helpers.block_calculations import calc_time_by_freq, freq_nhz_to_p
 from atriumdb.helpers.block_constants import TIME_TYPES
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME
 from atriumdb.intervals.intervals import Intervals
-from atriumdb.old.sql_api import supported_db_types
 from concurrent.futures import ThreadPoolExecutor
 import time
 import bisect
@@ -26,6 +25,7 @@ import sys
 from typing import Union
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
+from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 
 try:
@@ -121,6 +121,8 @@ class AtriumSDK:
         if dataset_location is None and tsc_file_location is None:
             raise ValueError("dataset_location or tsc_file_location must be specified.")
 
+        if isinstance(dataset_location, str):
+            dataset_location = Path(dataset_location)
         if tsc_file_location is None:
             tsc_file_location = dataset_location / 'tsc'
 
@@ -207,8 +209,8 @@ class AtriumSDK:
 
         # Set default parameters.
         database_type = 'sqlite' if database_type is None else database_type
-        if database_type not in supported_db_types:
-            raise ValueError("db_type {} not in {}.".format(database_type, supported_db_types))
+        if database_type not in SUPPORTED_DB_TYPES:
+            raise ValueError("db_type {} not in {}.".format(database_type, SUPPORTED_DB_TYPES))
 
         protected_mode = protected_mode_default_setting if protected_mode is None else protected_mode
         overwrite = overwrite_default_setting if overwrite is None else overwrite
@@ -1504,6 +1506,8 @@ class AtriumSDK:
         freq_units = "nHz" if freq_units is None else freq_units
         freq_nhz = convert_to_nanohz(freq, freq_units)
         row = self.sql_handler.select_measure(measure_tag=measure_tag, freq_nhz=freq_nhz, units=units)
+        if row is None:
+            return None
         return row[0]
 
     def get_measure_info(self, measure_id: int):
@@ -1536,6 +1540,9 @@ class AtriumSDK:
         }
         """
         row = self.sql_handler.select_measure(measure_id=measure_id)
+
+        if row is None:
+            return None
 
         measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, measure_unit, measure_unit_label, \
             measure_unit_code, measure_source_id = row
@@ -1571,6 +1578,8 @@ class AtriumSDK:
         1
         """
         row = self.sql_handler.select_device(device_tag=device_tag)
+        if row is None:
+            return None
         return row[0]
 
     def get_device_info(self, device_id: int):
@@ -1598,6 +1607,10 @@ class AtriumSDK:
 
         """
         row = self.sql_handler.select_device(device_id=device_id)
+
+        if row is None:
+            return None
+        
         device_id, device_tag, device_name, device_manufacturer, device_model, device_type, device_bed_id, \
             device_source_id = row
 

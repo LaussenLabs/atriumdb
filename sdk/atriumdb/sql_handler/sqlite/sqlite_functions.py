@@ -45,7 +45,7 @@ sqlite_interval_exists_query = """
     """
 
 
-sqlite_setting_insert_query = "INSERT INTO setting (name, value) VALUES (?, ?)"
+sqlite_setting_insert_query = "INSERT OR IGNORE INTO setting (name, value) VALUES (?, ?)"
 sqlite_setting_select_query = "SELECT * FROM setting WHERE name = ?"
 sqlite_setting_select_all_query = "SELECT * FROM setting"
 
