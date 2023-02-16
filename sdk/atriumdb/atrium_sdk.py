@@ -1358,10 +1358,15 @@ class AtriumSDK:
         freq_units = "nHz" if freq_units is None else freq_units
         freq_nhz = convert_to_nanohz(freq, freq_units)
         row = self.sql_handler.select_measure(measure_tag=measure_tag, freq_nhz=freq_nhz, units=units)
+        if row is None:
+            return None
         return row[0]
 
     def get_measure_info(self, measure_id: int):
         row = self.sql_handler.select_measure(measure_id=measure_id)
+
+        if row is None:
+            return None
 
         measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, measure_unit, measure_unit_label, \
             measure_unit_code, measure_source_id = row
@@ -1380,10 +1385,16 @@ class AtriumSDK:
 
     def get_device_id(self, device_tag: str):
         row = self.sql_handler.select_device(device_tag=device_tag)
+        if row is None:
+            return None
         return row[0]
 
     def get_device_info(self, device_id: int):
         row = self.sql_handler.select_device(device_id=device_id)
+
+        if row is None:
+            return None
+        
         device_id, device_tag, device_name, device_manufacturer, device_model, device_type, device_bed_id, \
             device_source_id = row
 
