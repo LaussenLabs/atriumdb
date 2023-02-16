@@ -7,7 +7,7 @@ from contextlib import contextmanager
 # Uncomment this code when sqlalchemy-utils becomes compatible with sqlalchemy 1.4 or greater.
 # from sqlalchemy_utils import database_exists, create_database
 
-supported_db_types = ["mysql", "sqlite"]
+supported_db_types = ["mysql", "sqlite", "mariadb"]
 # mariadb driver: mysqlclient
 
 measure_optional_vars = ['id', 'measure_tag', 'measure_name', 'units']

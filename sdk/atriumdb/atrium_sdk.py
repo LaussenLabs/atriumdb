@@ -12,7 +12,6 @@ from atriumdb.helpers.block_calculations import calc_time_by_freq, freq_nhz_to_p
 from atriumdb.helpers.block_constants import TIME_TYPES
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME
 from atriumdb.intervals.intervals import Intervals
-from atriumdb.old.sql_api import supported_db_types
 from concurrent.futures import ThreadPoolExecutor
 import time
 import bisect
@@ -26,6 +25,7 @@ import sys
 from typing import Union
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
+from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 
 try:
@@ -209,8 +209,8 @@ class AtriumSDK:
 
         # Set default parameters.
         database_type = 'sqlite' if database_type is None else database_type
-        if database_type not in supported_db_types:
-            raise ValueError("db_type {} not in {}.".format(database_type, supported_db_types))
+        if database_type not in SUPPORTED_DB_TYPES:
+            raise ValueError("db_type {} not in {}.".format(database_type, SUPPORTED_DB_TYPES))
 
         protected_mode = protected_mode_default_setting if protected_mode is None else protected_mode
         overwrite = overwrite_default_setting if overwrite is None else overwrite

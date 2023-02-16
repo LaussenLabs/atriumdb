@@ -44,7 +44,7 @@ maria_interval_exists_query = """
     )
     """
 
-mariadb_setting_insert_query = "INSERT INTO setting (name, value) VALUES (?, ?)"
+mariadb_setting_insert_query = "INSERT IGNORE INTO setting (name, value) VALUES (?, ?)"
 mariadb_setting_select_query = "SELECT * FROM setting WHERE name = ?"
 maria_select_all_query = "SELECT * FROM setting"
 
