@@ -169,7 +169,7 @@ class MariaDBHandler(SQLHandler):
                 cursor.execute(maria_select_measure_from_id_query, (measure_id,))
             else:
                 cursor.execute(maria_select_measure_from_triplet_query, (measure_tag, freq_nhz, units))
-                row = cursor.fetchone()
+            row = cursor.fetchone()
 
         return row
 
