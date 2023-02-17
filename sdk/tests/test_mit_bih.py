@@ -37,7 +37,7 @@ def test_mit_bih():
                     measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano)
                     if measure_id is None:
                         # if the measure, frequency pair is not in the DB create a new entry
-                        measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq_nhz=freq_nano)
+                        measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano)
 
                     # write data
                     sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal.T[i],
@@ -47,7 +47,7 @@ def test_mit_bih():
             else:
                 measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano)
                 if measure_id is None:
-                    measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq_nhz=freq_nano)
+                    measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano)
 
                 sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal,
                                     freq_nano, scale_m=None, scale_b=None)

@@ -19,7 +19,7 @@ def _test_insert_get_measure_device(db_type, dataset_location, connection_params
     freq_units = "Hz"
     measure_name = "Electrocardiogram Lead II Configuration 500 Hertz"
     units = "mV"
-    sdk.insert_measure(measure_tag=measure_tag, freq_nhz=freq_hz, freq_units=freq_units, measure_name=measure_name,
+    sdk.insert_measure(measure_tag=measure_tag, freq=freq_hz, freq_units=freq_units, measure_name=measure_name,
                        units=units)
     measure_id = sdk.get_measure_id(measure_tag, freq_hz, units, freq_units)
     assert measure_id is not None

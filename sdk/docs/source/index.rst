@@ -1,28 +1,17 @@
-.. atriumdb documentation master file, created by
-   sphinx-quickstart on Wed Jan 25 14:44:18 2023.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+Welcome to AtriumDB
+===================
 
-Welcome to atriumdb's documentation!
-====================================
+AtriumDB is a complete solution for managing and analyzing physiological waveform data.
+It includes an SDK for data compression, storage, and retrieval, a RESTful API for remote access,
+and a WAL System for continuous ingestion of streaming data.
+The SDK is a powerful Python library, and the API provides secure remote access authenticated by Auth0.
+The WAL System efficiently manages incoming data.
+To learn more about AtriumDB, visit the `about page <about.html>`_.
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
 
-.. automodule:: atriumdb
-   :members:
-   :special-members:
-
-.. autoclass:: atriumdb.AtriumSDK
-   :members:
-   :special-members:
-
-
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+   installation
+   quickstart
+   contents
+   about

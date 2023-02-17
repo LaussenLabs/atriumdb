@@ -59,7 +59,7 @@ end_time_nano = start_time_nano + (period_ns * value_data.size)
 ```python
 # Define a new signal.
 new_measure_id = 17
-sdk.insert_measure(measure_tag=sig_name, freq_nhz=freq_nhz)
+sdk.insert_measure(measure_tag=sig_name, freq=freq_nhz)
 
 # Define a new source.
 new_device_id = 100

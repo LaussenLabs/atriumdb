@@ -802,7 +802,7 @@ class AtriumSDK:
 
     def get_data(self, measure_id: int, start_time_n: int = None, end_time_n: int = None, device_id: int = None,
                  patient_id=None, auto_convert_gap_to_time_array=True, return_intervals=False, analog=True,
-                 connection=None, block_info=None, time_units: str = "ns"):
+                 block_info=None, time_units: str = "ns"):
         """
         The method for querying data from the dataset, indexed by signal type (measure_id),
         time (start_time_n and end_time_n) and data source (device_id and patient_id)
@@ -811,7 +811,7 @@ class AtriumSDK:
         >>> end_epoch_s = start_epoch_s + 3600  # 1 hour after start.
         >>> start_epoch_nano = start_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
         >>> end_epoch_nano = end_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
-        >>> _, r_times, r_values = sdk.get_data(measure_id=1,start_time_n=start_epoch_s,end_time_n=end_epoch_nano,device_id=4)
+        >>> _, r_times, r_values = sdk.get_data(measure_id=1, start_time_n=start_epoch_s, end_time_n=end_epoch_nano, device_id=4)
         >>> r_times
         array([1669668855000000000, 1669668856000000000, 1669668857000000000, ...,
         1669672452000000000, 1669672453000000000, 1669672454000000000],
@@ -1397,32 +1397,29 @@ class AtriumSDK:
                         raw_time_type=t_t, raw_value_type=raw_v_t, encoded_time_type=t_t,
                         encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b)
 
-    def insert_measure(self, measure_tag: str, freq_nhz, freq_units: str = "nHz", measure_name: str = None,
+    def insert_measure(self, measure_tag: str, freq, freq_units: str = "nHz", measure_name: str = None,
                        units: str = None):
         """
         Defines a new signal type to be stored in the dataset, as well as defining metadata related to the signal.
 
-        measure_id and freq_nhz are required information, but it is also recommended to define a measure_tag
+        freq and freq_units are required information, but it is also recommended to define a measure_tag
         (which can be done by specifying measure_tag as an optional parameter).
 
         The other optional parameters are measure_name (A description of the signal) and units
         (the units of the signal).
 
         >>> # Define a new signal.
-        >>> new_measure_id = 21
-        >>> freq_hz = 500
-        >>> freq_units = "hz"
+        >>> freq = 500
+        >>> freq_units = "Hz"
         >>> measure_tag = "ECG Lead II - 500 Hz"
         >>> measure_name = "Electrocardiogram Lead II Configuration 500 Hertz"
         >>> units = "mV"
-        >>> sdk.insert_measure(measure_tag=measure_tag,freq_nhz=freq_hz,freq_units=freq_units,measure_name=measure_name,units=units)
+        >>> measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq, freq_units=freq_units, measure_name=measure_name, units=units)
 
-        :param int measure_id: A number identifying a unique signal.
-        :param freq_nhz: The sample frequency of the signal.
-
-        :param str optional freq_units: The unit used for the specified frequency. This value can be one of ["nhz",
-            "uHz", "mHz", "Hz", "kHz", "MHz"]. Keep in mind if you use extreemly large values for this it will be
-            converted to nanohertz in the backend, and you may overflow 64bit integers.
+        :param freq: The sample frequency of the signal.
+        :param str optional freq_units: The unit used for the specified frequency. This value can be one of ["Hz",
+            "kHz", "MHz"]. Keep in mind if you use extremely large values for this it will be
+            converted to Hertz in the backend, and you may overflow 64bit integers.
         :param str optional measure_tag: A unique string identifying the signal.
         :param str optional measure_name: A long form description of the signal.
         :param str optional units: The units of the signal.
@@ -1435,9 +1432,9 @@ class AtriumSDK:
         assert isinstance(units, str) or units is None
 
         if freq_units != "nHz":
-            freq_nhz = convert_to_nanohz(freq_nhz, freq_units)
+            freq = convert_to_nanohz(freq, freq_units)
 
-        return self.sql_handler.insert_measure(measure_tag, freq_nhz, units, measure_name)
+        return self.sql_handler.insert_measure(measure_tag, freq, units, measure_name)
 
     def insert_device(self, device_tag: str, device_name: str = None):
         """
@@ -1449,10 +1446,9 @@ class AtriumSDK:
         The other optional parameter is device_name (A description of the source).
 
         >>> # Define a new source.
-        >>> new_device_id = 21
         >>> device_tag = "Monitor A3"
         >>> device_name = "Philips Monitor A3 in Room 2B"
-        >>> sdk.insert_device(device_tag=device_tag,device_name=device_name)
+        >>> new_device_id = sdk.insert_device(device_tag=device_tag, device_name=device_name)
 
         :param int device_id: A number identifying a unique source.
         :param str device_tag: A unique string identifying the source.

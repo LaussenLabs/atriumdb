@@ -40,7 +40,7 @@ maria_block_index_create_query = """CREATE TABLE IF NOT EXISTS block_index(
     INDEX (start_time_n, end_time_n)
 );"""
 
-maria_interval_index_create_query = """CREATE TABLE IF NOT EXISTS INTerval_index(
+maria_interval_index_create_query = """CREATE TABLE IF NOT EXISTS interval_index(
     id INT PRIMARY KEY AUTO_INCREMENT,
     measure_id INT UNSIGNED NOT NULL,
     device_id INT UNSIGNED NOT NULL,
