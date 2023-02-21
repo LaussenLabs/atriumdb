@@ -1599,6 +1599,3 @@ class AtriumSDK:
                 'bed_id': device_bed_id,
                 'source_id': device_source_id,
             }
-
-    def get_device_info(self, device_id: int):
-        return self.sql_api.get_device_info(device_id=device_id)
