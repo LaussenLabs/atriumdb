@@ -83,7 +83,7 @@ class MariaDBHandler(SQLHandler):
         cursor = conn.cursor()
 
         # Create Schema
-        cursor.execute("CREATE DATABASE IF NOT EXISTS {}".format(self.database))
+        cursor.execute("CREATE DATABASE IF NOT EXISTS `{}`".format(self.database))
         cursor.close()
         conn.change_user(self.user, self.password, self.database)
         cursor = conn.cursor()
