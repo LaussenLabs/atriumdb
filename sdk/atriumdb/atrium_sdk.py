@@ -314,40 +314,58 @@ class AtriumSDK:
     def write_data(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq_nhz: int,
                    time_0: int, raw_time_type: int = None, raw_value_type: int = None, encoded_time_type: int = None,
                    encoded_value_type: int = None, scale_m: float = None, scale_b: float = None):
-        # """
-        # The advanced method for writing new data to the dataset.
-        #
-        # :param int measure_id: The measure identifier corresponding to the measures table in the linked
-        #     relational database.
-        # :param int device_id: The device identifier corresponding to the devices table in the linked
-        #     relational database.
-        # :param numpy.ndarray time_data: A 1D numpy array representing the time information of the data to be written.
-        # :param numpy.ndarray value_data: A 1D numpy array representing the value information of the data to be written.
-        # :param int freq_nhz: The sample frequency, in nanohertz, of the data to be written.
-        # :param int time_0: The start time of the data to be written.
-        # :param int raw_time_type: An identifer representing the time format being written, corresponding to the options
-        #     written in the block header.
-        # :param int raw_value_type: An identifer representing the value format being written, corresponding to the
-        #     options written in the block header.
-        # :param int encoded_time_type: An identifer representing how the time information is encoded, corresponding
-        #     to the options written in the block header.
-        # :param int encoded_value_type: An identifer representing how the value information is encoded, corresponding
-        #     to the options written in the block header.
-        # :param float scale_m: A constant factor to scale digital data to transform it to analog (None if raw data
-        #     is already analog). The slope (m) in y = mx + b
-        # :param float scale_b: A constant factor to offset digital data to transform it to analog (None if raw data
-        #     is already analog). The y-intercept (b) in y = mx + b
-        # :param multiprocessing.Lock lock: Soon to be depreciated: a lock to pass when using the sdk in a
-        #     multiprocessing script, so that writes to the relational database can occur safely.
-        #
-        # :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
-        # :returns: A numpy byte array of the compressed blocks.\n
-        #     A list of BlockMetadata objects representing the binary
-        #     block headers.\n
-        #     A 1D numpy array representing the byte locations of the start of
-        #     each block.\n
-        #     The filename of the written blocks.
-        # """
+        """
+        The advanced method for writing new data to the dataset. This method can be used, like in the example,
+        to express time data as a gap array (even sized array, odd values are indices of value_data after a gap
+        and even values are the durations of the corresponding gaps in nanoseconds)
+
+        >>> import numpy as np
+        >>> from atriumdb import AtriumSDK, T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, \
+        ...     V_TYPE_INT64, V_TYPE_DELTA_INT64
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> measure_id = 21
+        >>> device_id = 21
+        >>> freq_nhz = 1_000_000_000
+        >>> time_zero_nano = 1234567890_000_000_000
+        >>> gap_arr = np.array([42, 1_000_000_000, 99, 2_000_000_000])
+        >>> value_data = np.sin(np.linspace(0, 4, num=200))
+        >>> sdk.write_data(
+        >>>     measure_id, device_id, gap_arr, value_data, freq_nhz, time_zero_nano,
+        >>>     raw_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
+        >>>     raw_value_type=V_TYPE_INT64,
+        >>>     encoded_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
+        >>>     encoded_value_type=V_TYPE_DELTA_INT64)
+
+
+        :param int measure_id: The measure identifier corresponding to the measures table in the linked
+            relational database.
+        :param int device_id: The device identifier corresponding to the devices table in the linked
+            relational database.
+        :param numpy.ndarray time_data: A 1D numpy array representing the time information of the data to be written.
+        :param numpy.ndarray value_data: A 1D numpy array representing the value information of the data to be written.
+        :param int freq_nhz: The sample frequency, in nanohertz, of the data to be written.
+        :param int time_0: The start time of the data to be written.
+        :param int raw_time_type: An identifer representing the time format being written, corresponding to the options
+            written in the block header.
+        :param int raw_value_type: An identifer representing the value format being written, corresponding to the
+            options written in the block header.
+        :param int encoded_time_type: An identifer representing how the time information is encoded, corresponding
+            to the options written in the block header.
+        :param int encoded_value_type: An identifer representing how the value information is encoded, corresponding
+            to the options written in the block header.
+        :param float scale_m: A constant factor to scale digital data to transform it to analog (None if raw data
+            is already analog). The slope (m) in y = mx + b
+        :param float scale_b: A constant factor to offset digital data to transform it to analog (None if raw data
+            is already analog). The y-intercept (b) in y = mx + b
+
+        :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
+        :returns: A numpy byte array of the compressed blocks.\n
+            A list of BlockMetadata objects representing the binary
+            block headers.\n
+            A 1D numpy array representing the byte locations of the start of
+            each block.\n
+            The filename of the written blocks.
+        """
         assert self.mode == "local"
         # Apply Scale Factors and Convert
         # if scale_b is not None:
@@ -501,13 +519,15 @@ class AtriumSDK:
         The simplified method for writing new data to the dataset
 
         >>> import numpy as np
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> new_measure_id = 21
         >>> new_device_id = 21
         >>> # Create some time data.
-        >>> time_data = np.arange(1234567890, 1234567890 + 3600, dtype=np.int64) * (10 ** 9)
+        >>> freq_hz = 1
+        >>> time_data = np.arange(1234567890, 1234567890 + 3600, dtype=np.int64)
         >>> # Create some value data of equal dimension.
         >>> value_data = np.sin(time_data)
-        >>> sdk.write_data(measure_id=new_measure_id,device_id=new_device_id,time_data=time_data,value_data=value_data,freq_nhz=,time_0=)
+        >>> sdk.write_data_easy(measure_id=new_measure_id, device_id=new_device_id, time_data=time_data, value_data=value_data, freq=freq_hz, freq_units="Hz", time_units="s")
 
         :param int measure_id: The measure identifier corresponding to the measures table in the linked
             relational database.
@@ -640,8 +660,41 @@ class AtriumSDK:
 
     def get_batched_data_generator(self, measure_id: int, start_time_n: int = None, end_time_n: int = None,
                                    device_id: int = None, patient_id=None, auto_convert_gap_to_time_array=True,
-                                   return_intervals=False, analog=True, block_info=None, connection=None,
-                                   max_kbyte_in_memory=None, window_size=None, step_size=None, get_last_window=True):
+                                   return_intervals=False, analog=True, block_info=None, max_kbyte_in_memory=None,
+                                   window_size=None, step_size=None, get_last_window=True):
+        """
+        Generates batched data from the dataset.
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> measure_id = 123
+        >>> start_time_n = 1000000000
+        >>> end_time_n = 2000000000
+        >>> device_id = 456
+        >>> patient_id = 789
+        >>> max_kbyte_in_memory = 1000
+        >>> for total_query_index, times, values in sdk.get_batched_data_generator(measure_id=measure_id, start_time_n=start_time_n, end_time_n=end_time_n, device_id=device_id, patient_id=patient_id, max_kbyte_in_memory=max_kbyte_in_memory):
+            ...     print(f"total_query_index: {total_query_index}, times: {times}, values: {values}")
+
+        :param int measure_id: The measure identifier corresponding to the measures table in the linked relational database.
+        :param int start_time_n: The start time of the data to be retrieved, in nanohertz.
+        :param int end_time_n: The end time of the data to be retrieved, in nanohertz.
+        :param int device_id: The device identifier corresponding to the devices table in the linked relational database.
+        :param patient_id: The patient identifier.
+        :param bool auto_convert_gap_to_time_array: If True, convert gap in time data to a numpy array.
+        :param bool return_intervals: If True, return intervals instead of values.
+        :param bool analog: If True, return analog data.
+        :param dict block_info: A dictionary containing information about blocks.
+        :param int max_kbyte_in_memory: The maximum amount of memory to use, in kilobytes.
+        :param int window_size: The size of each batch, in number of values.
+        :param int step_size: The step size between each batch, in number of values.
+        :param bool get_last_window: If True, return the last window, even if its size is less than `window_size`.
+
+        :returns: generator object
+            Each element is a tuple (int, numpy.ndarray, numpy.ndarray) representing:
+            The starting index of the current batch.
+            A 1D numpy array of time information.
+            A 1D numpy array of value information.
+        """
         if window_size is not None:
             if step_size is None:
                 step_size = window_size
@@ -675,18 +728,10 @@ class AtriumSDK:
             remaining_values -= block_metadata['num_values']
 
             if current_memory_kb >= max_kbyte_in_memory and (window_size is None or cur_values >= window_size):
-                # print(f"current_memory_kb >= max_kbyte_in_memory and "
-                #       f"(window_size is None or cur_values >= window_size)")
-                # print(f"{current_memory_kb} >= {max_kbyte_in_memory} and "
-                #       f"({window_size} is None or {cur_values} >= {window_size})")
-                # print()
                 headers, r_times, r_values = self.get_blocks(
                     current_blocks_meta, filename_dict, measure_id, start_time_n, end_time_n, analog,
                     auto_convert_gap_to_time_array, return_intervals,
                     times_before=times_before, values_before=values_before)
-
-                # print("middle r_times.size, r_values.size")
-                # print(r_times.size, r_values.size)
 
                 yield from yield_data(r_times, r_values, window_size, step_size,
                                       get_last_window and (current_blocks_meta[-1] is block_list[-1]), current_index)
@@ -757,7 +802,7 @@ class AtriumSDK:
 
     def get_data(self, measure_id: int, start_time_n: int = None, end_time_n: int = None, device_id: int = None,
                  patient_id=None, auto_convert_gap_to_time_array=True, return_intervals=False, analog=True,
-                 connection=None, block_info=None, time_units: str = "ns"):
+                 block_info=None, time_units: str = "ns"):
         """
         The method for querying data from the dataset, indexed by signal type (measure_id),
         time (start_time_n and end_time_n) and data source (device_id and patient_id)
@@ -766,7 +811,7 @@ class AtriumSDK:
         >>> end_epoch_s = start_epoch_s + 3600  # 1 hour after start.
         >>> start_epoch_nano = start_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
         >>> end_epoch_nano = end_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
-        >>> _, r_times, r_values = sdk.get_data(measure_id=1,start_time_n=start_epoch_s,end_time_n=end_epoch_nano,device_id=4)
+        >>> _, r_times, r_values = sdk.get_data(measure_id=1, start_time_n=start_epoch_s, end_time_n=end_epoch_nano, device_id=4)
         >>> r_times
         array([1669668855000000000, 1669668856000000000, 1669668857000000000, ...,
         1669672452000000000, 1669672453000000000, 1669672454000000000],
@@ -1115,6 +1160,17 @@ class AtriumSDK:
         """
         Returns the frequency of the signal corresponding to the specified measure_id.
 
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> measure_id = 1
+        >>> freq_units = "Hz"
+        >>> frequency = sdk.get_freq(measure_id, freq_units)
+        >>> print(frequency)
+        10.0
+
+        >>> freq = sdk.get_freq(measure_id=1, freq_units="nHz")
+        >>> print(freq)
+        10000000000
+
         :param int measure_id: The measure identifier corresponding to the measures table in the
             linked relational database.
         :param str freq_units: The units of the frequency to be returned.
@@ -1136,6 +1192,33 @@ class AtriumSDK:
         pass
 
     def get_all_devices(self):
+        """
+        Retrieve information about all devices in the linked relational database.
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> all_devices = sdk.get_all_devices()
+        >>> print(all_devices)
+        {1: {'id': 1,
+             'tag': 'Monitor A1',
+             'name': 'Philips Monitor A1 in Room 2A',
+             'manufacturer': 'Philips',
+             'model': 'A1',
+             'type': 'Monitor',
+             'bed_id': 2,
+             'source_id': 1},
+         2: {'id': 2,
+             'tag': 'Monitor A2',
+             'name': 'LG Monitor A2 in Room 2B',
+             'manufacturer': 'LG',
+             'model': 'A2',
+             'type': 'Monitor',
+             'bed_id': 2,
+             'source_id': 2}}
+
+        :return: A dictionary containing information about each device, including its id, tag, name, manufacturer,
+            model, type, bed_id, and source_id.
+        :rtype: dict
+        """
         device_tuple_list = self.sql_handler.select_all_devices()
         device_dict = {}
         for device_id, device_tag, device_name, device_manufacturer, device_model, device_type, device_bed_id, \
@@ -1154,6 +1237,35 @@ class AtriumSDK:
         return device_dict
 
     def get_all_measures(self):
+        """
+        Retrieve information about all measures in the linked relational database.
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> all_measures = sdk.get_all_measures()
+        >>> print(all_measures)
+        {1: {'id': 1,
+             'tag': 'Heart Rate',
+             'name': 'Heart Rate Measurement',
+             'freq_nhz': 500,
+             'code': 'HR',
+             'unit': 'BPM',
+             'unit_label': 'Beats per Minute',
+             'unit_code': 'BPM',
+             'source_id': 1},
+         2: {'id': 2,
+             'tag': 'Respiration Rate',
+             'name': 'Respiration Rate Measurement',
+             'freq_nhz': 500,
+             'code': 'RR',
+             'unit': 'BPM',
+             'unit_label': 'Breaths per Minute',
+             'unit_code': 'BPM',
+             'source_id': 1}}
+
+        :return: A dictionary containing information about each measure, including its id, tag, name, sample frequency
+            (in nanohertz), code, unit, unit label, unit code, and source_id.
+        :rtype: dict
+        """
         measure_tuple_list = self.sql_handler.select_all_measures()
         measure_dict = {}
         for measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, measure_unit, measure_unit_label, \
@@ -1290,27 +1402,24 @@ class AtriumSDK:
         """
         Defines a new signal type to be stored in the dataset, as well as defining metadata related to the signal.
 
-        measure_id and freq_nhz are required information, but it is also recommended to define a measure_tag
+        freq and freq_units are required information, but it is also recommended to define a measure_tag
         (which can be done by specifying measure_tag as an optional parameter).
 
         The other optional parameters are measure_name (A description of the signal) and units
         (the units of the signal).
 
         >>> # Define a new signal.
-        >>> new_measure_id = 21
-        >>> freq_hz = 500
-        >>> freq_units = "hz"
+        >>> freq = 500
+        >>> freq_units = "Hz"
         >>> measure_tag = "ECG Lead II - 500 Hz"
         >>> measure_name = "Electrocardiogram Lead II Configuration 500 Hertz"
         >>> units = "mV"
-        >>> sdk.insert_measure(measure_tag=measure_tag,freq_nhz=freq_hz,units=units,freq_units=freq_units,measure_name=measure_name)
+        >>> measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq, freq_units=freq_units, measure_name=measure_name, units=units)
 
-        :param int measure_id: A number identifying a unique signal.
-        :param freq_nhz: The sample frequency of the signal.
-
-        :param str optional freq_units: The unit used for the specified frequency. This value can be one of ["nhz",
-            "uHz", "mHz", "Hz", "kHz", "MHz"]. Keep in mind if you use extreemly large values for this it will be
-            converted to nanohertz in the backend, and you may overflow 64bit integers.
+        :param freq: The sample frequency of the signal.
+        :param str optional freq_units: The unit used for the specified frequency. This value can be one of ["Hz",
+            "kHz", "MHz"]. Keep in mind if you use extremely large values for this it will be
+            converted to Hertz in the backend, and you may overflow 64bit integers.
         :param str optional measure_tag: A unique string identifying the signal.
         :param str optional measure_name: A long form description of the signal.
         :param str optional units: The units of the signal.
@@ -1323,9 +1432,9 @@ class AtriumSDK:
         assert isinstance(units, str) or units is None
 
         if freq_units != "nHz":
-            freq_nhz = convert_to_nanohz(freq_nhz, freq_units)
+            freq = convert_to_nanohz(freq, freq_units)
 
-        return self.sql_handler.insert_measure(measure_tag, freq_nhz, units, measure_name)
+        return self.sql_handler.insert_measure(measure_tag, freq, units, measure_name)
 
     def insert_device(self, device_tag: str, device_name: str = None):
         """
@@ -1337,10 +1446,9 @@ class AtriumSDK:
         The other optional parameter is device_name (A description of the source).
 
         >>> # Define a new source.
-        >>> new_device_id = 21
         >>> device_tag = "Monitor A3"
         >>> device_name = "Philips Monitor A3 in Room 2B"
-        >>> sdk.insert_device(device_tag=device_tag,device_name=device_name)
+        >>> new_device_id = sdk.insert_device(device_tag=device_tag, device_name=device_name)
 
         :param int device_id: A number identifying a unique source.
         :param str device_tag: A unique string identifying the source.
@@ -1351,10 +1459,45 @@ class AtriumSDK:
         return self.sql_handler.insert_device(device_tag, device_name)
 
     def measure_device_start_time_exists(self, measure_id, device_id, start_time_nano):
+        """
+        Check if a time interval for a measure, device and start_time already exists in the linked relational database.
+
+        :param int measure_id: The identifier of the measure to check.
+        :param int device_id: The identifier of the device to check.
+        :param int start_time_nano: The start time of the interval, in nanoseconds.
+
+        :return: True if the interval exists, False otherwise.
+        :rtype: bool
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> measure_id = 3
+        >>> device_id = 2
+        >>> start_time_nano = 1234567890123
+        >>> sdk.measure_device_start_time_exists(measure_id, device_id, start_time_nano)
+        True
+        """
 
         return self.sql_handler.interval_exists(measure_id, device_id, start_time_nano)
 
     def get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None):
+        """
+        Returns the identifier for a measure specified by its tag, frequency, units, and frequency units.
+
+        :param str measure_tag: The tag of the measure.
+        :param float freq: The frequency of the measure.
+        :param str units: The unit of the measure (default is an empty string).
+        :param str freq_units: The frequency unit of the measure (default is 'nHz').
+        :return: The identifier of the measure.
+        :rtype: int
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> measure_tag = "Temperature Measure"
+        >>> freq = 100.0
+        >>> units = "Celsius"
+        >>> freq_units = "Hz"
+        >>> sdk.get_measure_id(measure_tag, freq, units, freq_units)
+        7
+        """
         units = "" if units is None else units
         freq_units = "nHz" if freq_units is None else freq_units
         freq_nhz = convert_to_nanohz(freq, freq_units)
@@ -1365,6 +1508,34 @@ class AtriumSDK:
         return row[0]
 
     def get_measure_info(self, measure_id: int):
+        """
+        Retrieve information about a specific measure in the linked relational database.
+
+        :param int measure_id: The identifier of the measure to retrieve information for.
+
+        :return: A dictionary containing information about the measure, including its id, tag, name, sample frequency
+            (in nanohertz), code, unit, unit label, unit code, and source_id.
+        :rtype: dict
+
+        >>> # Connect to example_dataset
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>>
+        >>> # Retrieve information for measure with id=1
+        >>> measure_id = 1
+        >>> measure_info = sdk.get_measure_info(measure_id)
+        >>> print(measure_info)
+        {
+            'id': 1,
+            'tag': 'Heart Rate',
+            'name': 'Heart rate in beats per minute',
+            'freq_nhz': 60,
+            'code': 'HR',
+            'unit': 'bpm',
+            'unit_label': 'beats per minute',
+            'unit_code': 'bpm',
+            'source_id': 1
+        }
+        """
         row = self.sql_handler.select_measure(measure_id=measure_id)
 
         if row is None:
@@ -1386,12 +1557,52 @@ class AtriumSDK:
             }
 
     def get_device_id(self, device_tag: str):
+        """
+        Retrieve the identifier of a device in the linked relational database based on its tag.
+
+        :param str device_tag: The tag of the device to retrieve the identifier for.
+
+        :return: The identifier of the device.
+        :rtype: int
+
+        >>> # Connect to example_dataset
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>>
+        >>> # Retrieve the identifier of the device with tag "Monitor A1"
+        >>> device_tag = "Monitor A1"
+        >>> device_id = sdk.get_device_id(device_tag)
+        >>> print(device_id)
+        1
+        """
         row = self.sql_handler.select_device(device_tag=device_tag)
         if row is None:
             return None
         return row[0]
 
     def get_device_info(self, device_id: int):
+        """
+        Retrieve information about a specific device in the linked relational database.
+
+        :param int device_id: The identifier of the device to retrieve information for.
+
+        :return: A dictionary containing information about the device, including its id, tag, name, manufacturer, model,
+                 type, bed_id, and source_id.
+        :rtype: dict
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> device_id = 1
+        >>> device_info = sdk.get_device_info(device_id)
+        >>> print(device_info)
+        {'id': 1,
+         'tag': 'Device A1',
+         'name': 'Philips Device A1 in Room 1A',
+         'manufacturer': 'Philips',
+         'model': 'A1',
+         'type': 'Device',
+         'bed_id': 1,
+         'source_id': 1}
+
+        """
         row = self.sql_handler.select_device(device_id=device_id)
 
         if row is None:
@@ -1568,14 +1779,14 @@ def convert_to_nanoseconds(time_data, time_units):
     return np.around(time_data).astype("int64")
 
 
-def convert_to_nanohz(freq_nhz, freq_units):
+def convert_to_nanohz(freq, freq_units):
     freq_unit_options = {"nHz": 1, "uHz": 10 ** 3, "mHz": 10 ** 6, "Hz": 10 ** 9, "kHz": 10 ** 12, "MHz": 10 ** 15}
     if freq_units not in freq_unit_options.keys():
         raise ValueError("Invalid frequency units. Expected one of: %s" % freq_unit_options)
 
-    freq_nhz *= freq_unit_options[freq_units]
+    freq *= freq_unit_options[freq_units]
 
-    return round(freq_nhz)
+    return round(freq)
 
 
 def convert_from_nanohz(freq_nhz, freq_units):
