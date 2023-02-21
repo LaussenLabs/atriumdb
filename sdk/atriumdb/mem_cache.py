@@ -1,7 +1,11 @@
+import functools
+
+
 cache = {}
 
 
 def cached(func):
+    @functools.wraps(func)
     def wrapper(*args, **kwargs):
         key = (func,) + args + tuple(sorted(kwargs.items()))
         if key in cache:
