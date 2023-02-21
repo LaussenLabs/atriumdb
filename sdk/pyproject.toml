@@ -24,9 +24,9 @@ classifiers = [
 keywords = ["timeseries", "database", "waveform", "ML"]
 dependencies = [
     'tomli; python_version < "3.11"',
+    "mariadb == 1.1.6",
     "numpy",
     "requests",
-    "mariadb==1.1.5",
 ]
 requires-python = ">=3.6"
 
