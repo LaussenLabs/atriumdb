@@ -211,3 +211,11 @@ CONSTRAINT log_hl7_adt_ibfk_1 FOREIGN KEY (source_id) REFERENCES source (id)
 
 mariadb_log_hl7_adt_source_id_create_index = """CREATE INDEX IF NOT EXISTS source_id
 ON log_hl7_adt (source_id);"""
+
+mariadb_current_census_view = """CREATE VIEW current_census AS select `e`.`start_time` AS 
+`admission_start`,`u`.`id` AS `unit_id`,`u`.`name` AS `unit_name`,`b`.`id` AS `bed_id`,`b`.`name` AS `bed_name`,
+`p`.`id` AS `patient_id`,`p`.`mrn` AS `mrn`,concat_ws(' ',`p`.`first_name`,`p`.`middle_name`,`p`.`last_name`) AS `name`,
+`p`.`gender` AS `gender`,`p`.`dob` AS `birth_date` from (((`encounter` `e` join `bed` `b` on(`e`.`bed_id` = `b`.`id`)) 
+join `unit` `u` on(`b`.`unit_id` = `u`.`id`)) join `patient` `p` on(`e`.`patient_id` = `p`.`id`)) 
+where `e`.`end_time` is null
+"""
