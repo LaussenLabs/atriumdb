@@ -7,6 +7,10 @@ from atriumdb.helpers.block_calculations import calc_time_by_freq
 from atriumdb.helpers.block_constants import TIME_TYPES
 
 
+time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+freq_unit_options = {"nHz": 1, "uHz": 10 ** 3, "mHz": 10 ** 6, "Hz": 10 ** 9, "kHz": 10 ** 12, "MHz": 10 ** 15}
+
+
 def get_block_and_interval_data(measure_id, device_id, metadata, start_bytes, intervals):
     block_data = []
     for header_i, header in enumerate(metadata):
@@ -28,6 +32,7 @@ def get_block_and_interval_data(measure_id, device_id, metadata, start_bytes, in
             "end_time_n": int(interval[1]),
         })
     return block_data, interval_data
+
 
 def condense_byte_read_list(block_list):
     result = []
@@ -172,18 +177,24 @@ def yield_data(r_times, r_values, window_size, step_size, get_last_window, total
 
 def convert_to_nanoseconds(time_data, time_units):
     # check that a correct unit type was entered
-    time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
     if time_units not in time_unit_options.keys():
         raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
 
     # convert time data into nanoseconds and round off any trailing digits and convert to integer array
+    # copy so as to not alter user's data, which should remain in original units.
     time_data = time_data.copy() * time_unit_options[time_units]
 
     return np.around(time_data).astype("int64")
 
 
+def convert_value_to_nanoseconds(time_value, time_units):
+    if time_units not in time_unit_options:
+        raise ValueError(f"Invalid time units. Expected one of {time_unit_options}.")
+
+    return round(time_value * time_unit_options[time_units])
+
+
 def convert_to_nanohz(freq, freq_units):
-    freq_unit_options = {"nHz": 1, "uHz": 10 ** 3, "mHz": 10 ** 6, "Hz": 10 ** 9, "kHz": 10 ** 12, "MHz": 10 ** 15}
     if freq_units not in freq_unit_options.keys():
         raise ValueError("Invalid frequency units. Expected one of: %s" % freq_unit_options)
 
@@ -193,7 +204,6 @@ def convert_to_nanohz(freq, freq_units):
 
 
 def convert_from_nanohz(freq_nhz, freq_units):
-    freq_unit_options = {"nHz": 1, "uHz": 10 ** 3, "mHz": 10 ** 6, "Hz": 10 ** 9, "kHz": 10 ** 12, "MHz": 10 ** 15}
     if freq_units not in freq_unit_options.keys():
         raise ValueError("Invalid frequency units. Expected one of: %s" % freq_unit_options)
 

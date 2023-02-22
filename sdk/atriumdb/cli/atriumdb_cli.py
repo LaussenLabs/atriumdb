@@ -9,3 +9,8 @@ def cli():
 @click.command()
 def convert():
     pass
+
+
+@click.command()
+def transfer():
+    pass

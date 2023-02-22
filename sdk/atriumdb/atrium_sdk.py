@@ -24,6 +24,7 @@ from pathlib import Path, PurePath
 from multiprocessing import cpu_count
 import sys
 from typing import Union
+from functools import cache
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
@@ -1457,6 +1458,7 @@ class AtriumSDK:
 
         return self.sql_handler.interval_exists(measure_id, device_id, start_time_nano)
 
+    @cache
     def get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None):
         """
         Returns the identifier for a measure specified by its tag, frequency, units, and frequency units.
@@ -1485,6 +1487,7 @@ class AtriumSDK:
             return None
         return row[0]
 
+    @cache
     def get_measure_info(self, measure_id: int):
         """
         Retrieve information about a specific measure in the linked relational database.
@@ -1534,6 +1537,7 @@ class AtriumSDK:
                 'source_id': measure_source_id
             }
 
+    @cache
     def get_device_id(self, device_tag: str):
         """
         Retrieve the identifier of a device in the linked relational database based on its tag.
@@ -1557,6 +1561,7 @@ class AtriumSDK:
             return None
         return row[0]
 
+    @cache
     def get_device_info(self, device_id: int):
         """
         Retrieve information about a specific device in the linked relational database.
