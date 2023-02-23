@@ -5,7 +5,7 @@ from contextlib import contextmanager
 import mariadb
 
 from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from_triplet_query, \
-    maria_select_measure_from_id_query, \
+    maria_select_measure_from_id, \
     maria_insert_ignore_measure_query, maria_insert_ignore_device_query, maria_select_device_from_tag_query, \
     maria_select_device_from_id_query, maria_insert_file_index_query, maria_insert_block_query, \
     maria_insert_interval_index_query, maria_select_file_by_id, maria_select_file_by_values, maria_select_block_by_id, \
@@ -169,7 +169,7 @@ class MariaDBHandler(SQLHandler):
         units = DEFAULT_UNITS if units is None else units
         with self.maria_db_connection() as (conn, cursor):
             if measure_id is not None:
-                cursor.execute(maria_select_measure_from_id_query, (measure_id,))
+                cursor.execute(maria_select_measure_from_id, (measure_id,))
             else:
                 cursor.execute(maria_select_measure_from_triplet_query, (measure_tag, freq_nhz, units))
             row = cursor.fetchone()
@@ -455,3 +455,67 @@ class MariaDBHandler(SQLHandler):
         with self.maria_db_connection(begin=False) as (conn, cursor):
             cursor.execute(maria_select_encounter_query, arg_tuple)
             return cursor.fetchall()
+
+    def select_all_measures_in_list(self, measure_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(measure_id_list))
+        maria_select_measures_by_id_list = f"SELECT * FROM measure WHERE id IN ({placeholders})"
+        with self.maria_db_connection() as (conn, cursor):
+            cursor.execute(maria_select_measures_by_id_list, measure_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_patients_in_list(self, patient_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(patient_id_list))
+        maria_select_patients_by_id_list = f"SELECT * FROM patient WHERE id IN ({placeholders})"
+        with self.maria_db_connection() as (conn, cursor):
+            cursor.execute(maria_select_patients_by_id_list, patient_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_devices_in_list(self, device_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(device_id_list))
+        maria_select_devices_by_id_list = f"SELECT * FROM device WHERE id IN ({placeholders})"
+        with self.maria_db_connection() as (conn, cursor):
+            cursor.execute(maria_select_devices_by_id_list, device_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_beds_in_list(self, bed_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(bed_id_list))
+        maria_select_beds_by_id_list = f"SELECT * FROM bed WHERE id IN ({placeholders})"
+        with self.maria_db_connection() as (conn, cursor):
+            cursor.execute(maria_select_beds_by_id_list, bed_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_units_in_list(self, unit_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(unit_id_list))
+        maria_select_units_by_id_list = f"SELECT * FROM unit WHERE id IN ({placeholders})"
+        with self.maria_db_connection() as (conn, cursor):
+            cursor.execute(maria_select_units_by_id_list, unit_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_institutions_in_list(self, institution_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(institution_id_list))
+        maria_select_institutions_by_id_list = f"SELECT * FROM institution WHERE id IN ({placeholders})"
+        with self.maria_db_connection() as (conn, cursor):
+            cursor.execute(maria_select_institutions_by_id_list, institution_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_device_encounters_by_encounter_list(self, encounter_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(encounter_id_list))
+        maria_select_device_encounters_by_encounter_list = f"SELECT * FROM device_encounter WHERE encounter_id IN ({placeholders})"
+        with self.maria_db_connection() as (conn, cursor):
+            cursor.execute(maria_select_device_encounters_by_encounter_list, encounter_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_sources_in_list(self, source_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(source_id_list))
+        maria_select_sources_by_id_list = f"SELECT * FROM source WHERE id IN ({placeholders})"
+        with self.maria_db_connection() as (conn, cursor):
+            cursor.execute(maria_select_sources_by_id_list, source_id_list)
+            rows = cursor.fetchall()
+        return rows

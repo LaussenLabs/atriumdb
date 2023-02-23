@@ -23,7 +23,7 @@ import logging
 from pathlib import Path, PurePath
 from multiprocessing import cpu_count
 import sys
-from typing import Union
+from typing import Union, List
 from functools import cache
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
@@ -233,6 +233,56 @@ class AtriumSDK:
         sdk_object.settings_dict = sdk_object._get_all_settings()
 
         return sdk_object
+
+    def get_all_patient_encounter_data(self, measure_id_list: List[int] = None, patient_id_list: List[int] = None,
+                                       start_time: int = None, end_time: int = None):
+        measure_result = self.sql_handler.select_all_measures_in_list(measure_id_list=measure_id_list)
+        measure_source_id_list = [row[0] for row in measure_result]
+
+        patient_result = self.sql_handler.select_all_patients_in_list(patient_id_list=patient_id_list)
+        patient_source_id_list = [row[9] for row in patient_result]
+
+        encounter_result = self.sql_handler.select_encounters(
+            patient_id_list=patient_id_list, start_time=start_time, end_time=end_time)
+
+        encounter_id_list = [row[0] for row in encounter_result]
+        encounter_bed_id_list = list(set([row[2] for row in encounter_result]))
+        encounter_source_id_list = [row[7] for row in encounter_result]
+
+        device_encounter_result = self.sql_handler.select_all_device_encounters_by_encounter_list(
+            encounter_id_list=encounter_id_list)
+
+        device_encounter_device_id_list = [row[1] for row in device_encounter_result]
+
+        device_result = self.sql_handler.select_all_devices_in_list(device_id_list=device_encounter_device_id_list)
+        device_source_id_list = [row[9] for row in device_result]
+
+        bed_result = self.sql_handler.select_all_beds_in_list(bed_id_list=encounter_bed_id_list)
+        bed_unit_id_list = list(set([row[1] for row in bed_result]))
+
+        unit_result = self.sql_handler.select_all_units_in_list(unit_id_list=bed_unit_id_list)
+        unit_institution_id_list = list(set([row[1] for row in unit_result]))
+
+        institution_result = self.sql_handler.select_all_institutions_in_list(
+            institution_id_list=unit_institution_id_list)
+
+        source_id_list = list(set(measure_source_id_list + patient_source_id_list +
+                                  encounter_source_id_list + device_source_id_list))
+
+        source_result = self.sql_handler.select_all_sources_in_list(source_id_list=source_id_list)
+
+        result_dict = {
+            "measure_result": measure_result,
+            "patient_result": patient_result,
+            "encounter_result": encounter_result,
+            "device_encounter_result": device_encounter_result,
+            "device_result": device_result,
+            "bed_result": bed_result,
+            "unit_result": unit_result,
+            "institution_result": institution_result,
+            "source_result": source_result
+        }
+        return result_dict
 
     def _get_all_settings(self):
         settings = self.sql_handler.select_all_settings()

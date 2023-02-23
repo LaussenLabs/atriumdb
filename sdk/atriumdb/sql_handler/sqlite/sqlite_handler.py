@@ -427,3 +427,66 @@ class SQLiteHandler(SQLHandler):
             cursor.execute(sqlite_select_encounter_query, arg_tuple)
             return cursor.fetchall()
 
+    def select_all_measures_in_list(self, measure_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(measure_id_list))
+        sqlite_select_measures_by_id_list = f"SELECT * FROM measure WHERE id IN ({placeholders})"
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(sqlite_select_measures_by_id_list, measure_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_patients_in_list(self, patient_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(patient_id_list))
+        sqlite_select_patients_by_id_list = f"SELECT * FROM patient WHERE id IN ({placeholders})"
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(sqlite_select_patients_by_id_list, patient_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_devices_in_list(self, device_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(device_id_list))
+        sqlite_select_devices_by_id_list = f"SELECT * FROM device WHERE id IN ({placeholders})"
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(sqlite_select_devices_by_id_list, device_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_beds_in_list(self, bed_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(bed_id_list))
+        sqlite_select_beds_by_id_list = f"SELECT * FROM bed WHERE id IN ({placeholders})"
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(sqlite_select_beds_by_id_list, bed_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_units_in_list(self, unit_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(unit_id_list))
+        sqlite_select_units_by_id_list = f"SELECT * FROM unit WHERE id IN ({placeholders})"
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(sqlite_select_units_by_id_list, unit_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_institutions_in_list(self, institution_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(institution_id_list))
+        sqlite_select_institutions_by_id_list = f"SELECT * FROM institution WHERE id IN ({placeholders})"
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(sqlite_select_institutions_by_id_list, institution_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_device_encounters_by_encounter_list(self, encounter_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(encounter_id_list))
+        sqlite_select_device_encounters_by_encounter_list = f"SELECT * FROM device_encounter WHERE encounter_id IN ({placeholders})"
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(sqlite_select_device_encounters_by_encounter_list, encounter_id_list)
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_sources_in_list(self, source_id_list: List[int]):
+        placeholders = ', '.join(['?'] * len(source_id_list))
+        sqlite_select_sources_by_id_list = f"SELECT * FROM source WHERE id IN ({placeholders})"
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(sqlite_select_sources_by_id_list, source_id_list)
+            rows = cursor.fetchall()
+        return rows
