@@ -150,6 +150,17 @@ class AtriumSDK:
         else:
             raise ValueError("metadata_connection_type must be one of sqlite, mysql, mariadb or api")
 
+        self._measures = self.get_all_measures()
+        self._devices = self.get_all_devices()
+
+        self._measure_ids = {}
+        for measure_id, measure_info in self._measures.items():
+            self._measure_ids[(measure_info['tag'], measure_info['freq_nhz'], measure_info['unit'])] = measure_id
+
+        self._device_ids = {}
+        for device_id, device_info in self._devices.items():
+            self._device_ids[device_info['tag']] = device_id
+
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None,
                        protected_mode: str = None, overwrite: str = None, connection_params: dict = None):
@@ -1413,6 +1424,9 @@ class AtriumSDK:
         if freq_units != "nHz":
             freq = convert_to_nanohz(freq, freq_units)
 
+        if (measure_tag, freq, units) in self._measure_ids:
+            return self._measure_ids[(measure_tag, freq, units)]
+
         return self.sql_handler.insert_measure(measure_tag, freq, units, measure_name)
 
     def insert_device(self, device_tag: str, device_name: str = None):
@@ -1434,6 +1448,9 @@ class AtriumSDK:
         :param str device_name: A long form description of the source.
 
         """
+
+        if device_tag in self._device_ids:
+            return self._device_ids[device_tag]
 
         return self.sql_handler.insert_device(device_tag, device_name)
 
@@ -1458,7 +1475,6 @@ class AtriumSDK:
 
         return self.sql_handler.interval_exists(measure_id, device_id, start_time_nano)
 
-    @cache
     def get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None):
         """
         Returns the identifier for a measure specified by its tag, frequency, units, and frequency units.
@@ -1482,12 +1498,17 @@ class AtriumSDK:
         freq_units = "nHz" if freq_units is None else freq_units
         freq_nhz = convert_to_nanohz(freq, freq_units)
 
+        if (measure_tag, freq_nhz, units) in self._measure_ids:
+            return self._measure_ids[(measure_tag, freq_nhz, units)]
+
         row = self.sql_handler.select_measure(measure_tag=measure_tag, freq_nhz=freq_nhz, units=units)
         if row is None:
             return None
-        return row[0]
 
-    @cache
+        measure_id = row[0]
+        self._measure_ids[(measure_tag, freq_nhz, units)] = measure_id
+        return measure_id
+
     def get_measure_info(self, measure_id: int):
         """
         Retrieve information about a specific measure in the linked relational database.
@@ -1517,6 +1538,10 @@ class AtriumSDK:
             'source_id': 1
         }
         """
+
+        if measure_id in self._measures:
+            return self._measures[measure_id]
+
         row = self.sql_handler.select_measure(measure_id=measure_id)
 
         if row is None:
@@ -1525,7 +1550,7 @@ class AtriumSDK:
         measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, measure_unit, measure_unit_label, \
             measure_unit_code, measure_source_id = row
 
-        return {
+        measure_info = {
                 'id': measure_id,
                 'tag': measure_tag,
                 'name': measure_name,
@@ -1535,9 +1560,12 @@ class AtriumSDK:
                 'unit_label': measure_unit_label,
                 'unit_code': measure_unit_code,
                 'source_id': measure_source_id
-            }
+        }
 
-    @cache
+        self._measures[measure_id] = measure_info
+
+        return measure_info
+
     def get_device_id(self, device_tag: str):
         """
         Retrieve the identifier of a device in the linked relational database based on its tag.
@@ -1556,12 +1584,16 @@ class AtriumSDK:
         >>> print(device_id)
         1
         """
+        if device_tag in self._device_ids:
+            return self._device_ids[device_tag]
         row = self.sql_handler.select_device(device_tag=device_tag)
         if row is None:
             return None
-        return row[0]
 
-    @cache
+        device_id = row[0]
+        self._device_ids[device_tag] = device_id
+        return device_id
+
     def get_device_info(self, device_id: int):
         """
         Retrieve information about a specific device in the linked relational database.
@@ -1586,6 +1618,9 @@ class AtriumSDK:
          'source_id': 1}
 
         """
+
+        if device_id in self._devices:
+            return self._devices[device_id]
         row = self.sql_handler.select_device(device_id=device_id)
 
         if row is None:
@@ -1594,7 +1629,7 @@ class AtriumSDK:
         device_id, device_tag, device_name, device_manufacturer, device_model, device_type, device_bed_id, \
             device_source_id = row
 
-        return {
+        device_info = {
                 'id': device_id,
                 'tag': device_tag,
                 'name': device_name,
@@ -1603,4 +1638,8 @@ class AtriumSDK:
                 'type': device_type,
                 'bed_id': device_bed_id,
                 'source_id': device_source_id,
-            }
+        }
+
+        self._devices[device_id] = device_info
+
+        return device_info
