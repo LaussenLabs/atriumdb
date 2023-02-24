@@ -25,7 +25,10 @@ from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query
     maria_encounter_create_index_bed_id_query, maria_encounter_create_index_patient_id_query, \
     maria_encounter_create_index_source_id_query, mariadb_device_create_query, mariadb_device_bed_id_create_index, \
     mariadb_device_source_id_create_index, maria_insert_adb_source, mariadb_measure_source_id_create_index, \
-    mariadb_log_hl7_adt_create_query, mariadb_log_hl7_adt_source_id_create_index, mariadb_current_census_view
+    mariadb_log_hl7_adt_create_query, mariadb_log_hl7_adt_source_id_create_index, mariadb_current_census_view, \
+    mariadb_device_patient_table, maria_encounter_device_encounter_insert_trigger, \
+    maria_encounter_device_encounter_update_trigger, maria_encounter_device_patient_insert_trigger, \
+    maria_encounter_device_patient_update_trigger
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
 
@@ -106,6 +109,7 @@ class MariaDBHandler(SQLHandler):
 
         cursor.execute(maria_device_encounter_create_query)
         cursor.execute(mariadb_log_hl7_adt_create_query)
+        cursor.execute(mariadb_device_patient_table)
 
         # Create Indices
         cursor.execute(maria_unit_institution_id_create_index)
@@ -131,6 +135,12 @@ class MariaDBHandler(SQLHandler):
         cursor.execute(maria_device_encounter_encounter_id_create_index)
         cursor.execute(maria_device_encounter_source_id_create_index)
         cursor.execute(mariadb_log_hl7_adt_source_id_create_index)
+
+        # Triggers
+        cursor.execute(maria_encounter_device_encounter_insert_trigger)
+        cursor.execute(maria_encounter_device_encounter_update_trigger)
+        cursor.execute(maria_encounter_device_patient_insert_trigger)
+        cursor.execute(maria_encounter_device_patient_update_trigger)
 
         conn.commit()
         cursor.close()

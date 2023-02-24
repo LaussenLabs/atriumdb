@@ -211,3 +211,16 @@ FOREIGN KEY (source_id) REFERENCES source(id)
 
 sqlite_log_hl7_adt_source_id_create_index = """CREATE INDEX IF NOT EXISTS source_id
 ON log_hl7_adt (source_id);"""
+
+sqlite_device_patient_table = """CREATE TABLE IF NOT EXISTS device_patient (
+  id INTEGER PRIMARY KEY,
+  device_id INTEGER NOT NULL,
+  patient_id INTEGER NOT NULL,
+  start_time INTEGER NOT NULL,
+  end_time INTEGER,
+  FOREIGN KEY (device_id) REFERENCES device(id),
+  FOREIGN KEY (patient_id) REFERENCES patient(id)
+);
+"""
+
+sqlite_patient_table_index_1 = "CREATE INDEX IF NOT EXISTS device_patient_index ON device_patient (device_id, patient_id, start_time, end_time);"

@@ -219,3 +219,58 @@ mariadb_current_census_view = """CREATE OR REPLACE VIEW current_census AS select
 join `unit` `u` on(`b`.`unit_id` = `u`.`id`)) join `patient` `p` on(`e`.`patient_id` = `p`.`id`)) 
 where `e`.`end_time` is null
 """
+
+mariadb_device_patient_table = """CREATE TABLE IF NOT EXISTS device_patient (
+  id INT UNSIGNED PRIMARY KEY,
+  device_id INT UNSIGNED NOT NULL,
+  patient_id INT UNSIGNED NOT NULL,
+  start_time BIGINT NOT NULL,
+  end_time BIGINT NULL,
+  FOREIGN KEY (device_id) REFERENCES device(id),
+  FOREIGN KEY (patient_id) REFERENCES patient(id),
+  INDEX device_patient_index (device_id, patient_id, start_time, end_time)
+);
+"""
+
+maria_encounter_device_encounter_insert_trigger = """
+CREATE DEFINER = root@`%` TRIGGER IF NOT EXISTS encounter_insert
+    after insert
+    on encounter
+    for each row
+BEGIN
+INSERT INTO device_encounter (device_id, encounter_id, start_time, end_time) 
+SELECT id, NEW.id, NEW.start_time, NEW.end_time 
+FROM device WHERE type='static' and bed_id=NEW.bed_id;
+END;
+"""
+
+maria_encounter_device_encounter_update_trigger = """
+CREATE DEFINER = root@`%` TRIGGER IF NOT EXISTS encounter_update
+    after update
+    on encounter
+    for each row
+BEGIN
+UPDATE device_encounter SET end_time=NEW.end_time WHERE encounter_id=NEW.id and end_time IS NULL;
+END;
+"""
+
+maria_encounter_device_patient_insert_trigger = """
+CREATE TRIGGER IF NOT EXISTS encounter_patient_insert
+AFTER INSERT ON encounter
+FOR EACH ROW
+BEGIN
+    INSERT INTO device_patient (device_id, patient_id, start_time, end_time) 
+    SELECT id, NEW.patient_id, NEW.start_time, NEW.end_time 
+    FROM device WHERE type='static' and bed_id=NEW.bed_id;
+END;
+"""
+
+maria_encounter_device_patient_update_trigger = """
+CREATE TRIGGER IF NOT EXISTS encounter_patient_update
+AFTER UPDATE ON encounter
+FOR EACH ROW
+BEGIN
+    UPDATE device_patient SET end_time=NEW.end_time 
+    WHERE patient_id=NEW.patient_id AND start_time=NEW.start_time AND end_time IS NULL;
+END;
+"""

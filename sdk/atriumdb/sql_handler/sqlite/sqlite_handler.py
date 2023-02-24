@@ -28,7 +28,8 @@ from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_quer
     sqlite_encounter_create_index_bed_id_query, sqlite_encounter_create_index_patient_id_query, \
     sqlite_encounter_create_index_source_id_query, sqlite_encounter_create_query, sqlite_device_create_query, \
     sqlite_device_bed_id_create_index, sqlite_device_source_id_create_index, sqlite_insert_adb_source, \
-    sqlite_measure_source_id_create_index, sqlite_log_hl7_adt_source_id_create_index, sqlite_log_hl7_adt_create_query
+    sqlite_measure_source_id_create_index, sqlite_log_hl7_adt_source_id_create_index, sqlite_log_hl7_adt_create_query, \
+    sqlite_device_patient_table, sqlite_patient_table_index_1
 
 
 class SQLiteHandler(SQLHandler):
@@ -80,6 +81,7 @@ class SQLiteHandler(SQLHandler):
 
         cursor.execute(sqlite_device_encounter_create_query)
         cursor.execute(sqlite_log_hl7_adt_create_query)
+        cursor.execute(sqlite_device_patient_table)
 
         # Create Indices
         cursor.execute(sqlite_block_index_idx_query)
@@ -103,6 +105,7 @@ class SQLiteHandler(SQLHandler):
         cursor.execute(sqlite_device_encounter_source_id_create_index)
 
         cursor.execute(sqlite_log_hl7_adt_source_id_create_index)
+        cursor.execute(sqlite_patient_table_index_1)
 
         # Insert Default Values
         cursor.execute(sqlite_insert_adb_source)
