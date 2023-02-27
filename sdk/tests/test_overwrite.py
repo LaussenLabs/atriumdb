@@ -6,17 +6,20 @@ import random
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # from tests.generate_wfdb import get_records
+from tests.testing_framework import _test_for_both
 
-TSC_DATASET_DIR = Path(__file__).parent / 'test_tsc_data' / 'overwrite_test'
-
+DB_NAME = 'overwrite_test'
 
 def test_overwrite():
-    print()
-    if TSC_DATASET_DIR.is_dir():
-        shutil.rmtree(TSC_DATASET_DIR)
-    TSC_DATASET_DIR.mkdir(parents=True, exist_ok=True)
+    _test_for_both(DB_NAME, _test_overwrite)
 
-    sdk = AtriumSDK.create_dataset(dataset_location=str(TSC_DATASET_DIR), overwrite='overwrite')
+
+def _test_overwrite(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params,
+        overwrite='overwrite')
+
+    print()
     measure_tag = 'signal_1'
     freq_hz = 1
     period = 1 / freq_hz

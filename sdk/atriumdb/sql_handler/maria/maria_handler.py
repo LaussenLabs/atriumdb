@@ -240,7 +240,8 @@ class MariaDBHandler(SQLHandler):
                 # insert into interval_index
                 interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
                                     interval["end_time_n"]) for interval in interval_data]
-                cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+                if len(interval_tuples) > 0:
+                    cursor.executemany(maria_insert_interval_index_query, interval_tuples)
 
             # delete old block data
             cursor.executemany(maria_delete_block_query, [(block_id,) for block_id in block_ids_to_delete])
@@ -261,6 +262,8 @@ class MariaDBHandler(SQLHandler):
         placeholders = ', '.join(['?'] * len(file_id_list))
         maria_select_files_by_id_list = f"SELECT * FROM file_index WHERE id IN ({placeholders})"
         with self.maria_db_connection() as (conn, cursor):
+            print(f"maria_select_files_by_id_list {maria_select_files_by_id_list}")
+            print(f"file_id_list {file_id_list}")
             cursor.execute(maria_select_files_by_id_list, file_id_list)
             rows = cursor.fetchall()
         return rows

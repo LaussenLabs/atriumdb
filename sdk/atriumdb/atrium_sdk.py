@@ -326,8 +326,11 @@ class AtriumSDK:
 
         overwrite_file_dict = {}
         all_old_file_blocks = []
+        print(f"measure_id={measure_id}, start_time_n={int(time_0)}, end_time_n={end_time_ns}, device_id={device_id}")
         old_block_list = self.get_block_id_list(measure_id, start_time_n=int(time_0),
                                                 end_time_n=end_time_ns, device_id=device_id)
+        print("old_block_list")
+        print(old_block_list)
 
         old_file_id_dict = self.get_filename_dict(list(set([row[3] for row in old_block_list])))
 
@@ -449,6 +452,8 @@ class AtriumSDK:
 
         # Calculate New Intervals
         write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
+        print("write_intervals")
+        print(write_intervals)
         write_intervals_o = Intervals(write_intervals)
 
         # Get Current Intervals
