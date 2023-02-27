@@ -31,6 +31,7 @@ from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query
     maria_encounter_device_patient_update_trigger
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
+from atriumdb.sql_handler.sql_helper import join_sql_and_bools
 
 DEFAULT_PORT = 3306
 
@@ -467,6 +468,10 @@ class MariaDBHandler(SQLHandler):
             cursor.execute(maria_select_encounter_query, arg_tuple)
             return cursor.fetchall()
 
+    def select_device_patients(self, patient_id_list=None, start_time=None, end_time=None):
+        arg_tuple = ()
+        maria_select_device_patient_query = "SELECT * FROM device_patient"
+
     def select_all_measures_in_list(self, measure_id_list: List[int]):
         placeholders = ', '.join(['?'] * len(measure_id_list))
         maria_select_measures_by_id_list = f"SELECT * FROM measure WHERE id IN ({placeholders})"
@@ -476,16 +481,16 @@ class MariaDBHandler(SQLHandler):
         return rows
 
     def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[int] = None):
-        assert (patient_id_list is None) != (mrn_list is None), \
-            "only one of patient_id_list and mrn_list can be specified."
         if patient_id_list is not None:
             placeholders = ', '.join(['?'] * len(patient_id_list))
             maria_select_patients_by_id_list = f"SELECT * FROM patient WHERE id IN ({placeholders})"
-        else:
-            assert mrn_list is not None
+        elif mrn_list is not None:
             patient_id_list = mrn_list
             placeholders = ', '.join(['?'] * len(patient_id_list))
             maria_select_patients_by_id_list = f"SELECT * FROM patient WHERE mrn IN ({placeholders})"
+        else:
+            maria_select_patients_by_id_list = "SELECT * FROM patient"
+            patient_id_list = tuple()
         with self.maria_db_connection() as (conn, cursor):
             cursor.execute(maria_select_patients_by_id_list, patient_id_list)
             rows = cursor.fetchall()
@@ -538,3 +543,33 @@ class MariaDBHandler(SQLHandler):
             cursor.execute(maria_select_sources_by_id_list, source_id_list)
             rows = cursor.fetchall()
         return rows
+
+    def select_device_patients(self, patient_id_list: List[int] = None, start_time: int = None, end_time: int = None):
+        arg_tuple = ()
+        maria_select_device_patient_query = \
+            "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
+        where_clauses = []
+        if patient_id_list is not None:
+            where_clauses.append("device_patient.patient_id IN ({})".format(
+                ','.join(['?'] * len(patient_id_list))))
+            arg_tuple += tuple(patient_id_list)
+        if start_time is not None:
+            where_clauses.append("device_patient.end_time > ?")
+            arg_tuple += (start_time,)
+        if end_time is not None:
+            where_clauses.append("device_patient.start_time < ?")
+            arg_tuple += (end_time,)
+        maria_select_device_patient_query += join_sql_and_bools(where_clauses)
+        maria_select_device_patient_query += " ORDER BY device_patient.id ASC"
+
+        with self.maria_db_connection(begin=False) as (conn, cursor):
+            cursor.execute(maria_select_device_patient_query, arg_tuple)
+            return cursor.fetchall()
+
+    def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
+        maria_insert_device_patient_query = \
+            "INSERT INTO device_patient (device_id, patient_id, start_time, end_time) VALUES (?, ?, ?, ?)"
+
+        with self.maria_db_connection() as (conn, cursor):
+            cursor.executemany(maria_insert_device_patient_query, device_patient_data)
+            conn.commit()

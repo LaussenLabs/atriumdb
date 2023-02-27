@@ -24,7 +24,7 @@ import logging
 from pathlib import Path, PurePath
 from multiprocessing import cpu_count
 import sys
-from typing import Union, List
+from typing import Union, List, Tuple
 from functools import cache
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
@@ -239,6 +239,20 @@ class AtriumSDK:
 
         return sdk_object
 
+    def get_device_patient_data(self, patient_id_list: List[int] = None, mrn_list: List[int] = None,
+                                start_time: int = None, end_time: int = None):
+        assert (patient_id_list is not None) or (mrn_list is not None), "must supply one of (patient_id_list, mrn_list)"
+
+        if patient_id_list is None:
+            mrn_to_patient_id_map = self.get_mrn_to_patient_id_map(mrn_list)
+            patient_id_list = [mrn_to_patient_id_map[mrn] for mrn in mrn_list if mrn in mrn_to_patient_id_map]
+
+        return self.sql_handler.select_device_patients(
+            patient_id_list=patient_id_list, start_time=start_time, end_time=end_time)
+
+    def insert_device_patient_data(self, device_patient_data: List[Tuple[int, int, int, int]]):
+        self.sql_handler.insert_device_patients(device_patient_data)
+
     def get_all_patient_encounter_data(self, measure_id_list: List[int] = None, patient_id_list: List[int] = None,
                                        start_time: int = None, end_time: int = None):
         measure_result = self.sql_handler.select_all_measures_in_list(measure_id_list=measure_id_list)
@@ -424,6 +438,7 @@ class AtriumSDK:
             The filename of the written blocks.
         """
         assert self.mode == "local"
+        assert value_data.size > 0, "Cannot write no data."
         # Apply Scale Factors and Convert
         # if scale_b is not None:
         #     value_data -= scale_b
@@ -1710,3 +1725,11 @@ class AtriumSDK:
         self._devices[device_id] = device_info
 
         return device_info
+
+    def get_mrn_to_patient_id_map(self, mrn_list=None):
+        patient_list = self.sql_handler.select_all_patients_in_list(mrn_list=mrn_list)
+        return {row[1]: row[0] for row in patient_list}
+
+    def get_patient_id_to_mrn_map(self, patient_id_list=None):
+        patient_list = self.sql_handler.select_all_patients_in_list(patient_id_list=patient_id_list)
+        return {row[0]: row[1] for row in patient_list}

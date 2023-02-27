@@ -189,3 +189,13 @@ class SQLHandler(ABC):
     def select_all_sources_in_list(self, source_id_list: List[int]):
         # Get all matching sources.
         pass
+
+    @abstractmethod
+    def select_device_patients(self, patient_id_list: List[int] = None, start_time: int = None, end_time: int = None):
+        # Get all device_patient rows.
+        pass
+
+    @abstractmethod
+    def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
+        # Insert device_patient rows.
+        pass
