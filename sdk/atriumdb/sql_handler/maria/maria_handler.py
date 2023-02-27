@@ -32,6 +32,9 @@ from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
 from atriumdb.sql_handler.sql_helper import join_sql_and_bools
+import logging
+
+_LOGGER = logging.getLogger(__name__)
 
 DEFAULT_PORT = 3306
 
@@ -262,8 +265,8 @@ class MariaDBHandler(SQLHandler):
         placeholders = ', '.join(['?'] * len(file_id_list))
         maria_select_files_by_id_list = f"SELECT * FROM file_index WHERE id IN ({placeholders})"
         with self.maria_db_connection() as (conn, cursor):
-            print(f"maria_select_files_by_id_list {maria_select_files_by_id_list}")
-            print(f"file_id_list {file_id_list}")
+            _LOGGER.debug(f"maria_select_files_by_id_list {maria_select_files_by_id_list}")
+            _LOGGER.debug(f"file_id_list {file_id_list}")
             cursor.execute(maria_select_files_by_id_list, file_id_list)
             rows = cursor.fetchall()
         return rows

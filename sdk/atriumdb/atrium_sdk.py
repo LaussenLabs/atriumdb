@@ -20,7 +20,6 @@ import bisect
 import requests
 import random
 from requests import Session
-import logging
 from pathlib import Path, PurePath
 from multiprocessing import cpu_count
 import sys
@@ -37,15 +36,18 @@ except ImportError:
     # Try backported to PY<37 `importlib_resources`.
     import importlib_resources as pkg_resources
 
+import logging
+
+_LOGGER = logging.getLogger(__name__)
 
 DEFAULT_META_CONNECTION_TYPE = 'sqlite'
 
 
-# logging.basicConfig(
-#     level=logging.debug,
+# _LOGGER.basicConfig(
+#     level=_LOGGER.debug,
 #     format="%(asctime)s [%(levelname)s] %(message)s",
 #     handlers=[
-#         logging.StreamHandler()
+#         _LOGGER.StreamHandler()
 #     ]
 # )
 
@@ -326,11 +328,11 @@ class AtriumSDK:
 
         overwrite_file_dict = {}
         all_old_file_blocks = []
-        print(f"measure_id={measure_id}, start_time_n={int(time_0)}, end_time_n={end_time_ns}, device_id={device_id}")
+        _LOGGER.debug(f"measure_id={measure_id}, start_time_n={int(time_0)}, end_time_n={end_time_ns}, device_id={device_id}")
         old_block_list = self.get_block_id_list(measure_id, start_time_n=int(time_0),
                                                 end_time_n=end_time_ns, device_id=device_id)
-        print("old_block_list")
-        print(old_block_list)
+        _LOGGER.debug("old_block_list")
+        _LOGGER.debug(old_block_list)
 
         old_file_id_dict = self.get_filename_dict(list(set([row[3] for row in old_block_list])))
 
@@ -452,8 +454,8 @@ class AtriumSDK:
 
         # Calculate New Intervals
         write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
-        print("write_intervals")
-        print(write_intervals)
+        _LOGGER.debug("write_intervals")
+        _LOGGER.debug(write_intervals)
         write_intervals_o = Intervals(write_intervals)
 
         # Get Current Intervals
@@ -931,7 +933,7 @@ class AtriumSDK:
         start_time_n = int(start_time_n * time_unit_options[time_units])
         end_time_n = int(end_time_n * time_unit_options[time_units])
 
-        logging.debug("\n")
+        _LOGGER.debug("\n")
         start_bench_total = time.perf_counter()
 
         if self.mode == "api":
@@ -947,13 +949,13 @@ class AtriumSDK:
                                                     end_time_n=int(end_time_n), device_id=device_id,
                                                     patient_id=patient_id)
                 end_bench = time.perf_counter()
-                logging.debug(f"get block info {(end_bench - start_bench) * 1000} ms")
+                _LOGGER.debug(f"get block info {(end_bench - start_bench) * 1000} ms")
 
                 # read_list = condense_byte_read_list([row[2:6] for row in block_list])
                 start_bench = time.perf_counter()
                 read_list = condense_byte_read_list(block_list)
                 end_bench = time.perf_counter()
-                logging.debug(f"condense read list {(end_bench - start_bench) * 1000} ms")
+                _LOGGER.debug(f"condense read list {(end_bench - start_bench) * 1000} ms")
 
                 # if no matching block ids
                 if len(read_list) == 0:
@@ -964,7 +966,7 @@ class AtriumSDK:
 
                 filename_dict = self.get_filename_dict(file_id_list)
                 end_bench = time.perf_counter()
-                logging.debug(f"get filename dictionary  {(end_bench - start_bench) * 1000} ms")
+                _LOGGER.debug(f"get filename dictionary  {(end_bench - start_bench) * 1000} ms")
 
             else:
                 block_list = block_info['block_list']
@@ -985,7 +987,7 @@ class AtriumSDK:
             # File Read Method 3
             encoded_bytes = self.file_api.read_file_list_3(measure_id, read_list, filename_dict)
             end_bench = time.perf_counter()
-            logging.debug(f"read from disk {(end_bench - start_bench) * 1000} ms")
+            _LOGGER.debug(f"read from disk {(end_bench - start_bench) * 1000} ms")
 
             num_bytes_list = [row[5] for row in block_list]
 
@@ -1000,7 +1002,7 @@ class AtriumSDK:
             # left, right = bisect.bisect_left(r_times, start_time_n), bisect.bisect_left(r_times, end_time_n)
             # r_times, r_values = r_times[left:right], r_values[left:right]
             # end_bench = time.perf_counter()
-            # logging.debug(f"truncate data {(end_bench - start_bench) * 1000} ms")
+            # _LOGGER.debug(f"truncate data {(end_bench - start_bench) * 1000} ms")
 
             # convert time data from nanoseconds to unit of choice
             r_times = r_times / time_unit_options[time_units]
@@ -1016,7 +1018,7 @@ class AtriumSDK:
         byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
         byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]], axis=None)
         end_bench = time.perf_counter()
-        logging.debug(f"arrange block info {(end_bench - start_bench) * 1000} ms")
+        _LOGGER.debug(f"arrange block info {(end_bench - start_bench) * 1000} ms")
 
         r_times, r_values, headers = self.block.decode_blocks(
             encoded_bytes, byte_start_array, analog=analog, times_before=times_before, values_before=values_before)
@@ -1102,7 +1104,7 @@ class AtriumSDK:
         left, right = bisect.bisect_left(r_times, start_time_n), bisect.bisect_left(r_times, end_time_n)
         r_times, r_values = r_times[left:right], r_values[left:right]
         end_bench = time.perf_counter()
-        logging.debug(f"truncate data {(end_bench - start_bench) * 1000} ms")
+        _LOGGER.debug(f"truncate data {(end_bench - start_bench) * 1000} ms")
 
         return headers, r_times, r_values
 
@@ -1147,7 +1149,7 @@ class AtriumSDK:
                 cur_index += h.num_vals
 
         end_bench = time.perf_counter()
-        logging.debug(f"Expand Gap Data {(end_bench - start_bench) * 1000} ms")
+        _LOGGER.debug(f"Expand Gap Data {(end_bench - start_bench) * 1000} ms")
         # full_timestamps[new_times_index:], r_values = \
         #     sort_data(full_timestamps[new_times_index:], r_values, headers)
 
