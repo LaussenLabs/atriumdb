@@ -403,7 +403,7 @@ class SQLiteHandler(SQLHandler):
     def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[int] = None, start_time: int = None,
                           end_time: int = None):
         assert (patient_id_list is None) != (
-                    mrn_list is None), "Either patient_id_list or mrn_list must be provided, but not both"
+                mrn_list is None), "Either patient_id_list or mrn_list must be provided, but not both"
         arg_tuple = ()
         sqlite_select_encounter_query = \
             "SELECT encounter.id, encounter.patient_id, encounter.bed_id, encounter.start_time, encounter.end_time, " \
@@ -438,9 +438,18 @@ class SQLiteHandler(SQLHandler):
             rows = cursor.fetchall()
         return rows
 
-    def select_all_patients_in_list(self, patient_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(patient_id_list))
-        sqlite_select_patients_by_id_list = f"SELECT * FROM patient WHERE id IN ({placeholders})"
+    def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[int] = None):
+        assert (patient_id_list is None) != (mrn_list is None), \
+            "only one of patient_id_list and mrn_list can be specified."
+        if patient_id_list is not None:
+            placeholders = ', '.join(['?'] * len(patient_id_list))
+            sqlite_select_patients_by_id_list = f"SELECT * FROM patient WHERE id IN ({placeholders})"
+        else:
+            assert mrn_list is not None
+            patient_id_list = mrn_list
+            placeholders = ', '.join(['?'] * len(patient_id_list))
+            sqlite_select_patients_by_id_list = f"SELECT * FROM patient WHERE mrn IN ({placeholders})"
+
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_select_patients_by_id_list, patient_id_list)
             rows = cursor.fetchall()

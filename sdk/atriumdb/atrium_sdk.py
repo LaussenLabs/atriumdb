@@ -11,7 +11,8 @@ from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_li
     overwrite_default_setting
 from atriumdb.helpers.block_calculations import calc_time_by_freq, freq_nhz_to_period_ns
 from atriumdb.helpers.block_constants import TIME_TYPES
-from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME
+from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME, \
+    ALLOWABLE_PROTECTED_MODE_SETTINGS
 from atriumdb.intervals.intervals import Intervals
 from concurrent.futures import ThreadPoolExecutor
 import time
@@ -206,6 +207,8 @@ class AtriumSDK:
         overwrite = overwrite_default_setting if overwrite is None else overwrite
         if overwrite not in ALLOWABLE_OVERWRITE_SETTINGS:
             raise ValueError(f"overwrite setting {overwrite} not in {ALLOWABLE_OVERWRITE_SETTINGS}")
+        if protected_mode not in ALLOWABLE_PROTECTED_MODE_SETTINGS:
+            raise ValueError(f"protected_mode setting {protected_mode} not in {ALLOWABLE_PROTECTED_MODE_SETTINGS}")
 
         # Create the database
         if database_type == 'sqlite':
@@ -288,15 +291,27 @@ class AtriumSDK:
         settings = self.sql_handler.select_all_settings()
         return {setting[0]: setting[1] for setting in settings}
 
-    def _overwrite_delete_data(self, measure_id, device_id, new_time_data):
+    def _overwrite_delete_data(self, measure_id, device_id, new_time_data, time_0, raw_time_type, values_size,
+                               freq_nhz):
         auto_convert_gap_to_time_array = True
         return_intervals = False
         analog = False
 
+        if raw_time_type == 1:
+            # already a timestamp array.
+            end_time_ns = int(new_time_data[-1])
+        elif raw_time_type == 2:
+            # Convert Gap array to timestamp array.
+            period_ns = int((10 ** 18) // freq_nhz)
+            end_time_ns = time_0 + (values_size * period_ns)
+            new_time_data = np.arange(time_0, end_time_ns, period_ns, dtype=np.int64)
+        else:
+            raise ValueError("Overwrite only supported for gap arrays and timestamp arrays.")
+
         overwrite_file_dict = {}
         all_old_file_blocks = []
-        old_block_list = self.get_block_id_list(measure_id, start_time_n=int(new_time_data[0]),
-                                                end_time_n=int(new_time_data[-1]), device_id=device_id)
+        old_block_list = self.get_block_id_list(measure_id, start_time_n=int(time_0),
+                                                end_time_n=end_time_ns, device_id=device_id)
 
         old_file_id_dict = self.get_filename_dict(list(set([row[3] for row in old_block_list])))
 
@@ -434,7 +449,7 @@ class AtriumSDK:
             overwrite_setting = self.settings_dict[OVERWRITE_SETTING_NAME]
             if overwrite_setting == 'overwrite':
                 overwrite_file_dict, old_block_ids, old_file_list = self._overwrite_delete_data(
-                    measure_id, device_id, time_data)
+                    measure_id, device_id, time_data, time_0, raw_time_type, value_data.size, freq_nhz)
             elif overwrite_setting == 'error':
                 raise ValueError("Data to be written overlaps already ingested data.")
             elif overwrite_setting == 'ignore':

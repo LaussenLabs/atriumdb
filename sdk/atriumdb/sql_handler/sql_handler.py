@@ -156,7 +156,7 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def select_all_patients_in_list(self, patient_id_list: List[int]):
+    def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[int] = None):
         # Get all matching patients.
         pass
 
