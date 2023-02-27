@@ -233,7 +233,7 @@ mariadb_device_patient_table = """CREATE TABLE IF NOT EXISTS device_patient (
 """
 
 maria_encounter_device_encounter_insert_trigger = """
-CREATE DEFINER = root@`%` TRIGGER IF NOT EXISTS encounter_insert
+CREATE TRIGGER IF NOT EXISTS encounter_insert
     after insert
     on encounter
     for each row
@@ -245,7 +245,7 @@ END;
 """
 
 maria_encounter_device_encounter_update_trigger = """
-CREATE DEFINER = root@`%` TRIGGER IF NOT EXISTS encounter_update
+CREATE TRIGGER IF NOT EXISTS encounter_update
     after update
     on encounter
     for each row
