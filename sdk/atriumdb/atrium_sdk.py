@@ -349,6 +349,8 @@ class AtriumSDK:
                 self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
                                       auto_convert_gap_to_time_array, return_intervals)
 
+            _LOGGER.debug(f"old_values: {old_values}")
+
             old_times = old_times.astype(np.int64)
             diff_mask = np.in1d(old_times, new_time_data, assume_unique=False, invert=True)
 
@@ -460,8 +462,6 @@ class AtriumSDK:
 
         current_intervals_o = Intervals(current_intervals)
 
-        _LOGGER.debug(f"({measure_id}, {device_id}): time_data: {time_data} \n write_intervals: {write_intervals} \n current_intervals: {current_intervals}")
-
         overwrite_file_dict, old_block_ids, old_file_list = None, None, None
         if current_intervals_o.intersection(write_intervals_o).duration() > 0:
             if OVERWRITE_SETTING_NAME not in self.settings_dict:
@@ -469,6 +469,8 @@ class AtriumSDK:
 
             overwrite_setting = self.settings_dict[OVERWRITE_SETTING_NAME]
             if overwrite_setting == 'overwrite':
+                _LOGGER.debug(
+                    f"({measure_id}, {device_id}): value_data: {value_data} \n time_data: {time_data} \n write_intervals: {write_intervals} \n current_intervals: {current_intervals}")
                 overwrite_file_dict, old_block_ids, old_file_list = self._overwrite_delete_data(
                     measure_id, device_id, time_data, time_0, raw_time_type, value_data.size, freq_nhz)
             elif overwrite_setting == 'error':
