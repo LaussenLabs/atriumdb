@@ -504,12 +504,17 @@ class SQLiteHandler(SQLHandler):
             rows = cursor.fetchall()
         return rows
 
-    def select_device_patients(self, patient_id_list: List[int] = None, start_time: int = None, end_time: int = None):
+    def select_device_patients(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
+                               start_time: int = None, end_time: int = None):
         arg_tuple = ()
         sqlite_select_device_patient_query = \
             "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
         where_clauses = []
-        if patient_id_list is not None:
+        if device_id_list is not None and len(device_id_list) > 0:
+            where_clauses.append("device_id IN ({})".format(
+                ','.join(['?'] * len(device_id_list))))
+            arg_tuple += tuple(device_id_list)
+        if patient_id_list is not None and len(patient_id_list) > 0:
             where_clauses.append("patient_id IN ({})".format(
                 ','.join(['?'] * len(patient_id_list))))
             arg_tuple += tuple(patient_id_list)

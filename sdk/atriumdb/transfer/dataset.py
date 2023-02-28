@@ -25,4 +25,5 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
     else:
         assert patient_id_list is not None or mrn_list is not None
         device_patient_list = from_sdk.get_device_patient_data(
-            patient_id_list=patient_id_list, mrn_list=mrn_list, start_time=start, end_time=end)
+            device_id_list=device_id_list, patient_id_list=patient_id_list, mrn_list=mrn_list,
+            start_time=start, end_time=end)

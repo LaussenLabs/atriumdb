@@ -191,7 +191,8 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def select_device_patients(self, patient_id_list: List[int] = None, start_time: int = None, end_time: int = None):
+    def select_device_patients(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
+                               start_time: int = None, end_time: int = None):
         # Get all device_patient rows.
         pass
 

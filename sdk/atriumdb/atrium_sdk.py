@@ -241,16 +241,15 @@ class AtriumSDK:
 
         return sdk_object
 
-    def get_device_patient_data(self, patient_id_list: List[int] = None, mrn_list: List[int] = None,
-                                start_time: int = None, end_time: int = None):
-        assert (patient_id_list is not None) or (mrn_list is not None), "must supply one of (patient_id_list, mrn_list)"
-
-        if patient_id_list is None:
+    def get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
+                                mrn_list: List[int] = None, start_time: int = None, end_time: int = None):
+        if mrn_list is not None:
+            patient_id_list = [] if patient_id_list is None else patient_id_list
             mrn_to_patient_id_map = self.get_mrn_to_patient_id_map(mrn_list)
-            patient_id_list = [mrn_to_patient_id_map[mrn] for mrn in mrn_list if mrn in mrn_to_patient_id_map]
+            patient_id_list.extend([mrn_to_patient_id_map[mrn] for mrn in mrn_list if mrn in mrn_to_patient_id_map])
 
         return self.sql_handler.select_device_patients(
-            patient_id_list=patient_id_list, start_time=start_time, end_time=end_time)
+            device_id_list=device_id_list, patient_id_list=patient_id_list, start_time=start_time, end_time=end_time)
 
     def insert_device_patient_data(self, device_patient_data: List[Tuple[int, int, int, int]]):
         self.sql_handler.insert_device_patients(device_patient_data)
@@ -321,7 +320,7 @@ class AtriumSDK:
         elif raw_time_type == 2:
             # Convert Gap array to timestamp array.
             period_ns = int((10 ** 18) // freq_nhz)
-            end_time_ns = time_0 + (values_size * period_ns)
+            end_time_ns = time_0 + (values_size * period_ns) + np.sum(new_time_data[1::2])
             new_time_data = np.arange(time_0, end_time_ns, period_ns, dtype=np.int64)
         else:
             raise ValueError("Overwrite only supported for gap arrays and timestamp arrays.")
