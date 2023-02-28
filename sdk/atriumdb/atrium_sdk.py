@@ -327,11 +327,9 @@ class AtriumSDK:
 
         overwrite_file_dict = {}
         all_old_file_blocks = []
-        _LOGGER.debug(f"measure_id={measure_id}, start_time_n={int(time_0)}, end_time_n={end_time_ns}, device_id={device_id}")
         old_block_list = self.get_block_id_list(measure_id, start_time_n=int(time_0),
                                                 end_time_n=end_time_ns, device_id=device_id)
-        _LOGGER.debug("old_block_list")
-        _LOGGER.debug(old_block_list)
+        _LOGGER.debug(f"old_block_list:{old_block_list} = self.get_block_id_list(measure_id={measure_id}, start_time_n={int(time_0)}, end_time_n={end_time_ns}, device_id={device_id})")
 
         old_file_id_dict = self.get_filename_dict(list(set([row[3] for row in old_block_list])))
 
@@ -453,8 +451,6 @@ class AtriumSDK:
 
         # Calculate New Intervals
         write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
-        _LOGGER.debug("write_intervals")
-        _LOGGER.debug(write_intervals)
         write_intervals_o = Intervals(write_intervals)
 
         # Get Current Intervals
@@ -463,6 +459,8 @@ class AtriumSDK:
             start=int(write_intervals[0][0]), end=int(write_intervals[-1][-1]))
 
         current_intervals_o = Intervals(current_intervals)
+
+        _LOGGER.debug(f"({measure_id}, {device_id}): time_data: {time_data} \n write_intervals: {write_intervals} \n current_intervals: {current_intervals}")
 
         overwrite_file_dict, old_block_ids, old_file_list = None, None, None
         if current_intervals_o.intersection(write_intervals_o).duration() > 0:
@@ -501,6 +499,7 @@ class AtriumSDK:
             overwrite_file_dict[filename] = (block_data, interval_data)
             # Update SQL
             old_file_ids = [file_id for file_id, filename in old_file_list]
+            _LOGGER.debug(f"{measure_id}, {device_id}): overwrite_file_dict: {overwrite_file_dict}\n old_block_ids: {old_block_ids}\n old_file_ids: {old_file_ids}\n")
             self.sql_handler.update_tsc_file_data(overwrite_file_dict, old_block_ids, old_file_ids)
 
             # Delete files
