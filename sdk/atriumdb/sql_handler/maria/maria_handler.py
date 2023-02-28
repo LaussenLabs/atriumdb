@@ -384,10 +384,10 @@ class MariaDBHandler(SQLHandler):
         maria_select_block_query += " WHERE block_index.measure_id = ?"
         arg_tuple += (measure_id,)
         if start_time_n is not None:
-            maria_select_block_query += " AND block_index.end_time_n > ?"
+            maria_select_block_query += " AND block_index.end_time_n >= ?"
             arg_tuple += (start_time_n,)
         if end_time_n is not None:
-            maria_select_block_query += " AND block_index.start_time_n < ?"
+            maria_select_block_query += " AND block_index.start_time_n <= ?"
             arg_tuple += (end_time_n,)
         if device_id is not None:
             maria_select_block_query += " AND block_index.device_id = ?"

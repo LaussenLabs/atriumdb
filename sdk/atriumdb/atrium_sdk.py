@@ -314,12 +314,12 @@ class AtriumSDK:
         return_intervals = False
         analog = False
 
+        period_ns = int((10 ** 18) // freq_nhz)
         if raw_time_type == 1:
             # already a timestamp array.
             end_time_ns = int(new_time_data[-1])
         elif raw_time_type == 2:
             # Convert Gap array to timestamp array.
-            period_ns = int((10 ** 18) // freq_nhz)
             end_time_ns = time_0 + (values_size * period_ns) + np.sum(new_time_data[1::2])
             new_time_data = np.arange(time_0, end_time_ns, period_ns, dtype=np.int64)
         else:
