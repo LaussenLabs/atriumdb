@@ -30,7 +30,7 @@ from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_quer
     sqlite_encounter_create_index_source_id_query, sqlite_encounter_create_query, sqlite_device_create_query, \
     sqlite_device_bed_id_create_index, sqlite_device_source_id_create_index, sqlite_insert_adb_source, \
     sqlite_measure_source_id_create_index, sqlite_log_hl7_adt_source_id_create_index, sqlite_log_hl7_adt_create_query, \
-    sqlite_device_patient_table, sqlite_patient_table_index_1
+    sqlite_device_patient_table, sqlite_patient_table_index_1, sqlite_block_file_delete_cascade
 
 
 class SQLiteHandler(SQLHandler):
@@ -107,6 +107,9 @@ class SQLiteHandler(SQLHandler):
 
         cursor.execute(sqlite_log_hl7_adt_source_id_create_index)
         cursor.execute(sqlite_patient_table_index_1)
+
+        # Triggers
+        cursor.execute(sqlite_block_file_delete_cascade)
 
         # Insert Default Values
         cursor.execute(sqlite_insert_adb_source)

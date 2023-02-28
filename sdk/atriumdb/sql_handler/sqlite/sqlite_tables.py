@@ -42,6 +42,14 @@ sqlite_block_index_create_query = """CREATE TABLE IF NOT EXISTS block_index(
 sqlite_block_index_idx_query = \
     "CREATE INDEX IF NOT EXISTS block_idx ON block_index (measure_id, device_id, start_time_n, end_time_n);"
 
+sqlite_block_file_delete_cascade = """CREATE TRIGGER IF NOT EXISTS delete_block_index_on_file_index_delete
+AFTER DELETE ON file_index
+FOR EACH ROW
+BEGIN
+    DELETE FROM block_index WHERE file_id = OLD.id;
+END;
+"""
+
 sqlite_interval_index_create_query = """CREATE TABLE IF NOT EXISTS interval_index(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     measure_id INTEGER NOT NULL,

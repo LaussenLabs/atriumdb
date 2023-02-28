@@ -36,7 +36,8 @@ maria_block_index_create_query = """CREATE TABLE IF NOT EXISTS block_index(
     num_values BIGINT NOT NULL,
     CONSTRAINT block_index_ibfk_1 FOREIGN KEY (measure_id) REFERENCES measure (id),
     CONSTRAINT block_index_ibfk_2 FOREIGN KEY (device_id) REFERENCES device (id),
-    CONSTRAINT block_index_ibfk_3 FOREIGN KEY (file_id) REFERENCES file_index (id),
+    CONSTRAINT block_index_ibfk_3 FOREIGN KEY (file_id) REFERENCES file_index (id)
+    ON DELETE CASCADE,
     INDEX (start_time_n, end_time_n)
 );"""
 
