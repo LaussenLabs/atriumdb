@@ -246,11 +246,11 @@ class MariaDBHandler(SQLHandler):
                 if len(interval_tuples) > 0:
                     cursor.executemany(maria_insert_interval_index_query, interval_tuples)
 
-            # delete old file data
-            cursor.executemany(maria_delete_file_query, [(file_id,) for file_id in file_ids_to_delete])
-
             # delete old block data
             cursor.executemany(maria_delete_block_query, [(block_id,) for block_id in block_ids_to_delete])
+
+            # delete old file data
+            cursor.executemany(maria_delete_file_query, [(file_id,) for file_id in file_ids_to_delete])
 
     def select_file(self, file_id: int = None, file_path: str = None):
         with self.maria_db_connection() as (conn, cursor):
