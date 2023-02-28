@@ -464,7 +464,8 @@ class AtriumSDK:
 
         overwrite_file_dict, old_block_ids, old_file_list = None, None, None
         if current_intervals_o.intersection(write_intervals_o).duration() > 0:
-            _LOGGER.info(f"Overlap measure_id {measure_id}, device_id {device_id}, existing_start {current_intervals[0][0]}, existing_end {current_intervals[-1][-1]}, new_data_start {write_intervals[0][0]}, new_data_end {write_intervals[-1][-1]}")
+            _LOGGER.info(f"Overlap measure_id {measure_id}, device_id {device_id}, "
+                         f"existing intervals {current_intervals}, new intervals {write_intervals}")
             if OVERWRITE_SETTING_NAME not in self.settings_dict:
                 raise ValueError("Overwrite detected, but overwrite behavior not set.")
 
