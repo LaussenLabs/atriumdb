@@ -509,7 +509,7 @@ class AtriumSDK:
             # Delete files
             for file_id, filename in old_file_list:
                 file_path = Path(self.file_api.to_abs_path(filename, measure_id, device_id))
-                file_path.unlink()
+                file_path.unlink(missing_ok=True)
         else:
             # Insert SQL Rows
             self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data)
