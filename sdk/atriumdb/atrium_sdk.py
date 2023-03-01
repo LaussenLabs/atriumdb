@@ -478,7 +478,7 @@ class AtriumSDK:
             elif overwrite_setting == 'error':
                 raise ValueError("Data to be written overlaps already ingested data.")
             elif overwrite_setting == 'ignore':
-                return None, None, None, None
+                pass
             else:
                 raise ValueError(f"Overwrite setting {overwrite_setting} not recognized.")
 
