@@ -221,7 +221,7 @@ sqlite_log_hl7_adt_source_id_create_index = """CREATE INDEX IF NOT EXISTS source
 ON log_hl7_adt (source_id);"""
 
 sqlite_device_patient_table = """CREATE TABLE IF NOT EXISTS device_patient (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   device_id INTEGER NOT NULL,
   patient_id INTEGER NOT NULL,
   start_time INTEGER NOT NULL,

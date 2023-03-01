@@ -10,6 +10,7 @@ from tests.testing_framework import _test_for_both
 
 DB_NAME = 'overwrite_test'
 
+
 def test_overwrite():
     _test_for_both(DB_NAME, _test_overwrite)
 

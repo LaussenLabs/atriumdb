@@ -222,7 +222,7 @@ where `e`.`end_time` is null
 """
 
 mariadb_device_patient_table = """CREATE TABLE IF NOT EXISTS device_patient (
-  id INT UNSIGNED PRIMARY KEY,
+  id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
   device_id INT UNSIGNED NOT NULL,
   patient_id INT UNSIGNED NOT NULL,
   start_time BIGINT NOT NULL,
