@@ -214,10 +214,10 @@ class SQLiteHandler(SQLHandler):
                 cursor.executemany(sqlite_insert_interval_index_query, interval_tuples)
 
             # delete old block data (Don't need, triggered automatically)
-            # cursor.executemany(sqlite_delete_block_query, [(block_id,) for block_id in block_ids_to_delete])
+            cursor.executemany(sqlite_delete_block_query, [(block_id,) for block_id in block_ids_to_delete])
 
             # delete old file data
-            cursor.executemany(sqlite_delete_file_query, [(file_id,) for file_id in file_ids_to_delete])
+            # cursor.executemany(sqlite_delete_file_query, [(file_id,) for file_id in file_ids_to_delete])
 
     def select_file(self, file_id: int = None, file_path: str = None):
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
