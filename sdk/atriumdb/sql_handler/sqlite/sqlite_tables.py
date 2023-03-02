@@ -226,8 +226,10 @@ sqlite_device_patient_table = """CREATE TABLE IF NOT EXISTS device_patient (
   patient_id INTEGER NOT NULL,
   start_time INTEGER NOT NULL,
   end_time INTEGER,
+  source_id INTEGER DEFAULT 1 NOT NULL,
   FOREIGN KEY (device_id) REFERENCES device(id),
-  FOREIGN KEY (patient_id) REFERENCES patient(id)
+  FOREIGN KEY (patient_id) REFERENCES patient(id),
+  FOREIGN KEY (source_id) REFERENCES source(id)
 );
 """
 
