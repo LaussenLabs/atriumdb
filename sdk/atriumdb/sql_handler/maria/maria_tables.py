@@ -222,14 +222,16 @@ where `e`.`end_time` is null
 """
 
 mariadb_device_patient_table = """CREATE TABLE IF NOT EXISTS device_patient (
-  id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-  device_id INT UNSIGNED NOT NULL,
-  patient_id INT UNSIGNED NOT NULL,
-  start_time BIGINT NOT NULL,
-  end_time BIGINT NULL,
-  FOREIGN KEY (device_id) REFERENCES device(id),
-  FOREIGN KEY (patient_id) REFERENCES patient(id),
-  INDEX device_patient_index (device_id, patient_id, start_time, end_time)
+id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+device_id INT UNSIGNED NOT NULL,
+patient_id INT UNSIGNED NOT NULL,
+start_time BIGINT NOT NULL,
+end_time BIGINT NULL,
+source_id INT UNSIGNED NOT NULL DEFAULT 1,
+FOREIGN KEY (device_id) REFERENCES device(id),
+FOREIGN KEY (patient_id) REFERENCES patient(id),
+FOREIGN KEY (source_id) REFERENCES source(id),
+INDEX device_patient_index (device_id, patient_id, start_time, end_time)
 );
 """
 
