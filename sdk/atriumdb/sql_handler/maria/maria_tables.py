@@ -262,8 +262,8 @@ CREATE TRIGGER IF NOT EXISTS encounter_patient_insert
 AFTER INSERT ON encounter
 FOR EACH ROW
 BEGIN
-    INSERT INTO device_patient (device_id, patient_id, start_time, end_time) 
-    SELECT id, NEW.patient_id, NEW.start_time, NEW.end_time 
+    INSERT INTO device_patient (device_id, patient_id, start_time, end_time, source_id) 
+    SELECT id, NEW.patient_id, NEW.start_time, NEW.end_time, NEW.source_id 
     FROM device WHERE type='static' and bed_id=NEW.bed_id;
 END;
 """
