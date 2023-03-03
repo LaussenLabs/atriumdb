@@ -70,7 +70,38 @@ def export_csv(output_file, measure_id, start_time, end_time, device_id):
     click.echo(f"Data exported successfully to {output_file}")
 
 
+@click.command()
+@click.option("--tag-match", type=str, help="Tag to search for in measures")
+@click.option("--freq-nhz", type=int, help="Frequency to search for in measures")
+@click.option("--unit", type=str, help="Unit to search for in measures")
+@click.option("--name-match", type=str, help="Name to search for in measures")
+def measures(tag_match, freq_nhz, unit, name_match):
+    sdk = get_sdk_from_env_vars()
+    result = sdk.search_measures(tag_match=tag_match, freq_nhz=freq_nhz, unit=unit, name_match=name_match)
+    click.echo("Measures:")
+    for measure_id, measure_info in result.items():
+        click.echo(f"Measure ID: {measure_id}")
+        for key, value in measure_info.items():
+            click.echo(f"    {key}: {value}")
+
+
+@click.command()
+@click.option("--tag-match", type=str, help="Tag to search for in devices")
+@click.option("--name-match", type=str, help="Name to search for in devices")
+def devices(tag_match, name_match):
+    sdk = get_sdk_from_env_vars()
+    result = sdk.search_devices(tag_match=tag_match, name_match=name_match)
+    click.echo("Devices:")
+    for device_id, device_info in result.items():
+        click.echo(f"Device ID: {device_id}")
+        for key, value in device_info.items():
+            click.echo(f"    {key}: {value}")
+
+
+
 cli.add_command(import_csv)
 cli.add_command(export_csv)
 cli.add_command(transfer)
 cli.add_command(convert)
+cli.add_command(measures)
+cli.add_command(devices)

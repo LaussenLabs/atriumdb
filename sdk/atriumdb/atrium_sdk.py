@@ -1365,6 +1365,64 @@ class AtriumSDK:
 
         return measure_dict
 
+    def search_devices(self, tag_match=None, name_match=None):
+        """
+        Retrieve information about all devices in the linked relational database that match the specified search criteria.
+
+        :param tag_match: A string to match against the `device_tag` field. If not None, only devices with a `device_tag`
+            field containing this string will be returned.
+        :type tag_match: str
+        :param name_match: A string to match against the `device_name` field. If not None, only devices with a `device_name`
+            field containing this string will be returned.
+        :type name_match: str
+        :return: A dictionary containing information about each device that matches the specified search criteria, including
+            its id, tag, name, manufacturer, model, type, bed_id, and source_id.
+        :rtype: dict
+        """
+        all_devices = self.get_all_devices()
+        result = {}
+        for device_id, device_info in all_devices.items():
+            match_bool_list = [
+                tag_match is None or tag_match in device_info['tag'],
+                name_match is None or name_match in device_info['name']
+            ]
+            if all(match_bool_list):
+                result[device_id] = device_info
+        return result
+
+    def search_measures(self, tag_match=None, freq_nhz=None, unit=None, name_match=None):
+        """
+        Retrieve information about all measures in the linked relational database that match the specified search criteria.
+
+        :param tag_match: A string to match against the `measure_tag` field. If not None, only measures with a `measure_tag`
+            field containing this string will be returned.
+        :type tag_match: str
+        :param freq_nhz: A value to match against the `measure_freq_nhz` field. If not None, only measures with a
+            `measure_freq_nhz` field equal to this value will be returned.
+        :type freq_nhz: int
+        :param unit: A string to match against the `measure_unit` field. If not None, only measures with a `measure_unit`
+            field equal to this string will be returned.
+        :type unit: str
+        :param name_match: A string to match against the `measure_name` field. If not None, only measures with a
+            `measure_name` field containing this string will be returned.
+        :type name_match: str
+        :return: A dictionary containing information about each measure that matches the specified search criteria, including
+            its id, tag, name, sample frequency (in nanohertz), code, unit, unit label, unit code, and source_id.
+        :rtype: dict
+        """
+        all_measures = self.get_all_measures()
+        result = {}
+        for measure_id, measure_info in all_measures.items():
+            match_bool_list = [
+                tag_match is None or tag_match in measure_info['tag'],
+                freq_nhz is None or freq_nhz == measure_info['freq_nhz'],
+                unit is None or unit == measure_info['unit'],
+                name_match is None or name_match in measure_info['name']
+            ]
+            if all(match_bool_list):
+                result[measure_id] = measure_info
+        return result
+
     def get_all_patient_ids(self, start=None, end=None):
         pass
 
