@@ -594,8 +594,8 @@ class AtriumSDK:
         return measure_id, device_id, filename, encode_headers, byte_start_array, intervals
 
     def write_data_easy(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray,
-                        freq: int, scale_m: float = None, scale_b: float = None, time_units: str = "ns",
-                        freq_units: str = "nHz"):
+                        freq: int, scale_m: float = None, scale_b: float = None, time_units: str = None,
+                        freq_units: str = None):
         """
         The simplified method for writing new data to the dataset
 
@@ -630,6 +630,8 @@ class AtriumSDK:
             in the backend, and you may overflow 64bit integers.
 
         """
+        time_units = "ns" if time_units is None else time_units
+        freq_units = "nHz" if freq_units is None else freq_units
 
         # Check if they are using time units other than nanoseconds and if they are convert time_data to nanoseconds
         if time_units != "ns":
