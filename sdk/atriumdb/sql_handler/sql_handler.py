@@ -143,9 +143,3 @@ class SQLHandler(ABC):
     def select_intervals(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
         # Get all matching intervals.
         pass
-
-    @abstractmethod
-    def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[int] = None, start_time: int = None,
-                          end_time: int = None):
-        # Get all matching encounters.
-        pass

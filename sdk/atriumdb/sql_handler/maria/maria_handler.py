@@ -442,34 +442,3 @@ class MariaDBHandler(SQLHandler):
         with self.maria_db_connection(begin=False) as (conn, cursor):
             cursor.execute(maria_select_interval_query, arg_tuple)
             return cursor.fetchall()
-
-    def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[int] = None, start_time: int = None,
-                          end_time: int = None):
-        assert (patient_id_list is None) != (
-                mrn_list is None), "Either patient_id_list or mrn_list must be provided, but not both"
-        arg_tuple = ()
-        maria_select_encounter_query = \
-            "SELECT encounter.id, encounter.patient_id, encounter.bed_id, encounter.start_time, encounter.end_time, " \
-            "encounter.source_id, encounter.visit_number, encounter.last_updated FROM encounter"
-        if patient_id_list is not None:
-            maria_select_encounter_query += \
-                " INNER JOIN patient ON encounter.patient_id = patient.id WHERE encounter.patient_id IN ({})".format(
-                    ','.join(['?'] * len(patient_id_list)))
-            arg_tuple += tuple(patient_id_list)
-        else:
-            maria_select_encounter_query += \
-                " INNER JOIN patient ON encounter.patient_id = patient.id WHERE patient.mrn IN ({})".format(
-                    ','.join(['?'] * len(mrn_list)))
-
-            arg_tuple += tuple(mrn_list)
-        if start_time is not None:
-            maria_select_encounter_query += " AND encounter.end_time > ?"
-            arg_tuple += (start_time,)
-        if end_time is not None:
-            maria_select_encounter_query += " AND encounter.start_time < ?"
-            arg_tuple += (end_time,)
-        maria_select_encounter_query += " ORDER BY encounter.id ASC"
-
-        with self.maria_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(maria_select_encounter_query, arg_tuple)
-            return cursor.fetchall()
