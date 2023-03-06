@@ -1556,7 +1556,7 @@ class AtriumSDK:
         >>> measure_tag = "ECG Lead II - 500 Hz"
         >>> measure_name = "Electrocardiogram Lead II Configuration 500 Hertz"
         >>> units = "mV"
-        >>> measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq, freq_units=freq_units, measure_name=measure_name, units=units)
+        >>> measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq, units=units, freq_units=freq_units, measure_name=measure_name)
 
         :param freq: The sample frequency of the signal.
         :param str optional freq_units: The unit used for the specified frequency. This value can be one of ["Hz",

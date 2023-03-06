@@ -18,6 +18,18 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
     if len(measure_id_list) == 0:
         raise ValueError("Must specify at least one measure.")
 
-    device_patient_list = from_sdk.get_device_patient_data(
-        device_id_list=device_id_list, patient_id_list=patient_id_list, mrn_list=mrn_list,
-        start_time=start, end_time=end)
+    from_devices = from_sdk.get_all_devices()
+    from_measures = from_sdk.get_all_measures()
+
+    # Transfer measures
+    for measure_id, measure_info in from_measures.items():
+        if measure_id_list is None or measure_id in measure_id_list:
+            to_sdk.insert_measure(measure_info)
+
+    if patient_id_list is not None or mrn_list is not None:
+        device_patient_list = from_sdk.get_device_patient_data(
+            device_id_list=device_id_list, patient_id_list=patient_id_list, mrn_list=mrn_list,
+            start_time=start, end_time=end)
+
+        for device_id, patient_id, start_time, end_time in device_patient_list:
+            pass
