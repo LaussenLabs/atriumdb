@@ -35,7 +35,3 @@ dev = ["pytest"]
 
 [project.urls]
 Homepage = "https://github.com/LaussenLabs/atriumdb"
-
-[project.scripts]
-hello = "atriumdb.cli.hello:hello"
-atriumdb = "atriumdb.cli.atriumdb_cli:cli"
