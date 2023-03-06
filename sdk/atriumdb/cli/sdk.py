@@ -25,19 +25,19 @@ def create_sdk_from_env_vars():
 
 
 def get_sdk_params_from_env_vars():
-    dataset_location = os.getenv("ATRIUM_SDK_DATASET_LOCATION")
-    metadata_connection_type = os.getenv("ATRIUM_SDK_CONNECTION_TYPE")
+    dataset_location = os.getenv("ATRIUM_DATASET_LOCATION")
+    metadata_connection_type = os.getenv("ATRIUM_CONNECTION_TYPE")
     connection_params = None
     if metadata_connection_type in ["mariadb", "mysql"]:
         connection_params = {
-            'host': os.getenv("ATRIUM_SDK_METADATA_HOST"),
-            'user': os.getenv("ATRIUM_SDK_METADATA_USER"),
-            'password': os.getenv("ATRIUM_SDK_METADATA_PASSWORD"),
-            'database': os.getenv("ATRIUM_SDK_METADATA_DATABASE"),
-            'port': int(os.getenv("ATRIUM_SDK_METADATA_PORT"))
+            'host': os.getenv("ATRIUM_METADATA_HOST"),
+            'user': os.getenv("ATRIUM_METADATA_USER"),
+            'password': os.getenv("ATRIUM_METADATA_PASSWORD"),
+            'database': os.getenv("ATRIUM_METADATA_DATABASE"),
+            'port': int(os.getenv("ATRIUM_METADATA_PORT"))
         }
-    assert dataset_location is not None, "Must set env var ATRIUM_SDK_DATASET_LOCATION"
-    assert metadata_connection_type is not None, "Must set env var ATRIUM_SDK_CONNECTION_TYPE"
+    assert dataset_location is not None, "Must set env var ATRIUM_DATASET_LOCATION"
+    assert metadata_connection_type is not None, "Must set env var ATRIUM_CONNECTION_TYPE"
     assert metadata_connection_type in SUPPORTED_DB_TYPES, \
-        f"ATRIUM_SDK_CONNECTION_TYPE must be one of {SUPPORTED_DB_TYPES}"
+        f"ATRIUM_CONNECTION_TYPE must be one of {SUPPORTED_DB_TYPES}"
     return connection_params, dataset_location, metadata_connection_type

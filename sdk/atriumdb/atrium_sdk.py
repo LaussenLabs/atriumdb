@@ -973,29 +973,14 @@ class AtriumSDK:
             else:
                 block_list = block_info['block_list']
                 filename_dict = block_info['filename_dict']
-                read_list = condense_byte_read_list(block_list)
 
                 # if no matching block ids
-                if len(read_list) == 0:
+                if len(block_list) == 0:
                     return [], np.array([]), np.array([])
 
-            start_bench = time.perf_counter()
-            # File Read Method 1
-            # encoded_bytes = self.file_api.read_file_list_1(measure_id, read_list, filename_dict)
-
-            # File Read Method 2 Not Working
-            # encoded_bytes = self.file_api.read_file_list_2(measure_id, read_list, filename_dict)
-
-            # File Read Method 3
-            encoded_bytes = self.file_api.read_file_list_3(measure_id, read_list, filename_dict)
-            end_bench = time.perf_counter()
-            _LOGGER.debug(f"read from disk {(end_bench - start_bench) * 1000} ms")
-
-            num_bytes_list = [row[5] for row in block_list]
-
-            headers, r_times, r_values = \
-                self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
-                                      auto_convert_gap_to_time_array, return_intervals)
+            headers, r_times, r_values = self.get_data_from_blocks(block_list, filename_dict, measure_id, start_time_n,
+                                                                   end_time_n, return_intervals, analog,
+                                                                   auto_convert_gap_to_time_array)
 
             end_bench_total = time.perf_counter()
             # print(f"Total get data call took {round(end_bench_total - start_bench_total, 2)}: {r_values.size} values")
@@ -1013,6 +998,24 @@ class AtriumSDK:
                 r_times = r_times.astype('int64')
 
             return headers, r_times, r_values
+
+    def get_data_from_blocks(self, block_list, filename_dict, measure_id, start_time_n, end_time_n,
+                             return_intervals=False, analog=True, auto_convert_gap_to_time_array=True):
+        start_bench = time.perf_counter()
+        read_list = condense_byte_read_list(block_list)
+        # File Read Method 1
+        # encoded_bytes = self.file_api.read_file_list_1(measure_id, read_list, filename_dict)
+        # File Read Method 2 Not Working
+        # encoded_bytes = self.file_api.read_file_list_2(measure_id, read_list, filename_dict)
+        # File Read Method 3
+        encoded_bytes = self.file_api.read_file_list_3(measure_id, read_list, filename_dict)
+        end_bench = time.perf_counter()
+        _LOGGER.debug(f"read from disk {(end_bench - start_bench) * 1000} ms")
+        num_bytes_list = [row[5] for row in block_list]
+        headers, r_times, r_values = \
+            self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
+                                  auto_convert_gap_to_time_array, return_intervals)
+        return headers, r_times, r_values
 
     def decode_block_arr(self, encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
                          auto_convert_gap_to_time_array, return_intervals, times_before=None, values_before=None):
