@@ -1539,7 +1539,7 @@ class AtriumSDK:
                         raw_time_type=t_t, raw_value_type=raw_v_t, encoded_time_type=t_t,
                         encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b)
 
-    def insert_measure(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = "nHz",
+    def insert_measure(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None,
                        measure_name: str = None):
         """
         Defines a new signal type to be stored in the dataset, as well as defining metadata related to the signal.
@@ -1572,6 +1572,8 @@ class AtriumSDK:
         assert isinstance(measure_tag, str)
         assert isinstance(measure_name, str) or measure_name is None
         assert isinstance(units, str) or units is None
+
+        freq_units = "nHz" if freq_units is None else freq_units
 
         if freq_units != "nHz":
             freq = convert_to_nanohz(freq, freq_units)
