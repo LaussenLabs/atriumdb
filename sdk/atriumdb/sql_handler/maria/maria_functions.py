@@ -1,6 +1,6 @@
 maria_insert_ignore_measure_query = "INSERT IGNORE INTO measure (tag, freq_nhz, unit, name) " \
                               "VALUES (?, ?, ?, ?);"
-maria_select_measure_from_id_query = "SELECT * FROM measure WHERE id = ?"
+maria_select_measure_from_id = "SELECT * FROM measure WHERE id = ?"
 maria_select_measure_from_triplet_query = "SELECT * FROM measure WHERE tag = ? AND freq_nhz = ? AND unit = ?"
 
 maria_insert_ignore_device_query = "INSERT IGNORE INTO device (tag, name) VALUES (?, ?);"

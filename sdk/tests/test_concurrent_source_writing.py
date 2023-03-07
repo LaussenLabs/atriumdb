@@ -8,6 +8,7 @@ import os
 from dotenv import load_dotenv
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
+from tests.testing_framework import _test_for_both
 
 load_dotenv()
 
@@ -27,13 +28,12 @@ process_sdk = None
 
 
 def test_concurrent_source_writing():
-    handler = MariaDBHandler(host, user, password, DB_NAME)
-    handler.maria_connect_no_db().cursor().execute(f"DROP DATABASE IF EXISTS {DB_NAME}")
-    handler.create_schema()
-    shutil.rmtree(TSC_DATASET_DIR, ignore_errors=True)
-    TSC_DATASET_DIR.mkdir(parents=True, exist_ok=True)
+    _test_for_both(DB_NAME, _test_concurrent_source_writing)
 
-    sdk = AtriumSDK(dataset_location=str(TSC_DATASET_DIR), database_uri=database_uri)
+
+def _test_concurrent_source_writing(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     test_measure_list = [(str(measure_id), random.randint(1, 2048)) for measure_id in range(1000)]
 
@@ -44,40 +44,50 @@ def test_concurrent_source_writing():
     with ProcessPoolExecutor(max_workers=num_processes) as executor:
         futures = []
         for _ in range(num_processes):
-            futures.append(executor.submit(write_source_info_process, test_measure_list, test_device_list))
+            futures.append(executor.submit(
+                write_source_info_process, test_measure_list, test_device_list, dataset_location,
+                db_type, connection_params))
 
         for future in as_completed(futures):
             future.result()
 
+    _check_source_equality(sdk, test_device_list, test_measure_list)
+
+    # Try again with new SDK object.
+    sdk = AtriumSDK(
+        dataset_location=dataset_location, metadata_connection_type=db_type, connection_params=connection_params)
+
+    _check_source_equality(sdk, test_device_list, test_measure_list)
+
+
+def _check_source_equality(sdk, test_device_list, test_measure_list):
     for (measure_tag, freq_hz) in test_measure_list:
         measure_id = sdk.get_measure_id(measure_tag, freq_hz, freq_units="Hz")
         assert measure_id is not None
-
     for device_tag in test_device_list:
         device_id = sdk.get_device_id(device_tag)
         assert device_id is not None
-
     read_measure_list = []
     for measure_id in sdk.get_all_measures():
-        measure_info_dict = sdk.sql_api.measure_id_dict[measure_id]
-        read_measure_list.append((measure_info_dict['measure_tag'], sdk.get_freq(measure_id, freq_units="Hz")))
-
+        measure_info_dict = sdk.get_measure_info(measure_id)
+        read_measure_list.append((measure_info_dict['tag'], sdk.get_freq(measure_id, freq_units="Hz")))
     read_device_list = []
     for device_id in sdk.get_all_devices():
-        device_info_dict = sdk.sql_api.device_id_dict[device_id]
-        read_device_list.append(device_info_dict['device_tag'])
-
+        device_info_dict = sdk.get_device_info(device_id)
+        read_device_list.append(device_info_dict['tag'])
     assert sorted(read_measure_list) == sorted(test_measure_list)
     assert sorted(read_device_list) == sorted(test_device_list)
 
 
-def write_source_info_process(measure_list, device_list):
+def write_source_info_process(measure_list, device_list, dataset_location, db_type, connection_params):
     global process_sdk
     if process_sdk is None:
-        process_sdk = AtriumSDK(dataset_location=str(TSC_DATASET_DIR), database_uri=database_uri)
+        process_sdk = AtriumSDK(
+            dataset_location=dataset_location, metadata_connection_type=db_type, connection_params=connection_params)
 
-    for (measure_tag, freq_hz) in measure_list:
-        process_sdk.insert_measure(measure_tag, freq_hz, freq_units="Hz")
+    for _ in range(2):
+        for (measure_tag, freq_hz) in measure_list:
+            process_sdk.insert_measure(measure_tag, freq_hz, freq_units="Hz")
 
-    for device_tag in device_list:
-        process_sdk.insert_device(device_tag)
+        for device_tag in device_list:
+            process_sdk.insert_device(device_tag)

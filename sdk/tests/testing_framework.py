@@ -27,7 +27,7 @@ def _test_for_both(db_name, test_function):
         'password': password,
         'database': db_name,
         'port': 3306}
-    maria_handler.maria_connect_no_db().cursor().execute(f"DROP DATABASE IF EXISTS {db_name}")
+    maria_handler.maria_connect_no_db().cursor().execute(f"DROP DATABASE IF EXISTS `{db_name}`")
     test_function(db_type, maria_dataset_path, connection_params)
 
     db_type = 'sqlite'

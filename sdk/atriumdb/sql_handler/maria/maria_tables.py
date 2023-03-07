@@ -36,7 +36,8 @@ maria_block_index_create_query = """CREATE TABLE IF NOT EXISTS block_index(
     num_values BIGINT NOT NULL,
     CONSTRAINT block_index_ibfk_1 FOREIGN KEY (measure_id) REFERENCES measure (id),
     CONSTRAINT block_index_ibfk_2 FOREIGN KEY (device_id) REFERENCES device (id),
-    CONSTRAINT block_index_ibfk_3 FOREIGN KEY (file_id) REFERENCES file_index (id),
+    CONSTRAINT block_index_ibfk_3 FOREIGN KEY (file_id) REFERENCES file_index (id)
+    ON DELETE CASCADE,
     INDEX (start_time_n, end_time_n)
 );"""
 
@@ -211,3 +212,68 @@ CONSTRAINT log_hl7_adt_ibfk_1 FOREIGN KEY (source_id) REFERENCES source (id)
 
 mariadb_log_hl7_adt_source_id_create_index = """CREATE INDEX IF NOT EXISTS source_id
 ON log_hl7_adt (source_id);"""
+
+mariadb_current_census_view = """CREATE OR REPLACE VIEW current_census AS select `e`.`start_time` AS 
+`admission_start`,`u`.`id` AS `unit_id`,`u`.`name` AS `unit_name`,`b`.`id` AS `bed_id`,`b`.`name` AS `bed_name`,
+`p`.`id` AS `patient_id`,`p`.`mrn` AS `mrn`,concat_ws(' ',`p`.`first_name`,`p`.`middle_name`,`p`.`last_name`) AS `name`,
+`p`.`gender` AS `gender`,`p`.`dob` AS `birth_date` from (((`encounter` `e` join `bed` `b` on(`e`.`bed_id` = `b`.`id`)) 
+join `unit` `u` on(`b`.`unit_id` = `u`.`id`)) join `patient` `p` on(`e`.`patient_id` = `p`.`id`)) 
+where `e`.`end_time` is null
+"""
+
+mariadb_device_patient_table = """CREATE TABLE IF NOT EXISTS device_patient (
+id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+device_id INT UNSIGNED NOT NULL,
+patient_id INT UNSIGNED NOT NULL,
+start_time BIGINT NOT NULL,
+end_time BIGINT NULL,
+source_id INT UNSIGNED NOT NULL DEFAULT 1,
+FOREIGN KEY (device_id) REFERENCES device(id),
+FOREIGN KEY (patient_id) REFERENCES patient(id),
+FOREIGN KEY (source_id) REFERENCES source(id),
+INDEX device_patient_index (device_id, patient_id, start_time, end_time)
+);
+"""
+
+maria_encounter_device_encounter_insert_trigger = """
+CREATE TRIGGER IF NOT EXISTS encounter_insert
+    after insert
+    on encounter
+    for each row
+BEGIN
+INSERT INTO device_encounter (device_id, encounter_id, start_time, end_time) 
+SELECT id, NEW.id, NEW.start_time, NEW.end_time 
+FROM device WHERE type='static' and bed_id=NEW.bed_id;
+END;
+"""
+
+maria_encounter_device_encounter_update_trigger = """
+CREATE TRIGGER IF NOT EXISTS encounter_update
+    after update
+    on encounter
+    for each row
+BEGIN
+UPDATE device_encounter SET end_time=NEW.end_time WHERE encounter_id=NEW.id and end_time IS NULL;
+END;
+"""
+
+maria_encounter_device_patient_insert_trigger = """
+CREATE TRIGGER IF NOT EXISTS encounter_patient_insert
+AFTER INSERT ON encounter
+FOR EACH ROW
+BEGIN
+    INSERT INTO device_patient (device_id, patient_id, start_time, end_time, source_id) 
+    SELECT id, NEW.patient_id, NEW.start_time, NEW.end_time, NEW.source_id 
+    FROM device WHERE type='static' and bed_id=NEW.bed_id;
+END;
+"""
+
+maria_encounter_device_patient_update_trigger = """
+CREATE TRIGGER IF NOT EXISTS encounter_patient_update
+AFTER UPDATE ON encounter
+FOR EACH ROW
+BEGIN
+    UPDATE device_patient SET end_time=NEW.end_time 
+    WHERE patient_id=NEW.patient_id AND start_time=NEW.start_time AND end_time IS NULL;
+END;
+"""

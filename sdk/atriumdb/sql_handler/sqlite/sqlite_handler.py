@@ -6,6 +6,7 @@ import time
 
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
+from atriumdb.sql_handler.sql_helper import join_sql_and_bools
 from atriumdb.sql_handler.sqlite.sqlite_functions import sqlite_insert_ignore_measure_query, \
     sqlite_select_measure_from_triplet_query, sqlite_select_measure_from_id_query, sqlite_insert_ignore_device_query, \
     sqlite_select_device_from_tag_query, sqlite_select_device_from_id_query, sqlite_insert_file_index_query, \
@@ -28,7 +29,8 @@ from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_quer
     sqlite_encounter_create_index_bed_id_query, sqlite_encounter_create_index_patient_id_query, \
     sqlite_encounter_create_index_source_id_query, sqlite_encounter_create_query, sqlite_device_create_query, \
     sqlite_device_bed_id_create_index, sqlite_device_source_id_create_index, sqlite_insert_adb_source, \
-    sqlite_measure_source_id_create_index, sqlite_log_hl7_adt_source_id_create_index, sqlite_log_hl7_adt_create_query
+    sqlite_measure_source_id_create_index, sqlite_log_hl7_adt_source_id_create_index, sqlite_log_hl7_adt_create_query, \
+    sqlite_device_patient_table, sqlite_patient_table_index_1, sqlite_block_file_delete_cascade
 
 
 class SQLiteHandler(SQLHandler):
@@ -80,6 +82,7 @@ class SQLiteHandler(SQLHandler):
 
         cursor.execute(sqlite_device_encounter_create_query)
         cursor.execute(sqlite_log_hl7_adt_create_query)
+        cursor.execute(sqlite_device_patient_table)
 
         # Create Indices
         cursor.execute(sqlite_block_index_idx_query)
@@ -103,6 +106,10 @@ class SQLiteHandler(SQLHandler):
         cursor.execute(sqlite_device_encounter_source_id_create_index)
 
         cursor.execute(sqlite_log_hl7_adt_source_id_create_index)
+        cursor.execute(sqlite_patient_table_index_1)
+
+        # Triggers
+        cursor.execute(sqlite_block_file_delete_cascade)
 
         # Insert Default Values
         cursor.execute(sqlite_insert_adb_source)
@@ -206,11 +213,11 @@ class SQLiteHandler(SQLHandler):
                                     interval["end_time_n"]) for interval in interval_data]
                 cursor.executemany(sqlite_insert_interval_index_query, interval_tuples)
 
-            # delete old block data
+            # delete old block data (Don't need, triggered automatically)
             cursor.executemany(sqlite_delete_block_query, [(block_id,) for block_id in block_ids_to_delete])
 
             # delete old file data
-            cursor.executemany(sqlite_delete_file_query, [(file_id,) for file_id in file_ids_to_delete])
+            # cursor.executemany(sqlite_delete_file_query, [(file_id,) for file_id in file_ids_to_delete])
 
     def select_file(self, file_id: int = None, file_path: str = None):
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
