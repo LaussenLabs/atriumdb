@@ -20,9 +20,6 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
     if end is not None:
         end = convert_value_to_nanoseconds(end, time_units)
 
-    if len(measure_id_list) == 0:
-        raise ValueError("Must specify at least one measure.")
-
     # Transfer measures
     transfer_measures(from_sdk, to_sdk, measure_id_list=measure_id_list)
 
@@ -39,28 +36,37 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
         # Transfer device_patients
         to_sdk.insert_device_patient_data(device_patient_data=device_patient_list)
 
-        for measure_id in from_sdk.get_all_measures().keys():
+        for measure_id, measure_info in from_sdk.get_all_measures().items():
+            to_measure_id = to_sdk.get_measure_id(measure_tag=measure_info['tag'],
+                                                  freq=measure_info['freq_nhz'],
+                                                  units=measure_info['unit'], )
             if measure_id_list is not None and measure_id not in measure_id_list:
                 continue
 
             for device_id, patient_id, start_time, end_time in device_patient_list:
+                device_info = from_sdk.get_device_info(device_id)
+                to_device_id = to_sdk.get_device_id(device_tag=device_info['tag'])
                 headers, times, values = from_sdk.get_data(
                     measure_id, start_time, end_time, device_id=device_id, analog=False)
 
                 if len(headers) == 0:
                     continue
 
-                ingest_data(to_sdk, measure_id, device_id, headers, times, values)
+                ingest_data(to_sdk, to_measure_id, to_device_id, headers, times, values)
 
     else:
         # Transfer devices
         transfer_devices(from_sdk, to_sdk, device_id_list=device_id_list)
 
-        for measure_id in from_sdk.get_all_measures().keys():
+        for measure_id, measure_info in from_sdk.get_all_measures().items():
+            to_measure_id = to_sdk.get_measure_id(measure_tag=measure_info['tag'],
+                                                  freq=measure_info['freq_nhz'],
+                                                  units=measure_info['unit'],)
             if measure_id_list is not None and measure_id not in measure_id_list:
                 continue
 
-            for device_id in from_sdk.get_all_devices().keys():
+            for device_id, device_info in from_sdk.get_all_devices().items():
+                to_device_id = to_sdk.get_device_id(device_tag=device_info['tag'])
                 if device_id_list is not None and device_id not in device_id_list:
                     continue
 
@@ -79,7 +85,7 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
                     headers, times, values = from_sdk.get_data_from_blocks(block_batch, filename_dict, measure_id,
                                                                            MIN_TRANSFER_TIME, MAX_TRANSFER_TIME)
 
-                    ingest_data(to_sdk, measure_id, device_id, headers, times, values)
+                    ingest_data(to_sdk, to_measure_id, to_device_id, headers, times, values)
                     start_block += batch_size
 
 
