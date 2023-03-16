@@ -10,6 +10,11 @@ MAX_TRANSFER_TIME = (2**63) - 1
 def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[int] = None,
                   device_id_list: List[int] = None, patient_id_list: List[int] = None, mrn_list: List[int] = None,
                   start: int = None, end: int = None, time_units: str = None, batch_size=None):
+    """
+
+    Transfers data from one dataset to another. If measure_id_list, device_id_list, patient_id_list, mrn_list, start,
+    end are all None, then all data is transferred, otherwise these parameters serve to limit the data transferred.
+    """
 
     batch_size = 40 if batch_size is None else batch_size
     time_units = 'ns' if time_units is None else time_units

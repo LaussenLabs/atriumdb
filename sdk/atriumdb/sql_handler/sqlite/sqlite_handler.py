@@ -448,11 +448,13 @@ class SQLiteHandler(SQLHandler):
         if patient_id_list is not None:
             placeholders = ', '.join(['?'] * len(patient_id_list))
             sqlite_select_patients_by_id_list = f"SELECT * FROM patient WHERE id IN ({placeholders})"
-        else:
-            assert mrn_list is not None
+        elif mrn_list is not None:
             patient_id_list = mrn_list
             placeholders = ', '.join(['?'] * len(patient_id_list))
             sqlite_select_patients_by_id_list = f"SELECT * FROM patient WHERE mrn IN ({placeholders})"
+        else:
+            sqlite_select_patients_by_id_list = "SELECT * FROM patient"
+            patient_id_list = tuple()
 
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_select_patients_by_id_list, patient_id_list)

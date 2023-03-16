@@ -91,7 +91,6 @@ class AtriumSDK:
     :param str atriumdb_lib_path: Legacy variable supporting old versions, do not use. A file path pointing to the CDLL that powers the compression and decompression.
     """
 
-
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
                  connection_params: dict = None, num_threads: int = None, api_url: str = None, token: str = None,
                  tsc_file_location: str = None, atriumdb_lib_path: str = None):
@@ -1429,7 +1428,7 @@ class AtriumSDK:
         return result
 
     def get_all_patient_ids(self, start=None, end=None):
-        pass
+        return [row[0] for row in self.sql_handler.select_all_patients_in_list()]
 
     def get_available_measures(self, device_id=None, patient_id=None, start=None, end=None):
         pass

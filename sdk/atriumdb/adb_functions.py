@@ -213,3 +213,65 @@ def convert_from_nanohz(freq_nhz, freq_units):
         freq = int(freq)
 
     return freq
+
+
+def parse_metadata_uri(metadata_uri):
+    # split the metadata_uri into four parts: sqltype, authentication, hostport, dbname (if it exists)
+    parts = metadata_uri.split('://')
+    if len(parts) != 2:
+        raise ValueError(f"Invalid metadata_uri format: expected 'sqltype://username:password@host:port[/dbname]', got {metadata_uri}")
+
+    sqltype, rest = parts
+
+    parts = rest.split('@')
+    if len(parts) != 2:
+        raise ValueError(f"Invalid metadata_uri format: expected 'sqltype://username:password@host:port[/dbname]', got {metadata_uri}")
+
+    auth, hostport_dbname = parts
+
+    # split the authentication part into username and password
+    auth_parts = auth.split(':')
+    if len(auth_parts) != 2:
+        raise ValueError(f"Invalid metadata_uri format: expected 'sqltype://username:password@host:port[/dbname]', got {metadata_uri}")
+
+    username, password = auth_parts
+
+    # split the hostport_dbname part into host and port, and dbname (if it exists)
+    hostport_dbname_parts = hostport_dbname.split('/')
+    if len(hostport_dbname_parts) == 2:
+        hostport, dbname = hostport_dbname_parts
+    elif len(hostport_dbname_parts) == 1:
+        hostport = hostport_dbname_parts[0]
+        dbname = None
+    else:
+        raise ValueError(f"Invalid metadata_uri format: expected 'sqltype://username:password@host:port[/dbname]', got {metadata_uri}")
+
+    hostport_parts = hostport.split(':')
+    if len(hostport_parts) != 2:
+        raise ValueError(f"Invalid metadata_uri format: expected 'sqltype://username:password@host:port[/dbname]', got {metadata_uri}")
+
+    host, port = hostport_parts
+
+    return {
+        'sqltype': sqltype,
+        'user': username,
+        'password': password,
+        'host': host,
+        'port': int(port),
+        'database': dbname
+    }
+
+
+def generate_metadata_uri(metadata):
+    sqltype = metadata['sqltype']
+    username = metadata['user']
+    password = metadata['password']
+    host = metadata['host']
+    port = metadata['port']
+    dbname = metadata.get('database')
+
+    uri = f"{sqltype}://{username}:{password}@{host}:{port}"
+    if dbname:
+        uri = f"{uri}/{dbname}"
+
+    return uri

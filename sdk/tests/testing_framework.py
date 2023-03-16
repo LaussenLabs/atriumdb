@@ -15,13 +15,14 @@ def _test_for_both(db_name, test_function):
     password = os.getenv("MARIA_DB_PASSWORD")
     port = int(os.getenv("MARIA_DB_PORT"))
 
-    maria_dataset_path = Path(__file__).parent / f"maria_{db_name}"
-    sqlite_dataset_path = Path(__file__).parent / f"sqlite_{db_name}"
+    maria_dataset_path = Path(__file__).parent / "test_datasets" / f"maria_{db_name}"
+    sqlite_dataset_path = Path(__file__).parent / "test_datasets" / f"sqlite_{db_name}"
 
     db_type = 'mariadb'
     shutil.rmtree(maria_dataset_path, ignore_errors=True)
     maria_handler = MariaDBHandler(host, user, password, db_name)
     connection_params = {
+        'sqltype': db_type,
         'host': host,
         'user': user,
         'password': password,

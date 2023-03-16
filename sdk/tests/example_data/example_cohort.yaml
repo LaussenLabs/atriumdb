@@ -1,0 +1,17 @@
+measures: ['heart_rate', 'blood_pressure', 'oxygen_saturation', 'respiratory_rate']
+
+measure_ids: [1, 2, 3]
+
+devices: ['1_101-A', '1_101-B ', '1_102-A ', 'Ventilator']
+
+device_ids: []
+
+patient_ids: [20001, 20002, 20003, 20004, 45409]
+
+mrns: []
+
+start_epoch_s: 1615463200.0
+
+end_epoch_s: null
+
+export_dataset_location:

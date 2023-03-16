@@ -1,13 +1,19 @@
 from atriumdb import AtriumSDK
 import pandas as pd
-from typing import Union
+from typing import Union, Dict
 from pathlib import PurePath
 
 
-def import_csv_to_sdk(sdk: AtriumSDK, filename: Union[str, PurePath]):
+def import_csv_to_sdk(sdk: AtriumSDK, filename: Union[str, PurePath], metadata: Dict[str, Union[str, float, int]]):
     df = pd.read_csv(filename)
 
-    device_tag, measure_tag, freq_nhz, units, scale_m, scale_b = parse_csv_column_info(df)
+    device_tag = metadata['device_tag']
+    measure_tag = metadata['measure_tag']
+    freq_nhz = metadata['freq']
+    units = metadata['unit']
+    scale_m = metadata.get('scale_m', None)
+    scale_b = metadata.get('scale_b', None)
+
     period_ns = (10 ** 18) // freq_nhz
     times, values = parse_csv_data(df)
     assert times.size > 0, f"No data in file {filename}."
@@ -60,4 +66,3 @@ def get_source_identifiers(sdk, device_tag, measure_tag, freq_nhz, units):
         device_id = sdk.insert_device(device_tag)
 
     return measure_id, device_id
-

@@ -58,4 +58,3 @@ def test_import_export_cli():
     exported_df = pd.read_csv(export_filename)
 
     assert imported_df.equals(exported_df), "Imported and exported data are not the same"
-

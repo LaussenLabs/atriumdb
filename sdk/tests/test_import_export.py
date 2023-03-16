@@ -1,8 +1,7 @@
 from atriumdb import AtriumSDK
-from atriumdb.transfer.import_csv import import_csv_to_sdk
-from tests.test_create_dataset import _test_create_dataset
+from atriumdb.transfer.csv.import_csv import import_csv_to_sdk
 from tests.testing_framework import _test_for_both
-from atriumdb.transfer.export_csv import export_csv_from_sdk
+from atriumdb.transfer.csv.export_csv import export_csv_from_sdk
 
 from pathlib import Path
 import pandas as pd
