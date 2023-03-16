@@ -4,11 +4,30 @@ from typing import Union
 from atriumdb import AtriumSDK
 import pandas as pd
 
-from atriumdb.transfer.csv.json_file_metadata import create_json_metadata_dict
+from atriumdb.transfer.formats.formats import IMPLEMENTED_DATA_FORMATS
+from atriumdb.transfer.formats.json_file_metadata import create_json_metadata_dict
 
 
-def export_csv_from_sdk(sdk: AtriumSDK, filename: Union[str, PurePath], measure_id, start_time, end_time,
-                        device_id=None, include_scale_factors=False):
+def export_data_from_sdk(sdk: AtriumSDK, directory: Union[str, PurePath], measure_id, start_time, end_time,
+                         device_id=None, data_format=None, include_scale_factors=False):
+
+    directory = Path(directory)
+    data_format = 'csv' if data_format is None else data_format.lower()
+    if data_format not in IMPLEMENTED_DATA_FORMATS:
+        raise ValueError(f"Unsupported data format '{data_format}', supported formats are "
+                         f"{list(IMPLEMENTED_DATA_FORMATS.keys())}")
+    ext = IMPLEMENTED_DATA_FORMATS[data_format]['ext']
+
+    device_info = sdk.get_device_info(device_id)
+    measure_info = sdk.get_measure_info(measure_id)
+
+    assert device_info is not None, f"device_id {device_id} not found."
+    assert measure_info is not None, f"measure_id {measure_id} not found."
+
+    measure_tag, freq, unit = measure_info['tag'], measure_info['freq_nhz'], measure_info['unit']
+    device_tag = device_info['tag']
+
+    filename = directory / f"{measure_tag}~{freq}~{unit}~{device_tag}~{start_time}~{end_time}{ext}"
     headers, times, values = sdk.get_data(measure_id, start_time, end_time, device_id=device_id, analog=False)
 
     if len(headers) == 0:
@@ -22,11 +41,14 @@ def export_csv_from_sdk(sdk: AtriumSDK, filename: Union[str, PurePath], measure_
 
     df = create_dataframe(measure_tag, times, values)
 
-    df.to_csv(filename, index=False)
+    if data_format == 'csv':
+        df.to_csv(filename, index=False)
+    elif data_format == 'parquet':
+        df.to_parquet(filename, index=False, engine='fastparquet')
 
     metadata = create_json_metadata_dict(
         measure_tag, freq_nhz, units, device_tag, start_time, end_time, scale_m, scale_b, None)
-    filename = Path(filename)
+
     filename = str(filename.name)
 
     return {filename: metadata}, df

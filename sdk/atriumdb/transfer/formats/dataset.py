@@ -4,34 +4,36 @@ from pathlib import Path, PurePath
 from tqdm import tqdm
 
 from atriumdb.adb_functions import convert_value_to_nanoseconds
-from atriumdb.transfer.csv.export_csv import export_csv_from_sdk
-from atriumdb.transfer.csv.import_csv import import_csv_to_sdk
+from atriumdb.transfer.formats.export_csv import export_data_from_sdk
+from atriumdb.transfer.formats.formats import IMPLEMENTED_DATA_FORMATS
+from atriumdb.transfer.formats.import_csv import import_data_to_sdk
 
 import logging
 
-from atriumdb.transfer.csv.json_file_metadata import export_json_metadata, import_json_metadata
+from atriumdb.transfer.formats.json_file_metadata import export_json_metadata, import_json_metadata
 
 _LOGGER = logging.getLogger(__name__)
 
 ONE_DAY_NANO = 86400 * (10 ** 9)
 
 
-def import_csv_dataset(sdk: AtriumSDK, directory: Union[str, PurePath]):
+def import_dataset(sdk: AtriumSDK, directory: Union[str, PurePath], data_format=None):
     directory_path = Path(directory)
     assert directory_path.is_dir(), f"{directory_path} is not a valid directory."
 
     file_metadata = import_json_metadata(directory_path)
 
-    for path in directory_path.rglob('*.csv'):
+    ext = IMPLEMENTED_DATA_FORMATS[data_format]['ext']
+    for path in directory_path.rglob(f'*{ext}'):
         if str(path.name) not in file_metadata:
             continue
-        import_csv_to_sdk(sdk, path, file_metadata[str(path.name)])
+        import_data_to_sdk(sdk, path, file_metadata[str(path.name)], data_format=data_format)
 
 
-def export_csv_dataset(sdk: AtriumSDK, directory: Union[str, PurePath], measure_id_list: List[int] = None,
-                       device_id_list: List[int] = None, patient_id_list: List[int] = None, mrn_list: List[int] = None,
-                       start: int = None, end: int = None, time_units: str = None, csv_dur=None, by_patient=False,
-                       include_scale_factors=False):
+def export_dataset(sdk: AtriumSDK, directory: Union[str, PurePath], data_format=None, device_id_list: List[int] = None,
+                   patient_id_list: List[int] = None, mrn_list: List[int] = None, start: int = None, end: int = None,
+                   time_units: str = None, csv_dur=None, by_patient=False, include_scale_factors=False,
+                   measure_id_list: List[int] = None):
     # Check if directory is already a directory, if not, make it so.
     directory_path = Path(directory)
     if not directory_path.is_dir():
@@ -63,25 +65,20 @@ def export_csv_dataset(sdk: AtriumSDK, directory: Union[str, PurePath], measure_
                     start_time=start, end_time=end)
 
                 for device_id, _, start_time, end_time in device_patient_list:
-                    filename = directory_path / f"{measure_id}_{device_id}_{start_time}_{end_time}.csv"
-                    metadata, _ = export_csv_from_sdk(sdk, filename, measure_id, start_time, end_time,
-                                                      device_id=device_id, include_scale_factors=include_scale_factors)
-                    metadata = {str(Path(filename).name): metadata}
+                    metadata, _ = export_data_from_sdk(sdk, directory_path, measure_id, start_time, end_time,
+                                                                 device_id=device_id,
+                                                                 data_format=data_format,
+                                                                 include_scale_factors=include_scale_factors)
                     file_metadata.update(metadata)
     else:
         for measure_id in tqdm(measure_id_list or sdk.get_all_measures().keys(), position=0, leave=False):
-            measure_info = sdk.get_measure_info(measure_id)
-            if measure_info is None:
+            if sdk.get_measure_info(measure_id) is None:
                 continue
-            measure_tag = measure_info['tag']
-            freq = measure_info['freq_nhz']
-            unit = measure_info['unit']
+
             for device_id in tqdm(device_id_list or sdk.get_all_devices().keys(), position=1, leave=False,
                                   desc=f"Measure id: {measure_id}"):
-                device_info = sdk.get_device_info(device_id)
-                if device_info is None:
+                if sdk.get_device_info(device_id) is None:
                     continue
-                device_tag = device_info['tag']
 
                 interval_arr = sdk.get_interval_array(measure_id, device_id=device_id)
                 if interval_arr.size == 0:
@@ -91,10 +88,10 @@ def export_csv_dataset(sdk: AtriumSDK, directory: Union[str, PurePath], measure_
                 end = interval_arr[-1][-1] if end is None else min(end, interval_arr[-1][-1])
                 for file_start in range(start, end, csv_dur):
                     file_end = file_start + csv_dur
-                    filename = directory_path / f"{measure_tag}~{freq}~{unit}~{device_tag}~{file_start}~{file_end}.csv"
-                    metadata, _ = export_csv_from_sdk(
-                        sdk, filename, measure_id, file_start, file_end, device_id=device_id,
-                        include_scale_factors=include_scale_factors)
+                    metadata, _ = export_data_from_sdk(sdk, directory_path, measure_id, file_start, file_end,
+                                                       device_id=device_id,
+                                                       data_format=data_format,
+                                                       include_scale_factors=include_scale_factors)
                     file_metadata.update(metadata)
 
     export_json_metadata(directory, file_metadata)

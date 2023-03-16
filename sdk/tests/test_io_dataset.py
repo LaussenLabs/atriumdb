@@ -5,33 +5,35 @@ import os
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 from atriumdb.transfer.adb.dataset import transfer_data
-from atriumdb.transfer.csv.dataset import export_csv_dataset, import_csv_dataset
+from atriumdb.transfer.formats.dataset import export_dataset, import_dataset
 from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset, assert_partial_mit_bih_to_dataset
 from tests.testing_framework import _test_for_both
 
 
-DB_NAME = 'atrium-csv-transfer'
-PARTIAL_DB_NAME = 'atrium-csv-partial-transfer'
+DB_NAME = 'atrium-formats-transfer'
+PARTIAL_DB_NAME = 'atrium-formats-partial-transfer'
 MAX_RECORDS = None
 
 
 def test_csv_dataset():
-    _test_for_both(DB_NAME, _test_csv_dataset)
+    for data_format in ["csv", "parquet"]:
+        _test_for_both(DB_NAME, _test_csv_dataset, data_format)
 
 
 def test_csv_partial_dataset():
-    _test_for_both(PARTIAL_DB_NAME, _test_csv_partial_dataset)
+    for data_format in ["csv", "parquet"]:
+        _test_for_both(PARTIAL_DB_NAME, _test_csv_partial_dataset, data_format)
 
 
-def _test_csv_dataset(db_type, dataset_location, connection_params):
+def _test_csv_dataset(db_type, dataset_location, connection_params, data_format):
     sdk_1 = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     dataset_location_2 = str(dataset_location) + "_2"
-    csv_dataset_dir = Path(__file__).parent / "test_datasets" / f"{db_type}_test_csv_dataset_export"
+    dataset_dir = Path(__file__).parent / "test_datasets" / f"{db_type}_test_csv_dataset_export_{data_format}"
 
     shutil.rmtree(dataset_location_2, ignore_errors=True)
-    shutil.rmtree(csv_dataset_dir, ignore_errors=True)
+    shutil.rmtree(dataset_dir, ignore_errors=True)
 
     if db_type in ['mysql', 'mariadb']:
         connection_params['database'] += "-2"
@@ -48,8 +50,8 @@ def _test_csv_dataset(db_type, dataset_location, connection_params):
     sdk_2 = AtriumSDK.create_dataset(
         dataset_location=dataset_location_2, database_type=db_type, connection_params=connection_params)
 
-    shutil.rmtree(csv_dataset_dir, ignore_errors=True)
-    os.mkdir(csv_dataset_dir)
+    shutil.rmtree(dataset_dir, ignore_errors=True)
+    os.mkdir(dataset_dir)
 
     write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS)
 
@@ -61,24 +63,24 @@ def _test_csv_dataset(db_type, dataset_location, connection_params):
     time_units = None
     csv_dur = None
 
-    export_csv_dataset(sdk_1, directory=csv_dataset_dir, measure_id_list=measure_id_list, device_id_list=device_id_list,
-                       patient_id_list=patient_id_list, start=start, end=end, time_units=time_units,
-                       csv_dur=csv_dur)
+    export_dataset(sdk_1, directory=dataset_dir, device_id_list=device_id_list, patient_id_list=patient_id_list,
+                   start=start, end=end, time_units=time_units, csv_dur=csv_dur, measure_id_list=measure_id_list,
+                   data_format=data_format)
 
-    import_csv_dataset(sdk_2, directory=csv_dataset_dir)
+    import_dataset(sdk_2, directory=dataset_dir, data_format=data_format)
 
     assert_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS)
 
 
-def _test_csv_partial_dataset(db_type, dataset_location, connection_params):
+def _test_csv_partial_dataset(db_type, dataset_location, connection_params, data_format):
     sdk_1 = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     dataset_location_2 = str(dataset_location) + "_partial"
-    csv_dataset_dir = Path(__file__).parent / "test_datasets" / f"{db_type}_test_csv_partial_dataset_export"
+    dataset_dir = Path(__file__).parent / "test_datasets" / f"{db_type}_test_csv_partial_dataset_export_{data_format}"
 
     shutil.rmtree(dataset_location_2, ignore_errors=True)
-    shutil.rmtree(csv_dataset_dir, ignore_errors=True)
+    shutil.rmtree(dataset_dir, ignore_errors=True)
 
     if db_type in ['mysql', 'mariadb']:
         connection_params['database'] += "-partial"
@@ -95,8 +97,8 @@ def _test_csv_partial_dataset(db_type, dataset_location, connection_params):
     sdk_2 = AtriumSDK.create_dataset(
         dataset_location=dataset_location_2, database_type=db_type, connection_params=connection_params)
 
-    shutil.rmtree(csv_dataset_dir, ignore_errors=True)
-    os.mkdir(csv_dataset_dir)
+    shutil.rmtree(dataset_dir, ignore_errors=True)
+    os.mkdir(dataset_dir)
 
     write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS)
 
@@ -109,11 +111,11 @@ def _test_csv_partial_dataset(db_type, dataset_location, connection_params):
     time_units = None
     csv_dur = None
 
-    export_csv_dataset(sdk_1, directory=csv_dataset_dir, measure_id_list=measure_id_list, device_id_list=device_id_list,
-                       patient_id_list=None, start=start, end=end, time_units=time_units,
-                       csv_dur=csv_dur)
+    export_dataset(sdk_1, directory=dataset_dir, device_id_list=device_id_list, patient_id_list=None, start=start,
+                   end=end, time_units=time_units, csv_dur=csv_dur, measure_id_list=measure_id_list,
+                   data_format=data_format)
 
-    import_csv_dataset(sdk_2, directory=csv_dataset_dir)
+    import_dataset(sdk_2, directory=dataset_dir, data_format=data_format)
 
     assert_partial_mit_bih_to_dataset(sdk_2, measure_id_list=measure_id_list, device_id_list=device_id_list,
                                       max_records=MAX_RECORDS, start_nano=start, end_nano=end)

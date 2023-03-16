@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 
 
-def _test_for_both(db_name, test_function):
+def _test_for_both(db_name, test_function, *args):
     load_dotenv()
 
     # Get MariaDB connection details from .env file
@@ -29,10 +29,10 @@ def _test_for_both(db_name, test_function):
         'database': db_name,
         'port': 3306}
     maria_handler.maria_connect_no_db().cursor().execute(f"DROP DATABASE IF EXISTS `{db_name}`")
-    test_function(db_type, maria_dataset_path, connection_params)
+    test_function(db_type, maria_dataset_path, connection_params, *args)
 
     db_type = 'sqlite'
     connection_params = None
     shutil.rmtree(sqlite_dataset_path, ignore_errors=True)
     sqlite_dataset_path.unlink(missing_ok=True)
-    test_function(db_type, sqlite_dataset_path, connection_params)
+    test_function(db_type, sqlite_dataset_path, connection_params, *args)

@@ -3,9 +3,20 @@ import pandas as pd
 from typing import Union, Dict
 from pathlib import PurePath
 
+from atriumdb.transfer.formats.formats import IMPLEMENTED_DATA_FORMATS
 
-def import_csv_to_sdk(sdk: AtriumSDK, filename: Union[str, PurePath], metadata: Dict[str, Union[str, float, int]]):
-    df = pd.read_csv(filename)
+
+def import_data_to_sdk(sdk: AtriumSDK, filename: Union[str, PurePath], metadata: Dict[str, Union[str, float, int]],
+                       data_format=None):
+    data_format = 'csv' if data_format is None else data_format.lower()
+    if data_format not in IMPLEMENTED_DATA_FORMATS:
+        raise ValueError(f"Unsupported data format '{data_format}', supported formats are "
+                         f"{list(IMPLEMENTED_DATA_FORMATS.keys())}")
+
+    if data_format == 'csv':
+        df = pd.read_csv(filename)
+    elif data_format == 'parquet':
+        df = pd.read_parquet(filename, engine='fastparquet')
 
     device_tag = metadata['device_tag']
     measure_tag = metadata['measure_tag']

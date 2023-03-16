@@ -35,7 +35,7 @@ def test_import_export_cli():
     runner = CliRunner()
 
     # Import data from a CSV file
-    filename = Path(__file__).parent / "example_data" / "import_data_1.csv"
+    filename = Path(__file__).parent / "example_data" / "import_data_1.formats"
     imported_df = pd.read_csv(filename)
 
     result = runner.invoke(import_csv, ["--input-file", str(filename)])
@@ -44,7 +44,7 @@ def test_import_export_cli():
     print(result.output)
 
     # Export data to a CSV file
-    export_filename = Path(__file__).parent / "example_data" / "export_data_1.csv"
+    export_filename = Path(__file__).parent / "example_data" / "export_data_1.formats"
     result = runner.invoke(export_csv, ["--output-file", str(export_filename),
                                         "--measure-id", "1",
                                         "--device-id", "1",

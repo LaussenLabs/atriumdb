@@ -10,9 +10,9 @@ from atriumdb.cli.sdk import get_sdk_from_env_vars, create_sdk_from_env_vars
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.transfer.cohort.cohort_yaml import parse_atrium_cohort_yaml
 from atriumdb.transfer.adb.dataset import transfer_data
-from atriumdb.transfer.csv.dataset import export_csv_dataset, import_csv_dataset
-from atriumdb.transfer.csv.export_csv import export_csv_from_sdk
-from atriumdb.transfer.csv.import_csv import import_csv_to_sdk
+from atriumdb.transfer.formats.dataset import export_dataset, import_dataset
+from atriumdb.transfer.formats.export_csv import export_data_from_sdk
+from atriumdb.transfer.formats.import_csv import import_data_to_sdk
 
 import logging
 
@@ -24,7 +24,7 @@ cli_help_text = """
 The atriumdb command is a command line interface for the Atrium database, 
 allowing you to import and export data from the database.
 
-The import-csv subcommand is used to import data into the database from a CSV file, while the export-csv subcommand 
+The import-formats subcommand is used to import data into the database from a CSV file, while the export-formats subcommand 
 is used to export data from the database to a CSV file. 
 
 The SDK data is defined by the following environment variables:
@@ -159,13 +159,14 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
                       device_id_list=device_ids, patient_id_list=patient_ids, mrn_list=mrns,
                       start=start_time, end=end_time)
 
-    if export_format == "csv":
+    else:
         assert dataset_location_out is not None, "dataset-location-out option or ATRIUMDB_EXPORT_DATASET_LOCATION " \
                                                  "envvar must be specified."
 
-        csv_dataset_dir = Path(dataset_location_out) / "csv_export"
-        export_csv_dataset(from_sdk, csv_dataset_dir, measure_ids, device_ids, patient_ids, mrns, start_time, end_time,
-                           by_patient=by_patient)
+        dataset_dir = Path(dataset_location_out) / f"{export_format}_export"
+        export_dataset(sdk=from_sdk, directory=dataset_dir, data_format=export_format, device_id_list=device_ids,
+                       patient_id_list=patient_ids, mrn_list=mrns, start=start_time, end=end_time,
+                       by_patient=by_patient, measure_id_list=measure_ids)
 
 
 def get_sdk_from_cli_params(dataset_location, metadata_uri):
@@ -210,7 +211,7 @@ def import_(ctx, import_format, packaging_type, dataset_location_in, metadata_ur
     dataset_location = ctx.obj["dataset_location"]
     metadata_uri = ctx.obj["metadata_uri"]
 
-    implemented_formats = ["csv"]
+    implemented_formats = ["csv", "parquet"]
 
     if import_format not in implemented_formats:
         raise NotImplementedError(f"Only {implemented_formats} formats are currently supported for import")
@@ -223,7 +224,7 @@ def import_(ctx, import_format, packaging_type, dataset_location_in, metadata_ur
 
     sdk = get_sdk_from_cli_params(dataset_location, metadata_uri)
 
-    import_csv_dataset(sdk, directory=dataset_location_in)
+    import_dataset(sdk, directory=dataset_location_in, data_format=import_format)
 
 
 @click.group(name='measure')
