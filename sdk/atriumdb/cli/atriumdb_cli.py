@@ -24,26 +24,21 @@ cli_help_text = """
 The atriumdb command is a command line interface for the Atrium database, 
 allowing you to import and export data from the database.
 
-The import-formats subcommand is used to import data into the database from a CSV file, while the export-formats subcommand 
-is used to export data from the database to a CSV file. 
+The import subcommand is used to import data into the database from common formats, while the export subcommand 
+is used to export data from the database to common formats.
 
-The SDK data is defined by the following environment variables:
+The SDK data is defined by the following environment variables or corresponding command line options:
 
-ATRIUMDB_DATASET_LOCATION: This environment variable specifies the directory location where the Atrium SDK data will 
+ATRIUMDB_ENDPOINT_URL (--endpoint-url): This environment variable specifies the endpoint to connect to for a remote AtriumDB server.
+
+ATRIUMDB_DATASET_LOCATION (--dataset-location): This environment variable specifies the directory location where the Atrium SDK data will 
 be stored.
 
-ATRIUMDB_CONNECTION_TYPE: This environment variable specifies the type of metadata connection to be used for the 
-Atrium SDK. The possible values are "sqlite", "mariadb", or "mysql".
+ATRIUMDB_METADATA_URI (--metadata-uri): This environment variable specifies the URI of a metadata server, which includes the db_type, host, password, db_name, and other relevant connection details. The format should be "<db_type>://<user>:<password>@<host>:<port>/<database_name>".
 
-ATRIUMDB_METADATA_HOST specifies the hostname or IP address of the metadata database server.
+ATRIUMDB_DATABASE_TYPE (--database-type): This environment variable specifies the type of metadata database supporting the dataset. The possible values are "sqlite", "mariadb", or "mysql".
 
-ATRIUMDB_METADATA_USER specifies the username used to connect to the metadata database.
-
-ATRIUMDB_METADATA_PASSWORD specifies the password for the user specified by ATRIUMDB_METADATA_USER.
-
-ATRIUMDB_METADATA_DATABASE specifies the name of the metadata database.
-
-ATRIUMDB_METADATA_PORT specifies the port number used to connect to the metadata database.
+You can use command line options in place of the environment variables for a more flexible configuration.
 
 For more information on how to use these subcommands 
 and the Atrium database, please visit the documentation at https://atriumdb.sickkids.ca/docs/.
