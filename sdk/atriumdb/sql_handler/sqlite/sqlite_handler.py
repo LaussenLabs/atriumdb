@@ -136,6 +136,12 @@ class SQLiteHandler(SQLHandler):
             rows = cursor.fetchall()
         return rows
 
+    def select_all_patients(self):
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute("SELECT * FROM patient")
+            rows = cursor.fetchall()
+        return rows
+
     def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None):
         units = DEFAULT_UNITS if units is None else units
 
@@ -301,13 +307,12 @@ class SQLiteHandler(SQLHandler):
             cursor.execute(sqlite_insert_ignore_bed_query, (unit_id, b_name))
             return cursor.lastrowid
 
-    def insert_patient(self, mrn, gender=None, dob=None, first_name=None, middle_name=None, last_name=None,
-                       first_seen=None,
-                       last_updated=None, source_id=1):
-        first_seen = time.time_ns() if first_seen is None else first_seen
+    def insert_patient(self, patient_id=None, mrn=None, gender=None, dob=None, first_name=None, middle_name=None,
+                       last_name=None, first_seen=None, last_updated=None, source_id=1):
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
             cursor.execute(sqlite_insert_ignore_patient_query,
-                           (mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id))
+                           (patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated,
+                            source_id))
             return cursor.lastrowid
 
     def insert_encounter(self, patient_id, bed_id, start_time, end_time=None, source_id=1, visit_number=None,
@@ -331,17 +336,15 @@ class SQLiteHandler(SQLHandler):
         if end_time_n is not Null: block_index.start_time_n < end_time_n
         if device_id is not Null: block_index.device_id = device_id
         if patient_id is not Null:
-            encounter.patient_id = patient_id
-            and encounter.id = device_encounter.encounter_id
-            and device_encounter.device_id = block_index.device_id
-            and device_encounter.start_time < block_index.end_time_n
-            and block_index.start_time < device_encounter.end_time_n
+            device_patient.patient_id = patient_id
+            and device_patient.device_id = block_index.device_id
+            and device_patient.start_time < block_index.end_time_n
+            and block_index.start_time_n < device_patient.end_time_n
         """
         arg_tuple = ()
         sqlite_select_block_query = "SELECT block_index.id, block_index.measure_id, block_index.device_id, block_index.file_id, block_index.start_byte, block_index.num_bytes, block_index.start_time_n, block_index.end_time_n, block_index.num_values FROM block_index"
         if patient_id is not None:
-            sqlite_select_block_query += " INNER JOIN device_encounter ON device_encounter.device_id = block_index.device_id"
-            sqlite_select_block_query += " INNER JOIN encounter ON encounter.id = device_encounter.encounter_id"
+            sqlite_select_block_query += " INNER JOIN device_patient ON device_patient.device_id = block_index.device_id"
         sqlite_select_block_query += " WHERE block_index.measure_id = ?"
         arg_tuple += (measure_id,)
         if start_time_n is not None:
@@ -354,10 +357,10 @@ class SQLiteHandler(SQLHandler):
             sqlite_select_block_query += " AND block_index.device_id = ?"
             arg_tuple += (device_id,)
         if patient_id is not None:
-            sqlite_select_block_query += " AND encounter.patient_id = ?"
+            sqlite_select_block_query += " AND device_patient.patient_id = ?"
             arg_tuple += (patient_id,)
-            sqlite_select_block_query += " AND device_encounter.start_time < block_index.end_time_n"
-            sqlite_select_block_query += " AND block_index.start_time_n < device_encounter.end_time"
+            sqlite_select_block_query += " AND device_patient.start_time < block_index.end_time_n"
+            sqlite_select_block_query += " AND block_index.start_time_n < device_patient.end_time"
         sqlite_select_block_query += " ORDER BY block_index.file_id ASC, block_index.start_byte ASC"
 
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
@@ -371,17 +374,15 @@ class SQLiteHandler(SQLHandler):
         if end_time_n is not Null: interval_index.start_time_n < end_time_n
         if device_id is not Null: interval_index.device_id = device_id
         if patient_id is not Null:
-            encounter.patient_id = patient_id
-            and encounter.id = device_encounter.encounter_id
-            and device_encounter.device_id = interval_index.device_id
-            and device_encounter.start_time < interval_index.end_time_n
-            and interval_index.start_time < device_encounter.end_time_n
+            device_patient.patient_id = patient_id
+            and device_patient.device_id = interval_index.device_id
+            and device_patient.start_time < interval_index.end_time_n
+            and interval_index.start_time_n < device_patient.end_time_n
         """
         arg_tuple = ()
         sqlite_select_interval_query = "SELECT interval_index.id, interval_index.measure_id, interval_index.device_id, interval_index.start_time_n, interval_index.end_time_n FROM interval_index"
         if patient_id is not None:
-            sqlite_select_interval_query += " INNER JOIN device_encounter ON device_encounter.device_id = interval_index.device_id"
-            sqlite_select_interval_query += " INNER JOIN encounter ON encounter.id = device_encounter.encounter_id"
+            sqlite_select_interval_query += " INNER JOIN device_patient ON device_patient.device_id = interval_index.device_id"
         sqlite_select_interval_query += " WHERE interval_index.measure_id = ?"
         arg_tuple += (measure_id,)
         if start_time_n is not None:
@@ -394,10 +395,10 @@ class SQLiteHandler(SQLHandler):
             sqlite_select_interval_query += " AND interval_index.device_id = ?"
             arg_tuple += (device_id,)
         if patient_id is not None:
-            sqlite_select_interval_query += " AND encounter.patient_id = ?"
+            sqlite_select_interval_query += " AND device_patient.patient_id = ?"
             arg_tuple += (patient_id,)
-            sqlite_select_interval_query += " AND device_encounter.start_time < interval_index.end_time_n"
-            sqlite_select_interval_query += " AND interval_index.start_time_n < device_encounter.end_time"
+            sqlite_select_interval_query += " AND device_patient.start_time < interval_index.end_time_n"
+            sqlite_select_interval_query += " AND interval_index.start_time_n < device_patient.end_time"
         sqlite_select_interval_query += " ORDER BY interval_index.start_time_n ASC"
 
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
@@ -532,8 +533,7 @@ class SQLiteHandler(SQLHandler):
         sqlite_select_device_patient_query += join_sql_and_bools(where_clauses)
         sqlite_select_device_patient_query += " ORDER BY id ASC"
 
-        with self.sqlite_db_connection() as conn:
-            cursor = conn.cursor()
+        with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_select_device_patient_query, arg_tuple)
             return cursor.fetchall()
 
@@ -541,7 +541,6 @@ class SQLiteHandler(SQLHandler):
         sqlite_insert_device_patient_query = \
             "INSERT INTO device_patient (device_id, patient_id, start_time, end_time) VALUES (?, ?, ?, ?)"
 
-        with self.sqlite_db_connection() as conn:
-            cursor = conn.cursor()
+        with self.sqlite_db_connection() as (conn, cursor):
             cursor.executemany(sqlite_insert_device_patient_query, device_patient_data)
             conn.commit()

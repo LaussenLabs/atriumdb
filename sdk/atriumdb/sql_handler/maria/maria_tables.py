@@ -101,13 +101,13 @@ maria_bed_unit_id_create_index = "CREATE INDEX IF NOT EXISTS unit_id ON bed (uni
 maria_patient_create_query = """
 CREATE TABLE IF NOT EXISTS patient (
   id INT UNSIGNED auto_increment PRIMARY KEY,
-  mrn INT UNSIGNED NOT NULL,
+  mrn INT UNSIGNED NULL,
   gender VARCHAR(1) NULL,
   dob bigint NULL,
   first_name VARCHAR(255) NULL,
   middle_name VARCHAR(255) NULL,
   last_name VARCHAR(255) NULL,
-  first_seen bigint DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  first_seen bigint DEFAULT CURRENT_TIMESTAMP NULL,
   last_updated bigint NULL,
   source_id INT UNSIGNED DEFAULT 1 NULL,
   CONSTRAINT mrn UNIQUE (mrn),

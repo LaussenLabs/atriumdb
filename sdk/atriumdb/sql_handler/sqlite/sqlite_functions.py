@@ -53,8 +53,8 @@ sqlite_insert_ignore_source_query = "INSERT OR IGNORE INTO source (name, descrip
 sqlite_insert_ignore_institution_query = "INSERT OR IGNORE INTO institution (name) VALUES (?);"
 sqlite_insert_ignore_unit_query = "INSERT OR IGNORE INTO unit (institution_id, name, type) VALUES (?, ?, ?);"
 sqlite_insert_ignore_bed_query = "INSERT OR IGNORE INTO bed (unit_id, name) VALUES (?, ?);"
-sqlite_insert_ignore_patient_query = "INSERT OR IGNORE INTO patient (mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id) " \
-                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"
+sqlite_insert_ignore_patient_query = "INSERT OR IGNORE INTO patient (id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id) " \
+                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
 sqlite_insert_ignore_encounter_query = "INSERT OR IGNORE INTO encounter (patient_id, bed_id, start_time, end_time, source_id, visit_number, last_updated) " \
                                        "VALUES (?, ?, ?, ?, ?, ?, ?);"
 sqlite_insert_ignore_device_encounter_query = "INSERT OR IGNORE INTO device_encounter (device_id, encounter_id, start_time, end_time, source_id) " \

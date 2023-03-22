@@ -128,13 +128,13 @@ sqlite_bed_unit_id_create_index = "CREATE INDEX IF NOT EXISTS unit_id_index ON b
 sqlite_patient_create_query = """
 CREATE TABLE IF NOT EXISTS patient (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  mrn INTEGER NOT NULL UNIQUE,
+  mrn INTEGER NULL UNIQUE,
   gender TEXT NULL,
   dob INTEGER NULL,
   first_name TEXT NULL,
   middle_name TEXT NULL,
   last_name TEXT NULL,
-  first_seen INTEGER NOT NULL DEFAULT (STRFTIME('%s','NOW')),
+  first_seen INTEGER NULL DEFAULT (STRFTIME('%s','NOW')),
   last_updated INTEGER NULL,
   source_id INTEGER DEFAULT 1 NULL,
   FOREIGN KEY (source_id) REFERENCES source (id)

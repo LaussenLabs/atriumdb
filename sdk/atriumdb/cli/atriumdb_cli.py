@@ -155,9 +155,8 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
         # Transfer the data using the specified parameters
         to_sdk = get_sdk_from_cli_params(dataset_location_out, metadata_uri_out)
 
-        transfer_data(from_sdk=from_sdk, to_sdk=to_sdk, measure_id_list=measure_ids,
-                      device_id_list=device_ids, patient_id_list=patient_ids, mrn_list=mrns,
-                      start=start_time, end=end_time)
+        transfer_data(from_sdk=from_sdk, to_sdk=to_sdk, measure_id_list=measure_ids, device_id_list=device_ids,
+                      patient_id_list=patient_ids, mrn_list=mrns, start=start_time, end=end_time)
 
     else:
         assert dataset_location_out is not None, "dataset-location-out option or ATRIUMDB_EXPORT_DATASET_LOCATION " \

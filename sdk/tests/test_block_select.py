@@ -43,7 +43,8 @@ def _test_block_select(sql_handler):
     unit_id = sql_handler.insert_unit(institution_id, "ICU", "ICU")
     bed_id = sql_handler.insert_bed(unit_id, "ICU1")
 
-    patient_id = sql_handler.insert_patient("12345")
+    # patient_id = sql_handler.insert_patient(mrn="12345")
+    patient_id = sql_handler.insert_patient(mrn=None)
     encounter_id = sql_handler.insert_encounter(patient_id, bed_id, t_now, t_now + 100)
     device_encounter_id = sql_handler.insert_device_encounter(device_id, encounter_id, t_now, t_now + 100)
 

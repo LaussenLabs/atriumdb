@@ -1369,6 +1369,56 @@ class AtriumSDK:
 
         return measure_dict
 
+    def get_all_patients(self):
+        """
+        Retrieve information about all patients in the linked relational database.
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> all_patients = sdk.get_all_patients()
+        >>> print(all_patients)
+        {1: {'id': 1,
+             'mrn': 123456,
+             'gender': 'M',
+             'dob': 946684800,
+             'first_name': 'John',
+             'middle_name': 'A',
+             'last_name': 'Doe',
+             'first_seen': 1609459200,
+             'last_updated': 1609545600,
+             'source_id': 1},
+         2: {'id': 2,
+             'mrn': 654321,
+             'gender': 'F',
+             'dob': 978307200,
+             'first_name': 'Jane',
+             'middle_name': 'B',
+             'last_name': 'Smith',
+             'first_seen': 1609642000,
+             'last_updated': 1609728400,
+             'source_id': 1}}
+
+        :return: A dictionary containing information about each patient, including their id, mrn, gender, dob,
+            first_name, middle_name, last_name, first_seen, last_updated, and source_id.
+        :rtype: dict
+        """
+        patient_tuple_list = self.sql_handler.select_all_patients()
+        patient_dict = {}
+        for patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id in patient_tuple_list:
+            patient_dict[patient_id] = {
+                'id': patient_id,
+                'mrn': mrn,
+                'gender': gender,
+                'dob': dob,
+                'first_name': first_name,
+                'middle_name': middle_name,
+                'last_name': last_name,
+                'first_seen': first_seen,
+                'last_updated': last_updated,
+                'source_id': source_id,
+            }
+
+        return patient_dict
+
     def search_devices(self, tag_match=None, name_match=None):
         """
         Retrieve information about all devices in the linked relational database that match the specified search criteria.
