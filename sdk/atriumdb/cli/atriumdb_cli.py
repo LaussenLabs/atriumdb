@@ -11,8 +11,8 @@ from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.transfer.cohort.cohort_yaml import parse_atrium_cohort_yaml
 from atriumdb.transfer.adb.dataset import transfer_data
 from atriumdb.transfer.formats.dataset import export_dataset, import_dataset
-from atriumdb.transfer.formats.export_csv import export_data_from_sdk
-from atriumdb.transfer.formats.import_csv import import_data_to_sdk
+from atriumdb.transfer.formats.export_data import export_data_from_sdk
+from atriumdb.transfer.formats.import_data import import_data_to_sdk
 
 import logging
 
