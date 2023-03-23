@@ -4,9 +4,9 @@ from pathlib import Path, PurePath
 from tqdm import tqdm
 
 from atriumdb.adb_functions import convert_value_to_nanoseconds
-from atriumdb.transfer.formats.export_csv import export_data_from_sdk
+from atriumdb.transfer.formats.export_data import export_data_from_sdk
 from atriumdb.transfer.formats.formats import IMPLEMENTED_DATA_FORMATS
-from atriumdb.transfer.formats.import_csv import import_data_to_sdk
+from atriumdb.transfer.formats.import_data import import_data_to_sdk
 
 import logging
 
