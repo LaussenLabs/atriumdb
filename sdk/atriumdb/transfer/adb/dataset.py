@@ -52,6 +52,14 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
                 device_patient_list[i] = list(device_patient_list[i])
                 device_patient_list[i][patient_id_idx] = patient_id_map[device_patient_list[i][patient_id_idx]]
 
+        start_time_idx = 2
+        end_time_idx = 3
+        if isinstance(time_shift, int):
+            for i in range(len(device_patient_list)):
+                device_patient_list[i] = list(device_patient_list[i])
+                device_patient_list[i][start_time_idx] -= time_shift
+                device_patient_list[i][end_time_idx] -= time_shift
+
         # Transfer device_patients
         to_sdk.insert_device_patient_data(device_patient_data=device_patient_list)
 
@@ -74,11 +82,11 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
                     print(e)
                     continue
 
-                if isinstance(time_shift, int):
-                    shift_times(times, time_shift)
-
                 if len(headers) == 0:
                     continue
+
+                if isinstance(time_shift, int):
+                    shift_times(times, time_shift)
 
                 ingest_data(to_sdk, to_measure_id, to_device_id, headers, times, values)
 
@@ -111,7 +119,8 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
                 while start_block < len(block_list):
                     block_batch = block_list[start_block:start_block+batch_size]
                     headers, times, values = from_sdk.get_data_from_blocks(block_batch, filename_dict, measure_id,
-                                                                           MIN_TRANSFER_TIME, MAX_TRANSFER_TIME)
+                                                                           MIN_TRANSFER_TIME, MAX_TRANSFER_TIME,
+                                                                           analog=False)
 
                     if isinstance(time_shift, int):
                         shift_times(times, time_shift)
