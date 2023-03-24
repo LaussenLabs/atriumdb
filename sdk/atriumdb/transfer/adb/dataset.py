@@ -2,6 +2,7 @@ import random
 from typing import List
 
 import numpy as np
+from tqdm import tqdm
 
 from atriumdb import AtriumSDK
 from atriumdb.adb_functions import convert_value_to_nanoseconds
@@ -49,23 +50,29 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
         if deidentify:
             for i in range(len(device_patient_list)):
                 device_patient_list[i] = list(device_patient_list[i])
-                device_patient_list[i][patient_id_idx] = patient_id_map[device_patient_list[patient_id_idx]]
+                device_patient_list[i][patient_id_idx] = patient_id_map[device_patient_list[i][patient_id_idx]]
 
         # Transfer device_patients
         to_sdk.insert_device_patient_data(device_patient_data=device_patient_list)
 
-        for measure_id, measure_info in from_sdk.get_all_measures().items():
+        for measure_id, measure_info in tqdm(from_sdk.get_all_measures().items()):
             to_measure_id = to_sdk.get_measure_id(measure_tag=measure_info['tag'],
                                                   freq=measure_info['freq_nhz'],
                                                   units=measure_info['unit'], )
             if measure_id_list is not None and measure_id not in measure_id_list:
                 continue
 
-            for from_device_id, patient_id, start_time, end_time in device_patient_list:
+            for from_device_id, patient_id, start_time, end_time in tqdm(device_patient_list, leave=False):
+                if end_time is None:
+                    continue
                 device_info = from_sdk.get_device_info(from_device_id)
                 to_device_id = to_sdk.get_device_id(device_tag=device_info['tag'])
-                headers, times, values = from_sdk.get_data(
-                    measure_id, start_time, end_time, device_id=from_device_id, analog=False)
+                try:
+                    headers, times, values = from_sdk.get_data(
+                        measure_id, start_time, end_time, device_id=from_device_id, analog=False)
+                except Exception as e:
+                    print(e)
+                    continue
 
                 if isinstance(time_shift, int):
                     shift_times(times, time_shift)
@@ -114,19 +121,26 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
 
 
 def ingest_data(to_sdk, measure_id, device_id, headers, times, values):
-    if all([h.scale_m == headers[0].scale_m for h in headers]) and \
-            all([h.scale_b == headers[0].scale_b for h in headers]) and \
-            all([h.freq_nhz == headers[0].freq_nhz for h in headers]):
-        to_sdk.write_data_easy(measure_id, device_id, time_data=times, value_data=values,
-                               freq=headers[0].freq_nhz, scale_m=headers[0].scale_m,
-                               scale_b=headers[0].scale_b)
-    else:
-        val_index = 0
-        for h in headers:
-            to_sdk.write_data_easy(measure_id, device_id, time_data=times[val_index:val_index + h.num_vals],
-                                   value_data=values[val_index:val_index + h.num_vals], freq=h.freq_nhz,
-                                   scale_m=h.scale_m, scale_b=h.scale_b)
-            val_index += h.num_vals
+    try:
+        if all([h.scale_m == headers[0].scale_m for h in headers]) and \
+                all([h.scale_b == headers[0].scale_b for h in headers]) and \
+                all([h.freq_nhz == headers[0].freq_nhz for h in headers]):
+            to_sdk.write_data_easy(measure_id, device_id, time_data=times, value_data=values,
+                                   freq=headers[0].freq_nhz, scale_m=headers[0].scale_m,
+                                   scale_b=headers[0].scale_b)
+        else:
+            val_index = 0
+            for h in headers:
+                try:
+                    to_sdk.write_data_easy(measure_id, device_id, time_data=times[val_index:val_index + h.num_vals],
+                                           value_data=values[val_index:val_index + h.num_vals], freq=h.freq_nhz,
+                                           scale_m=h.scale_m, scale_b=h.scale_b)
+                except IndexError:
+                    continue
+                val_index += h.num_vals
+    except Exception as e:
+        print(e)
+        return
 
 
 def transfer_measures(from_sdk, to_sdk, measure_id_list=None):

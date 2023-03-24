@@ -24,7 +24,6 @@ from pathlib import Path, PurePath
 from multiprocessing import cpu_count
 import sys
 from typing import Union, List, Tuple
-from functools import cache
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
