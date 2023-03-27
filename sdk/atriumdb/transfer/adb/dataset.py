@@ -94,14 +94,14 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
         # Transfer devices
         transfer_devices(from_sdk, to_sdk, device_id_list=device_id_list)
 
-        for measure_id, measure_info in from_sdk.get_all_measures().items():
+        for measure_id, measure_info in tqdm(from_sdk.get_all_measures().items()):
             to_measure_id = to_sdk.get_measure_id(measure_tag=measure_info['tag'],
                                                   freq=measure_info['freq_nhz'],
                                                   units=measure_info['unit'],)
             if measure_id_list is not None and measure_id not in measure_id_list:
                 continue
 
-            for from_device_id, device_info in from_sdk.get_all_devices().items():
+            for from_device_id, device_info in tqdm(from_sdk.get_all_devices().items(), leave=False):
                 to_device_id = to_sdk.get_device_id(device_tag=device_info['tag'])
                 if device_id_list is not None and from_device_id not in device_id_list:
                     continue
@@ -118,9 +118,14 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
                 start_block = 0
                 while start_block < len(block_list):
                     block_batch = block_list[start_block:start_block+batch_size]
-                    headers, times, values = from_sdk.get_data_from_blocks(block_batch, filename_dict, measure_id,
-                                                                           MIN_TRANSFER_TIME, MAX_TRANSFER_TIME,
-                                                                           analog=False)
+                    try:
+                        headers, times, values = from_sdk.get_data_from_blocks(block_batch, filename_dict, measure_id,
+                                                                               MIN_TRANSFER_TIME, MAX_TRANSFER_TIME,
+                                                                               analog=False)
+                    except Exception as e:
+                        print(e)
+                        start_block += batch_size
+                        continue
 
                     if isinstance(time_shift, int):
                         shift_times(times, time_shift)

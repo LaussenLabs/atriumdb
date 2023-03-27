@@ -925,6 +925,32 @@ class AtriumSDK:
             A numpy 1D array representing the value data.
 
         """
+
+        def print_params(measure_id: int, start_time_n: int = None, end_time_n: int = None, device_id: int = None,
+                         patient_id=None, auto_convert_gap_to_time_array=True, return_intervals=False, analog=True,
+                         block_info=None, time_units: str = "ns"):
+            print("measure_id:", measure_id)
+            print("start_time_n:", start_time_n)
+            print("end_time_n:", end_time_n)
+            print("device_id:", device_id)
+            print("patient_id:", patient_id)
+            print("auto_convert_gap_to_time_array:", auto_convert_gap_to_time_array)
+            print("return_intervals:", return_intervals)
+            print("analog:", analog)
+            print("block_info:", block_info)
+            print("time_units:", time_units)
+
+        print_params(measure_id=measure_id,
+                     start_time_n=start_time_n,
+                     end_time_n=end_time_n,
+                     device_id=device_id,
+                     patient_id=patient_id,
+                     auto_convert_gap_to_time_array=auto_convert_gap_to_time_array,
+                     return_intervals=return_intervals,
+                     analog=analog,
+                     block_info=block_info,
+                     time_units=time_units)
+
         # check that a correct unit type was entered
         time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 

@@ -17,7 +17,7 @@ from atriumdb.sql_handler.sqlite.sqlite_functions import sqlite_insert_ignore_me
     sqlite_insert_ignore_institution_query, sqlite_insert_ignore_unit_query, sqlite_insert_ignore_bed_query, \
     sqlite_insert_ignore_patient_query, sqlite_insert_ignore_encounter_query, \
     sqlite_insert_ignore_device_encounter_query, sqlite_select_blocks_from_file, sqlite_delete_block_query, \
-    sqlite_delete_file_query, sqlite_interval_exists_query
+    sqlite_delete_file_query, sqlite_interval_exists_query, sqlite_get_query_with_patient_id
 from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_query, \
     sqlite_file_index_create_query, sqlite_block_index_create_query, \
     sqlite_interval_index_create_query, sqlite_settings_create_query, \
@@ -330,80 +330,93 @@ class SQLiteHandler(SQLHandler):
             return cursor.lastrowid
 
     def select_blocks(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
-        """
-        block_index.measure_id = measure_id
-        if start_time_n is not Null: block_index.end_time_n > start_time_n
-        if end_time_n is not Null: block_index.start_time_n < end_time_n
-        if device_id is not Null: block_index.device_id = device_id
-        if patient_id is not Null:
-            device_patient.patient_id = patient_id
-            and device_patient.device_id = block_index.device_id
-            and device_patient.start_time < block_index.end_time_n
-            and block_index.start_time_n < device_patient.end_time_n
-        """
-        arg_tuple = ()
-        sqlite_select_block_query = "SELECT block_index.id, block_index.measure_id, block_index.device_id, block_index.file_id, block_index.start_byte, block_index.num_bytes, block_index.start_time_n, block_index.end_time_n, block_index.num_values FROM block_index"
+        assert device_id is not None or patient_id is not None, "Either device_id or patient_id must be provided"
+
         if patient_id is not None:
-            sqlite_select_block_query += " INNER JOIN device_patient ON device_patient.device_id = block_index.device_id"
-        sqlite_select_block_query += " WHERE block_index.measure_id = ?"
-        arg_tuple += (measure_id,)
+            device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, start_time_n, end_time_n)
+        else:
+            device_time_ranges = [(device_id, start_time_n, end_time_n)]
+
+        block_query = """
+                        SELECT
+                            id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
+                        FROM
+                            block_index
+                        WHERE
+                            measure_id = ? AND device_id = ?"""
+
         if start_time_n is not None:
-            sqlite_select_block_query += " AND block_index.end_time_n > ?"
-            arg_tuple += (start_time_n,)
+            block_query += " AND end_time_n >= ? "
         if end_time_n is not None:
-            sqlite_select_block_query += " AND block_index.start_time_n < ?"
-            arg_tuple += (end_time_n,)
-        if device_id is not None:
-            sqlite_select_block_query += " AND block_index.device_id = ?"
-            arg_tuple += (device_id,)
-        if patient_id is not None:
-            sqlite_select_block_query += " AND device_patient.patient_id = ?"
-            arg_tuple += (patient_id,)
-            sqlite_select_block_query += " AND device_patient.start_time < block_index.end_time_n"
-            sqlite_select_block_query += " AND block_index.start_time_n < device_patient.end_time"
-        sqlite_select_block_query += " ORDER BY block_index.file_id ASC, block_index.start_byte ASC"
+            block_query += " AND start_time_n <= ? "
+
+        block_results = []
 
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(sqlite_select_block_query, arg_tuple)
+            for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
+                args = (measure_id, encounter_device_id)
+                if start_time_n is not None:
+                    args += (encounter_start_time,)
+
+                if end_time_n is not None:
+                    args += (encounter_end_time,)
+
+                cursor.execute(block_query, args)
+                block_results.extend(cursor.fetchall())
+
+        return block_results
+
+    def get_device_time_ranges_by_patient(self, patient_id, start_time_n, end_time_n):
+        patient_device_query = "SELECT device_id, start_time, end_time FROM device_patient WHERE patient_id = ?"
+        args = (patient_id,)
+        if start_time_n is not None:
+            patient_device_query += " AND end_time >= ? "
+            args += (start_time_n,)
+        if end_time_n is not None:
+            patient_device_query += " AND start_time <= ? "
+            args += (end_time_n,)
+        with self.sqlite_db_connection(begin=False) as (conn, cursor):
+            args = (patient_id,) + ((start_time_n,) if start_time_n is not None else ()) + (
+                (end_time_n,) if end_time_n is not None else ())
+            cursor.execute(patient_device_query, args)
             return cursor.fetchall()
 
     def select_intervals(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
-        """
-        interval_index.measure_id = measure_id
-        if start_time_n is not Null: interval_index.end_time_n > start_time_n
-        if end_time_n is not Null: interval_index.start_time_n < end_time_n
-        if device_id is not Null: interval_index.device_id = device_id
-        if patient_id is not Null:
-            device_patient.patient_id = patient_id
-            and device_patient.device_id = interval_index.device_id
-            and device_patient.start_time < interval_index.end_time_n
-            and interval_index.start_time_n < device_patient.end_time_n
-        """
-        arg_tuple = ()
-        sqlite_select_interval_query = "SELECT interval_index.id, interval_index.measure_id, interval_index.device_id, interval_index.start_time_n, interval_index.end_time_n FROM interval_index"
+        assert device_id is not None or patient_id is not None, "Either device_id or patient_id must be provided"
+
         if patient_id is not None:
-            sqlite_select_interval_query += " INNER JOIN device_patient ON device_patient.device_id = interval_index.device_id"
-        sqlite_select_interval_query += " WHERE interval_index.measure_id = ?"
-        arg_tuple += (measure_id,)
+            device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
+        else:
+            device_time_ranges = [(device_id, start_time_n, end_time_n)]
+
+        interval_query = """
+                        SELECT
+                            id, measure_id, device_id, start_time_n, end_time_n
+                        FROM
+                            interval_index
+                        WHERE
+                            measure_id = ? AND device_id = ?"""
+
         if start_time_n is not None:
-            sqlite_select_interval_query += " AND interval_index.end_time_n > ?"
-            arg_tuple += (start_time_n,)
+            interval_query += " AND end_time_n >= ? "
         if end_time_n is not None:
-            sqlite_select_interval_query += " AND interval_index.start_time_n < ?"
-            arg_tuple += (end_time_n,)
-        if device_id is not None:
-            sqlite_select_interval_query += " AND interval_index.device_id = ?"
-            arg_tuple += (device_id,)
-        if patient_id is not None:
-            sqlite_select_interval_query += " AND device_patient.patient_id = ?"
-            arg_tuple += (patient_id,)
-            sqlite_select_interval_query += " AND device_patient.start_time < interval_index.end_time_n"
-            sqlite_select_interval_query += " AND interval_index.start_time_n < device_patient.end_time"
-        sqlite_select_interval_query += " ORDER BY interval_index.start_time_n ASC"
+            interval_query += " AND start_time_n <= ? "
+
+        block_results = []
 
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(sqlite_select_interval_query, arg_tuple)
-            return cursor.fetchall()
+            for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
+                args = (measure_id, encounter_device_id)
+                if start_time_n is not None:
+                    args += (encounter_start_time,)
+
+                if end_time_n is not None:
+                    args += (encounter_end_time,)
+
+                cursor.execute(interval_query, args)
+                block_results.extend(cursor.fetchall())
+
+        return block_results
 
     def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[int] = None, start_time: int = None,
                           end_time: int = None):

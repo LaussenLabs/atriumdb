@@ -59,3 +59,21 @@ sqlite_insert_ignore_encounter_query = "INSERT OR IGNORE INTO encounter (patient
                                        "VALUES (?, ?, ?, ?, ?, ?, ?);"
 sqlite_insert_ignore_device_encounter_query = "INSERT OR IGNORE INTO device_encounter (device_id, encounter_id, start_time, end_time, source_id) " \
                                               "VALUES (?, ?, ?, ?, ?);"
+
+
+def sqlite_get_query_with_patient_id(measure_id, patient_id, start_time_n=None, end_time_n=None):
+    query = \
+        "FROM block_index " \
+        "INNER JOIN device_patient ON device_patient.device_id = block_index.device_id " \
+        "WHERE block_index.measure_id = ? " \
+        "AND device_patient.patient_id = ? " \
+        "AND device_patient.start_time < block_index.end_time_n " \
+        "AND block_index.start_time_n < device_patient.end_time "
+    arg_tuple = (measure_id, patient_id)
+    if start_time_n is not None:
+        query += " AND block_index.end_time_n >= ?"
+        arg_tuple += (start_time_n,)
+    if end_time_n is not None:
+        query += " AND block_index.start_time_n <= ?"
+        arg_tuple += (end_time_n,)
+    return query, arg_tuple
