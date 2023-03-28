@@ -385,6 +385,9 @@ class MariaDBHandler(SQLHandler):
         if end_time_n is not None:
             block_query += " AND start_time_n <= ? "
 
+        # Order By
+        block_query += " ORDER BY file_id, start_byte ASC"
+
         block_results = []
 
         with self.maria_db_connection(begin=False) as (conn, cursor):
@@ -411,8 +414,6 @@ class MariaDBHandler(SQLHandler):
             patient_device_query += " AND start_time <= ? "
             args += (end_time_n,)
         with self.maria_db_connection(begin=False) as (conn, cursor):
-            args = (patient_id,) + ((start_time_n,) if start_time_n is not None else ()) + (
-                (end_time_n,) if end_time_n is not None else ())
             cursor.execute(patient_device_query, args)
             device_time_ranges = cursor.fetchall()
         return device_time_ranges
@@ -438,7 +439,7 @@ class MariaDBHandler(SQLHandler):
         if end_time_n is not None:
             interval_query += " AND start_time_n <= ? "
 
-        block_results = []
+        interval_results = []
 
         with self.maria_db_connection(begin=False) as (conn, cursor):
             for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
@@ -450,9 +451,9 @@ class MariaDBHandler(SQLHandler):
                     args += (encounter_end_time,)
 
                 cursor.execute(interval_query, args)
-                block_results.extend(cursor.fetchall())
+                interval_results.extend(cursor.fetchall())
 
-        return block_results
+        return interval_results
 
     def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[int] = None, start_time: int = None,
                           end_time: int = None):
