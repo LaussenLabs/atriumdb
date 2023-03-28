@@ -49,7 +49,7 @@ maria_interval_index_create_query = """CREATE TABLE IF NOT EXISTS interval_index
     end_time_n BIGINT NOT NULL,
     CONSTRAINT interval_index_ibfk_1 FOREIGN KEY (measure_id) REFERENCES measure(id),
     CONSTRAINT interval_index_ibfk_2 FOREIGN KEY (device_id) REFERENCES device(id),
-    INDEX (start_time_n, end_time_n)
+    INDEX (measure_id, device_id, start_time_n, end_time_n)
 );"""
 
 
