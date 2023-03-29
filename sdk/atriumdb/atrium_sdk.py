@@ -97,9 +97,8 @@ class AtriumSDK:
         metadata_connection_type = DEFAULT_META_CONNECTION_TYPE if \
             metadata_connection_type is None else metadata_connection_type
 
-        assert dataset_location is not None or tsc_file_location is not None
-        if dataset_location is None and tsc_file_location is None and api_url is 'api':
-            raise ValueError("dataset_location or tsc_file_location must be specified.")
+        if dataset_location is None and tsc_file_location is None and api_url is None:
+            raise ValueError("One of dataset_location, tsc_file_location or api_url must be specified.")
 
         if isinstance(dataset_location, str):
             dataset_location = Path(dataset_location)
@@ -151,16 +150,18 @@ class AtriumSDK:
         else:
             raise ValueError("metadata_connection_type must be one of sqlite, mysql, mariadb or api")
 
-        self._measures = self.get_all_measures()
-        self._devices = self.get_all_devices()
+        if metadata_connection_type != "api":
 
-        self._measure_ids = {}
-        for measure_id, measure_info in self._measures.items():
-            self._measure_ids[(measure_info['tag'], measure_info['freq_nhz'], measure_info['unit'])] = measure_id
+            self._measures = self.get_all_measures()
+            self._devices = self.get_all_devices()
 
-        self._device_ids = {}
-        for device_id, device_info in self._devices.items():
-            self._device_ids[device_info['tag']] = device_id
+            self._measure_ids = {}
+            for measure_id, measure_info in self._measures.items():
+                self._measure_ids[(measure_info['tag'], measure_info['freq_nhz'], measure_info['unit'])] = measure_id
+
+            self._device_ids = {}
+            for device_id, device_info in self._devices.items():
+                self._device_ids[device_info['tag']] = device_id
 
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None,
@@ -663,26 +664,38 @@ class AtriumSDK:
 
     def get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int,
                      device_id: int = None, patient_id: int = None, mrn: int = None,
-                     auto_convert_gap_to_time_array=True, return_intervals=False, analog=True):
+                     auto_convert_gap_to_time_array=True, return_intervals=False, analog=True, test_client=None):
+
         headers = {"Authorization": "Bearer {}".format(self.token)}
 
         block_info_url = self.get_block_info_api_url(measure_id, start_time_n, end_time_n, device_id, patient_id, mrn)
 
-        block_info_response = requests.get(block_info_url, headers=headers)
+        if test_client is not None:
+            # Used for Testing
+            block_info_response = test_client.get(block_info_url)
+            if not block_info_response.status_code == 200:
+                print(block_info_url)
+                raise block_info_response.raise_for_status()
 
-        if not block_info_response.ok:
-            raise block_info_response.raise_for_status()
+        else:
+            block_info_response = requests.get(block_info_url, headers=headers)
+
+            if not block_info_response.ok:
+                raise block_info_response.raise_for_status()
 
         block_info_list = block_info_response.json()
 
         if len(block_info_list) == 0:
             return [], np.array([], dtype=np.int64), np.array([], dtype=np.float64)
 
-        block_requests = self.threaded_block_requests(block_info_list)
+        if test_client is not None:
+            block_requests = self.get_block_requests_from_test_client(block_info_list, test_client)
+        else:
+            block_requests = self.threaded_block_requests(block_info_list)
 
-        for response in block_requests:
-            if not response.ok:
-                raise response.raise_for_status()
+            for response in block_requests:
+                if not response.ok:
+                    raise response.raise_for_status()
 
         encoded_bytes = np.concatenate(
             [np.frombuffer(response.content, dtype=np.uint8) for response in block_requests], axis=None)
@@ -694,6 +707,18 @@ class AtriumSDK:
                                   auto_convert_gap_to_time_array, return_intervals)
 
         return headers, r_times, r_values
+
+    def get_block_requests_from_test_client(self, block_info_list, test_client):
+        block_requests = []
+        for block_info in block_info_list:
+            block_id = block_info['id']
+            block_request_url = self.api_url + f"/v1/sdk/blocks/{block_id}"
+            response = test_client.get(block_request_url)
+            block_requests.append(response)
+        for response in block_requests:
+            if not response.status_code == 200:
+                raise response.raise_for_status()
+        return block_requests
 
     def threaded_block_requests(self, block_info_list):
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -925,31 +950,6 @@ class AtriumSDK:
             A numpy 1D array representing the value data.
 
         """
-
-        def print_params(measure_id: int, start_time_n: int = None, end_time_n: int = None, device_id: int = None,
-                         patient_id=None, auto_convert_gap_to_time_array=True, return_intervals=False, analog=True,
-                         block_info=None, time_units: str = "ns"):
-            print("measure_id:", measure_id)
-            print("start_time_n:", start_time_n)
-            print("end_time_n:", end_time_n)
-            print("device_id:", device_id)
-            print("patient_id:", patient_id)
-            print("auto_convert_gap_to_time_array:", auto_convert_gap_to_time_array)
-            print("return_intervals:", return_intervals)
-            print("analog:", analog)
-            print("block_info:", block_info)
-            print("time_units:", time_units)
-
-        print_params(measure_id=measure_id,
-                     start_time_n=start_time_n,
-                     end_time_n=end_time_n,
-                     device_id=device_id,
-                     patient_id=patient_id,
-                     auto_convert_gap_to_time_array=auto_convert_gap_to_time_array,
-                     return_intervals=return_intervals,
-                     analog=analog,
-                     block_info=block_info,
-                     time_units=time_units)
 
         # check that a correct unit type was entered
         time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
