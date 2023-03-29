@@ -1,3 +1,6 @@
+from pathlib import Path
+from typing import Optional
+
 from atriumdb import AtriumSDK
 
 class MockAPI:
@@ -16,28 +19,28 @@ class MockAPI:
     ):
         # BASE VALIDATION
         if measure_id is None:
-            raise HTTPException(status_code=400, detail="A measure_id must be specified")
+            raise ValueError("A measure_id must be specified")
         if sum(x is not None for x in (device_id, patient_id, mrn)) != 1:
-            raise HTTPException(status_code=400, detail="Exactly one of device_id, patient_id, or mrn must be specified")
+            raise ValueError("Exactly one of device_id, patient_id, or mrn must be specified")
         if start_time > end_time:
-            raise HTTPException(status_code=400, detail="The start time must be lower than the end time")
+            raise ValueError("The start time must be lower than the end time")
 
         if device_id is not None:
             device_info = self.sdk.sql_handler.get_device_info(device_id=device_id)
 
             # If the device_id doesn't exist in atriumdb raise an error
             if device_info is None:
-                raise HTTPException(status_code=400, detail=f"Cannot find device_id={device_id} in AtriumDB")
+                raise ValueError(f"Cannot find device_id={device_id} in AtriumDB")
 
         if patient_id is not None:
             patient_id_dict = self.sdk.get_patient_id_to_mrn_map([patient_id])
             if patient_id not in patient_id_dict:
-                raise HTTPException(status_code=400, detail=f"Cannot find patient_id={patient_id} in AtriumDB.")
+                raise ValueError(f"Cannot find patient_id={patient_id} in AtriumDB.")
 
         if mrn is not None:
             mrn_patient_id_map = self.sdk.get_mrn_to_patient_id_map([int(mrn)])
             if mrn not in mrn_patient_id_map:
-                raise HTTPException(status_code=400, detail=f"Cannot find mrn={mrn} in AtriumDB.")
+                raise ValueError(f"Cannot find mrn={mrn} in AtriumDB.")
             patient_id = mrn_patient_id_map[mrn]
 
         block_info = []
@@ -67,10 +70,10 @@ class MockAPI:
             block_id: int,
     ):
         # Get block_info
-        block_info = atriumdb_sdk.sql_handler.select_block(block_id=block_id)
+        block_info = self.sdk.sql_handler.select_block(block_id=block_id)
 
         if block_info is None:
-            raise HTTPException(status_code=404, detail=f"Cannot find block_id={block_id} in AtriumDB.")
+            raise ValueError(f"Cannot find block_id={block_id} in AtriumDB.")
 
         # Get indices of the block_info tuple
         measure_id_idx = 1
@@ -80,11 +83,11 @@ class MockAPI:
         num_bytes_idx = 5
 
         file_id_list = [block_info[file_id_idx]]
-        filename = atriumdb_sdk.get_filename_dict(file_id_list)[block_info[file_id_idx]]
+        filename = self.sdk.get_filename_dict(file_id_list)[block_info[file_id_idx]]
 
         if not Path(filename).is_file():
-            filename = atriumdb_sdk.file_api.to_abs_path(filename, block_info[measure_id_idx], block_info[device_id_idx])
+            filename = self.sdk.file_api.to_abs_path(filename, block_info[measure_id_idx], block_info[device_id_idx])
 
         with open(filename, 'rb') as file:
             file.seek(block_info[start_byte_idx])
-            return Response(file.read(block_info[num_bytes_idx]))
+            return file.read(block_info[num_bytes_idx])

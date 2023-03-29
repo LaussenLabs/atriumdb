@@ -98,12 +98,12 @@ class AtriumSDK:
             metadata_connection_type is None else metadata_connection_type
 
         assert dataset_location is not None or tsc_file_location is not None
-        if dataset_location is None and tsc_file_location is None:
+        if dataset_location is None and tsc_file_location is None and api_url is 'api':
             raise ValueError("dataset_location or tsc_file_location must be specified.")
 
         if isinstance(dataset_location, str):
             dataset_location = Path(dataset_location)
-        if tsc_file_location is None:
+        if tsc_file_location is None and metadata_connection_type != 'api':
             tsc_file_location = dataset_location / 'tsc'
 
         if num_threads is None:
