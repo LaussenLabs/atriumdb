@@ -29,14 +29,16 @@ is used to export data from the database to common formats.
 
 The SDK data is defined by the following environment variables or corresponding command line options:
 
-ATRIUMDB_ENDPOINT_URL (--endpoint-url): This environment variable specifies the endpoint to connect to for a remote AtriumDB server.
-
 ATRIUMDB_DATASET_LOCATION (--dataset-location): This environment variable specifies the directory location where the Atrium SDK data will 
 be stored.
 
 ATRIUMDB_METADATA_URI (--metadata-uri): This environment variable specifies the URI of a metadata server, which includes the db_type, host, password, db_name, and other relevant connection details. The format should be "<db_type>://<user>:<password>@<host>:<port>/<database_name>".
 
-ATRIUMDB_DATABASE_TYPE (--database-type): This environment variable specifies the type of metadata database supporting the dataset. The possible values are "sqlite", "mariadb", or "mysql".
+ATRIUMDB_DATABASE_TYPE (--database-type): This environment variable specifies the type of metadata database supporting the dataset. The possible values are "sqlite", "mariadb", "mysql" or "api".
+
+ATRIUMDB_ENDPOINT_URL (--endpoint-url): This environment variable specifies the endpoint to connect to for a remote AtriumDB server.
+
+ATRIUMDB_API_TOKEN (--api-token): This environment variable specifies a token to authorize api access.
 
 You can use command line options in place of the environment variables for a more flexible configuration.
 
@@ -46,17 +48,20 @@ and the Atrium database, please visit the documentation at https://atriumdb.sick
 
 
 @click.group(help=cli_help_text)
-@click.option("--endpoint-url", type=str, envvar="ATRIUMDB_ENDPOINT_URL",
-              help="The endpoint to connect to for a remote AtriumDB server")
 @click.option("--dataset-location", type=click.Path(), envvar="ATRIUMDB_DATASET_LOCATION",
               help="The local path to a dataset")
 @click.option("--metadata-uri", type=str, envvar="ATRIUMDB_METADATA_URI", help="The URI of a metadata server")
-@click.option("--database-type", type=click.Choice(SUPPORTED_DB_TYPES), envvar="ATRIUMDB_DATABASE_TYPE",
+@click.option("--database-type", type=click.Choice(SUPPORTED_DB_TYPES + ["api"]), envvar="ATRIUMDB_DATABASE_TYPE",
               help="The type of metadata database supporting the dataset.")
+@click.option("--endpoint-url", type=str, envvar="ATRIUMDB_ENDPOINT_URL",
+              help="The endpoint to connect to for a remote AtriumDB server")
+@click.option("--api-token", type=str, envvar="ATRIUMDB_API_TOKEN",
+              help="A token to authorize api access.")
 @click.pass_context
-def cli(ctx, endpoint_url, dataset_location, metadata_uri, database_type):
+def cli(ctx, dataset_location, metadata_uri, database_type, endpoint_url, api_token):
     ctx.ensure_object(dict)
     ctx.obj["endpoint_url"] = endpoint_url
+    ctx.obj["api_token"] = api_token
     ctx.obj["dataset_location"] = dataset_location
     ctx.obj["metadata_uri"] = metadata_uri
     ctx.obj["database_type"] = database_type
@@ -94,6 +99,7 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
     mrns = None if mrns is not None and len(mrns) == 0 else list(mrns)
 
     endpoint_url = ctx.obj["endpoint_url"]
+    api_token = ctx.obj["api_token"]
     dataset_location = ctx.obj["dataset_location"]
     metadata_uri = ctx.obj["metadata_uri"]
     database_type = ctx.obj["database_type"]
@@ -166,9 +172,9 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
 def get_sdk_from_cli_params(dataset_location, metadata_uri):
     connection_params = None if metadata_uri is None else parse_metadata_uri(metadata_uri)
     metadata_connection_type = None if connection_params is None else connection_params['sqltype']
-    from_sdk = AtriumSDK(dataset_location=dataset_location, connection_params=connection_params,
-                         metadata_connection_type=metadata_connection_type)
-    return from_sdk
+    sdk = AtriumSDK(dataset_location=dataset_location, connection_params=connection_params,
+                    metadata_connection_type=metadata_connection_type)
+    return sdk
 
 
 @click.command(name="import")
