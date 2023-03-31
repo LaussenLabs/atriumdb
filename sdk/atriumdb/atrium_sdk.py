@@ -195,7 +195,6 @@ class AtriumSDK:
         :rtype: AtriumSDK
         """
 
-
         # Create Dataset Directory if it doesn't exist.
         dataset_location = Path(dataset_location)
         if dataset_location.is_file():
@@ -330,7 +329,8 @@ class AtriumSDK:
         all_old_file_blocks = []
         old_block_list = self.get_block_id_list(measure_id, start_time_n=int(time_0),
                                                 end_time_n=end_time_ns, device_id=device_id)
-        _LOGGER.debug(f"old_block_list:{old_block_list} = self.get_block_id_list(measure_id={measure_id}, start_time_n={int(time_0)}, end_time_n={end_time_ns}, device_id={device_id})")
+        _LOGGER.debug(
+            f"old_block_list:{old_block_list} = self.get_block_id_list(measure_id={measure_id}, start_time_n={int(time_0)}, end_time_n={end_time_ns}, device_id={device_id})")
 
         old_file_id_dict = self.get_filename_dict(list(set([row[3] for row in old_block_list])))
 
@@ -465,7 +465,7 @@ class AtriumSDK:
 
         overwrite_file_dict, old_block_ids, old_file_list = None, None, None
         if current_intervals_o.intersection(write_intervals_o).duration() > 0:
-            _LOGGER.debug(f"Overlap measure_id {measure_id}, device_id {device_id}, " 
+            _LOGGER.debug(f"Overlap measure_id {measure_id}, device_id {device_id}, "
                           f"existing intervals {current_intervals}, new intervals {write_intervals}")
             if OVERWRITE_SETTING_NAME not in self.settings_dict:
                 raise ValueError("Overwrite detected, but overwrite behavior not set.")
@@ -504,7 +504,8 @@ class AtriumSDK:
             overwrite_file_dict[filename] = (block_data, interval_data)
             # Update SQL
             old_file_ids = [file_id for file_id, filename in old_file_list]
-            _LOGGER.debug(f"{measure_id}, {device_id}): overwrite_file_dict: {overwrite_file_dict}\n old_block_ids: {old_block_ids}\n old_file_ids: {old_file_ids}\n")
+            _LOGGER.debug(
+                f"{measure_id}, {device_id}): overwrite_file_dict: {overwrite_file_dict}\n old_block_ids: {old_block_ids}\n old_file_ids: {old_file_ids}\n")
             self.sql_handler.update_tsc_file_data(overwrite_file_dict, old_block_ids, old_file_ids)
 
             # Delete files
@@ -741,27 +742,25 @@ class AtriumSDK:
 
     def get_block_bytes_response(self, block_id):
         headers = {"Authorization": "Bearer {}".format(self.token)}
-        block_request_url = self.api_url + "/sdk/blocks/{}".format(block_id)
+        block_request_url = self.api_url + "sdk/blocks/{}".format(block_id)
         return requests.get(block_request_url, headers=headers)
 
     def get_block_bytes_response_from_session(self, block_id, session: Session):
-        block_request_url = self.api_url + "/sdk/blocks/{}".format(block_id)
+        block_request_url = self.api_url + "sdk/blocks/{}".format(block_id)
         return session.get(block_request_url)
 
     def get_block_info_api_url(self, measure_id, start_time_n, end_time_n, device_id, patient_id, mrn):
         if device_id is not None:
-            block_info_url = \
-                self.api_url + "/sdk/blocks/?start_time={}&end_time={}&measure_id={}&device_id={}".format(
-                    start_time_n, end_time_n, measure_id, device_id)
+            block_info_url = "sdk/blocks/?start_time={}&end_time={}&measure_id={}&device_id={}".format(
+                                     start_time_n, end_time_n, measure_id, device_id)
+
         elif patient_id is not None:
-            block_info_url = \
-                self.api_url + "/sdk/blocks/?start_time={}&end_time={}&measure_id={}&patient_id={}".format(
-                    start_time_n, end_time_n, measure_id, patient_id)
+            block_info_url = "sdk/blocks/?start_time={}&end_time={}&measure_id={}&patient_id={}".format(
+                                         start_time_n, end_time_n, measure_id, patient_id)
 
         elif mrn is not None:
-            block_info_url = \
-                self.api_url + "/sdk/blocks/?start_time={}&end_time={}&measure_id={}&mrn={}".format(
-                    start_time_n, end_time_n, measure_id, mrn)
+            block_info_url = "sdk/blocks/?start_time={}&end_time={}&measure_id={}&mrn={}".format(
+                                         start_time_n, end_time_n, measure_id, mrn)
         else:
             raise ValueError("One of [device_id, patient_id, mrn] must be specified.")
         return block_info_url
@@ -1336,7 +1335,7 @@ class AtriumSDK:
         device_tuple_list = self.sql_handler.select_all_devices()
         device_dict = {}
         for device_id, device_tag, device_name, device_manufacturer, device_model, device_type, device_bed_id, \
-                device_source_id in device_tuple_list:
+            device_source_id in device_tuple_list:
             device_dict[device_id] = {
                 'id': device_id,
                 'tag': device_tag,
@@ -1386,7 +1385,7 @@ class AtriumSDK:
         measure_tuple_list = self.sql_handler.select_all_measures()
         measure_dict = {}
         for measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, measure_unit, measure_unit_label, \
-                measure_unit_code, measure_source_id in measure_tuple_list:
+            measure_unit_code, measure_source_id in measure_tuple_list:
             measure_dict[measure_id] = {
                 'id': measure_id,
                 'tag': measure_tag,
@@ -1805,18 +1804,18 @@ class AtriumSDK:
             return None
 
         measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, measure_unit, measure_unit_label, \
-            measure_unit_code, measure_source_id = row
+        measure_unit_code, measure_source_id = row
 
         measure_info = {
-                'id': measure_id,
-                'tag': measure_tag,
-                'name': measure_name,
-                'freq_nhz': measure_freq_nhz,
-                'code': measure_code,
-                'unit': measure_unit,
-                'unit_label': measure_unit_label,
-                'unit_code': measure_unit_code,
-                'source_id': measure_source_id
+            'id': measure_id,
+            'tag': measure_tag,
+            'name': measure_name,
+            'freq_nhz': measure_freq_nhz,
+            'code': measure_code,
+            'unit': measure_unit,
+            'unit_label': measure_unit_label,
+            'unit_code': measure_unit_code,
+            'source_id': measure_source_id
         }
 
         self._measures[measure_id] = measure_info
@@ -1979,19 +1978,19 @@ class AtriumSDK:
 
         if row is None:
             return None
-        
+
         device_id, device_tag, device_name, device_manufacturer, device_model, device_type, device_bed_id, \
-            device_source_id = row
+        device_source_id = row
 
         device_info = {
-                'id': device_id,
-                'tag': device_tag,
-                'name': device_name,
-                'manufacturer': device_manufacturer,
-                'model': device_model,
-                'type': device_type,
-                'bed_id': device_bed_id,
-                'source_id': device_source_id,
+            'id': device_id,
+            'tag': device_tag,
+            'name': device_name,
+            'manufacturer': device_manufacturer,
+            'model': device_model,
+            'type': device_type,
+            'bed_id': device_bed_id,
+            'source_id': device_source_id,
         }
 
         self._devices[device_id] = device_info
@@ -2016,7 +2015,9 @@ class AtriumSDK:
         response = requests.request(method, url, headers=headers, **kwargs)
 
         if response.status_code != 200:
-            raise ValueError(f"API request failed with status code {response.status_code}: {response.text}")
+            print(url)
+            raise ValueError(
+                f"API request failed with status code {response.status_code}: {response.text} \n url: {url}")
 
         return response.json()
 
