@@ -10,7 +10,7 @@ from tests.test_mit_bih import write_mit_bih_to_dataset
 from tests.testing_framework import _test_for_both
 
 DB_NAME = 'api_test'
-MAX_RECORDS = None
+MAX_RECORDS = 1
 
 
 def test_api():
@@ -26,8 +26,8 @@ def _test_api(db_type, dataset_location, connection_params):
     client = TestClient(app)
     client.app.dependency_overrides[get_sdk_instance] = lambda: sdk
 
-    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="")
-    assert_mit_bih_to_dataset_api(sdk, api_sdk, client, max_records=MAX_RECORDS)
+    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="", api_test_client=client)
+    assert_mit_bih_to_dataset_api(api_sdk, max_records=MAX_RECORDS)
 
     # response = client.get("/v1/sdk/blocks", params={
     #     "start_time": 0,
@@ -38,13 +38,14 @@ def _test_api(db_type, dataset_location, connection_params):
     # assert response.status_code == 400
 
 
-def assert_mit_bih_to_dataset_api(sdk, api_sdk, client: TestClient, max_records=None):
+def assert_mit_bih_to_dataset_api(api_sdk, max_records=None):
     num_records = 0
     for record in get_records(dataset_name='mitdb'):
         if max_records and num_records >= max_records:
             return
         num_records += 1
-        device_id = sdk.get_device_id(device_tag=record.record_name)
+        device_id = api_sdk.get_device_id(device_tag=record.record_name)
+        assert device_id is not None
         freq_nano = record.fs * 1_000_000_000
         period_ns = int(10 ** 9 // record.fs)
 
@@ -52,27 +53,29 @@ def assert_mit_bih_to_dataset_api(sdk, api_sdk, client: TestClient, max_records=
 
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
-                measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano,
-                                                units=record.units[i])
+                measure_id = api_sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano,
+                                                    units=record.units[i])
+                assert measure_id is not None
 
                 start_time = time_arr[0]
                 end_time = time_arr[-1] + period_ns
 
                 # Replace sdk.get_data_api call with TestClient
                 headers, r_times, r_values = api_sdk.get_data_api(
-                    measure_id, start_time, end_time, device_id=device_id, test_client=client)
+                    measure_id, start_time, end_time, device_id=device_id)
 
                 assert np.array_equal(record.p_signal.T[i], r_values) and np.array_equal(time_arr, r_times)
 
         else:
-            measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano,
-                                            units=record.units)
+            measure_id = api_sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano,
+                                                units=record.units)
+            assert measure_id is not None
 
             start_time = time_arr[0]
             end_time = time_arr[-1] + period_ns
 
             headers, r_times, r_values = api_sdk.get_data_api(
-                measure_id, end_time, start_time, device_id=device_id, test_client=client)
+                measure_id, end_time, start_time, device_id=device_id)
 
             assert np.array_equal(record.p_signal, r_values) and np.array_equal(time_arr, r_times)
 

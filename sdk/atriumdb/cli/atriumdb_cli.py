@@ -172,8 +172,8 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
 def get_sdk_from_cli_params(dataset_location, metadata_uri):
     connection_params = None if metadata_uri is None else parse_metadata_uri(metadata_uri)
     metadata_connection_type = None if connection_params is None else connection_params['sqltype']
-    sdk = AtriumSDK(dataset_location=dataset_location, connection_params=connection_params,
-                    metadata_connection_type=metadata_connection_type)
+    sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type=metadata_connection_type,
+                    connection_params=connection_params)
     return sdk
 
 
@@ -247,7 +247,7 @@ def measure_ls(ctx, tag_match, name_match, unit, freq_hz, freq_nhz, source_id):
     metadata_uri = ctx.obj["metadata_uri"]
 
     sdk = get_sdk_from_cli_params(dataset_location, metadata_uri)
-    result = sdk.search_measures(tag_match=tag_match, freq_nhz=freq_nhz, unit=unit, name_match=name_match)
+    result = sdk.search_measures(tag_match=tag_match, freq=freq_nhz, unit=unit, name_match=name_match)
 
     headers = ["Measure ID", "Tag", "Name", "Frequency (nHz)", "Code", "Unit", "Unit Label", "Unit Code", "Source ID"]
     table = []

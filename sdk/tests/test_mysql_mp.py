@@ -15,7 +15,7 @@ dest_tsc_path = "/mnt/datasets/atriumdb_popular_local/tsc"
 
 # sdk = AtriumSDK(database_uri=phillips_database_uri, block_codec_dll_path=DLL_PATH,
 #                 tsc_file_location=PHILLIPS_TSC_FILE_LOCATION, session_string=None)
-sdk = AtriumSDK(dataset_location=dest_tsc_path, database_uri=dest_db_uri)
+sdk = AtriumSDK(dataset_location=dest_tsc_path)
 
 
 def process(measure, start, end, device):
@@ -28,7 +28,7 @@ def process(measure, start, end, device):
 
 def initializer():
     global sdk
-    sdk = AtriumSDK(dataset_location=dest_tsc_path, database_uri=dest_db_uri, atriumdb_lib_path=DLL_PATH)
+    sdk = AtriumSDK(dataset_location=dest_tsc_path, atriumdb_lib_path=DLL_PATH)
     # sdk = AtriumSDK(database_uri=phillips_database_uri, block_codec_dll_path=DLL_PATH,
     #                 tsc_file_location=PHILLIPS_TSC_FILE_LOCATION, session_string=None)
     sdk.mp_init()

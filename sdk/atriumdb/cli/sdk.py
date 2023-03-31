@@ -9,8 +9,7 @@ load_dotenv()
 def get_sdk_from_env_vars():
     connection_params, dataset_location, metadata_connection_type = get_sdk_params_from_env_vars()
 
-    sdk = AtriumSDK(dataset_location=dataset_location,
-                    metadata_connection_type=metadata_connection_type,
+    sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type=metadata_connection_type,
                     connection_params=connection_params)
     return sdk
 

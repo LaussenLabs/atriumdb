@@ -1,4 +1,5 @@
 import numpy as np
+from urllib.parse import urljoin
 
 from atriumdb.adb_functions import get_block_and_interval_data, condense_byte_read_list, find_intervals, \
     merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz
@@ -71,14 +72,12 @@ class AtriumSDK:
     >>>     'database': "your_dataset_name",
     >>>     'port': 3306
     >>> }
-    >>> sdk = AtriumSDK(dataset_location="./example_dataset",
-    >>>                 metadata_connection_type=metadata_connection_type,
-    >>>                 connection_params=connection_params)
+    >>> sdk = AtriumSDK(dataset_location="./example_dataset",metadata_connection_type=metadata_connection_type,connection_params=connection_params)
 
     >>> # Remote API Mode
     >>> api_url = "http://example.com/api/v1"
     >>> token = "4e78a93749ead7893"
-    >>> sdk = AtriumSDK(api_url=api_url, token=token)
+    >>> sdk = AtriumSDK(api_url=api_url,token=token)
 
     :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
     :param str metadata_connection_type: Specifies the type of connection to use for metadata. Options are "sqlite", "mysql", "mariadb", or "api". Default "sqlite".
@@ -92,10 +91,13 @@ class AtriumSDK:
 
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
                  connection_params: dict = None, num_threads: int = None, api_url: str = None, token: str = None,
-                 tsc_file_location: str = None, atriumdb_lib_path: str = None):
+                 tsc_file_location: str = None, atriumdb_lib_path: str = None, api_test_client=None):
+        self.api_test_client = api_test_client
 
         metadata_connection_type = DEFAULT_META_CONNECTION_TYPE if \
             metadata_connection_type is None else metadata_connection_type
+
+        self.metadata_connection_type = metadata_connection_type
 
         if dataset_location is None and tsc_file_location is None and api_url is None:
             raise ValueError("One of dataset_location, tsc_file_location or api_url must be specified.")
@@ -664,32 +666,32 @@ class AtriumSDK:
 
     def get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int,
                      device_id: int = None, patient_id: int = None, mrn: int = None,
-                     auto_convert_gap_to_time_array=True, return_intervals=False, analog=True, test_client=None):
+                     auto_convert_gap_to_time_array=True, return_intervals=False, analog=True):
 
         headers = {"Authorization": "Bearer {}".format(self.token)}
 
         block_info_url = self.get_block_info_api_url(measure_id, start_time_n, end_time_n, device_id, patient_id, mrn)
+        block_info_list = self._request("GET", block_info_url)
 
-        if test_client is not None:
-            # Used for Testing
-            block_info_response = test_client.get(block_info_url)
-            if not block_info_response.status_code == 200:
-                print(block_info_url)
-                raise block_info_response.raise_for_status()
+        # if self.api_test_client is not None:
+        #     # Used for Testing
+        #     block_info_response = self.api_test_client.get(block_info_url)
+        #     if not block_info_response.status_code == 200:
+        #         print(block_info_url)
+        #         raise block_info_response.raise_for_status()
+        #
+        # else:
+        #     block_info_response = requests.get(block_info_url, headers=headers)
+        #     if not block_info_response.ok:
+        #         raise block_info_response.raise_for_status()
 
-        else:
-            block_info_response = requests.get(block_info_url, headers=headers)
-
-            if not block_info_response.ok:
-                raise block_info_response.raise_for_status()
-
-        block_info_list = block_info_response.json()
+        # block_info_list = block_info_response.json()
 
         if len(block_info_list) == 0:
             return [], np.array([], dtype=np.int64), np.array([], dtype=np.float64)
 
-        if test_client is not None:
-            block_requests = self.get_block_requests_from_test_client(block_info_list, test_client)
+        if self.api_test_client is not None:
+            block_requests = self.get_block_requests_from_test_client(block_info_list)
         else:
             block_requests = self.threaded_block_requests(block_info_list)
 
@@ -708,12 +710,12 @@ class AtriumSDK:
 
         return headers, r_times, r_values
 
-    def get_block_requests_from_test_client(self, block_info_list, test_client):
+    def get_block_requests_from_test_client(self, block_info_list):
         block_requests = []
         for block_info in block_info_list:
             block_id = block_info['id']
-            block_request_url = self.api_url + f"/v1/sdk/blocks/{block_id}"
-            response = test_client.get(block_request_url)
+            block_request_url = self.api_url + f"/sdk/blocks/{block_id}"
+            response = self.api_test_client.get(block_request_url)
             block_requests.append(response)
         for response in block_requests:
             if not response.status_code == 200:
@@ -739,26 +741,26 @@ class AtriumSDK:
 
     def get_block_bytes_response(self, block_id):
         headers = {"Authorization": "Bearer {}".format(self.token)}
-        block_request_url = self.api_url + "/v1/sdk/blocks/{}".format(block_id)
+        block_request_url = self.api_url + "/sdk/blocks/{}".format(block_id)
         return requests.get(block_request_url, headers=headers)
 
     def get_block_bytes_response_from_session(self, block_id, session: Session):
-        block_request_url = self.api_url + "/v1/sdk/blocks/{}".format(block_id)
+        block_request_url = self.api_url + "/sdk/blocks/{}".format(block_id)
         return session.get(block_request_url)
 
     def get_block_info_api_url(self, measure_id, start_time_n, end_time_n, device_id, patient_id, mrn):
         if device_id is not None:
             block_info_url = \
-                self.api_url + "/v1/sdk/blocks/?start_time={}&end_time={}&measure_id={}&device_id={}".format(
+                self.api_url + "/sdk/blocks/?start_time={}&end_time={}&measure_id={}&device_id={}".format(
                     start_time_n, end_time_n, measure_id, device_id)
         elif patient_id is not None:
             block_info_url = \
-                self.api_url + "/v1/sdk/blocks/?start_time={}&end_time={}&measure_id={}&patient_id={}".format(
+                self.api_url + "/sdk/blocks/?start_time={}&end_time={}&measure_id={}&patient_id={}".format(
                     start_time_n, end_time_n, measure_id, patient_id)
 
         elif mrn is not None:
             block_info_url = \
-                self.api_url + "/v1/sdk/blocks/?start_time={}&end_time={}&measure_id={}&mrn={}".format(
+                self.api_url + "/sdk/blocks/?start_time={}&end_time={}&measure_id={}&mrn={}".format(
                     start_time_n, end_time_n, measure_id, mrn)
         else:
             raise ValueError("One of [device_id, patient_id, mrn] must be specified.")
@@ -1329,6 +1331,8 @@ class AtriumSDK:
             model, type, bed_id, and source_id.
         :rtype: dict
         """
+        if self.metadata_connection_type == "api":
+            return self._api_get_all_devices()
         device_tuple_list = self.sql_handler.select_all_devices()
         device_dict = {}
         for device_id, device_tag, device_name, device_manufacturer, device_model, device_type, device_bed_id, \
@@ -1376,6 +1380,9 @@ class AtriumSDK:
             (in nanohertz), code, unit, unit label, unit code, and source_id.
         :rtype: dict
         """
+        if self.metadata_connection_type == "api":
+            return self._api_get_all_measures()
+
         measure_tuple_list = self.sql_handler.select_all_measures()
         measure_dict = {}
         for measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, measure_unit, measure_unit_label, \
@@ -1394,7 +1401,7 @@ class AtriumSDK:
 
         return measure_dict
 
-    def get_all_patients(self):
+    def get_all_patients(self, skip=None, limit=None):
         """
         Retrieve information about all patients in the linked relational database.
 
@@ -1426,9 +1433,14 @@ class AtriumSDK:
             first_name, middle_name, last_name, first_seen, last_updated, and source_id.
         :rtype: dict
         """
+        if self.metadata_connection_type == "api":
+            return self._api_get_all_patients(skip=skip, limit=limit)
         patient_tuple_list = self.sql_handler.select_all_patients()
+        skip = 0 if skip is None else skip
+        limit = len(patient_tuple_list) if limit is None else limit
         patient_dict = {}
-        for patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id in patient_tuple_list:
+        for patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id in \
+                patient_tuple_list[skip:limit]:
             patient_dict[patient_id] = {
                 'id': patient_id,
                 'mrn': mrn,
@@ -1458,6 +1470,8 @@ class AtriumSDK:
             its id, tag, name, manufacturer, model, type, bed_id, and source_id.
         :rtype: dict
         """
+        if self.metadata_connection_type == "api":
+            return self._api_search_devices(tag_match, name_match)
         all_devices = self.get_all_devices()
         result = {}
         for device_id, device_info in all_devices.items():
@@ -1469,32 +1483,41 @@ class AtriumSDK:
                 result[device_id] = device_info
         return result
 
-    def search_measures(self, tag_match=None, freq_nhz=None, unit=None, name_match=None):
+    def search_measures(self, tag_match=None, freq=None, unit=None, name_match=None, freq_units=None):
         """
         Retrieve information about all measures in the linked relational database that match the specified search criteria.
 
         :param tag_match: A string to match against the `measure_tag` field. If not None, only measures with a `measure_tag`
             field containing this string will be returned.
         :type tag_match: str
-        :param freq_nhz: A value to match against the `measure_freq_nhz` field. If not None, only measures with a
+        :param freq: A value to match against the `measure_freq_nhz` field. If not None, only measures with a
             `measure_freq_nhz` field equal to this value will be returned.
-        :type freq_nhz: int
+        :type freq: int
         :param unit: A string to match against the `measure_unit` field. If not None, only measures with a `measure_unit`
             field equal to this string will be returned.
         :type unit: str
         :param name_match: A string to match against the `measure_name` field. If not None, only measures with a
             `measure_name` field containing this string will be returned.
         :type name_match: str
+        :param freq_units: The units for the freq parameter. (Default: "Hz")
+        :type freq_units: str
         :return: A dictionary containing information about each measure that matches the specified search criteria, including
             its id, tag, name, sample frequency (in nanohertz), code, unit, unit label, unit code, and source_id.
         :rtype: dict
         """
+        if self.metadata_connection_type == "api":
+            return self._api_search_measures(tag_match, freq, unit, name_match, freq_units)
+
+        freq_units = "Hz" if freq_units is None else freq_units
+        if freq_units != "nHz":
+            freq = convert_to_nanohz(freq, freq_units)
+
         all_measures = self.get_all_measures()
         result = {}
         for measure_id, measure_info in all_measures.items():
             match_bool_list = [
                 tag_match is None or tag_match in measure_info['tag'],
-                freq_nhz is None or freq_nhz == measure_info['freq_nhz'],
+                freq is None or freq == measure_info['freq_nhz'],
                 unit is None or unit == measure_info['unit'],
                 name_match is None or name_match in measure_info['name']
             ]
@@ -1727,6 +1750,8 @@ class AtriumSDK:
         units = "" if units is None else units
         freq_units = "nHz" if freq_units is None else freq_units
         freq_nhz = convert_to_nanohz(freq, freq_units)
+        if self.metadata_connection_type == "api":
+            return self._api_get_measure_id(measure_tag, freq_nhz, units, freq_units)
 
         if (measure_tag, freq_nhz, units) in self._measure_ids:
             return self._measure_ids[(measure_tag, freq_nhz, units)]
@@ -1768,6 +1793,8 @@ class AtriumSDK:
             'source_id': 1
         }
         """
+        if self.metadata_connection_type == "api":
+            return self._api_get_measure_info(measure_id)
 
         if measure_id in self._measures:
             return self._measures[measure_id]
@@ -1796,6 +1823,98 @@ class AtriumSDK:
 
         return measure_info
 
+    def _api_get_all_measures(self):
+        return self._request("GET", "measures")
+
+    def _api_search_measures(self, tag_match=None, freq_nhz=None, unit=None, name_match=None, freq_units=None):
+        params = {
+            'measure_tag': tag_match,
+            'freq': freq_nhz,
+            'unit': unit,
+            'measure_name': name_match,
+            'freq_units': freq_units,
+        }
+        return self._request("GET", "measures", params=params)
+
+    def _api_get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None,
+                            freq_units: str = None):
+        params = {
+            'measure_tag': measure_tag,
+            'freq': freq,
+            'unit': units,
+            'freq_units': freq_units,
+        }
+        measure_result = self._request("GET", "measures", params=params)
+
+        freq_units = "Hz" if freq_units is None else freq_units
+        if freq_units != "nHz":
+            freq = convert_to_nanohz(freq, freq_units)
+
+        units = "" if units is None else units
+
+        for measure_id, measure_info in measure_result.items():
+            tag_bool = measure_tag == measure_info['tag']
+            freq_bool = freq == measure_info['freq_nhz']
+            units_bool = measure_info['unit'] is None or units == measure_info['unit']
+            if tag_bool and freq_bool and units_bool:
+                return int(measure_id)
+
+        return None
+
+    def _api_get_measure_info(self, measure_id: int):
+        return self._request("GET", f"measures/{measure_id}")
+
+    def _api_get_device_id(self, device_tag: str):
+        params = {
+            'device_tag': device_tag,
+        }
+        devices_result = self._request("GET", "devices", params=params)
+
+        for device_id, device_info in devices_result.items():
+            if device_tag == device_info['tag']:
+                return int(device_id)
+
+        return None
+
+    def _api_get_device_info(self, device_id: int):
+        return self._request("GET", f"devices/{device_id}")
+
+    def _api_search_devices(self, tag_match=None, name_match=None):
+        params = {
+            'device_tag': tag_match,
+            'device_name': name_match,
+        }
+        return self._request("GET", "devices", params=params)
+
+    def _api_get_all_devices(self):
+        return self._request("GET", "devices")
+
+    def _api_get_all_patients(self, skip=None, limit=None):
+        skip = 0 if skip is None else skip
+
+        if limit is None:
+            limit = 100
+            patient_list = []
+            while True:
+                params = {
+                    'skip': skip,
+                    'limit': limit,
+                }
+                result_list = self._request("GET", "patients", params=params)
+                if len(result_list) == 0:
+                    break
+                patient_list.extend(result_list)
+                skip += limit
+
+        else:
+            params = {
+                'skip': skip,
+                'limit': limit,
+            }
+            patient_list = self._request("GET", "patients", params=params)
+
+        return {row['id']: row for row in patient_list}
+
     def get_device_id(self, device_tag: str):
         """
         Retrieve the identifier of a device in the linked relational database based on its tag.
@@ -1814,6 +1933,9 @@ class AtriumSDK:
         >>> print(device_id)
         1
         """
+        if self.metadata_connection_type == "api":
+            return self._api_get_device_id(device_tag)
+
         if device_tag in self._device_ids:
             return self._device_ids[device_tag]
         row = self.sql_handler.select_device(device_tag=device_tag)
@@ -1848,6 +1970,8 @@ class AtriumSDK:
          'source_id': 1}
 
         """
+        if self.metadata_connection_type == "api":
+            return self._api_get_device_info(device_id)
 
         if device_id in self._devices:
             return self._devices[device_id]
@@ -1881,3 +2005,29 @@ class AtriumSDK:
     def get_patient_id_to_mrn_map(self, patient_id_list=None):
         patient_list = self.sql_handler.select_all_patients_in_list(patient_id_list=patient_id_list)
         return {row[0]: row[1] for row in patient_list}
+
+    def _request(self, method: str, endpoint: str, **kwargs):
+        if self.api_test_client is not None:
+            return self._test_client_request(method, endpoint, **kwargs)
+
+        url = urljoin(self.api_url, endpoint)
+
+        headers = {'Authorization': f"Bearer {self.token}"}
+        response = requests.request(method, url, headers=headers, **kwargs)
+
+        if response.status_code != 200:
+            raise ValueError(f"API request failed with status code {response.status_code}: {response.text}")
+
+        return response.json()
+
+    def _test_client_request(self, method: str, endpoint: str, **kwargs):
+        headers = kwargs.get("headers", {})
+        headers['Authorization'] = f"Bearer {self.token}"
+        kwargs["headers"] = headers
+
+        response = self.api_test_client.request(method, endpoint, **kwargs)
+
+        if response.status_code != 200:
+            raise ValueError(f"API TestClient request failed with status code {response.status_code}: {response.text}")
+
+        return response.json()

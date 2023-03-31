@@ -68,7 +68,7 @@ class TestAtriumSDK(unittest.TestCase):
 
         Path(binary_path).mkdir(parents=True, exist_ok=True)
 
-        atrium_sdk = AtriumSDK(dataset_location=binary_path, database_uri=database_uri)
+        atrium_sdk = AtriumSDK(dataset_location=binary_path)
 
         measure_ids = [1, 2, 3]
         chunk_sizes = [atrium_sdk.block.block_size // 100,

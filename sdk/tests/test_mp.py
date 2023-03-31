@@ -39,7 +39,7 @@ def test_mp():
     driver_str = "pymysql"
 
     # remove_all_files_in_directory(DUMMY_FILE_LOC)
-    write_sdk = AtriumSDK(dataset_location=DUMMY_FILE_LOC, database_uri=dummy_uri)
+    write_sdk = AtriumSDK(dataset_location=DUMMY_FILE_LOC)
     original_dataset_info = write_simple_dataset(write_sdk, "mp_test.pkl")
     del write_sdk
     total_duration = original_dataset_info['end_time'] - original_dataset_info['start_time']
@@ -83,5 +83,5 @@ def process(measure, start, end, device):
 
 def initializer():
     global sdk
-    sdk = AtriumSDK(dataset_location=DUMMY_FILE_LOC, database_uri=dummy_uri, atriumdb_lib_path=DLL_PATH)
+    sdk = AtriumSDK(dataset_location=DUMMY_FILE_LOC, atriumdb_lib_path=DLL_PATH)
     sdk.mp_init()

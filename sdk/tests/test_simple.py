@@ -145,7 +145,7 @@ def create_local_sdk_object(demo_name, top_level_dir, db_uri=None):
     # Create an sqlite uri.
     if db_uri is None:
         db_uri = f"sqlite:///{db_path}"
-    return AtriumSDK(dataset_location=tsc_path, database_uri=db_uri, atriumdb_lib_path=DLL_PATH)
+    return AtriumSDK(dataset_location=tsc_path, atriumdb_lib_path=DLL_PATH)
 
 
 def get_db_path(demo_name, top_level_dir):

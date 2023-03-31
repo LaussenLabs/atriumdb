@@ -54,8 +54,8 @@ def _test_concurrent_source_writing(db_type, dataset_location, connection_params
     _check_source_equality(sdk, test_device_list, test_measure_list)
 
     # Try again with new SDK object.
-    sdk = AtriumSDK(
-        dataset_location=dataset_location, metadata_connection_type=db_type, connection_params=connection_params)
+    sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type=db_type,
+                    connection_params=connection_params)
 
     _check_source_equality(sdk, test_device_list, test_measure_list)
 
@@ -82,8 +82,8 @@ def _check_source_equality(sdk, test_device_list, test_measure_list):
 def write_source_info_process(measure_list, device_list, dataset_location, db_type, connection_params):
     global process_sdk
     if process_sdk is None:
-        process_sdk = AtriumSDK(
-            dataset_location=dataset_location, metadata_connection_type=db_type, connection_params=connection_params)
+        process_sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type=db_type,
+                                connection_params=connection_params)
 
     for _ in range(2):
         for (measure_tag, freq_hz) in measure_list:
