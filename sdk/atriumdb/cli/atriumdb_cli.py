@@ -86,11 +86,11 @@ def cli(ctx, dataset_location, metadata_uri, database_type, endpoint_url, api_to
               envvar='ATRIUMDB_EXPORT_DATASET_LOCATION')
 @click.option("--metadata-uri-out", type=str, help="The URI of a metadata server",
               envvar='ATRIUMDB_METADATA_URI_OUT')
-@click.option("--endpoint-url-out", type=str, help="The endpoint to connect to for a remote AtriumDB server",
-              envvar='ATRIUMDB_ENDPOINT_URL_OUT')
+@click.option("--database-type-out", type=str, help="The metadata database type",
+              envvar='ATRIUMDB_DATABASE_TYPE_OUT')
 @click.option("--by-patient", type=bool, default=False, help="Whether or not to include patient mapping")
 def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measures, device_ids, devices, patient_ids,
-           mrns, start_time, end_time, dataset_location_out, metadata_uri_out, endpoint_url_out, by_patient):
+           mrns, start_time, end_time, dataset_location_out, metadata_uri_out, database_type_out, by_patient):
     measure_ids = None if measure_ids is not None and len(measure_ids) == 0 else list(measure_ids)
     measures = None if measures is not None and len(measures) == 0 else list(measures)
     device_ids = None if device_ids is not None and len(device_ids) == 0 else list(device_ids)
@@ -109,7 +109,7 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
     if export_format not in implemented_formats:
         raise NotImplementedError(f"Only {implemented_formats} formats are currently supported for export")
 
-    from_sdk = get_sdk_from_cli_params(dataset_location, metadata_uri)
+    from_sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
 
     # If a cohort file is specified, parse it and use its parameters for transfer_data
     if cohort_file:
@@ -154,7 +154,8 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
                                                  "envvar must be specified."
 
         # Transfer the data using the specified parameters
-        to_sdk = get_sdk_from_cli_params(dataset_location_out, metadata_uri_out)
+        to_sdk = get_sdk_from_cli_params(dataset_location_out, metadata_uri_out, database_type_out, None,
+                                         None)
 
         transfer_data(from_sdk=from_sdk, to_sdk=to_sdk, measure_id_list=measure_ids, device_id_list=device_ids,
                       patient_id_list=patient_ids, mrn_list=mrns, start=start_time, end=end_time)
@@ -169,11 +170,10 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
                        by_patient=by_patient, measure_id_list=measure_ids)
 
 
-def get_sdk_from_cli_params(dataset_location, metadata_uri):
+def get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, api_url, api_token):
     connection_params = None if metadata_uri is None else parse_metadata_uri(metadata_uri)
-    metadata_connection_type = None if connection_params is None else connection_params['sqltype']
-    sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type=metadata_connection_type,
-                    connection_params=connection_params)
+    sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type=database_type,
+                    connection_params=connection_params, api_url=api_url, token=api_token)
     return sdk
 
 
@@ -208,8 +208,10 @@ def import_(ctx, import_format, packaging_type, dataset_location_in, metadata_ur
     mrns = None if mrns is not None and len(mrns) == 0 else list(mrns)
 
     endpoint_url = ctx.obj["endpoint_url"]
+    api_token = ctx.obj["api_token"]
     dataset_location = ctx.obj["dataset_location"]
     metadata_uri = ctx.obj["metadata_uri"]
+    database_type = ctx.obj["database_type"]
 
     implemented_formats = ["csv", "parquet"]
 
@@ -222,7 +224,7 @@ def import_(ctx, import_format, packaging_type, dataset_location_in, metadata_ur
     if not Path(dataset_location_in).is_dir():
         raise ValueError(f"{dataset_location_in} is not a valid directory.")
 
-    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri)
+    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, None, None)
 
     import_dataset(sdk, directory=dataset_location_in, data_format=import_format)
 
@@ -243,10 +245,12 @@ def atriumdb_measure(ctx):
 @click.option("--source-id", type=int, help="Filter measures by source identifier")
 def measure_ls(ctx, tag_match, name_match, unit, freq_hz, freq_nhz, source_id):
     endpoint_url = ctx.obj["endpoint_url"]
+    api_token = ctx.obj["api_token"]
     dataset_location = ctx.obj["dataset_location"]
     metadata_uri = ctx.obj["metadata_uri"]
+    database_type = ctx.obj["database_type"]
 
-    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri)
+    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, "database_type", "api_url", "api_token")
     result = sdk.search_measures(tag_match=tag_match, freq=freq_nhz, unit=unit, name_match=name_match)
 
     headers = ["Measure ID", "Tag", "Name", "Frequency (nHz)", "Code", "Unit", "Unit Label", "Unit Code", "Source ID"]
@@ -278,10 +282,12 @@ def atriumdb_device(ctx):
 @click.option("--source-id", type=str, help="Filter devices by source identifier")
 def device_ls(ctx, tag_match, name_match, manufacturer_match, model_match, bed_id, source_id):
     endpoint_url = ctx.obj["endpoint_url"]
+    api_token = ctx.obj["api_token"]
     dataset_location = ctx.obj["dataset_location"]
     metadata_uri = ctx.obj["metadata_uri"]
+    database_type = ctx.obj["database_type"]
 
-    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri)
+    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
     result = sdk.search_devices(tag_match=tag_match, name_match=name_match)
 
     headers = ["Device ID", "Tag", "Name", "Manufacturer", "Model", "Type", "Bed ID", "Source ID"]
@@ -313,8 +319,10 @@ def atriumdb_patient(ctx):
 @click.option("--last-updated", type=int, help="Filter patients by last updated timestamp in epoch time")
 def patient_ls(ctx, age_years_min, age_years_max, gender, source_id, first_seen, last_updated):
     endpoint_url = ctx.obj["endpoint_url"]
+    api_token = ctx.obj["api_token"]
     dataset_location = ctx.obj["dataset_location"]
     metadata_uri = ctx.obj["metadata_uri"]
+    database_type = ctx.obj["database_type"]
 
     click.echo("_LOGGER.infoing list of patients available in the configured dataset")
     click.echo(f"Endpoint URL: {endpoint_url}")
