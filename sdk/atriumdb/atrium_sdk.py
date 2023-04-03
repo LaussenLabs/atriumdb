@@ -460,6 +460,8 @@ class AtriumSDK:
         #     value_data /= scale_m
         #     value_data = value_data.astype(np.int64)
 
+        # ======= Overwrite Calculation =======
+
         # Calculate New Intervals
         write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
         write_intervals_o = Intervals(write_intervals)
