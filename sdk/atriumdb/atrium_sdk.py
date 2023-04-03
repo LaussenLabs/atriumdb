@@ -506,16 +506,19 @@ class AtriumSDK:
         # Write to Disk
         filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
 
+        # Use the header data to create rows to be inserted into the block_index and interval_index sql tables.
         block_data, interval_data = get_block_and_interval_data(
             measure_id, device_id, encode_headers, byte_start_array, write_intervals)
 
+        # If we ended up overwriting data...
         if overwrite_file_dict is not None:
             # Add new data to sql insertion data.
             overwrite_file_dict[filename] = (block_data, interval_data)
             # Update SQL
             old_file_ids = [file_id for file_id, filename in old_file_list]
             _LOGGER.debug(
-                f"{measure_id}, {device_id}): overwrite_file_dict: {overwrite_file_dict}\n old_block_ids: {old_block_ids}\n old_file_ids: {old_file_ids}\n")
+                f"{measure_id}, {device_id}): overwrite_file_dict: {overwrite_file_dict}\n "
+                f"old_block_ids: {old_block_ids}\n old_file_ids: {old_file_ids}\n")
             self.sql_handler.update_tsc_file_data(overwrite_file_dict, old_block_ids, old_file_ids)
 
             # Delete files
@@ -919,7 +922,7 @@ class AtriumSDK:
 
     def get_data(self, measure_id: int, start_time_n: int = None, end_time_n: int = None, device_id: int = None,
                  patient_id=None, auto_convert_gap_to_time_array=True, return_intervals=False, analog=True,
-                 block_info=None, time_units: str = "ns"):
+                 block_info=None, time_units: str = None):
         """
         The method for querying data from the dataset, indexed by signal type (measure_id),
         time (start_time_n and end_time_n) and data source (device_id and patient_id)
@@ -963,6 +966,7 @@ class AtriumSDK:
         """
 
         # check that a correct unit type was entered
+        time_units = "ns" if time_units is None else time_units
         time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 
         if time_units not in time_unit_options.keys():
