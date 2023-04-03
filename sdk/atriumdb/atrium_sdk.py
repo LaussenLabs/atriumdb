@@ -979,14 +979,18 @@ class AtriumSDK:
         _LOGGER.debug("\n")
         start_bench_total = time.perf_counter()
 
+        # If the data is from the api.
         if self.mode == "api":
             self.get_data_api(measure_id, start_time_n, end_time_n,
                               device_id=device_id, patient_id=patient_id,
                               auto_convert_gap_to_time_array=auto_convert_gap_to_time_array,
                               return_intervals=return_intervals, analog=analog)
 
+        # If the dataset is in a local directory.
         elif self.mode == "local":
+            # If we don't already have the blocks
             if block_info is None:
+                # Select all blocks from the block_index (sql table) that match params.
                 start_bench = time.perf_counter()
                 block_list = self.get_block_id_list(int(measure_id), start_time_n=int(start_time_n),
                                                     end_time_n=int(end_time_n), device_id=device_id,
@@ -994,7 +998,7 @@ class AtriumSDK:
                 end_bench = time.perf_counter()
                 _LOGGER.debug(f"get block info {(end_bench - start_bench) * 1000} ms")
 
-                # read_list = condense_byte_read_list([row[2:6] for row in block_list])
+                # Concatenate continuous byte intervals to cut down on total number of reads.
                 start_bench = time.perf_counter()
                 read_list = condense_byte_read_list(block_list)
                 end_bench = time.perf_counter()
@@ -1004,13 +1008,14 @@ class AtriumSDK:
                 if len(read_list) == 0:
                     return [], np.array([]), np.array([])
 
+                # Map file_ids to filenames and return a dictionary.
                 start_bench = time.perf_counter()
                 file_id_list = [row[1] for row in read_list]
-
                 filename_dict = self.get_filename_dict(file_id_list)
                 end_bench = time.perf_counter()
                 _LOGGER.debug(f"get filename dictionary  {(end_bench - start_bench) * 1000} ms")
 
+            # If we already have the blocks
             else:
                 block_list = block_info['block_list']
                 filename_dict = block_info['filename_dict']
@@ -1019,22 +1024,20 @@ class AtriumSDK:
                 if len(block_list) == 0:
                     return [], np.array([]), np.array([])
 
+            # Read and decode the blocks.
             headers, r_times, r_values = self.get_data_from_blocks(block_list, filename_dict, measure_id, start_time_n,
                                                                    end_time_n, return_intervals, analog,
                                                                    auto_convert_gap_to_time_array)
 
             end_bench_total = time.perf_counter()
-            # print(f"Total get data call took {round(end_bench_total - start_bench_total, 2)}: {r_values.size} values")
-            # print(f"{round(r_values.size / (end_bench_total-start_bench_total), 2)} values per second.")
-            # start_bench = time.perf_counter()
-            # left, right = bisect.bisect_left(r_times, start_time_n), bisect.bisect_left(r_times, end_time_n)
-            # r_times, r_values = r_times[left:right], r_values[left:right]
-            # end_bench = time.perf_counter()
-            # _LOGGER.debug(f"truncate data {(end_bench - start_bench) * 1000} ms")
+            _LOGGER.debug(
+                f"Total get data call took {round(end_bench_total - start_bench_total, 2)}: {r_values.size} values")
+            _LOGGER.debug(f"{round(r_values.size / (end_bench_total-start_bench_total), 2)} values per second.")
 
             # convert time data from nanoseconds to unit of choice
             r_times = r_times / time_unit_options[time_units]
 
+            # Cast times to integers if possible.
             if np.all(r_times == np.floor(r_times)):
                 r_times = r_times.astype('int64')
 
