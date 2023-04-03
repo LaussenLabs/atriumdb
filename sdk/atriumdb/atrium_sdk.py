@@ -99,8 +99,6 @@ class AtriumSDK:
 
         self.metadata_connection_type = metadata_connection_type
 
-        print(metadata_connection_type)
-
         if num_threads is None:
             num_threads = max(cpu_count() - 2, 1)
 
@@ -1909,10 +1907,7 @@ class AtriumSDK:
                     'skip': skip,
                     'limit': limit,
                 }
-                print(params)
                 result_dict = self._request("GET", "patients", params=params)
-                print(f"Num results: {len(result_dict)}")
-                print()
 
                 if len(result_dict) == 0:
                     break
