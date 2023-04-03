@@ -99,13 +99,7 @@ class AtriumSDK:
 
         self.metadata_connection_type = metadata_connection_type
 
-        if dataset_location is None and tsc_file_location is None and api_url is None:
-            raise ValueError("One of dataset_location, tsc_file_location or api_url must be specified.")
-
-        if isinstance(dataset_location, str):
-            dataset_location = Path(dataset_location)
-        if tsc_file_location is None and metadata_connection_type != 'api':
-            tsc_file_location = dataset_location / 'tsc'
+        print(metadata_connection_type)
 
         if num_threads is None:
             num_threads = max(cpu_count() - 2, 1)
@@ -124,6 +118,14 @@ class AtriumSDK:
         self.sql_handler = None
 
         if metadata_connection_type == 'sqlite':
+            if dataset_location is None and tsc_file_location is None and api_url is None:
+                raise ValueError("One of dataset_location, tsc_file_location or api_url must be specified.")
+
+            if isinstance(dataset_location, str):
+                dataset_location = Path(dataset_location)
+            if tsc_file_location is None and metadata_connection_type != 'api':
+                tsc_file_location = dataset_location / 'tsc'
+
             if dataset_location is None:
                 raise ValueError("dataset location must be specified for sqlite mode")
             db_file = Path(dataset_location) / 'meta' / 'index.db'
@@ -134,6 +136,14 @@ class AtriumSDK:
             self.settings_dict = self._get_all_settings()
 
         elif metadata_connection_type == 'mysql' or metadata_connection_type == 'mariadb':
+            if dataset_location is None and tsc_file_location is None and api_url is None:
+                raise ValueError("One of dataset_location, tsc_file_location or api_url must be specified.")
+
+            if isinstance(dataset_location, str):
+                dataset_location = Path(dataset_location)
+            if tsc_file_location is None and metadata_connection_type != 'api':
+                tsc_file_location = dataset_location / 'tsc'
+
             host = connection_params['host']
             user = connection_params['user']
             password = connection_params['password']
@@ -1439,7 +1449,7 @@ class AtriumSDK:
         limit = len(patient_tuple_list) if limit is None else limit
         patient_dict = {}
         for patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id in \
-                patient_tuple_list[skip:limit]:
+                patient_tuple_list[skip:skip+limit]:
             patient_dict[patient_id] = {
                 'id': patient_id,
                 'mrn': mrn,
@@ -1893,16 +1903,20 @@ class AtriumSDK:
 
         if limit is None:
             limit = 100
-            patient_list = []
+            patient_dict = {}
             while True:
                 params = {
                     'skip': skip,
                     'limit': limit,
                 }
-                result_list = self._request("GET", "patients", params=params)
-                if len(result_list) == 0:
+                print(params)
+                result_dict = self._request("GET", "patients", params=params)
+                print(f"Num results: {len(result_dict)}")
+                print()
+
+                if len(result_dict) == 0:
                     break
-                patient_list.extend(result_list)
+                patient_dict.update(result_dict)
                 skip += limit
 
         else:
@@ -1910,9 +1924,9 @@ class AtriumSDK:
                 'skip': skip,
                 'limit': limit,
             }
-            patient_list = self._request("GET", "patients", params=params)
+            patient_dict = self._request("GET", "patients", params=params)
 
-        return {row['id']: row for row in patient_list}
+        return patient_dict
 
     def get_device_id(self, device_tag: str):
         """

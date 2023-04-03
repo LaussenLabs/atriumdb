@@ -250,7 +250,7 @@ def measure_ls(ctx, tag_match, name_match, unit, freq_hz, freq_nhz, source_id):
     metadata_uri = ctx.obj["metadata_uri"]
     database_type = ctx.obj["database_type"]
 
-    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, "database_type", "api_url", "api_token")
+    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
     result = sdk.search_measures(tag_match=tag_match, freq=freq_nhz, unit=unit, name_match=name_match)
 
     headers = ["Measure ID", "Tag", "Name", "Frequency (nHz)", "Code", "Unit", "Unit Label", "Unit Code", "Source ID"]
@@ -311,35 +311,36 @@ def atriumdb_patient(ctx):
 
 @atriumdb_patient.command(name="ls")
 @click.pass_context
+@click.option("--skip", type=int, help="Offset number of patients to return")
+@click.option("--limit", type=int, help="Limit number of patients to return")
 @click.option("--age-years-min", type=float, help="Filter patients by minimum age in years")
 @click.option("--age-years-max", type=float, help="Filter patients by maximum age in years")
 @click.option("--gender", type=str, help="Filter patients by gender")
 @click.option("--source-id", type=str, help="Filter patients by source identifier")
 @click.option("--first-seen", type=int, help="Filter patients by first seen timestamp in epoch time")
 @click.option("--last-updated", type=int, help="Filter patients by last updated timestamp in epoch time")
-def patient_ls(ctx, age_years_min, age_years_max, gender, source_id, first_seen, last_updated):
+def patient_ls(ctx, skip, limit, age_years_min, age_years_max, gender, source_id, first_seen, last_updated):
     endpoint_url = ctx.obj["endpoint_url"]
     api_token = ctx.obj["api_token"]
     dataset_location = ctx.obj["dataset_location"]
     metadata_uri = ctx.obj["metadata_uri"]
     database_type = ctx.obj["database_type"]
 
-    click.echo("_LOGGER.infoing list of patients available in the configured dataset")
-    click.echo(f"Endpoint URL: {endpoint_url}")
-    click.echo(f"Dataset location: {dataset_location}")
-    click.echo(f"Metadata URI: {metadata_uri}")
-    if age_years_min:
-        click.echo(f"Filter patients by minimum age in years: {age_years_min}")
-    if age_years_max:
-        click.echo(f"Filter patients by maximum age in years: {age_years_max}")
-    if gender:
-        click.echo(f"Filter patients by gender: {gender}")
-    if source_id:
-        click.echo(f"Filter patients by source identifier: {source_id}")
-    if first_seen:
-        click.echo(f"Filter patients by first seen timestamp in epoch time: {first_seen}")
-    if last_updated:
-        click.echo(f"Filter patients by last updated timestamp in epoch time: {last_updated}")
+    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
+
+    result = sdk.get_all_patients(skip=skip, limit=limit)
+
+    if len(result) == 0:
+        return
+
+    headers = list(list(result.values())[0].keys())
+    table = []
+
+    for patient_id, patient_info in result.items():
+        table.append(list(patient_info.values()))
+
+    click.echo("\nPatients:")
+    click.echo(tabulate(table, headers=headers))
 
 
 cli.add_command(export)
