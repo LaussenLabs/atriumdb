@@ -1525,7 +1525,7 @@ class AtriumSDK:
             return self._api_search_measures(tag_match, freq, unit, name_match, freq_units)
 
         freq_units = "Hz" if freq_units is None else freq_units
-        if freq_units != "nHz":
+        if freq_units != "nHz" and freq is not None:
             freq = convert_to_nanohz(freq, freq_units)
 
         all_measures = self.get_all_measures()

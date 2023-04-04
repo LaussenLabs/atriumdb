@@ -24,9 +24,9 @@ from atriumdb.transfer.formats.import_data import import_data_to_sdk
 
 import logging
 
-load_dotenv()
-
 _LOGGER = logging.getLogger(__name__)
+
+load_dotenv()
 
 cli_help_text = """
 The atriumdb command is a command line interface for the Atrium database, 
@@ -68,6 +68,12 @@ and the Atrium database, please visit the documentation at https://atriumdb.sick
 @click.pass_context
 def cli(ctx, dataset_location, metadata_uri, database_type, endpoint_url, api_token):
     ctx.ensure_object(dict)
+    print(f"dataset_location: {dataset_location}")
+    print(f"metadata_uri: {metadata_uri}")
+    print(f"database_type: {database_type}")
+    print(f"endpoint_url: {endpoint_url}")
+    print(f"api_token: {api_token}")
+
     ctx.obj["endpoint_url"] = endpoint_url
     ctx.obj["api_token"] = api_token
     ctx.obj["dataset_location"] = dataset_location
@@ -141,7 +147,11 @@ def login(ctx):
 
             authenticated = True
             click.echo(token_data['access_token'])
-            os.environ["ATRIUMDB_API_TOKEN"] = token_data['access_token']
+
+            set_env_var_in_dotenv("ATRIUMDB_API_TOKEN", token_data['access_token'])
+            set_env_var_in_dotenv("ATRIUMDB_DATABASE_TYPE", "api")
+            load_dotenv()
+
         elif token_data['error'] not in ('authorization_pending', 'slow_down'):
             click.echo(token_data['error_description'])
             exit(1)
@@ -433,3 +443,21 @@ cli.add_command(atriumdb_patient)
 cli.add_command(atriumdb_measure)
 cli.add_command(atriumdb_device)
 cli.add_command(login)
+
+
+def set_env_var_in_dotenv(name, value):
+    dotenv_file = ".env"
+    env_vars = {}
+
+    if os.path.exists(dotenv_file):
+        with open(dotenv_file, "r") as file:
+            for line in file:
+                if line.strip() and not line.startswith("#"):
+                    key, val = line.strip().split("=", 1)
+                    env_vars[key] = val
+
+    env_vars[name] = value
+
+    with open(dotenv_file, "w") as file:
+        for key, val in env_vars.items():
+            file.write(f"{key}={val}\n")
