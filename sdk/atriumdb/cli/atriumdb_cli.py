@@ -327,10 +327,10 @@ def atriumdb_measure(ctx):
 @click.option("--tag-match", type=str, help="Filter measures by tag string match")
 @click.option("--name-match", type=str, help="Filter measures by name string match")
 @click.option("--unit", type=str, help="Filter measures by units")
-@click.option("--freq-hz", type=float, help="Filter measures by frequency in Hertz")
-@click.option("--freq-nhz", type=int, help="Filter measures by frequency in Nanohertz")
+@click.option("--freq", type=float, help="Filter measures by frequency")
+@click.option("--freq-units", type=int, help="Unit of frequency", default="Hz")
 @click.option("--source-id", type=int, help="Filter measures by source identifier")
-def measure_ls(ctx, tag_match, name_match, unit, freq_hz, freq_nhz, source_id):
+def measure_ls(ctx, tag_match, name_match, unit, freq, freq_units, source_id):
     endpoint_url = ctx.obj["endpoint_url"]
     api_token = ctx.obj["api_token"]
     dataset_location = ctx.obj["dataset_location"]
@@ -338,7 +338,8 @@ def measure_ls(ctx, tag_match, name_match, unit, freq_hz, freq_nhz, source_id):
     database_type = ctx.obj["database_type"]
 
     sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
-    result = sdk.search_measures(tag_match=tag_match, freq=freq_nhz, unit=unit, name_match=name_match)
+    result = sdk.search_measures(
+        tag_match=tag_match, freq=freq, unit=unit, name_match=name_match, freq_units=freq_units)
 
     headers = ["Measure ID", "Tag", "Name", "Frequency (nHz)", "Code", "Unit", "Unit Label", "Unit Code", "Source ID"]
     table = []
