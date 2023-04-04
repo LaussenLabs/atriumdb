@@ -328,7 +328,7 @@ def atriumdb_measure(ctx):
 @click.option("--name-match", type=str, help="Filter measures by name string match")
 @click.option("--unit", type=str, help="Filter measures by units")
 @click.option("--freq", type=float, help="Filter measures by frequency")
-@click.option("--freq-units", type=int, help="Unit of frequency", default="Hz")
+@click.option("--freq-units", type=str, help="Unit of frequency", default="Hz")
 @click.option("--source-id", type=int, help="Filter measures by source identifier")
 def measure_ls(ctx, tag_match, name_match, unit, freq, freq_units, source_id):
     endpoint_url = ctx.obj["endpoint_url"]
