@@ -136,9 +136,9 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
 
 def ingest_data(to_sdk, measure_id, device_id, headers, times, values):
     try:
-        if all([h.scale_m == headers[0].scale_m for h in headers]) and \
-                all([h.scale_b == headers[0].scale_b for h in headers]) and \
-                all([h.freq_nhz == headers[0].freq_nhz for h in headers]):
+        if all([h.scale_m == headers[0].scale_m and
+                h.scale_b == headers[0].scale_b and
+                h.freq_nhz == headers[0].freq_nhz for h in headers]):
             to_sdk.write_data_easy(measure_id, device_id, time_data=times, value_data=values,
                                    freq=headers[0].freq_nhz, scale_m=headers[0].scale_m,
                                    scale_b=headers[0].scale_b)
