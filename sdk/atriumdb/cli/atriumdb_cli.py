@@ -2,6 +2,14 @@ import click
 from tabulate import tabulate
 from pathlib import Path
 
+import requests
+import qrcodeT
+import urllib3
+import os
+import time
+
+from auth0.authentication.token_verifier import TokenVerifier, AsymmetricSignatureVerifier
+
 from dotenv import load_dotenv
 
 from atriumdb import AtriumSDK
@@ -65,6 +73,80 @@ def cli(ctx, dataset_location, metadata_uri, database_type, endpoint_url, api_to
     ctx.obj["dataset_location"] = dataset_location
     ctx.obj["metadata_uri"] = metadata_uri
     ctx.obj["database_type"] = database_type
+
+
+@click.command(help="Endpoint to login with QR code.")
+@click.pass_context
+def login(ctx):
+    endpoint_url = ctx.obj["endpoint_url"]
+
+    endpoint_url = endpoint_url.rstrip('/')
+
+    auth_conf_res = requests.get(f'{endpoint_url}/auth/cli/code')
+
+    if auth_conf_res.status_code == 404:
+        _LOGGER.error("Invalid Endpoint URL")
+        exit()
+
+    if auth_conf_res.status_code != 200:
+        _LOGGER.error("Something went wrong")
+        exit()
+
+    auth_conf = auth_conf_res.json()
+    auth0_domain = auth_conf['auth0_tenant']
+    auth0_client_id = auth_conf['auth0_client_id']
+    api_audience = auth_conf['auth0_audience']
+    algorithms = auth_conf['algorithms']
+
+    def validate_token(id_token):
+        jwks_url = f'https://{auth0_domain}/.well-known/jwks.json'
+        issuer = f'https://{auth0_domain}/'
+        sv = AsymmetricSignatureVerifier(jwks_url)
+        tv = TokenVerifier(signature_verifier=sv, issuer=issuer, audience=auth0_client_id)
+        tv.verify(id_token)
+
+    device_code_payload = {
+        'client_id': auth0_client_id,
+        'scope': 'openid profile',
+        'audience': api_audience
+    }
+    device_code_response = requests.post(f'https://{auth0_domain}/oauth/device/code', data=device_code_payload)
+
+    if device_code_response.status_code != 200:
+        click.echo('Error generating the device code')
+        exit(1)
+
+    click.echo('Device code successful')
+    device_code_data = device_code_response.json()
+    click.echo(f"1. On your computer or mobile device navigate to: \n{device_code_data['verification_uri_complete']}")
+    click.echo(f"2. Enter the following code: \n{device_code_data['user_code']}")
+    qrcodeT.qrcodeT(device_code_data['verification_uri_complete'])
+
+    token_payload = {
+        'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
+        'device_code': device_code_data['device_code'],
+        'client_id': auth0_client_id
+    }
+
+    authenticated = False
+    while not authenticated:
+        click.echo('Checking if the user completed the flow...')
+        token_response = requests.post(f'https://{auth0_domain}/oauth/token', data=token_payload)
+
+        token_data = token_response.json()
+        if token_response.status_code == 200:
+            click.echo('Authenticated!')
+
+            validate_token(token_data['id_token'])
+
+            authenticated = True
+            click.echo(token_data['access_token'])
+            os.environ["ATRIUMDB_API_TOKEN"] = token_data['access_token']
+        elif token_data['error'] not in ('authorization_pending', 'slow_down'):
+            click.echo(token_data['error_description'])
+            exit(1)
+        else:
+            time.sleep(device_code_data['interval'])
 
 
 @click.command()
@@ -326,6 +408,8 @@ def patient_ls(ctx, skip, limit, age_years_min, age_years_max, gender, source_id
     metadata_uri = ctx.obj["metadata_uri"]
     database_type = ctx.obj["database_type"]
 
+    print(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
+
     sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
 
     result = sdk.get_all_patients(skip=skip, limit=limit)
@@ -348,3 +432,4 @@ cli.add_command(import_)
 cli.add_command(atriumdb_patient)
 cli.add_command(atriumdb_measure)
 cli.add_command(atriumdb_device)
+cli.add_command(login)

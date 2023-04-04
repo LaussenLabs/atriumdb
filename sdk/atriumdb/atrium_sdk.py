@@ -1840,7 +1840,7 @@ class AtriumSDK:
         return measure_info
 
     def _api_get_all_measures(self):
-        return self._request("GET", "measures")
+        return self._request("GET", "measures/")
 
     def _api_search_measures(self, tag_match=None, freq_nhz=None, unit=None, name_match=None, freq_units=None):
         params = {
@@ -1850,7 +1850,7 @@ class AtriumSDK:
             'measure_name': name_match,
             'freq_units': freq_units,
         }
-        return self._request("GET", "measures", params=params)
+        return self._request("GET", "measures/", params=params)
 
     def _api_get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None,
                             freq_units: str = None):
@@ -1860,7 +1860,7 @@ class AtriumSDK:
             'unit': units,
             'freq_units': freq_units,
         }
-        measure_result = self._request("GET", "measures", params=params)
+        measure_result = self._request("GET", "measures/", params=params)
 
         freq_units = "Hz" if freq_units is None else freq_units
         if freq_units != "nHz":
@@ -1884,7 +1884,7 @@ class AtriumSDK:
         params = {
             'device_tag': device_tag,
         }
-        devices_result = self._request("GET", "devices", params=params)
+        devices_result = self._request("GET", "devices/", params=params)
 
         for device_id, device_info in devices_result.items():
             if device_tag == device_info['tag']:
@@ -1900,10 +1900,10 @@ class AtriumSDK:
             'device_tag': tag_match,
             'device_name': name_match,
         }
-        return self._request("GET", "devices", params=params)
+        return self._request("GET", "devices/", params=params)
 
     def _api_get_all_devices(self):
-        return self._request("GET", "devices")
+        return self._request("GET", "devices/")
 
     def _api_get_all_patients(self, skip=None, limit=None):
         skip = 0 if skip is None else skip
@@ -1916,7 +1916,7 @@ class AtriumSDK:
                     'skip': skip,
                     'limit': limit,
                 }
-                result_dict = self._request("GET", "patients", params=params)
+                result_dict = self._request("GET", "patients/", params=params)
 
                 if len(result_dict) == 0:
                     break
@@ -1928,7 +1928,7 @@ class AtriumSDK:
                 'skip': skip,
                 'limit': limit,
             }
-            patient_dict = self._request("GET", "patients", params=params)
+            patient_dict = self._request("GET", "patients/", params=params)
 
         return patient_dict
 
@@ -2027,9 +2027,12 @@ class AtriumSDK:
         if self.api_test_client is not None:
             return self._test_client_request(method, endpoint, **kwargs)
 
+        print(self.api_url, endpoint)
         url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
+        print(url)
 
         headers = {'Authorization': f"Bearer {self.token}"}
+        print(headers)
         response = requests.request(method, url, headers=headers, **kwargs)
 
         if response.status_code != 200:
