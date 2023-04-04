@@ -142,7 +142,6 @@ def login(ctx):
             validate_token(token_data['id_token'])
 
             authenticated = True
-            click.echo(token_data['access_token'])
 
             set_env_var_in_dotenv("ATRIUMDB_API_TOKEN", token_data['access_token'])
             set_env_var_in_dotenv("ATRIUMDB_DATABASE_TYPE", "api")
