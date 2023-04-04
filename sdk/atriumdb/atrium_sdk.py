@@ -2027,7 +2027,7 @@ class AtriumSDK:
         if self.api_test_client is not None:
             return self._test_client_request(method, endpoint, **kwargs)
 
-        url = urljoin(self.api_url, endpoint)
+        url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
 
         headers = {'Authorization': f"Bearer {self.token}"}
         response = requests.request(method, url, headers=headers, **kwargs)
