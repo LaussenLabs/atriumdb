@@ -26,7 +26,7 @@ import logging
 
 _LOGGER = logging.getLogger(__name__)
 
-load_dotenv()
+load_dotenv(dotenv_path="./.env", override=True)
 
 cli_help_text = """
 The atriumdb command is a command line interface for the Atrium database, 
@@ -57,22 +57,18 @@ and the Atrium database, please visit the documentation at https://atriumdb.sick
 
 @click.group(help=cli_help_text)
 @click.option("--dataset-location", type=click.Path(), envvar="ATRIUMDB_DATASET_LOCATION",
-              help="The local path to a dataset")
-@click.option("--metadata-uri", type=str, envvar="ATRIUMDB_METADATA_URI", help="The URI of a metadata server")
+              default=None, help="The local path to a dataset")
+@click.option("--metadata-uri", type=str, envvar="ATRIUMDB_METADATA_URI",
+              default=None, help="The URI of a metadata server")
 @click.option("--database-type", type=click.Choice(SUPPORTED_DB_TYPES + ["api"]), envvar="ATRIUMDB_DATABASE_TYPE",
-              help="The type of metadata database supporting the dataset.")
+              default=None, help="The type of metadata database supporting the dataset.")
 @click.option("--endpoint-url", type=str, envvar="ATRIUMDB_ENDPOINT_URL",
-              help="The endpoint to connect to for a remote AtriumDB server")
+              default=None, help="The endpoint to connect to for a remote AtriumDB server")
 @click.option("--api-token", type=str, envvar="ATRIUMDB_API_TOKEN",
-              help="A token to authorize api access.")
+              default=None, help="A token to authorize api access.")
 @click.pass_context
 def cli(ctx, dataset_location, metadata_uri, database_type, endpoint_url, api_token):
     ctx.ensure_object(dict)
-    print(f"dataset_location: {dataset_location}")
-    print(f"metadata_uri: {metadata_uri}")
-    print(f"database_type: {database_type}")
-    print(f"endpoint_url: {endpoint_url}")
-    print(f"api_token: {api_token}")
 
     ctx.obj["endpoint_url"] = endpoint_url
     ctx.obj["api_token"] = api_token
@@ -136,7 +132,7 @@ def login(ctx):
 
     authenticated = False
     while not authenticated:
-        click.echo('Checking if the user completed the flow...')
+        # click.echo('Checking if the user completed the flow...')
         token_response = requests.post(f'https://{auth0_domain}/oauth/token', data=token_payload)
 
         token_data = token_response.json()
@@ -150,7 +146,7 @@ def login(ctx):
 
             set_env_var_in_dotenv("ATRIUMDB_API_TOKEN", token_data['access_token'])
             set_env_var_in_dotenv("ATRIUMDB_DATABASE_TYPE", "api")
-            load_dotenv()
+            load_dotenv(dotenv_path="./.env", override=True)
 
         elif token_data['error'] not in ('authorization_pending', 'slow_down'):
             click.echo(token_data['error_description'])

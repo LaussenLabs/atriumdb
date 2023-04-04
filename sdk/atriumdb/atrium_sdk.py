@@ -2027,16 +2027,12 @@ class AtriumSDK:
         if self.api_test_client is not None:
             return self._test_client_request(method, endpoint, **kwargs)
 
-        print(self.api_url, endpoint)
         url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
-        print(url)
 
         headers = {'Authorization': f"Bearer {self.token}"}
-        print(headers)
         response = requests.request(method, url, headers=headers, **kwargs)
 
         if response.status_code != 200:
-            print(url)
             raise ValueError(
                 f"API request failed with status code {response.status_code}: {response.text} \n url: {url}")
 
