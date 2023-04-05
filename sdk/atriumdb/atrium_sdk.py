@@ -1257,6 +1257,8 @@ class AtriumSDK:
         interval_result = self.sql_handler.select_intervals(
             measure_id, start_time_n=start, end_time_n=end, device_id=device_id, patient_id=patient_id)
 
+        # Sort interval result by start_time.
+        interval_result = sorted(interval_result, key=lambda x: x[3])
         arr = []
         for row in interval_result:
             if len(arr) > 0 and row[3] - arr[-1][-1] <= gap_tolerance_nano:
