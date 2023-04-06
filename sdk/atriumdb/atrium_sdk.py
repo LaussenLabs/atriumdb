@@ -1,5 +1,4 @@
 import numpy as np
-from urllib.parse import urljoin
 
 from atriumdb.adb_functions import get_block_and_interval_data, condense_byte_read_list, find_intervals, \
     merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz
@@ -18,9 +17,7 @@ from atriumdb.intervals.intervals import Intervals
 from concurrent.futures import ThreadPoolExecutor
 import time
 import bisect
-import requests
 import random
-from requests import Session
 from pathlib import Path, PurePath
 from multiprocessing import cpu_count
 import sys
@@ -154,6 +151,8 @@ class AtriumSDK:
             self.settings_dict = self._get_all_settings()
 
         elif metadata_connection_type == 'api':
+            import requests
+            from requests import Session
             self.mode = "api"
             self.api_url = api_url
             self.token = token
