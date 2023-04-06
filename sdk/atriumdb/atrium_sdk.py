@@ -26,7 +26,6 @@ from multiprocessing import cpu_count
 import sys
 from typing import Union, List, Tuple
 
-from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 
@@ -141,6 +140,8 @@ class AtriumSDK:
                 dataset_location = Path(dataset_location)
             if tsc_file_location is None and metadata_connection_type != 'api':
                 tsc_file_location = dataset_location / 'tsc'
+
+            from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 
             host = connection_params['host']
             user = connection_params['user']
