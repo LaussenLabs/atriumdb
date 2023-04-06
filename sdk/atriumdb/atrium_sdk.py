@@ -232,6 +232,7 @@ class AtriumSDK:
             SQLiteHandler(db_file).create_schema()
 
         elif database_type == 'mysql' or database_type == "mariadb":
+            from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
             host = connection_params['host']
             user = connection_params['user']
             password = connection_params['password']
