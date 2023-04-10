@@ -1,5 +1,6 @@
 import numpy as np
 import time
+from urllib.parse import urlsplit, urlunsplit
 from numpy.lib.stride_tricks import sliding_window_view
 import logging
 
@@ -216,41 +217,26 @@ def convert_from_nanohz(freq_nhz, freq_units):
 
 
 def parse_metadata_uri(metadata_uri):
-    # split the metadata_uri into four parts: sqltype, authentication, hostport, dbname (if it exists)
-    parts = metadata_uri.split('://')
-    if len(parts) != 2:
+    parsed_uri = urlsplit(metadata_uri)
+
+    if not parsed_uri.scheme or not parsed_uri.netloc:
         raise ValueError(f"Invalid metadata_uri format: expected 'sqltype://username:password@host:port[/dbname]', got {metadata_uri}")
 
-    sqltype, rest = parts
+    sqltype = parsed_uri.scheme
 
-    parts = rest.split('@')
-    if len(parts) != 2:
+    if not parsed_uri.username or not parsed_uri.password:
         raise ValueError(f"Invalid metadata_uri format: expected 'sqltype://username:password@host:port[/dbname]', got {metadata_uri}")
 
-    auth, hostport_dbname = parts
+    username = parsed_uri.username
+    password = parsed_uri.password
 
-    # split the authentication part into username and password
-    auth_parts = auth.split(':')
-    if len(auth_parts) != 2:
+    if not parsed_uri.hostname or not parsed_uri.port:
         raise ValueError(f"Invalid metadata_uri format: expected 'sqltype://username:password@host:port[/dbname]', got {metadata_uri}")
 
-    username, password = auth_parts
+    host = parsed_uri.hostname
+    port = parsed_uri.port
 
-    # split the hostport_dbname part into host and port, and dbname (if it exists)
-    hostport_dbname_parts = hostport_dbname.split('/')
-    if len(hostport_dbname_parts) == 2:
-        hostport, dbname = hostport_dbname_parts
-    elif len(hostport_dbname_parts) == 1:
-        hostport = hostport_dbname_parts[0]
-        dbname = None
-    else:
-        raise ValueError(f"Invalid metadata_uri format: expected 'sqltype://username:password@host:port[/dbname]', got {metadata_uri}")
-
-    hostport_parts = hostport.split(':')
-    if len(hostport_parts) != 2:
-        raise ValueError(f"Invalid metadata_uri format: expected 'sqltype://username:password@host:port[/dbname]', got {metadata_uri}")
-
-    host, port = hostport_parts
+    dbname = parsed_uri.path.lstrip('/')
 
     return {
         'sqltype': sqltype,
@@ -258,7 +244,7 @@ def parse_metadata_uri(metadata_uri):
         'password': password,
         'host': host,
         'port': int(port),
-        'database': dbname
+        'database': dbname if dbname else None
     }
 
 
@@ -270,8 +256,7 @@ def generate_metadata_uri(metadata):
     port = metadata['port']
     dbname = metadata.get('database')
 
-    uri = f"{sqltype}://{username}:{password}@{host}:{port}"
-    if dbname:
-        uri = f"{uri}/{dbname}"
+    netloc = f"{username}:{password}@{host}:{port}"
+    path = f"/{dbname}" if dbname else ""
 
-    return uri
+    return urlunsplit((sqltype, netloc, path, "", ""))
