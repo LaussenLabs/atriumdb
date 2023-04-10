@@ -1,4 +1,5 @@
 import numpy as np
+from dotenv import load_dotenv
 
 from atriumdb.adb_functions import get_block_and_interval_data, condense_byte_read_list, find_intervals, \
     merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz
@@ -21,6 +22,7 @@ import random
 from pathlib import Path, PurePath
 from multiprocessing import cpu_count
 import sys
+import os
 from typing import Union, List, Tuple
 
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
@@ -159,8 +161,14 @@ class AtriumSDK:
             self.settings_dict = self._get_all_settings()
 
         elif metadata_connection_type == 'api':
+            if not REQUESTS_INSTALLED:
+                raise ImportError("Must install requests and python-dotenv or simply atriumdb[remote].")
             self.mode = "api"
             self.api_url = api_url
+            if token is None:
+                load_dotenv(dotenv_path="./.env", override=True)
+                token = os.environ['ATRIUMDB_API_TOKEN']
+
             self.token = token
 
         else:
