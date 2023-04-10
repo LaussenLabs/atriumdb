@@ -27,6 +27,14 @@ from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 
 try:
+    import requests
+    from requests import Session
+
+    REQUESTS_INSTALLED = True
+except ImportError:
+    REQUESTS_INSTALLED = False
+
+try:
     import importlib.resources as pkg_resources
 except ImportError:
     # Try backported to PY<37 `importlib_resources`.
@@ -151,8 +159,6 @@ class AtriumSDK:
             self.settings_dict = self._get_all_settings()
 
         elif metadata_connection_type == 'api':
-            import requests
-            from requests import Session
             self.mode = "api"
             self.api_url = api_url
             self.token = token
@@ -744,6 +750,8 @@ class AtriumSDK:
         return block_byte_list_threaded
 
     def block_session_requests(self, block_info_list):
+        if not REQUESTS_INSTALLED:
+            raise ImportError("requests module is not installed.")
         session = Session()
         session.headers = {"Authorization": "Bearer {}".format(self.token)}
         block_byte_list_2 = \
@@ -755,6 +763,8 @@ class AtriumSDK:
         return block_byte_list
 
     def get_block_bytes_response(self, block_id):
+        if not REQUESTS_INSTALLED:
+            raise ImportError("requests module is not installed.")
         headers = {"Authorization": "Bearer {}".format(self.token)}
         block_request_url = self.api_url + "sdk/blocks/{}".format(block_id)
         return requests.get(block_request_url, headers=headers)
@@ -2027,6 +2037,8 @@ class AtriumSDK:
         return {row[0]: row[1] for row in patient_list}
 
     def _request(self, method: str, endpoint: str, **kwargs):
+        if not REQUESTS_INSTALLED:
+            raise ImportError("requests module is not installed.")
         if self.api_test_client is not None:
             return self._test_client_request(method, endpoint, **kwargs)
 
