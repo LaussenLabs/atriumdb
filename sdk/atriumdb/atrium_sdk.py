@@ -165,9 +165,12 @@ class AtriumSDK:
                 raise ImportError("Must install requests and python-dotenv or simply atriumdb[remote].")
             self.mode = "api"
             self.api_url = api_url
-            if token is None:
+            if token is None and api_test_client is None:
                 load_dotenv(dotenv_path="./.env", override=True)
-                token = os.environ['ATRIUMDB_API_TOKEN']
+                try:
+                    token = os.environ['ATRIUMDB_API_TOKEN']
+                except KeyError:
+                    token = None
 
             self.token = token
 
