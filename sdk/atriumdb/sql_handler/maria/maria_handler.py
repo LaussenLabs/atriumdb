@@ -3,6 +3,7 @@ from typing import List, Dict, Tuple
 from contextlib import contextmanager
 
 import mariadb
+import uuid
 
 from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from_triplet_query, \
     maria_select_measure_from_id, \
@@ -40,7 +41,7 @@ DEFAULT_PORT = 3306
 
 
 class MariaDBHandler(SQLHandler):
-    def __init__(self, host: str, user: str, password: str, database: str, port: int = None):
+    def __init__(self, host: str, user: str, password: str, database: str, port: int = None, pool_size: int = 5):
         self.host = host
         self.user = user
         self.password = password
@@ -54,9 +55,21 @@ class MariaDBHandler(SQLHandler):
             'password': self.password,
             'database': self.database,
         }
+        self.pool_size = pool_size
+        self.pool = None
 
     def maria_connect(self):
         return mariadb.connect(**self.connection_params)
+
+    def create_pool(self):
+        pool_guid = str(uuid.uuid4())
+        self.pool = mariadb.ConnectionPool(pool_name=f"atriumdb_pool_{pool_guid}", pool_size=self.pool_size,
+                                           **self.connection_params)
+
+    def get_connection_from_pool(self):
+        if self.pool is None:
+            self.create_pool()
+        return self.pool.get_connection()
 
     def maria_connect_no_db(self, db_name=None):
         conn = mariadb.connect(
@@ -70,7 +83,8 @@ class MariaDBHandler(SQLHandler):
 
     @contextmanager
     def maria_db_connection(self, begin=False):
-        conn = self.maria_connect()
+        # conn = self.maria_connect()
+        conn = self.get_connection_from_pool()
         cursor = conn.cursor()
 
         try:
