@@ -392,26 +392,15 @@ class MariaDBHandler(SQLHandler):
                 FROM
                     block_index
                 WHERE
-                    measure_id = ? AND device_id = ?"""
-
-        if start_time_n is not None:
-            block_query += " AND end_time_n >= ? "
-        if end_time_n is not None:
-            block_query += " AND start_time_n <= ? "
-
-        # Order By
-        block_query += " ORDER BY file_id, start_byte ASC"
+                    measure_id = ? AND device_id = ? AND end_time_n >= ? AND start_time_n <= ?
+                ORDER BY
+                    file_id, start_byte ASC"""
 
         block_results = []
 
         with self.maria_db_connection(begin=False) as (conn, cursor):
             for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
-                args = (measure_id, encounter_device_id)
-                if start_time_n is not None:
-                    args += (encounter_start_time,)
-
-                if end_time_n is not None:
-                    args += (encounter_end_time,)
+                args = (measure_id, encounter_device_id, encounter_start_time, encounter_end_time)
 
                 cursor.execute(block_query, args)
                 block_results.extend(cursor.fetchall())
