@@ -326,8 +326,8 @@ class AtriumSDK:
         following order:
         - device_id (int): The ID of the device associated with the patient.
         - patient_id (int): The ID of the patient associated with the device.
-        - start_time (int): The start time (in UNIX timestamp format) of the association between the device and the patient.
-        - end_time (int): The end time (in UNIX timestamp format) of the association between the device and the patient.
+        - start_time (int): The start time (in UNIX nano timestamp format) of the association between the device and the patient.
+        - end_time (int): The end time (in UNIX nano timestamp format) of the association between the device and the patient.
 
         The `start_time` and `end_time` values represent the time range in which the device is associated with the patient.
 
