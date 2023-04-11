@@ -269,6 +269,47 @@ class AtriumSDK:
 
     def get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
                                 mrn_list: List[int] = None, start_time: int = None, end_time: int = None):
+        """
+            Retrieves device-patient mappings from the dataset's database based on the provided search criteria.
+
+            You can specify search criteria by providing values for one or more of the following parameters:
+            - device_id_list (List[int]): A list of device IDs to search for.
+            - patient_id_list (List[int]): A list of patient IDs to search for.
+            - mrn_list (List[int]): A list of MRN (medical record number) values to search for.
+            - start_time (int): The start time (in UNIX nano timestamp format) of the device-patient association to search for.
+            - end_time (int): The end time (in UNIX nano timestamp format) of the device-patient association to search for.
+
+            If you provide a value for the `mrn_list` parameter, the method will use the `get_mrn_to_patient_id_map` method to
+            retrieve a mapping of MRN values to patient IDs, and it will automatically include the corresponding patient IDs
+            in the search.
+
+            The method returns a list of tuples, where each tuple contains four integer values in the following order:
+            - device_id (int): The ID of the device associated with the patient.
+            - patient_id (int): The ID of the patient associated with the device.
+            - start_time (int): The start time (in UNIX timestamp format) of the association between the device and the patient.
+            - end_time (int): The end time (in UNIX timestamp format) of the association between the device and the patient.
+
+            The `start_time` and `end_time` values represent the time range in which the device is associated with the patient.
+
+            >>> # Retrieve device-patient mappings from the dataset's database.
+            >>> device_id_list = [1, 2]
+            >>> patient_id_list = [3, 4]
+            >>> start_time = 164708400_000_000_000
+            >>> end_time = 1647094800_000_000_000
+            >>> device_patient_data = sdk.get_device_patient_data(device_id_list=device_id_list,
+            >>>                                                    patient_id_list=patient_id_list,
+            >>>                                                    start_time=start_time,
+            >>>                                                    end_time=end_time)
+
+            :param List[int] optional device_id_list: A list of device IDs to search for.
+            :param List[int] optional patient_id_list: A list of patient IDs to search for.
+            :param List[int] optional mrn_list: A list of MRN (medical record number) values to search for.
+            :param int optional start_time: The start time (in UNIX timestamp format) of the device-patient association to search for.
+            :param int optional end_time: The end time (in UNIX timestamp format) of the device-patient association to search for.
+            :return: A list of tuples containing device-patient mapping data, where each tuple contains four integer values in
+                the following order: device_id, patient_id, start_time, and end_time.
+            :rtype: List[Tuple[int, int, int, int]]
+            """
         if mrn_list is not None:
             patient_id_list = [] if patient_id_list is None else patient_id_list
             mrn_to_patient_id_map = self.get_mrn_to_patient_id_map(mrn_list)
@@ -278,6 +319,27 @@ class AtriumSDK:
             device_id_list=device_id_list, patient_id_list=patient_id_list, start_time=start_time, end_time=end_time)
 
     def insert_device_patient_data(self, device_patient_data: List[Tuple[int, int, int, int]]):
+        """
+        Inserts device-patient mappings into the dataset's database.
+
+        The `device_patient_data` parameter is a list of tuples, where each tuple contains four integer values in the
+        following order:
+        - device_id (int): The ID of the device associated with the patient.
+        - patient_id (int): The ID of the patient associated with the device.
+        - start_time (int): The start time (in UNIX timestamp format) of the association between the device and the patient.
+        - end_time (int): The end time (in UNIX timestamp format) of the association between the device and the patient.
+
+        The `start_time` and `end_time` values represent the time range in which the device is associated with the patient.
+
+        >>> # Insert a device-patient mapping into the dataset's database.
+        >>> device_patient_data = [(1, 2, 1647084000, 1647094800), (1, 3, 1647084000, 1647094800)]
+        >>> sdk.insert_device_patient_data(device_patient_data)
+
+        :param List[Tuple[int, int, int, int]] device_patient_data: A list of tuples containing device-patient mapping
+            data, where each tuple contains four integer values in the following order: device_id, patient_id, start_time,
+            and end_time.
+        :return: None
+        """
         self.sql_handler.insert_device_patients(device_patient_data)
 
     def get_all_patient_encounter_data(self, measure_id_list: List[int] = None, patient_id_list: List[int] = None,
@@ -692,9 +754,6 @@ class AtriumSDK:
         self.write_data(measure_id, device_id, time_data, value_data, freq, int(time_data[0]), raw_time_type=raw_t_t,
                         raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
                         scale_m=scale_m, scale_b=scale_b)
-
-    def write_encounter(self, patient_id, device_id, start_time_n, end_time_n):
-        pass
 
     def get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int,
                      device_id: int = None, patient_id: int = None, mrn: int = None,
