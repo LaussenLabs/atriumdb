@@ -332,7 +332,8 @@ class AtriumSDK:
         The `start_time` and `end_time` values represent the time range in which the device is associated with the patient.
 
         >>> # Insert a device-patient mapping into the dataset's database.
-        >>> device_patient_data = [(1, 2, 1647084000, 1647094800), (1, 3, 1647084000, 1647094800)]
+        >>> device_patient_data = [(1, 2, 1647084000_000_000_000, 1647094800_000_000_000),
+        >>>                        (1, 3, 1647084000_000_000_000, 1647094800_000_000_000)]
         >>> sdk.insert_device_patient_data(device_patient_data)
 
         :param List[Tuple[int, int, int, int]] device_patient_data: A list of tuples containing device-patient mapping
