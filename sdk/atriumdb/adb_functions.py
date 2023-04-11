@@ -54,10 +54,10 @@ def find_intervals(freq_nhz, raw_time_type, time_data, data_start_time, num_valu
         time_deltas = time_data[1:] - time_data[:-1]
         for time_arr_i in range(time_data.size - 1):
             if time_deltas[time_arr_i] > period_ns:
-                intervals[-1][-1] = time_data[time_arr_i]
+                intervals[-1][-1] = time_data[time_arr_i] + period_ns
                 intervals.append([time_data[time_arr_i + 1], 0])
 
-        intervals[-1][-1] = time_data[-1]
+        intervals[-1][-1] = time_data[-1] + period_ns
 
     elif raw_time_type == TIME_TYPES['START_TIME_NUM_SAMPLES']:
         intervals = [[time_data[0], time_data[0] + ((time_data[1] - 1) * period_ns)]]

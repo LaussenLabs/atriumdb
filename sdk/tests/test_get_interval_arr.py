@@ -1,4 +1,7 @@
 from atriumdb import AtriumSDK
+import numpy as np
+from tests.test_transfer_info import insert_random_patients
+from typing import List, Tuple
 
 from tests.testing_framework import _test_for_both
 
@@ -15,4 +18,64 @@ def _test_get_interval_arr(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    pass
+    # Write and insert data
+    device_id = sdk.insert_device("device_tag_1")
+    freq_hz = 1
+    measure_id = sdk.insert_measure("measure_tag_1", freq_hz)
+
+    # Insert random patients
+    num_patients = 5
+    patient_ids = insert_random_patients(sdk, num_patients)
+
+    # Map patients to devices over different times
+    device_patient_data: List[Tuple[int, int, int, int]] = []
+    start_time_s = 1234567890
+    end_time_s = start_time_s + 3600
+    start_time_nano = start_time_s * (10 ** 9)
+    end_time_nano = end_time_s * (10 ** 9)
+    interval = (end_time_nano - start_time_nano) // num_patients
+    gap_nano = 2 * (10 ** 9)  # 2-second gap
+
+    expected_intervals = {}
+    combined_intervals = []
+    for idx, patient_id in enumerate(patient_ids):
+        start = start_time_nano + (idx * (interval + gap_nano))
+        end = start + interval
+        device_patient_data.append((device_id, patient_id, start, end))
+        expected_intervals[patient_id] = np.array([[start, end]])
+        combined_intervals.append([start, end])
+
+    sdk.insert_device_patient_data(device_patient_data)
+
+    # Generate time_data with gaps
+    time_data = []
+    for idx in range(num_patients):
+        start = start_time_s + (idx * (interval // (10 ** 9) + 2))
+        end = start + (interval // (10 ** 9))
+        time_data.extend(np.arange(start, end))
+
+    time_data = np.array(time_data, dtype=np.int64)
+    value_data = np.sin(time_data)
+
+    # Write data with gaps
+    sdk.write_data_easy(measure_id=measure_id, device_id=device_id, time_data=time_data, value_data=value_data,
+                        freq=freq_hz, freq_units="Hz", time_units="s")
+
+    # Test get_interval_array based on device
+    start_time_nano = start_time_s * (10 ** 9)
+    end_time_nano = end_time_s * (10 ** 9)
+    interval_arr_device = sdk.get_interval_array(measure_id=measure_id, device_id=device_id, start=start_time_nano,
+                                                 end=end_time_nano)
+
+    assert interval_arr_device.shape[0] > 0, "No intervals found for the device"
+    assert np.array_equal(interval_arr_device, np.array(combined_intervals, dtype=np.int64)), "Unexpected intervals for device"
+
+    # Test get_interval_array based on patient
+    for patient_id in patient_ids:
+        interval_arr_patient = sdk.get_interval_array(measure_id=measure_id, patient_id=patient_id,
+                                                      start=start_time_nano, end=end_time_nano)
+
+        assert interval_arr_patient.shape[0] > 0, f"No intervals found for patient {patient_id}"
+        assert np.array_equal(interval_arr_patient, expected_intervals[patient_id]), f"Unexpected intervals for patient {patient_id}"
+
+
