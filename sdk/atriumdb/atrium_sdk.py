@@ -1335,6 +1335,13 @@ class AtriumSDK:
         :returns: A 2D array representing the availability of a specified measure.
 
         """
+        if self.metadata_connection_type == "api":
+            return self._api_get_interval_array(
+                measure_id,
+                device_id=device_id,
+                patient_id=patient_id,
+                gap_tolerance_nano=gap_tolerance_nano,
+                start=start, end=end)
         gap_tolerance_nano = 0 if gap_tolerance_nano is None else gap_tolerance_nano
 
         interval_result = self.sql_handler.select_intervals(
@@ -1926,6 +1933,19 @@ class AtriumSDK:
 
     def _api_get_all_measures(self):
         return self._request("GET", "measures/")
+
+    def _api_get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
+                                start=None, end=None):
+        params = {
+            'measure_id': measure_id,
+            'device_id': device_id,
+            'patient_id': patient_id,
+            'start': start,
+            'end': end,
+        }
+        result = self._request("GET", "intervals/", params=params)
+
+        return result
 
     def _api_search_measures(self, tag_match=None, freq_nhz=None, unit=None, name_match=None, freq_units=None):
         params = {
