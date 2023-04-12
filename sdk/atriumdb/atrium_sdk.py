@@ -1,5 +1,4 @@
 import numpy as np
-from dotenv import load_dotenv
 
 from atriumdb.adb_functions import get_block_and_interval_data, condense_byte_read_list, find_intervals, \
     merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz
@@ -31,6 +30,7 @@ from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 try:
     import requests
     from requests import Session
+    from dotenv import load_dotenv
 
     REQUESTS_INSTALLED = True
 except ImportError:
@@ -83,7 +83,8 @@ class AtriumSDK:
     >>> # Remote API Mode
     >>> api_url = "http://example.com/api/v1"
     >>> token = "4e78a93749ead7893"
-    >>> sdk = AtriumSDK(api_url=api_url,token=token)
+    >>> metadata_connection_type = "api"
+    >>> sdk = AtriumSDK(api_url=api_url, token=token, metadata_connection_type=metadata_connection_type)
 
     :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
     :param str metadata_connection_type: Specifies the type of connection to use for metadata. Options are "sqlite", "mysql", "mariadb", or "api". Default "sqlite".

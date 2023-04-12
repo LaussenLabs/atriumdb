@@ -145,6 +145,9 @@ def login(ctx):
 
             set_env_var_in_dotenv("ATRIUMDB_API_TOKEN", token_data['access_token'])
             set_env_var_in_dotenv("ATRIUMDB_DATABASE_TYPE", "api")
+            click.echo("Your API Token is:\n")
+            click.echo(token_data['access_token'])
+            click.echo("The variable ATRIUMDB_API_TOKEN has been set in your .env file and")
             load_dotenv(dotenv_path="./.env", override=True)
 
         elif token_data['error'] not in ('authorization_pending', 'slow_down'):
