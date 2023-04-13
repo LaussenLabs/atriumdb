@@ -1222,8 +1222,12 @@ class AtriumSDK:
                 r_values = r_values[:new_values_index + new_values.size]
 
         else:
-            r_times[new_times_index:], r_values[new_values_index:] = sort_data(
-                r_times[new_times_index:], r_values[new_values_index:], headers)
+            if times_before is None and values_before is None:
+                r_times, r_values = sort_data(
+                    r_times, r_values, headers)
+            else:
+                r_times[new_times_index:], r_values[new_values_index:] = sort_data(
+                    r_times[new_times_index:], r_values[new_values_index:], headers)
 
         if times_before is not None:
             r_times[:times_before.size] = times_before
