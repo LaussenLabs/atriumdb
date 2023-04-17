@@ -848,15 +848,15 @@ class AtriumSDK:
     def get_block_info_api_url(self, measure_id, start_time_n, end_time_n, device_id, patient_id, mrn):
         if device_id is not None:
             block_info_url = "sdk/blocks/?start_time={}&end_time={}&measure_id={}&device_id={}".format(
-                                     start_time_n, end_time_n, measure_id, device_id)
+                start_time_n, end_time_n, measure_id, device_id)
 
         elif patient_id is not None:
             block_info_url = "sdk/blocks/?start_time={}&end_time={}&measure_id={}&patient_id={}".format(
-                                         start_time_n, end_time_n, measure_id, patient_id)
+                start_time_n, end_time_n, measure_id, patient_id)
 
         elif mrn is not None:
             block_info_url = "sdk/blocks/?start_time={}&end_time={}&measure_id={}&mrn={}".format(
-                                         start_time_n, end_time_n, measure_id, mrn)
+                start_time_n, end_time_n, measure_id, mrn)
         else:
             raise ValueError("One of [device_id, patient_id, mrn] must be specified.")
         return block_info_url
@@ -1065,9 +1065,9 @@ class AtriumSDK:
         # If the data is from the api.
         if self.mode == "api":
             return self.get_data_api(measure_id, start_time_n, end_time_n,
-                              device_id=device_id, patient_id=patient_id,
-                              auto_convert_gap_to_time_array=auto_convert_gap_to_time_array,
-                              return_intervals=return_intervals, analog=analog)
+                                     device_id=device_id, patient_id=patient_id,
+                                     auto_convert_gap_to_time_array=auto_convert_gap_to_time_array,
+                                     return_intervals=return_intervals, analog=analog)
 
         # If the dataset is in a local directory.
         elif self.mode == "local":
@@ -1115,7 +1115,7 @@ class AtriumSDK:
             end_bench_total = time.perf_counter()
             _LOGGER.debug(
                 f"Total get data call took {round(end_bench_total - start_bench_total, 2)}: {r_values.size} values")
-            _LOGGER.debug(f"{round(r_values.size / (end_bench_total-start_bench_total), 2)} values per second.")
+            _LOGGER.debug(f"{round(r_values.size / (end_bench_total - start_bench_total), 2)} values per second.")
 
             # convert time data from nanoseconds to unit of choice
             r_times = r_times / time_unit_options[time_units]
@@ -1210,8 +1210,7 @@ class AtriumSDK:
 
                 r_times, r_values = sorted_intervals, sorted_values
 
-            # If all blocks are time type 1.
-            elif all([h.t_raw_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO for h in headers]):
+            else:
                 # r_times, r_values[new_values_index:] = self.filter_gap_data_to_timestamps(
                 #     end_time_n, headers, r_times[new_times_index:], r_values[new_values_index:],
                 #     start_time_n, times_before=times_before)
@@ -1223,16 +1222,17 @@ class AtriumSDK:
                 r_values[new_values_index:new_values_index + new_values.size] = new_values
                 r_values = r_values[:new_values_index + new_values.size]
 
-            elif len(headers) > 0 and not all([h.t_raw_type == headers[0].t_raw_type for h in headers]):
-                raise ValueError("Blocks pulled were not homogeneously encoded. TODO: handle this case.")
-
-        else:
+        # If all blocks are time type 1.
+        elif all([h.t_raw_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO for h in headers]):
             if times_before is None and values_before is None:
                 r_times, r_values = sort_data(
                     r_times, r_values, headers)
             else:
                 r_times[new_times_index:], r_values[new_values_index:] = sort_data(
                     r_times[new_times_index:], r_values[new_values_index:], headers)
+
+        elif len(headers) > 0 and not all([h.t_raw_type == headers[0].t_raw_type for h in headers]):
+            raise ValueError("Blocks pulled were not homogeneously encoded. TODO: handle this case.")
 
         if times_before is not None:
             r_times[:times_before.size] = times_before
@@ -1557,7 +1557,7 @@ class AtriumSDK:
         limit = len(patient_tuple_list) if limit is None else limit
         patient_dict = {}
         for patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id in \
-                patient_tuple_list[skip:skip+limit]:
+                patient_tuple_list[skip:skip + limit]:
             patient_dict[patient_id] = {
                 'id': patient_id,
                 'mrn': mrn,
