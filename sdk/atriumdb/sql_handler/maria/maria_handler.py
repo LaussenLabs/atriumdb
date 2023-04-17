@@ -41,7 +41,8 @@ DEFAULT_PORT = 3306
 
 
 class MariaDBHandler(SQLHandler):
-    def __init__(self, host: str, user: str, password: str, database: str, port: int = None, pool_size: int = 5):
+    def __init__(self, host: str, user: str, password: str, database: str, port: int = None, pool_size: int = 1,
+                 no_pool=False):
         self.host = host
         self.user = user
         self.password = password
@@ -56,6 +57,7 @@ class MariaDBHandler(SQLHandler):
             'database': self.database,
         }
         self.pool_size = pool_size
+        self.no_pool = no_pool
         self.pool = None
 
     def maria_connect(self):
@@ -83,8 +85,10 @@ class MariaDBHandler(SQLHandler):
 
     @contextmanager
     def maria_db_connection(self, begin=False):
-        # conn = self.maria_connect()
-        conn = self.get_connection_from_pool()
+        if self.no_pool:
+            conn = self.maria_connect()
+        else:
+            conn = self.get_connection_from_pool()
         cursor = conn.cursor()
 
         try:
