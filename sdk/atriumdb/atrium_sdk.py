@@ -1158,6 +1158,7 @@ class AtriumSDK:
         new_times_index = 0 if times_before is None else times_before.size
         new_values_index = 0 if values_before is None else values_before.size
 
+        # If all blocks are time type 2.
         if auto_convert_gap_to_time_array and \
                 all([h.t_raw_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO for h in headers]):
 
@@ -1209,7 +1210,8 @@ class AtriumSDK:
 
                 r_times, r_values = sorted_intervals, sorted_values
 
-            else:
+            # If all blocks are time type 1.
+            elif all([h.t_raw_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO for h in headers]):
                 # r_times, r_values[new_values_index:] = self.filter_gap_data_to_timestamps(
                 #     end_time_n, headers, r_times[new_times_index:], r_values[new_values_index:],
                 #     start_time_n, times_before=times_before)
@@ -1220,6 +1222,9 @@ class AtriumSDK:
 
                 r_values[new_values_index:new_values_index + new_values.size] = new_values
                 r_values = r_values[:new_values_index + new_values.size]
+
+            elif len(headers) > 0 and not all([h.t_raw_type == headers[0].t_raw_type for h in headers]):
+                raise ValueError("Blocks pulled were not homogeneously encoded. TODO: handle this case.")
 
         else:
             if times_before is None and values_before is None:
