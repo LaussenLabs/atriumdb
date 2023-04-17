@@ -1954,7 +1954,7 @@ class AtriumSDK:
         }
         result = self._request("GET", "intervals/", params=params)
 
-        return result
+        return np.array(result, dtype=np.int64)
 
     def _api_search_measures(self, tag_match=None, freq_nhz=None, unit=None, name_match=None, freq_units=None):
         params = {
