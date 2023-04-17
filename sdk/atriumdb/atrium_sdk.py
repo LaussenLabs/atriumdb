@@ -1064,7 +1064,7 @@ class AtriumSDK:
 
         # If the data is from the api.
         if self.mode == "api":
-            self.get_data_api(measure_id, start_time_n, end_time_n,
+            return self.get_data_api(measure_id, start_time_n, end_time_n,
                               device_id=device_id, patient_id=patient_id,
                               auto_convert_gap_to_time_array=auto_convert_gap_to_time_array,
                               return_intervals=return_intervals, analog=analog)
