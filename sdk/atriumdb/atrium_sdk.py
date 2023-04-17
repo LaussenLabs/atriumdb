@@ -98,7 +98,7 @@ class AtriumSDK:
 
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
                  connection_params: dict = None, num_threads: int = None, api_url: str = None, token: str = None,
-                 tsc_file_location: str = None, atriumdb_lib_path: str = None, api_test_client=None):
+                 tsc_file_location: str = None, atriumdb_lib_path: str = None, api_test_client=None, no_pool=False):
         self.api_test_client = api_test_client
 
         metadata_connection_type = DEFAULT_META_CONNECTION_TYPE if \
@@ -156,7 +156,7 @@ class AtriumSDK:
             password = connection_params['password']
             database = connection_params['database']
             port = connection_params['port']
-            self.sql_handler = MariaDBHandler(host, user, password, database, port)
+            self.sql_handler = MariaDBHandler(host, user, password, database, port, no_pool=no_pool)
             self.mode = "local"
             self.file_api = AtriumFileHandler(tsc_file_location)
             self.settings_dict = self._get_all_settings()
