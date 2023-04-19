@@ -807,7 +807,8 @@ class AtriumSDK:
         block_requests = []
         for block_info in block_info_list:
             block_id = block_info['id']
-            block_request_url = self.api_url + f"/sdk/blocks/{block_id}"
+            endpoint = f"/sdk/blocks/{block_id}"
+            block_request_url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
             response = self.api_test_client.get(block_request_url)
             block_requests.append(response)
         for response in block_requests:
@@ -838,24 +839,26 @@ class AtriumSDK:
         if not REQUESTS_INSTALLED:
             raise ImportError("requests module is not installed.")
         headers = {"Authorization": "Bearer {}".format(self.token)}
-        block_request_url = self.api_url + "sdk/blocks/{}".format(block_id)
+        endpoint = f"/sdk/blocks/{block_id}"
+        block_request_url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
         return requests.get(block_request_url, headers=headers)
 
     def get_block_bytes_response_from_session(self, block_id, session: Session):
-        block_request_url = self.api_url + "sdk/blocks/{}".format(block_id)
+        endpoint = f"/sdk/blocks/{block_id}"
+        block_request_url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
         return session.get(block_request_url)
 
     def get_block_info_api_url(self, measure_id, start_time_n, end_time_n, device_id, patient_id, mrn):
         if device_id is not None:
-            block_info_url = "sdk/blocks/?start_time={}&end_time={}&measure_id={}&device_id={}".format(
+            block_info_url = "sdk/blocks?start_time={}&end_time={}&measure_id={}&device_id={}".format(
                 start_time_n, end_time_n, measure_id, device_id)
 
         elif patient_id is not None:
-            block_info_url = "sdk/blocks/?start_time={}&end_time={}&measure_id={}&patient_id={}".format(
+            block_info_url = "sdk/blocks?start_time={}&end_time={}&measure_id={}&patient_id={}".format(
                 start_time_n, end_time_n, measure_id, patient_id)
 
         elif mrn is not None:
-            block_info_url = "sdk/blocks/?start_time={}&end_time={}&measure_id={}&mrn={}".format(
+            block_info_url = "sdk/blocks?start_time={}&end_time={}&measure_id={}&mrn={}".format(
                 start_time_n, end_time_n, measure_id, mrn)
         else:
             raise ValueError("One of [device_id, patient_id, mrn] must be specified.")
@@ -1949,10 +1952,10 @@ class AtriumSDK:
             'measure_id': measure_id,
             'device_id': device_id,
             'patient_id': patient_id,
-            'start': start,
-            'end': end,
+            'start_time': start,
+            'end_time': end,
         }
-        result = self._request("GET", "intervals/", params=params)
+        result = self._request("GET", "intervals", params=params)
 
         return np.array(result, dtype=np.int64)
 
@@ -2146,6 +2149,7 @@ class AtriumSDK:
         url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
 
         headers = {'Authorization': f"Bearer {self.token}"}
+
         response = requests.request(method, url, headers=headers, **kwargs)
 
         if response.status_code != 200:
