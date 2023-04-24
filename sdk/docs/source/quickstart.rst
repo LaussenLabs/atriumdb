@@ -115,14 +115,15 @@ To write and read data in AtriumDB, you will use the `write_data_easy` and `get_
     assert np.array_equal(time_data, read_time_data)
     assert np.array_equal(value_data, read_value_data)
 
+
 Using the CLI for authentication and remote access
 ##################################################
 
-To use the CLI for authentication and remote access, you will need to install the `atriumdb` package with the `cli` optional dependency.
+To use the CLI for authentication and remote access, you will need to install the `atriumdb` package with the `cli` and `remote` optional dependency.
 
 .. code-block:: bash
 
-    pip install atriumdb[cli]
+    pip install atriumdb[cli,remote]
 
 You can then use the `atriumdb` CLI to set the endpoint URL and log in to the remote API.
 
@@ -152,3 +153,51 @@ After logging in, the `atriumdb` CLI will store the API token in the `.env` file
     ATRIUMDB_API_TOKEN=4e78a93749ead7893
 
 Now, you can access the remote dataset using the AtriumSDK object, as shown in the "Connecting to an Existing Dataset" section.
+
+
+Using the CLI for Local Operations
+##################################
+
+The `atriumdb` CLI also provides commands for working with local datasets. You can use the CLI to list and filter measures, devices, and patients in your local dataset.
+
+First, ensure you have the `atriumdb` package with the `cli` optional dependency installed:
+
+.. code-block:: bash
+
+    pip install atriumdb[cli]
+
+To list measures, use the `measure ls` command:
+
+.. code-block:: bash
+
+    atriumdb measure ls
+
+To filter measures by a specific tag or frequency, use the `--tag-match` or `--freq` options:
+
+.. code-block:: bash
+
+    atriumdb measure ls --tag-match "ECG" --freq 250
+
+To list devices, use the `device ls` command:
+
+.. code-block:: bash
+
+    atriumdb device ls
+
+To filter devices by a specific tag or manufacturer, use the `--tag-match` or `--manufacturer-match` options:
+
+.. code-block:: bash
+
+    atriumdb device ls --tag-match "monitor" --manufacturer-match "Philips"
+
+To list patients, use the `patient ls` command:
+
+.. code-block:: bash
+
+    atriumdb patient ls
+
+To filter patients by gender or age range, use the `--gender` or `--age-years-min` and `--age-years-max` options:
+
+.. code-block:: bash
+
+    atriumdb patient ls --gender "F" --age-years-min 20 --age-years-max 40
