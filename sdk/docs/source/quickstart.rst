@@ -80,7 +80,7 @@ Then, you can use the `wfdb` library to read in a record from the MITDB database
 
     # WFDB doesn't have time information associated with this data, so create some.
     period_ns = (10 ** 9) // record.fs
-    time_data = np.arange(value_data) * period_ns
+    time_data = np.arange(value_data.size, dtype=np.int64) * period_ns
 
     # Remember start & end times for future query
     start_time_nano = 0
