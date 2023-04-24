@@ -1,13 +1,32 @@
 Quick Start
 -----------
 
-.. toctree::
-   :maxdepth: 2
-
 This quick start guide will walk you through the process of creating a new dataset, pulling example data from WFDB, defining signals and sources, and reading and writing data in AtriumDB.
 
-Dataset Location
+Creating a new dataset
 #######################
+
+To create a new dataset, you can use the `create_dataset` method. This method allows you to specify the type of metadata database to use, the protection mode, and the behavior when new data overlaps with existing data.
+
+.. code-block:: python
+
+    from atriumdb import AtriumSDK
+
+    # Create a new local dataset using SQLite
+    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", database_type="sqlite")
+
+    # Create a new local dataset using MariaDB
+    connection_params = {
+        'host': "localhost",
+        'user': "user",
+        'password': "pass",
+        'database': "new_dataset",
+        'port': 3306
+    }
+    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", database_type="mysql", connection_params=connection_params)
+
+Connecting to an Existing Dataset
+#######################################
 
 To create a new dataset or continue working on a previous dataset, you will need to specify a local path where the dataset should be stored.
 
@@ -21,6 +40,22 @@ To create a new dataset or continue working on a previous dataset, you will need
 
     # Create AtriumSDK python object.
     sdk = AtriumSDK(dataset_location=dataset_location)
+
+    # Connect to a dataset supported by mariadb
+    connection_params = {
+        'host': "localhost",
+        'user': "user",
+        'password': "pass",
+        'database': "new_dataset",
+        'port': 3306
+    }
+    sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type="mysql", connection_params=connection_params)
+
+    # Connect to a remote dataset using the API
+    api_url = "http://example.com/api/v1"
+    token = "4e78a93749ead7893"
+    sdk = AtriumSDK(api_url=api_url, token=token, metadata_connection_type="api")
+
 
 Pull Some Example Data from WFDB
 #####################################
@@ -79,3 +114,41 @@ To write and read data in AtriumDB, you will use the `write_data_easy` and `get_
     _, read_time_data, read_value_data = sdk.get_data(measure_id=new_measure_id, start_time_n=start_time_nano, end_time_n=end_time_nano, device_id=new_device_id)
     assert np.array_equal(time_data, read_time_data)
     assert np.array_equal(value_data, read_value_data)
+
+Using the CLI for authentication and remote access
+##################################################
+
+To use the CLI for authentication and remote access, you will need to install the `atriumdb` package with the `cli` optional dependency.
+
+.. code-block:: bash
+
+    pip install atriumdb[cli]
+
+You can then use the `atriumdb` CLI to set the endpoint URL and log in to the remote API.
+
+.. code-block:: bash
+
+    atriumdb --endpoint-url http://example.com/api/v1 login
+
+If the endpoint URL is already set in the .env file or as an environment variable, you can simply log in like this:
+
+Create a file named `.env` in the same directory as your script and add the following content:
+
+.. code-block:: ini
+
+    ATRIUMDB_ENDPOINT_URL=http://example.com/api/v1
+
+Now, you can log in using the CLI:
+
+.. code-block:: bash
+
+    atriumdb login
+
+After logging in, the `atriumdb` CLI will store the API token in the `.env` file. You can update your `.env` file to include the API token as well:
+
+.. code-block:: ini
+
+    ATRIUMDB_ENDPOINT_URL=http://example.com/api/v1
+    ATRIUMDB_API_TOKEN=4e78a93749ead7893
+
+Now, you can access the remote dataset using the AtriumSDK object, as shown in the "Connecting to an Existing Dataset" section.
