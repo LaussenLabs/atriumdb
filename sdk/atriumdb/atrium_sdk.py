@@ -103,16 +103,18 @@ class AtriumSDK:
                  tsc_file_location: str = None, atriumdb_lib_path: str = None, api_test_client=None, no_pool=False):
         self.api_test_client = api_test_client
 
+        # Set default metadata connection type if not provided
         metadata_connection_type = DEFAULT_META_CONNECTION_TYPE if \
             metadata_connection_type is None else metadata_connection_type
 
         self.metadata_connection_type = metadata_connection_type
 
+        # Set number of threads to max available minus 2 or 1, whichever is greater, if not provided
         if num_threads is None:
             num_threads = max(cpu_count() - 2, 1)
 
+        # Set the C DLL path based on the platform if not provided
         if atriumdb_lib_path is None:
-
             if sys.platform == "win32":
                 shared_lib_filename = shared_lib_filename_windows
             else:
@@ -121,53 +123,72 @@ class AtriumSDK:
             this_file_path = Path(__file__)
             atriumdb_lib_path = this_file_path.parent.parent / shared_lib_filename
 
+        # Initialize the block object with the C DLL path and number of threads
         self.block = Block(atriumdb_lib_path, num_threads)
         self.sql_handler = None
 
+        # Handle SQLite connections
         if metadata_connection_type == 'sqlite':
-            if dataset_location is None and tsc_file_location is None and api_url is None:
-                raise ValueError("One of dataset_location, tsc_file_location or api_url must be specified.")
-
-            if isinstance(dataset_location, str):
-                dataset_location = Path(dataset_location)
-            if tsc_file_location is None and metadata_connection_type != 'api':
-                tsc_file_location = dataset_location / 'tsc'
-
+            # Ensure dataset_location is provided for SQLite mode
             if dataset_location is None:
                 raise ValueError("dataset location must be specified for sqlite mode")
+
+            # Convert dataset_location to a Path object if it's a string
+            if isinstance(dataset_location, str):
+                dataset_location = Path(dataset_location)
+
+            # Set the default tsc_file_location if not provided.
+            if tsc_file_location is None:
+                tsc_file_location = dataset_location / 'tsc'
+
+            # Set the SQLite database file path and create its parent directory if it doesn't exist
             db_file = Path(dataset_location) / 'meta' / 'index.db'
             db_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Initialize the SQLiteHandler with the database file path
             self.sql_handler = SQLiteHandler(db_file)
             self.mode = "local"
             self.file_api = AtriumFileHandler(tsc_file_location)
             self.settings_dict = self._get_all_settings()
 
+        # Handle MySQL or MariaDB connections
         elif metadata_connection_type == 'mysql' or metadata_connection_type == 'mariadb':
-            if dataset_location is None and tsc_file_location is None and api_url is None:
-                raise ValueError("One of dataset_location, tsc_file_location or api_url must be specified.")
+            # Ensure at least one of the required parameters is provided
+            if dataset_location is None and tsc_file_location is None:
+                raise ValueError("One of dataset_location, tsc_file_location must be specified.")
 
+            # Convert dataset_location to a Path object if it's a string
             if isinstance(dataset_location, str):
                 dataset_location = Path(dataset_location)
-            if tsc_file_location is None and metadata_connection_type != 'api':
+
+            # Set the default tsc_file_location if not provided
+            if tsc_file_location is None:
                 tsc_file_location = dataset_location / 'tsc'
 
+            # Import the MariaDBHandler class and extract connection parameters
             from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
-
             host = connection_params['host']
             user = connection_params['user']
             password = connection_params['password']
             database = connection_params['database']
             port = connection_params['port']
+
+            # Initialize the MariaDBHandler with the connection parameters
             self.sql_handler = MariaDBHandler(host, user, password, database, port, no_pool=no_pool)
             self.mode = "local"
             self.file_api = AtriumFileHandler(tsc_file_location)
             self.settings_dict = self._get_all_settings()
 
+        # Handle API connections
         elif metadata_connection_type == 'api':
+            # Check if the necessary modules are installed for API connections
             if not REQUESTS_INSTALLED:
                 raise ImportError("Must install requests and python-dotenv or simply atriumdb[remote].")
+
             self.mode = "api"
             self.api_url = api_url
+
+            # Load API token from environment variables if not provided
             if token is None and api_test_client is None:
                 load_dotenv(dotenv_path="./.env", override=True)
                 try:
@@ -180,15 +201,17 @@ class AtriumSDK:
         else:
             raise ValueError("metadata_connection_type must be one of sqlite, mysql, mariadb or api")
 
+        # Initialize measures and devices if not in API mode
         if metadata_connection_type != "api":
-
             self._measures = self.get_all_measures()
             self._devices = self.get_all_devices()
 
+            # Create a dictionary to map measure information to measure IDs
             self._measure_ids = {}
             for measure_id, measure_info in self._measures.items():
                 self._measure_ids[(measure_info['tag'], measure_info['freq_nhz'], measure_info['unit'])] = measure_id
 
+            # Create a dictionary to map device tags to device IDs
             self._device_ids = {}
             for device_id, device_info in self._devices.items():
                 self._device_ids[device_info['tag']] = device_id
