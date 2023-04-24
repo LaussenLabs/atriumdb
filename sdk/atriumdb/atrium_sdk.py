@@ -72,7 +72,7 @@ class AtriumSDK:
     :param str atriumdb_lib_path: A file path pointing to the shared library (CDLL) that powers the compression and decompression. Not required for most users.
 
     Examples:
-    --------
+    -----------
     Simple Usage:
 
     >>> from atriumdb import AtriumSDK
@@ -80,7 +80,7 @@ class AtriumSDK:
 
     Advanced Usage:
 
-    # MySQL/MariaDB Connection
+    >>> # MySQL/MariaDB Connection
     >>> metadata_connection_type = "mysql"
     >>> connection_params = {
     >>>     'host': "localhost",
@@ -91,7 +91,7 @@ class AtriumSDK:
     >>> }
     >>> sdk = AtriumSDK(dataset_location="./example_dataset", metadata_connection_type=metadata_connection_type, connection_params=connection_params)
 
-    # Remote API Mode
+    >>> # Remote API Mode
     >>> api_url = "http://example.com/api/v1"
     >>> token = "4e78a93749ead7893"
     >>> metadata_connection_type = "api"

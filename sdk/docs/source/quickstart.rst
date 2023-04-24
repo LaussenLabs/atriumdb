@@ -1,5 +1,5 @@
 Quick Start
------------
+-------------
 
 This quick start guide will walk you through the process of creating a new dataset, pulling example data from WFDB, defining signals and sources, and reading and writing data in AtriumDB.
 
