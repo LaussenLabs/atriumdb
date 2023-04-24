@@ -62,6 +62,17 @@ class AtriumSDK:
     """
     The Core SDK Object that represents a single dataset and provides methods to interact with it.
 
+    :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
+    :param str metadata_connection_type: Specifies the type of connection to use for metadata. Options are "sqlite", "mysql", "mariadb", or "api". Default "sqlite".
+    :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" connection type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
+    :param int num_threads: Specifies the number of threads to use when processing data.
+    :param str api_url: Specifies the URL of the server hosting the API in "api" connection type.
+    :param str token: An authentication token for the API in "api" connection type.
+    :param str tsc_file_location: A file path pointing to the directory in which the TSC (time series compression) files are written for this dataset. Used to customize the TSC directory location, rather than using `dataset_location/tsc`.
+    :param str atriumdb_lib_path: A file path pointing to the shared library (CDLL) that powers the compression and decompression. Not required for most users.
+
+    Examples:
+    --------
     Simple Usage:
 
     >>> from atriumdb import AtriumSDK
@@ -69,7 +80,7 @@ class AtriumSDK:
 
     Advanced Usage:
 
-    >>> # MySQL/MariaDB Connection
+    # MySQL/MariaDB Connection
     >>> metadata_connection_type = "mysql"
     >>> connection_params = {
     >>>     'host': "localhost",
@@ -78,22 +89,13 @@ class AtriumSDK:
     >>>     'database': "your_dataset_name",
     >>>     'port': 3306
     >>> }
-    >>> sdk = AtriumSDK(dataset_location="./example_dataset",metadata_connection_type=metadata_connection_type,connection_params=connection_params)
+    >>> sdk = AtriumSDK(dataset_location="./example_dataset", metadata_connection_type=metadata_connection_type, connection_params=connection_params)
 
-    >>> # Remote API Mode
+    # Remote API Mode
     >>> api_url = "http://example.com/api/v1"
     >>> token = "4e78a93749ead7893"
     >>> metadata_connection_type = "api"
     >>> sdk = AtriumSDK(api_url=api_url, token=token, metadata_connection_type=metadata_connection_type)
-
-    :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
-    :param str metadata_connection_type: Specifies the type of connection to use for metadata. Options are "sqlite", "mysql", "mariadb", or "api". Default "sqlite".
-    :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" connection type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
-    :param int num_threads: Specifies the number of threads to use when processing data.
-    :param str api_url: Specifies the URL of the server hosting the API in "api" connection type.
-    :param str token: An authentication token for the API in "api" connection type.
-    :param str tsc_file_location: A file path pointing to the directory in which the TSC (time series compression) files are written for this dataset. Used to customize the TSC directory location, rather than using `dataset_location/tsc`.
-    :param str atriumdb_lib_path: Legacy variable supporting old versions, do not use. A file path pointing to the CDLL that powers the compression and decompression.
     """
 
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
