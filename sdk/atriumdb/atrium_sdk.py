@@ -534,6 +534,7 @@ class AtriumSDK:
         """
         assert self.mode == "local"
         assert value_data.size > 0, "Cannot write no data."
+        assert np.issubdtype(time_data.dtype, np.integer), "Time information must be encoded as an integer."
         # Apply Scale Factors and Convert
         # if scale_b is not None:
         #     value_data -= scale_b
