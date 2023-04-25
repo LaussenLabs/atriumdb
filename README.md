@@ -99,7 +99,7 @@ sdk = AtriumSDK(dataset_location=dataset_location, database_uri=database_uri)
 
 ```console
 $ cd sdk
-$ sphinx-build -b html .\docs\source\ .\docs\build\ ; .\docs\make html
+$ .\docs\make clean ; sphinx-build -b html .\docs\source\ .\docs\build\ ; .\docs\make html
 ```
 
 ## The SDK
