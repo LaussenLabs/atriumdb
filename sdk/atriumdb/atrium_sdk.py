@@ -2200,6 +2200,39 @@ class AtriumSDK:
 
         return device_info
 
+    def insert_patient(self, patient_id=None, mrn=None, gender=None, dob=None, first_name=None, middle_name=None,
+                       last_name=None, first_seen=None, last_updated=None, source_id=1):
+        """
+        .. _insert_patient_label:
+
+        Inserts a new patient record into the database with the provided patient details.
+
+        All patient details are optional, but it is recommended to provide as much information as possible
+        to ensure accurate patient identification and to avoid duplicate records.
+
+        >>> # Insert a new patient record.
+        >>> new_patient_id = sdk.insert_patient(patient_id=123, mrn="123456", gender="M", dob=946684800000000000,
+        >>>                                     first_name="John", middle_name="Doe", last_name="Smith",
+        >>>                                     first_seen=1609459200000000000, last_updated=1609459200000000000, source_id=1)
+
+        :param int patient_id: A unique number identifying the patient.
+        :param str mrn: The Medical Record Number (MRN) of the patient.
+        :param str gender: The gender of the patient (e.g., "M", "F", "O" for Other, or "U" for Unknown).
+        :param int dob: The date of birth of the patient as a nanosecond epoch.
+        :param str first_name: The first name of the patient.
+        :param str middle_name: The middle name of the patient.
+        :param str last_name: The last name of the patient.
+        :param int first_seen: The date when the patient was first seen as a nanosecond epoch.
+        :param int last_updated: The date when the patient record was last updated as a nanosecond epoch.
+        :param int source_id: The unique identifier of the source from which the patient information was obtained.
+
+        :return: The unique identifier of the inserted patient record.
+        :rtype: int
+        """
+
+        return self.sql_handler.insert_patient(patient_id, mrn, gender, dob, first_name, middle_name, last_name,
+                                               first_seen, last_updated, source_id)
+
     def get_mrn_to_patient_id_map(self, mrn_list=None):
         patient_list = self.sql_handler.select_all_patients_in_list(mrn_list=mrn_list)
         return {row[1]: row[0] for row in patient_list}
