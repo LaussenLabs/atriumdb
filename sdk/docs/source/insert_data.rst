@@ -1,4 +1,4 @@
-Inserting data into a dataset
+Inserting Data into a Dataset
 ######################################
 
 Measures, Devices, and Patients
