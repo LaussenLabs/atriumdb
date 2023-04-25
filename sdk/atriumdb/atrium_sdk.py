@@ -60,6 +60,8 @@ DEFAULT_META_CONNECTION_TYPE = 'sqlite'
 
 class AtriumSDK:
     """
+    .. _atrium_sdk_label:
+
     The Core SDK Object that represents a single dataset and provides methods to interact with it.
 
     :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
@@ -300,6 +302,8 @@ class AtriumSDK:
     def get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
                                 mrn_list: List[int] = None, start_time: int = None, end_time: int = None):
         """
+        .. _get_device_patient_data_label:
+
             Retrieves device-patient mappings from the dataset's database based on the provided search criteria.
 
             You can specify search criteria by providing values for one or more of the following parameters:
@@ -350,6 +354,8 @@ class AtriumSDK:
 
     def insert_device_patient_data(self, device_patient_data: List[Tuple[int, int, int, int]]):
         """
+        .. _insert_device_patient_data_label:
+
         Inserts device-patient mappings into the dataset's database.
 
         The `device_patient_data` parameter is a list of tuples, where each tuple contains four integer values in the
@@ -510,6 +516,8 @@ class AtriumSDK:
                    time_0: int, raw_time_type: int = None, raw_value_type: int = None, encoded_time_type: int = None,
                    encoded_value_type: int = None, scale_m: float = None, scale_b: float = None):
         """
+        .. _write_data_label:
+
         The advanced method for writing new data to the dataset. This method can be used, like in the example,
         to express time data as a gap array (even sized array, odd values are indices of value_data after a gap
         and even values are the durations of the corresponding gaps in nanoseconds)
@@ -724,6 +732,8 @@ class AtriumSDK:
                         freq: int, scale_m: float = None, scale_b: float = None, time_units: str = None,
                         freq_units: str = None):
         """
+        .. _write_data_easy_label:
+
         The simplified method for writing new data to the dataset
 
         >>> import numpy as np
@@ -899,6 +909,8 @@ class AtriumSDK:
                                    return_intervals=False, analog=True, block_info=None, max_kbyte_in_memory=None,
                                    window_size=None, step_size=None, get_last_window=True):
         """
+        .. _get_batched_data_generator_label:
+
         Generates batched data from the dataset.
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
@@ -1040,6 +1052,8 @@ class AtriumSDK:
                  patient_id=None, auto_convert_gap_to_time_array=True, return_intervals=False, analog=True,
                  block_info=None, time_units: str = None):
         """
+        .. _get_data_label:
+
         The method for querying data from the dataset, indexed by signal type (measure_id),
         time (start_time_n and end_time_n) and data source (device_id and patient_id)
 
@@ -1343,6 +1357,8 @@ class AtriumSDK:
     def get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                            start=None, end=None):
         """
+        .. _get_interval_array_label:
+
         Returns a 2D array representing the availability of a specified measure (signal) and a specified source
         (device id or patient id). Each row of the 2D array output represents a continuous interval of available
         data while the first and second columns represent the start epoch and end epoch of that interval
@@ -1455,6 +1471,8 @@ class AtriumSDK:
 
     def get_all_devices(self):
         """
+        .. _get_all_devices_label:
+
         Retrieve information about all devices in the linked relational database.
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
@@ -1502,6 +1520,8 @@ class AtriumSDK:
 
     def get_all_measures(self):
         """
+        .. _get_all_measures_label:
+
         Retrieve information about all measures in the linked relational database.
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
@@ -1553,6 +1573,8 @@ class AtriumSDK:
 
     def get_all_patients(self, skip=None, limit=None):
         """
+        .. _get_all_patients_label:
+
         Retrieve information about all patients in the linked relational database.
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
@@ -1608,6 +1630,8 @@ class AtriumSDK:
 
     def search_devices(self, tag_match=None, name_match=None):
         """
+        .. _search_devices_label:
+
         Retrieve information about all devices in the linked relational database that match the specified search criteria.
 
         :param tag_match: A string to match against the `device_tag` field. If not None, only devices with a `device_tag`
@@ -1635,6 +1659,8 @@ class AtriumSDK:
 
     def search_measures(self, tag_match=None, freq=None, unit=None, name_match=None, freq_units=None):
         """
+        .. _search_measures_label:
+
         Retrieve information about all measures in the linked relational database that match the specified search criteria.
 
         :param tag_match: A string to match against the `measure_tag` field. If not None, only measures with a `measure_tag`
@@ -1791,6 +1817,8 @@ class AtriumSDK:
     def insert_measure(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None,
                        measure_name: str = None):
         """
+        .. _insert_measure_label:
+
         Defines a new signal type to be stored in the dataset, as well as defining metadata related to the signal.
 
         freq and freq_units are required information, but it is also recommended to define a measure_tag
@@ -1834,6 +1862,8 @@ class AtriumSDK:
 
     def insert_device(self, device_tag: str, device_name: str = None):
         """
+        .. _insert_device_label:
+
         Defines a new source to be stored in the dataset, as well as defining metadata related to the source.
 
         device_id is required information, but it is also recommended to define a device_tag
@@ -1880,6 +1910,8 @@ class AtriumSDK:
 
     def get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None):
         """
+        .. _get_measure_id_label:
+
         Returns the identifier for a measure specified by its tag, frequency, units, and frequency units.
 
         :param str measure_tag: The tag of the measure.
@@ -1916,6 +1948,8 @@ class AtriumSDK:
 
     def get_measure_info(self, measure_id: int):
         """
+        .. _get_measure_info_label:
+
         Retrieve information about a specific measure in the linked relational database.
 
         :param int measure_id: The identifier of the measure to retrieve information for.
@@ -2081,6 +2115,8 @@ class AtriumSDK:
 
     def get_device_id(self, device_tag: str):
         """
+        .. _get_device_id_label:
+
         Retrieve the identifier of a device in the linked relational database based on its tag.
 
         :param str device_tag: The tag of the device to retrieve the identifier for.
@@ -2112,6 +2148,8 @@ class AtriumSDK:
 
     def get_device_info(self, device_id: int):
         """
+        .. _get_device_info_label:
+
         Retrieve information about a specific device in the linked relational database.
 
         :param int device_id: The identifier of the device to retrieve information for.
