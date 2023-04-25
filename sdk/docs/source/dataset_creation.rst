@@ -1,7 +1,7 @@
 Creating a new dataset
 ####################################
 
-The `AtriumSDK.create_dataset` method is a powerful and flexible way to create a new dataset in AtriumDB. This method allows you to specify various options such as the type of metadata database to use, the protection mode, and the behavior when new data overlaps with existing data. In this section, we will explore the depths of the `AtriumSDK.create_dataset` method and its various options.
+The :ref:`AtriumSDK.create_dataset <create_dataset_label>` method is a powerful and flexible way to create a new dataset in AtriumDB. This method allows you to specify various options such as the type of metadata database to use, the protection mode, and the behavior when new data overlaps with existing data. In this section, we will explore the depths of the `AtriumSDK.create_dataset` method and its various options.
 
 Parameters
 ----------

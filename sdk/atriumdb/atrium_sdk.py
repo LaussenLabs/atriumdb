@@ -220,6 +220,8 @@ class AtriumSDK:
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None,
                        protected_mode: str = None, overwrite: str = None, connection_params: dict = None):
         """
+        .. _create_dataset_label:
+
         A class method to create a new dataset.
 
         :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
