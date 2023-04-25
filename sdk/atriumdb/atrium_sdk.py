@@ -232,6 +232,7 @@ class AtriumSDK:
         :rtype: AtriumSDK
 
         Examples:
+
         >>> from atriumdb import AtriumSDK
         >>> protected_mode, overwrite = None, None  # Use default values from `sdk/atriumdb/helpers/config.toml`
         >>> sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", database_type="sqlite", protected_mode=protected_mode, overwrite=overwrite)
