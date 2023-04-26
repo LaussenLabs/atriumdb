@@ -1157,23 +1157,60 @@ class AtriumSDK:
 
     def get_blocks(self, current_blocks_meta, filename_dict, measure_id, start_time_n, end_time_n, analog,
                    auto_convert_gap_to_time_array, return_intervals, times_before=None, values_before=None):
+        """
+        Get the headers, times, and values of blocks from the specified measure_id and time range.
+
+        :param current_blocks_meta: List of metadata for the current blocks.
+        :param filename_dict: Dictionary mapping file IDs to their respective filenames.
+        :param measure_id: The measure ID for the data to be retrieved.
+        :param start_time_n: The starting time (in nanoseconds) for the data to be retrieved.
+        :param end_time_n: The ending time (in nanoseconds) for the data to be retrieved.
+        :param analog: Whether the data is analog or not.
+        :param auto_convert_gap_to_time_array: Whether to automatically convert gaps to time arrays.
+        :param return_intervals: Whether to return intervals or not.
+        :param times_before: Array of times from previous blocks.
+        :param values_before: Array of values from previous blocks.
+        :return: Tuple containing headers, times, and values of the blocks.
+        """
+        # Condense the byte read list from the current blocks metadata
         read_list = condense_byte_read_list(current_blocks_meta)
+
+        # Read the data from the files using the measure ID and the read list
         encoded_bytes = self.file_api.read_file_list_3(measure_id, read_list, filename_dict)
+
+        # Extract the number of bytes for each block in the current blocks metadata
         num_bytes_list = [row[5] for row in current_blocks_meta]
+
+        # Decode the block array and get the headers, times, and values
         headers, r_times, r_values = self.decode_block_arr(
             encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog, auto_convert_gap_to_time_array,
             return_intervals, times_before=times_before, values_before=values_before)
+
         return headers, r_times, r_values
 
     def get_block_info(self, measure_id: int, start_time_n: int = None, end_time_n: int = None, device_id: int = None,
                        patient_id=None):
+        """
+        Get information about the blocks for the specified measure_id and time range.
+
+        :param measure_id: The measure ID for the data to be retrieved.
+        :param start_time_n: The starting time (in nanoseconds) for the data to be retrieved.
+        :param end_time_n: The ending time (in nanoseconds) for the data to be retrieved.
+        :param device_id: The device ID for the data to be retrieved.
+        :param patient_id: The patient ID for the data to be retrieved.
+        :return: Dictionary containing the block list and filename dictionary.
+        """
+        # Get the list of block IDs for the specified measure ID and time range
         block_list = self.get_block_id_list(int(measure_id), start_time_n=int(start_time_n), end_time_n=int(end_time_n),
                                             device_id=device_id, patient_id=patient_id)
 
+        # Condense the byte read list from the block list
         read_list = condense_byte_read_list(block_list)
 
+        # Extract the file ID list from the read list
         file_id_list = [row[1] for row in read_list]
 
+        # Get the dictionary mapping file IDs to their respective filenames
         filename_dict = self.get_filename_dict(file_id_list)
 
         return {'block_list': block_list, 'filename_dict': filename_dict}
