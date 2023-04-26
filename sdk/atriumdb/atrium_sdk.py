@@ -1411,31 +1411,44 @@ class AtriumSDK:
 
     def decode_block_arr(self, encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
                          auto_convert_gap_to_time_array, return_intervals, times_before=None, values_before=None):
-        start_bench = time.perf_counter()
+        """
+        Decode a series of blocks of encoded bytes and return the corresponding time and value arrays.
+
+        :param encoded_bytes: The encoded bytes to be decoded.
+        :param num_bytes_list: List of the number of bytes in each block.
+        :param start_time_n: The start time of the query in nanoseconds.
+        :param end_time_n: The end time of the query in nanoseconds.
+        :param analog: Whether the values should be converted to anolog or not.
+        :param auto_convert_gap_to_time_array: Whether to automatically convert gap arrays to time arrays.
+        :param return_intervals: Whether to return intervals instead of timestamps.
+        :param times_before: Time array of previous blocks, if any.
+        :param values_before: Value array of previous blocks, if any.
+        :return: Tuple containing headers, time array, and value array.
+        """
+
+        # Calculate the starting byte positions of each block in the encoded bytes array
         byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
         byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]], axis=None)
-        end_bench = time.perf_counter()
-        _LOGGER.debug(f"arrange block info {(end_bench - start_bench) * 1000} ms")
 
+        # Decode the blocks
         r_times, r_values, headers = self.block.decode_blocks(
             encoded_bytes, byte_start_array, analog=analog, times_before=times_before, values_before=values_before)
 
         new_times_index = 0 if times_before is None else times_before.size
         new_values_index = 0 if values_before is None else values_before.size
 
-        # If all blocks are time type 2.
+        # If all blocks are time type 2 (gap arrays)
         if auto_convert_gap_to_time_array and \
                 all([h.t_raw_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO for h in headers]):
 
             if return_intervals:
-                # This whole block almost never runs, but it probably bug riddled.
-
+                # Convert gap arrays to intervals
                 intervals = []
                 gap_arr = r_times[new_times_index:].reshape((-1, 2))
 
                 cur_gap = 0
 
-                # create a list of intervals from all blocks
+                # Create a list of intervals from all blocks
                 for h in headers:
                     intervals.extend(
                         convert_gap_array_to_intervals(h.start_n,
@@ -1447,14 +1460,11 @@ class AtriumSDK:
 
                 intervals = np.array(intervals, dtype=np.int64)
 
-                # Sort by start time
+                # Sort intervals by start time
                 interval_order = np.argsort(intervals.T[0])
-
                 sorted_intervals = intervals[interval_order]
 
-                # Sort the value array
-
-                # Get arr of original value order [[start_ind, num_values], ...]
+                # Sort the value array according to the sorted intervals
                 org_value_order_arr = np.zeros((intervals.shape[0], 2), dtype=np.uint64)
                 cur_index = 0
 
@@ -1462,7 +1472,7 @@ class AtriumSDK:
                     org_value_order_arr[block_i] = (cur_index, block_num_values)
                     cur_index += block_num_values
 
-                # Populate new value array in correct order.
+                # Populate new value array in correct order
                 sorted_values = np.zeros(r_values[new_values_index:].shape, dtype=r_values.dtype)
                 cur_index = 0
                 for org_index, block_num_values in org_value_order_arr[interval_order]:
@@ -1476,10 +1486,7 @@ class AtriumSDK:
                 r_times, r_values = sorted_intervals, sorted_values
 
             else:
-                # r_times, r_values[new_values_index:] = self.filter_gap_data_to_timestamps(
-                #     end_time_n, headers, r_times[new_times_index:], r_values[new_values_index:],
-                #     start_time_n, times_before=times_before)
-
+                # Convert time type 2 (gap arrays) to time type 1 (timestamp arrays)
                 r_times, new_values = self.filter_gap_data_to_timestamps(
                     end_time_n, headers, r_times[new_times_index:], r_values[new_values_index:],
                     start_time_n, times_before=times_before)
@@ -1487,7 +1494,7 @@ class AtriumSDK:
                 r_values[new_values_index:new_values_index + new_values.size] = new_values
                 r_values = r_values[:new_values_index + new_values.size]
 
-        # If all blocks are time type 1.
+        # If all blocks are time type 1 (timestamp arrays)
         elif all([h.t_raw_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO for h in headers]):
             if times_before is None and values_before is None:
                 r_times, r_values = sort_data(
@@ -1496,21 +1503,20 @@ class AtriumSDK:
                 r_times[new_times_index:], r_values[new_values_index:] = sort_data(
                     r_times[new_times_index:], r_values[new_values_index:], headers)
 
+        # If blocks have mixed time types
         elif len(headers) > 0 and not all([h.t_raw_type == headers[0].t_raw_type for h in headers]):
             raise ValueError("Blocks pulled were not homogeneously encoded. TODO: handle this case.")
 
+        # Include previous block data, if any
         if times_before is not None:
             r_times[:times_before.size] = times_before
 
         if values_before is not None:
             r_values[:values_before.size] = values_before
 
-        # Truncate data to match query.
-        start_bench = time.perf_counter()
+        # Truncate data to match query
         left, right = bisect.bisect_left(r_times, start_time_n), bisect.bisect_left(r_times, end_time_n)
         r_times, r_values = r_times[left:right], r_values[left:right]
-        end_bench = time.perf_counter()
-        _LOGGER.debug(f"truncate data {(end_bench - start_bench) * 1000} ms")
 
         return headers, r_times, r_values
 
