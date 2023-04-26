@@ -2032,15 +2032,19 @@ class AtriumSDK:
         return result
 
     def get_all_patient_ids(self, start=None, end=None):
+        # Return just the ids from the patient table.
         return [row[0] for row in self.sql_handler.select_all_patients_in_list()]
 
     def get_available_measures(self, device_id=None, patient_id=None, start=None, end=None):
+        # Might Delete
         pass
 
     def get_available_devices(self, measure_id, start=None, end=None):
+        # Might Delete
         pass
 
     def get_random_window(self, time_intervals, time_window_size_nano=30_000_000_000):
+        # Might Delete
         # Get large enough interval
         start, end = random.choice(time_intervals)
 
@@ -2063,6 +2067,7 @@ class AtriumSDK:
 
     def get_random_data(self, measure_id=None, device_list=None, start=None, end=None,
                         time_window_size_nano=30_000_000_000, gap_tolerance_nano=0):
+        # Might Delete
         if device_list is None:
             device_list = self.get_available_devices(measure_id, start=start, end=end)
 
@@ -2102,6 +2107,7 @@ class AtriumSDK:
     def create_derived_variable(self, function_list, args_list, kwargs_list,
                                 dest_sdk=None, dest_measure_id_list=None, dest_device_id_list=None,
                                 measure_id=None, device_id=None, start=None, end=None):
+        # Might Delete
         for var in [measure_id, device_id, start, end]:
             if var is None:
                 raise ValueError("[measure_id, device_id, start, end] must all be specified")
@@ -2130,6 +2136,7 @@ class AtriumSDK:
         return results
 
     def auto_write_interval_data(self, measure_id, device_id, intervals, values, freq_nhz, scale_b, scale_m):
+        # Might Delete
         gap_arr = convert_intervals_to_gap_array(intervals)
 
         t_t = 2
