@@ -831,43 +831,62 @@ class AtriumSDK:
     def get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int,
                      device_id: int = None, patient_id: int = None, mrn: int = None,
                      auto_convert_gap_to_time_array=True, return_intervals=False, analog=True):
+        """
+        .. _get_data_api_label:
 
-        headers = {"Authorization": "Bearer {}".format(self.token)}
+        Retrieve data from the API for a specific measure within a given time range, and optionally for a specific device,
+        patient or medical record number (MRN). This function is automatically called by get_data when in "api" mode.
 
+        :param measure_id: The ID of the measure to retrieve data for.
+        :param start_time_n: The start time (in nanoseconds) to retrieve data from.
+        :param end_time_n: The end time (in nanoseconds) to retrieve data until.
+        :param device_id: (Optional) The ID of the device to retrieve data for.
+        :param patient_id: (Optional) The ID of the patient to retrieve data for.
+        :param mrn: (Optional) The medical record number (MRN) to retrieve data for.
+        :param auto_convert_gap_to_time_array: Automatically convert gaps in the data to time arrays (default: True).
+        :param return_intervals: Return data as intervals (default: False).
+        :param analog: Convert digitized data to its analog values (default: True).
+
+        :return: A tuple containing headers, request times, and request values.
+
+        Example usage:
+
+        >>> headers, r_times, r_values = get_data_api(1, 0, 1000000000, device_id=123)
+        """
+
+        # Get the block information API URL
         block_info_url = self.get_block_info_api_url(measure_id, start_time_n, end_time_n, device_id, patient_id, mrn)
+
+        # Request the block information
         block_info_list = self._request("GET", block_info_url)
 
-        # if self.api_test_client is not None:
-        #     # Used for Testing
-        #     block_info_response = self.api_test_client.get(block_info_url)
-        #     if not block_info_response.status_code == 200:
-        #         print(block_info_url)
-        #         raise block_info_response.raise_for_status()
-        #
-        # else:
-        #     block_info_response = requests.get(block_info_url, headers=headers)
-        #     if not block_info_response.ok:
-        #         raise block_info_response.raise_for_status()
-
-        # block_info_list = block_info_response.json()
-
+        # Check if there are no blocks in the response
         if len(block_info_list) == 0:
+            # Return empty arrays for headers, request times and request values
             return [], np.array([], dtype=np.int64), np.array([], dtype=np.float64)
 
+        # Check if the test client is being used
         if self.api_test_client is not None:
+            # Get block requests using the test client
             block_requests = self.get_block_requests_from_test_client(block_info_list)
         else:
+            # Get block requests using threads
             block_requests = self.threaded_block_requests(block_info_list)
 
+            # Check if any response is not ok
             for response in block_requests:
                 if not response.ok:
+                    # Raise an exception for the failed request
                     raise response.raise_for_status()
 
+        # Concatenate the content of all responses
         encoded_bytes = np.concatenate(
             [np.frombuffer(response.content, dtype=np.uint8) for response in block_requests], axis=None)
 
+        # Get the number of bytes for each block
         num_bytes_list = [row['num_bytes'] for row in block_info_list]
 
+        # Decode the concatenated bytes to get headers, request times and request values
         headers, r_times, r_values = \
             self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
                                   auto_convert_gap_to_time_array, return_intervals)
