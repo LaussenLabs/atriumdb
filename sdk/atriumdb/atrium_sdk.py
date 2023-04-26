@@ -1346,20 +1346,56 @@ class AtriumSDK:
 
     def get_data_from_blocks(self, block_list, filename_dict, measure_id, start_time_n, end_time_n,
                              return_intervals=False, analog=True, auto_convert_gap_to_time_array=True):
+        """
+        Retrieve data from blocks.
+
+        This method reads data from the specified blocks, decodes it, and returns the headers, times, and values.
+
+        :param block_list: List of blocks to read data from.
+        :type block_list: list
+        :param filename_dict: Dictionary containing file information.
+        :type filename_dict: dict
+        :param measure_id: ID of the measurement to read.
+        :type measure_id: int
+        :param start_time_n: Start time of the data to read.
+        :type start_time_n: int
+        :param end_time_n: End time of the data to read.
+        :type end_time_n: int
+        :param return_intervals: Whether to return intervals or not, defaults to False.
+        :type return_intervals: bool, optional
+        :param analog: Whether the data is analog or not, defaults to True.
+        :type analog: bool, optional
+        :param auto_convert_gap_to_time_array: Whether to automatically convert gaps to time arrays, defaults to True.
+        :type auto_convert_gap_to_time_array: bool, optional
+        :return: Tuple containing headers, times, and values.
+        :rtype: tuple
+        """
+        # Start performance benchmark
         start_bench = time.perf_counter()
+
+        # Condense the block list for optimized reading
         read_list = condense_byte_read_list(block_list)
-        # File Read Method 1
+
+        # Read data from files using the specified file reading method
+        # Note: Method 2 is not working, so it's commented out
         # encoded_bytes = self.file_api.read_file_list_1(measure_id, read_list, filename_dict)
-        # File Read Method 2 Not Working
         # encoded_bytes = self.file_api.read_file_list_2(measure_id, read_list, filename_dict)
-        # File Read Method 3
         encoded_bytes = self.file_api.read_file_list_3(measure_id, read_list, filename_dict)
+
+        # End performance benchmark
         end_bench = time.perf_counter()
+
+        # Log the time taken to read data from disk
         _LOGGER.debug(f"read from disk {(end_bench - start_bench) * 1000} ms")
+
+        # Extract the number of bytes for each block
         num_bytes_list = [row[5] for row in block_list]
+
+        # Decode the data and separate it into headers, times, and values
         headers, r_times, r_values = \
             self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
                                   auto_convert_gap_to_time_array, return_intervals)
+
         return headers, r_times, r_values
 
     def decode_block_arr(self, encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
