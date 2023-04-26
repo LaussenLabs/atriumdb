@@ -2220,19 +2220,23 @@ class AtriumSDK:
 
         """
 
-        # confirm the values are being entered as strings or none
+        # Check if measure_tag, measure_name, and units are either strings or None
         assert isinstance(measure_tag, str)
         assert isinstance(measure_name, str) or measure_name is None
         assert isinstance(units, str) or units is None
 
+        # Set default frequency unit to "nHz" if not provided
         freq_units = "nHz" if freq_units is None else freq_units
 
+        # Convert frequency to nanohertz if the provided frequency unit is not "nHz"
         if freq_units != "nHz":
             freq = convert_to_nanohz(freq, freq_units)
 
+        # Check if the measure already exists in the dataset
         if (measure_tag, freq, units) in self._measure_ids:
             return self._measure_ids[(measure_tag, freq, units)]
 
+        # Insert the new measure into the database
         return self.sql_handler.insert_measure(measure_tag, freq, units, measure_name)
 
     def insert_device(self, device_tag: str, device_name: str = None):
