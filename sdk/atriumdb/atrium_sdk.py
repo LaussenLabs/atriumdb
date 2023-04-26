@@ -2595,19 +2595,26 @@ class AtriumSDK:
          'source_id': 1}
 
         """
+        # Check if metadata is fetched using API and call the appropriate method
         if self.metadata_connection_type == "api":
             return self._api_get_device_info(device_id)
 
+        # If device info is already cached, return it
         if device_id in self._devices:
             return self._devices[device_id]
+
+        # Fetch device info from the SQL database
         row = self.sql_handler.select_device(device_id=device_id)
 
+        # If device not found in the database, return None
         if row is None:
             return None
 
+        # Unpack the fetched row into individual variables
         device_id, device_tag, device_name, device_manufacturer, device_model, device_type, device_bed_id, \
         device_source_id = row
 
+        # Create a dictionary with the device information
         device_info = {
             'id': device_id,
             'tag': device_tag,
@@ -2619,8 +2626,10 @@ class AtriumSDK:
             'source_id': device_source_id,
         }
 
+        # Cache the device information for future use
         self._devices[device_id] = device_info
 
+        # Return the device information dictionary
         return device_info
 
     def insert_patient(self, patient_id=None, mrn=None, gender=None, dob=None, first_name=None, middle_name=None,
