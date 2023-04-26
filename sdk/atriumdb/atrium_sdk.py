@@ -1693,20 +1693,53 @@ class AtriumSDK:
 
     def get_combined_intervals(self, measure_id_list, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                                start=None, end=None):
+        """
+        Get combined intervals of multiple measures.
+
+        This method combines the intervals of multiple measures by merging their interval arrays. The combined intervals
+        can be filtered by device_id, patient_id, and a time range (start and end).
+
+        :param measure_id_list: List of measure IDs to combine intervals for.
+        :param device_id: Optional, filter intervals by device ID.
+        :param patient_id: Optional, filter intervals by patient ID.
+        :param gap_tolerance_nano: Optional, gap tolerance in nanoseconds.
+        :param start: Optional, start time for filtering intervals.
+        :param end: Optional, end time for filtering intervals.
+        :return: A numpy array containing the combined intervals.
+        """
+        # Return an empty numpy array if the measure_id_list is empty
         if len(measure_id_list) == 0:
             return np.array([[]])
+
+        # Get the interval array for the first measure in the list
         result = self.get_interval_array(measure_id_list[0], device_id=device_id, patient_id=patient_id,
                                          gap_tolerance_nano=gap_tolerance_nano, start=start, end=end)
 
+        # Iterate through the remaining measure IDs in the list
         for measure_id in measure_id_list[1:]:
+            # Merge the current result with the interval array of the next measure ID
             result = merge_interval_lists(
                 result,
                 self.get_interval_array(measure_id, device_id=device_id, patient_id=patient_id,
                                         gap_tolerance_nano=gap_tolerance_nano, start=start, end=end))
 
+        # Return the combined intervals
         return result
 
     def get_block_id_list(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
+        """
+        Get a list of block IDs for a specific measure.
+
+        This method retrieves block IDs for a specific measure, with optional filtering by device_id, patient_id, and a
+        time range (start_time_n and end_time_n).
+
+        :param measure_id: The measure ID to get block IDs for.
+        :param start_time_n: Optional, start time for filtering block IDs.
+        :param end_time_n: Optional, end time for filtering block IDs.
+        :param device_id: Optional, filter block IDs by device ID.
+        :param patient_id: Optional, filter block IDs by patient ID.
+        :return: A list of block IDs.
+        """
         return self.sql_handler.select_blocks(measure_id, start_time_n, end_time_n, device_id, patient_id)
 
     def get_freq(self, measure_id: int, freq_units: str = None):
