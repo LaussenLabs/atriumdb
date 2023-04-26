@@ -2384,20 +2384,26 @@ class AtriumSDK:
             'source_id': 1
         }
         """
+        # Check if metadata connection type is API
         if self.metadata_connection_type == "api":
             return self._api_get_measure_info(measure_id)
 
+        # If measure_id is already in the cache, return the cached measure info
         if measure_id in self._measures:
             return self._measures[measure_id]
 
+        # Query the SQL database for the measure information
         row = self.sql_handler.select_measure(measure_id=measure_id)
 
+        # If no row is found, return None
         if row is None:
             return None
 
+        # Unpack the row tuple into variables
         measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, measure_unit, measure_unit_label, \
         measure_unit_code, measure_source_id = row
 
+        # Create a dictionary containing the measure information
         measure_info = {
             'id': measure_id,
             'tag': measure_tag,
@@ -2410,8 +2416,10 @@ class AtriumSDK:
             'source_id': measure_source_id
         }
 
+        # Cache the measure information in the _measures dictionary
         self._measures[measure_id] = measure_info
 
+        # Return the measure information dictionary
         return measure_info
 
     def _api_get_all_measures(self):
