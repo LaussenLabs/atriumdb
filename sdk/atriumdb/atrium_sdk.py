@@ -1051,7 +1051,7 @@ class AtriumSDK:
         >>> patient_id = 789
         >>> max_kbyte_in_memory = 1000
         >>> for total_query_index, times, values in sdk.get_batched_data_generator(measure_id=measure_id, start_time_n=start_time_n, end_time_n=end_time_n, device_id=device_id, patient_id=patient_id, max_kbyte_in_memory=max_kbyte_in_memory):
-            ...     print(f"total_query_index: {total_query_index}, times: {times}, values: {values}")
+        ...     print(f"total_query_index: {total_query_index}, times: {times}, values: {values}")
 
         :param int measure_id: The measure identifier corresponding to the measures table in the linked relational database.
         :param int start_time_n: The start time of the data to be retrieved, in nanohertz.
@@ -1073,31 +1073,33 @@ class AtriumSDK:
             A 1D numpy array of time information.
             A 1D numpy array of value information.
         """
-        if window_size is not None:
-            if step_size is None:
-                step_size = window_size
+        # Set the step size to the window size if it is not provided
+        if window_size is not None and step_size is None:
+            step_size = window_size
 
+        # If block_info is not provided, get the block_list and filename_dict
         if block_info is None:
-
             block_list = self.get_block_id_list(int(measure_id), start_time_n=start_time_n, end_time_n=end_time_n,
                                                 device_id=device_id, patient_id=patient_id)
-
             file_id_list = list(set([row['file_id'] for row in block_list]))
             filename_dict = self.get_filename_dict(file_id_list)
-
         else:
             block_list = block_info['block_list']
             filename_dict = block_info['filename_dict']
 
+        # Return nothing if there are no blocks
         if len(block_list) == 0:
             return
 
+        # Initialize variables for batch generation
         current_memory_kb = 0
         cur_values = 0
         current_index = 0
         current_blocks_meta = []
         remaining_values = sum([block_metadata['num_values'] for block_metadata in block_list])
         times_before, values_before = None, None
+
+        # Iterate through the blocks
         for block_metadata in block_list:
             current_blocks_meta.append(block_metadata)
             current_memory_kb += (block_metadata['num_bytes'] +
@@ -1105,14 +1107,14 @@ class AtriumSDK:
             cur_values += block_metadata['num_values']
             remaining_values -= block_metadata['num_values']
 
+            # Process blocks when memory limit is reached or when enough values are collected for a window
             if current_memory_kb >= max_kbyte_in_memory and (window_size is None or cur_values >= window_size):
                 headers, r_times, r_values = self.get_blocks(
                     current_blocks_meta, filename_dict, measure_id, start_time_n, end_time_n, analog,
                     auto_convert_gap_to_time_array, return_intervals,
                     times_before=times_before, values_before=values_before)
 
-                yield from yield_data(r_times, r_values, window_size, step_size,
-                                      get_last_window and (current_blocks_meta[-1] is block_list[-1]), current_index)
+                yield from yield_data(r_times, r_values, window_size, step_size, get_last_window and (current_blocks_meta[-1] is block_list[-1]), current_index)
 
                 current_index += r_values.size
 
@@ -1127,11 +1129,13 @@ class AtriumSDK:
                 cur_values = 0
                 current_blocks_meta = []
 
+        # Process the remaining blocks if there is any memory left
         if current_memory_kb > 0:
             headers, r_times, r_values = self.get_blocks(
                 current_blocks_meta, filename_dict, measure_id, start_time_n, end_time_n, analog,
                 auto_convert_gap_to_time_array, return_intervals,
                 times_before=times_before, values_before=values_before)
+
             if window_size is not None and r_values.size < window_size:
                 if get_last_window:
                     current_index += r_values.size
