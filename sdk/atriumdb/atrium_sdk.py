@@ -2748,13 +2748,38 @@ class AtriumSDK:
         return response.json()
 
     def _test_client_request(self, method: str, endpoint: str, **kwargs):
+        """
+        Send an HTTP request to the specified API endpoint using the provided method and
+        optional keyword arguments.
+
+        :param method: The HTTP method to use for the request (e.g., "GET", "POST").
+        :type method: str
+        :param endpoint: The API endpoint to send the request to (e.g., "/users").
+        :type endpoint: str
+        :param kwargs: Optional keyword arguments to pass to the request method.
+                       These can include "headers", "params", "data", "json", etc.
+        :type kwargs: dict
+        :return: The JSON response from the API.
+        :rtype: dict
+        :raises ValueError: If the request fails with a non-200 status code.
+        """
+        # Get the headers from the kwargs, or use an empty dictionary if not provided
         headers = kwargs.get("headers", {})
+
+        # Add the Authorization header with the Bearer token
         headers['Authorization'] = f"Bearer {self.token}"
+
+        # Update the headers in kwargs
         kwargs["headers"] = headers
 
+        # Send the request using the provided method, endpoint, and kwargs
         response = self.api_test_client.request(method, endpoint, **kwargs)
 
+        # Check if the response has a non-200 status code
         if response.status_code != 200:
+            # Raise a ValueError with the status code and response text
             raise ValueError(f"API TestClient request failed with status code {response.status_code}: {response.text}")
 
+        # Return the JSON response
         return response.json()
+
