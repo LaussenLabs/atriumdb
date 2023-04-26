@@ -2528,7 +2528,7 @@ class AtriumSDK:
 
         return patient_dict
 
-    def get_device_id(self, device_tag: str):
+    def get_device_id(self, device_tag: str) -> int:
         """
         .. _get_device_id_label:
 
@@ -2546,17 +2546,25 @@ class AtriumSDK:
         >>> device_tag = "Monitor A1"
         >>> device_id = sdk.get_device_id(device_tag)
         >>> print(device_id)
-        1
+        ... 1
         """
+        # Check if the metadata connection type is API
         if self.metadata_connection_type == "api":
+            # If it's API, use the API method to get the device ID
             return self._api_get_device_id(device_tag)
 
+        # If the device tag is already in the cached device IDs dictionary, return the cached ID
         if device_tag in self._device_ids:
             return self._device_ids[device_tag]
+
+        # If the device tag is not in the cache, query the database using the SQL handler
         row = self.sql_handler.select_device(device_tag=device_tag)
+
+        # If the device tag is not found in the database, return None
         if row is None:
             return None
 
+        # If the device tag is found in the database, store the ID in the cache and return it
         device_id = row[0]
         self._device_ids[device_tag] = device_id
         return device_id
