@@ -2662,6 +2662,8 @@ class AtriumSDK:
         :rtype: int
         """
 
+        # Call the SQL handler's insert_patient method with the provided patient details
+        # and return the unique identifier of the inserted patient record.
         return self.sql_handler.insert_patient(patient_id, mrn, gender, dob, first_name, middle_name, last_name,
                                                first_seen, last_updated, source_id)
 
