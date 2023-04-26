@@ -2704,21 +2704,47 @@ class AtriumSDK:
         return {row[0]: row[1] for row in patient_list}
 
     def _request(self, method: str, endpoint: str, **kwargs):
+        """
+        Send an API request using the specified method and endpoint.
+
+        This method checks if the `requests` module is installed, and then sends the API request
+        using the provided method and endpoint. If a test client is provided, it will use the test
+        client instead of sending the request to the actual API.
+
+        :param method: The HTTP method to use for the request (e.g., 'GET', 'POST', etc.).
+        :type method: str
+        :param endpoint: The API endpoint to send the request to (e.g., '/users').
+        :type endpoint: str
+        :param kwargs: Additional keyword arguments to pass to the `requests.request` function.
+        :raises ImportError: If the `requests` module is not installed.
+        :raises ValueError: If the API request returns a non-200 status code.
+        :return: The JSON response from the API request.
+        :rtype: dict
+        """
+
+        # Check if the `requests` module is installed.
         if not REQUESTS_INSTALLED:
             raise ImportError("requests module is not installed.")
+
+        # If a test client is provided, use it to send the request.
         if self.api_test_client is not None:
             return self._test_client_request(method, endpoint, **kwargs)
 
+        # Construct the full URL by combining the base API URL and the endpoint.
         url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
 
+        # Set the authorization header using the stored access token.
         headers = {'Authorization': f"Bearer {self.token}"}
 
+        # Send the API request using the specified method, URL, headers, and any additional arguments.
         response = requests.request(method, url, headers=headers, **kwargs)
 
+        # Check if the response has a 200 status code. If not, raise an error.
         if response.status_code != 200:
             raise ValueError(
                 f"API request failed with status code {response.status_code}: {response.text} \n url: {url}")
 
+        # Return the JSON response from the API request.
         return response.json()
 
     def _test_client_request(self, method: str, endpoint: str, **kwargs):
