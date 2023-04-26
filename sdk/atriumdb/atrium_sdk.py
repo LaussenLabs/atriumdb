@@ -1935,12 +1935,21 @@ class AtriumSDK:
             first_name, middle_name, last_name, first_seen, last_updated, and source_id.
         :rtype: dict
         """
+        # Check if the metadata connection type is API and call the appropriate method
         if self.metadata_connection_type == "api":
             return self._api_get_all_patients(skip=skip, limit=limit)
+
+        # Retrieve all patient records from the database
         patient_tuple_list = self.sql_handler.select_all_patients()
+
+        # Set default values for skip and limit if not provided
         skip = 0 if skip is None else skip
         limit = len(patient_tuple_list) if limit is None else limit
+
+        # Initialize an empty dictionary to store patient information
         patient_dict = {}
+
+        # Iterate over the patient records and populate the patient_dict
         for patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id in \
                 patient_tuple_list[skip:skip + limit]:
             patient_dict[patient_id] = {
@@ -1956,6 +1965,7 @@ class AtriumSDK:
                 'source_id': source_id,
             }
 
+        # Return the populated patient_dict
         return patient_dict
 
     def search_devices(self, tag_match=None, name_match=None):
