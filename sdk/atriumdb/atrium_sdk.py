@@ -2322,23 +2322,35 @@ class AtriumSDK:
         >>> units = "Celsius"
         >>> freq_units = "Hz"
         >>> sdk.get_measure_id(measure_tag, freq, units, freq_units)
-        7
+        ... 7
         """
+        # Set default values for units and freq_units if not provided
         units = "" if units is None else units
         freq_units = "nHz" if freq_units is None else freq_units
+
+        # Convert frequency to nanohertz
         freq_nhz = convert_to_nanohz(freq, freq_units)
+
+        # If metadata connection type is "api", use API method to get the measure ID
         if self.metadata_connection_type == "api":
             return self._api_get_measure_id(measure_tag, freq_nhz, units, freq_units)
 
+        # If measure ID is already in the cache, return it
         if (measure_tag, freq_nhz, units) in self._measure_ids:
             return self._measure_ids[(measure_tag, freq_nhz, units)]
 
+        # Query the database for the measure ID
         row = self.sql_handler.select_measure(measure_tag=measure_tag, freq_nhz=freq_nhz, units=units)
+
+        # If no row is found, return None
         if row is None:
             return None
 
+        # Extract measure ID from the row and store it in the cache
         measure_id = row[0]
         self._measure_ids[(measure_tag, freq_nhz, units)] = measure_id
+
+        # Return the measure ID
         return measure_id
 
     def get_measure_info(self, measure_id: int):
