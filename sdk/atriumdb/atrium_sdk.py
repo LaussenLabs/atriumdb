@@ -1744,34 +1744,40 @@ class AtriumSDK:
 
     def get_freq(self, measure_id: int, freq_units: str = None):
         """
-        Returns the frequency of the signal corresponding to the specified measure_id.
+        Returns the frequency of the signal corresponding to the specified measure_id in the given frequency units.
 
-        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
-        >>> measure_id = 1
-        >>> freq_units = "Hz"
-        >>> frequency = sdk.get_freq(measure_id, freq_units)
-        >>> print(frequency)
-        10.0
+        Usage example:
 
-        >>> freq = sdk.get_freq(measure_id=1, freq_units="nHz")
-        >>> print(freq)
-        10000000000
+            >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+            >>> measure_id = 1
+            >>> freq_units = "Hz"
+            >>> frequency = sdk.get_freq(measure_id, freq_units)
+            >>> print(frequency)
+            ... 10.0
+
+            >>> freq = sdk.get_freq(measure_id=1, freq_units="nHz")
+            >>> print(freq)
+            ... 10000000000
 
         :param int measure_id: The measure identifier corresponding to the measures table in the
             linked relational database.
-        :param str freq_units: The units of the frequency to be returned.
+        :param str freq_units: The units of the frequency to be returned. Default is "nHz".
         :rtype: float
-        :return: The frequency in hertz.
+        :return: The frequency in the specified units.
 
         """
+        # Set default frequency units to nanohertz if not provided
         if freq_units is None:
             freq_units = "nHz"
 
+        # Retrieve the measure tuple from the database using the provided measure_id
         measure_tuple = self.sql_handler.select_measure(measure_id=measure_id)
 
+        # Raise a ValueError if the measure_id is not found in the database
         if measure_tuple is None:
             raise ValueError(f"measure id {measure_id} not in sdk.")
 
+        # Convert the frequency from nanohertz to the specified units and return the result
         return convert_from_nanohz(measure_tuple[3], freq_units)
 
     def get_all_devices(self):
