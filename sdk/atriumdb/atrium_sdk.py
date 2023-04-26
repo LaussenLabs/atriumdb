@@ -2280,6 +2280,10 @@ class AtriumSDK:
         """
         Check if a time interval for a measure, device and start_time already exists in the linked relational database.
 
+        This method is a wrapper around the `interval_exists` method of the SQL handler.
+        It checks if there is already an existing interval in the database with the given
+        measure_id, device_id, and start_time_nano.
+
         :param int measure_id: The identifier of the measure to check.
         :param int device_id: The identifier of the device to check.
         :param int start_time_nano: The start time of the interval, in nanoseconds.
@@ -2292,9 +2296,11 @@ class AtriumSDK:
         >>> device_id = 2
         >>> start_time_nano = 1234567890123
         >>> sdk.measure_device_start_time_exists(measure_id, device_id, start_time_nano)
-        True
+        ... True
         """
 
+        # Call the interval_exists method of the SQL handler with the provided parameters
+        # and return the result.
         return self.sql_handler.interval_exists(measure_id, device_id, start_time_nano)
 
     def get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None):
