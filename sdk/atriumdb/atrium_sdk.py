@@ -1970,31 +1970,42 @@ class AtriumSDK:
 
     def search_devices(self, tag_match=None, name_match=None):
         """
-        .. _search_devices_label:
-
         Retrieve information about all devices in the linked relational database that match the specified search criteria.
+        This method supports searching by device tag and/or device name.
 
         :param tag_match: A string to match against the `device_tag` field. If not None, only devices with a `device_tag`
-            field containing this string will be returned.
-        :type tag_match: str
+            field containing this string will be returned. Default is None.
+        :type tag_match: str, optional
         :param name_match: A string to match against the `device_name` field. If not None, only devices with a `device_name`
-            field containing this string will be returned.
-        :type name_match: str
+            field containing this string will be returned. Default is None.
+        :type name_match: str, optional
         :return: A dictionary containing information about each device that matches the specified search criteria, including
             its id, tag, name, manufacturer, model, type, bed_id, and source_id.
         :rtype: dict
         """
+        # Check if the metadata connection type is "api" and call the appropriate method
         if self.metadata_connection_type == "api":
             return self._api_search_devices(tag_match, name_match)
+
+        # Get all devices from the linked relational database
         all_devices = self.get_all_devices()
+
+        # Initialize an empty dictionary to store the search results
         result = {}
+
+        # Iterate through all devices and their information
         for device_id, device_info in all_devices.items():
+            # Create a list of boolean values to determine if the device matches the search criteria
             match_bool_list = [
                 tag_match is None or tag_match in device_info['tag'],
                 name_match is None or name_match in device_info['name']
             ]
+
+            # If all conditions in the match_bool_list are True, add the device to the result dictionary
             if all(match_bool_list):
                 result[device_id] = device_info
+
+        # Return the dictionary containing the search results
         return result
 
     def search_measures(self, tag_match=None, freq=None, unit=None, name_match=None, freq_units=None):
