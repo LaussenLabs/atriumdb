@@ -1634,6 +1634,7 @@ class AtriumSDK:
         :returns: A 2D array representing the availability of a specified measure.
 
         """
+        # Check if the metadata connection type is API
         if self.metadata_connection_type == "api":
             return self._api_get_interval_array(
                 measure_id,
@@ -1641,20 +1642,32 @@ class AtriumSDK:
                 patient_id=patient_id,
                 gap_tolerance_nano=gap_tolerance_nano,
                 start=start, end=end)
+
+        # Set default value for gap_tolerance_nano if not provided
         gap_tolerance_nano = 0 if gap_tolerance_nano is None else gap_tolerance_nano
 
+        # Query the database for intervals based on the given parameters
         interval_result = self.sql_handler.select_intervals(
             measure_id, start_time_n=start, end_time_n=end, device_id=device_id, patient_id=patient_id)
 
-        # Sort interval result by start_time.
+        # Sort the interval result by start_time
         interval_result = sorted(interval_result, key=lambda x: x[3])
+
+        # Initialize an empty list to store the final intervals
         arr = []
+
+        # Iterate through the sorted interval results
         for row in interval_result:
+            # If the final intervals list is not empty and the difference between the current interval's start time
+            # and the previous interval's end time is less than or equal to the gap tolerance, update the end time
+            # of the previous interval
             if len(arr) > 0 and row[3] - arr[-1][-1] <= gap_tolerance_nano:
                 arr[-1][-1] = row[4]
+            # Otherwise, add a new interval to the final intervals list
             else:
                 arr.append([row[3], row[4]])
 
+        # Convert the final intervals list to a numpy array with int64 data type
         return np.array(arr, dtype=np.int64)
 
     def get_combined_intervals(self, measure_id_list, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
