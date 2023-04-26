@@ -2749,7 +2749,7 @@ class AtriumSDK:
 
     def _test_client_request(self, method: str, endpoint: str, **kwargs):
         """
-        Send an HTTP request to the specified API endpoint using the provided method and
+        Send an HTTP request to a locally handled test endpoint using the provided method and
         optional keyword arguments.
 
         :param method: The HTTP method to use for the request (e.g., "GET", "POST").
