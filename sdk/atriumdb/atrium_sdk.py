@@ -1871,13 +1871,22 @@ class AtriumSDK:
             (in nanohertz), code, unit, unit label, unit code, and source_id.
         :rtype: dict
         """
+        # Check if connection type is API and call the appropriate method
         if self.metadata_connection_type == "api":
             return self._api_get_all_measures()
 
+        # Get all measures from the SQL handler
         measure_tuple_list = self.sql_handler.select_all_measures()
+
+        # Initialize an empty dictionary to store measure information
         measure_dict = {}
-        for measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, measure_unit, measure_unit_label, \
-            measure_unit_code, measure_source_id in measure_tuple_list:
+
+        # Iterate through the list of measures and construct a dictionary for each measure
+        for measure_info in measure_tuple_list:
+            measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, \
+            measure_unit, measure_unit_label, measure_unit_code, measure_source_id = measure_info
+
+            # Add the measure information to the dictionary
             measure_dict[measure_id] = {
                 'id': measure_id,
                 'tag': measure_tag,
