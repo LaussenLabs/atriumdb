@@ -962,32 +962,76 @@ class AtriumSDK:
         return block_byte_list
 
     def get_block_bytes_response(self, block_id):
+        """
+        Retrieve the block bytes response for a given block ID.
+
+        :param block_id: The ID of the block to retrieve.
+        :type block_id: str
+        :raises ImportError: If the requests module is not installed.
+        :return: The block bytes response.
+        :rtype: requests.Response
+        """
         if not REQUESTS_INSTALLED:
             raise ImportError("requests module is not installed.")
+
+        # Set up the headers with the API token
         headers = {"Authorization": "Bearer {}".format(self.token)}
+
+        # Create the endpoint URL for the block request
         endpoint = f"/sdk/blocks/{block_id}"
         block_request_url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
+
+        # Make the request and return the response
         return requests.get(block_request_url, headers=headers)
 
     def get_block_bytes_response_from_session(self, block_id, session: Session):
+        """
+        Retrieve the block bytes response for a given block ID using a session.
+
+        :param block_id: The ID of the block to retrieve.
+        :type block_id: str
+        :param session: The session to use for the request.
+        :type session: Session
+        :return: The block bytes response.
+        :rtype: requests.Response
+        """
+        # Create the endpoint URL for the block request
         endpoint = f"/sdk/blocks/{block_id}"
         block_request_url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
+
+        # Make the request using the session and return the response
         return session.get(block_request_url)
 
     def get_block_info_api_url(self, measure_id, start_time_n, end_time_n, device_id, patient_id, mrn):
+        """
+        Generate the block info API URL based on the provided parameters.
+
+        :param measure_id: The measure ID to filter the blocks.
+        :type measure_id: str
+        :param start_time_n: The start time for the block query.
+        :type start_time_n: str
+        :param end_time_n: The end time for the block query.
+        :type end_time_n: str
+        :param device_id: The device ID to filter the blocks.
+        :type device_id: str
+        :param patient_id: The patient ID to filter the blocks.
+        :type patient_id: str
+        :param mrn: The MRN to filter the blocks.
+        :type mrn: str
+        :raises ValueError: If none of the device_id, patient_id, or mrn are specified.
+        :return: The block info API URL.
+        :rtype: str
+        """
+        # Generate the block info URL based on the provided parameters
         if device_id is not None:
-            block_info_url = "sdk/blocks?start_time={}&end_time={}&measure_id={}&device_id={}".format(
-                start_time_n, end_time_n, measure_id, device_id)
-
+            block_info_url = f"sdk/blocks?start_time={start_time_n}&end_time={end_time_n}&measure_id={measure_id}&device_id={device_id}"
         elif patient_id is not None:
-            block_info_url = "sdk/blocks?start_time={}&end_time={}&measure_id={}&patient_id={}".format(
-                start_time_n, end_time_n, measure_id, patient_id)
-
+            block_info_url = f"sdk/blocks?start_time={start_time_n}&end_time={end_time_n}&measure_id={measure_id}&patient_id={patient_id}"
         elif mrn is not None:
-            block_info_url = "sdk/blocks?start_time={}&end_time={}&measure_id={}&mrn={}".format(
-                start_time_n, end_time_n, measure_id, mrn)
+            block_info_url = f"sdk/blocks?start_time={start_time_n}&end_time={end_time_n}&measure_id={measure_id}&mrn={mrn}"
         else:
             raise ValueError("One of [device_id, patient_id, mrn] must be specified.")
+
         return block_info_url
 
     def get_batched_data_generator(self, measure_id: int, start_time_n: int = None, end_time_n: int = None,
