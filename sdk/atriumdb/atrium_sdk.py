@@ -540,82 +540,78 @@ class AtriumSDK:
         """
         .. _write_data_label:
 
-        The advanced method for writing new data to the dataset. This method can be used, like in the example,
-        to express time data as a gap array (even sized array, odd values are indices of value_data after a gap
-        and even values are the durations of the corresponding gaps in nanoseconds)
+        Advanced method for writing new data to the dataset. This method can be used to express time data as a gap array
+        (even sized array, odd values are indices of value_data after a gap and even values are the durations of the
+        corresponding gaps in nanoseconds).
 
-        >>> import numpy as np
-        >>> from atriumdb import AtriumSDK, T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, \
-        ...     V_TYPE_INT64, V_TYPE_DELTA_INT64
-        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
-        >>> measure_id = 21
-        >>> device_id = 21
-        >>> freq_nhz = 1_000_000_000
-        >>> time_zero_nano = 1234567890_000_000_000
-        >>> gap_arr = np.array([42, 1_000_000_000, 99, 2_000_000_000])
-        >>> value_data = np.sin(np.linspace(0, 4, num=200))
-        >>> sdk.write_data(
-        >>>     measure_id, device_id, gap_arr, value_data, freq_nhz, time_zero_nano,
-        >>>     raw_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
-        >>>     raw_value_type=V_TYPE_INT64,
-        >>>     encoded_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
-        >>>     encoded_value_type=V_TYPE_DELTA_INT64)
-
-
-        :param int measure_id: The measure identifier corresponding to the measures table in the linked
-            relational database.
-        :param int device_id: The device identifier corresponding to the devices table in the linked
-            relational database.
-        :param numpy.ndarray time_data: A 1D numpy array representing the time information of the data to be written.
-        :param numpy.ndarray value_data: A 1D numpy array representing the value information of the data to be written.
-        :param int freq_nhz: The sample frequency, in nanohertz, of the data to be written.
-        :param int time_0: The start time of the data to be written.
-        :param int raw_time_type: An identifer representing the time format being written, corresponding to the options
+        :param int measure_id: Measure identifier corresponding to the measures table in the linked relational database.
+        :param int device_id: Device identifier corresponding to the devices table in the linked relational database.
+        :param numpy.ndarray time_data: 1D numpy array representing the time information of the data to be written.
+        :param numpy.ndarray value_data: 1D numpy array representing the value information of the data to be written.
+        :param int freq_nhz: Sample frequency, in nanohertz, of the data to be written.
+        :param int time_0: Start time of the data to be written.
+        :param int raw_time_type: Identifier representing the time format being written, corresponding to the options
             written in the block header.
-        :param int raw_value_type: An identifer representing the value format being written, corresponding to the
+        :param int raw_value_type: Identifier representing the value format being written, corresponding to the
             options written in the block header.
-        :param int encoded_time_type: An identifer representing how the time information is encoded, corresponding
+        :param int encoded_time_type: Identifier representing how the time information is encoded, corresponding
             to the options written in the block header.
-        :param int encoded_value_type: An identifer representing how the value information is encoded, corresponding
+        :param int encoded_value_type: Identifier representing how the value information is encoded, corresponding
             to the options written in the block header.
-        :param float scale_m: A constant factor to scale digital data to transform it to analog (None if raw data
+        :param float scale_m: Constant factor to scale digital data to transform it to analog (None if raw data
             is already analog). The slope (m) in y = mx + b
-        :param float scale_b: A constant factor to offset digital data to transform it to analog (None if raw data
+        :param float scale_b: Constant factor to offset digital data to transform it to analog (None if raw data
             is already analog). The y-intercept (b) in y = mx + b
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
-        :returns: A numpy byte array of the compressed blocks.\n
-            A list of BlockMetadata objects representing the binary
-            block headers.\n
-            A 1D numpy array representing the byte locations of the start of
-            each block.\n
+        :returns: A numpy byte array of the compressed blocks.
+            A list of BlockMetadata objects representing the binary block headers.
+            A 1D numpy array representing the byte locations of the start of each block.
             The filename of the written blocks.
+
+        Examples:
+
+            >>> import numpy as np
+            >>> from atriumdb import AtriumSDK, T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, \
+            ...     V_TYPE_INT64, V_TYPE_DELTA_INT64
+            >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+            >>> measure_id = 21
+            >>> device_id = 21
+            >>> freq_nhz = 1_000_000_000
+            >>> time_zero_nano = 1234567890_000_000_000
+            >>> gap_arr = np.array([42, 1_000_000_000, 99, 2_000_000_000])
+            >>> value_data = np.sin(np.linspace(0, 4, num=200))
+            >>> sdk.write_data(
+            >>>     measure_id, device_id, gap_arr, value_data, freq_nhz, time_zero_nano,
+            >>>     raw_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
+            >>>     raw_value_type=V_TYPE_INT64,
+            >>>     encoded_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
+            >>>     encoded_value_type=V_TYPE_DELTA_INT64)
         """
+        # Ensure the current mode is "local"
         assert self.mode == "local"
+
+        # Ensure there is data to be written
         assert value_data.size > 0, "Cannot write no data."
+
+        # Ensure time data is of integer type
         assert np.issubdtype(time_data.dtype, np.integer), "Time information must be encoded as an integer."
-        # Apply Scale Factors and Convert
-        # if scale_b is not None:
-        #     value_data -= scale_b
-        #
-        # if scale_m is not None:
-        #     value_data /= scale_m
-        #     value_data = value_data.astype(np.int64)
 
-        # ======= Overwrite Calculation =======
-
-        # Calculate New Intervals
+        # Calculate new intervals
         write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
         write_intervals_o = Intervals(write_intervals)
 
-        # Get Current Intervals
+        # Get current intervals
         current_intervals = self.get_interval_array(
             measure_id, device_id=device_id, gap_tolerance_nano=0,
             start=int(write_intervals[0][0]), end=int(write_intervals[-1][-1]))
 
         current_intervals_o = Intervals(current_intervals)
 
+        # Initialize variables for handling overwriting
         overwrite_file_dict, old_block_ids, old_file_list = None, None, None
+
+        # Check if there is an overlap between current and new intervals
         if current_intervals_o.intersection(write_intervals_o).duration() > 0:
             _LOGGER.debug(f"Overlap measure_id {measure_id}, device_id {device_id}, "
                           f"existing intervals {current_intervals}, new intervals {write_intervals}")
@@ -623,6 +619,8 @@ class AtriumSDK:
                 raise ValueError("Overwrite detected, but overwrite behavior not set.")
 
             overwrite_setting = self.settings_dict[OVERWRITE_SETTING_NAME]
+
+            # Handle overwriting based on the overwrite_setting
             if overwrite_setting == 'overwrite':
                 _LOGGER.debug(
                     f"({measure_id}, {device_id}): value_data: {value_data} \n time_data: {time_data} \n write_intervals: {write_intervals} \n current_intervals: {current_intervals}")
@@ -635,7 +633,7 @@ class AtriumSDK:
             else:
                 raise ValueError(f"Overwrite setting {overwrite_setting} not recognized.")
 
-        # Block Encode
+        # Encode the blocks
         encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(
             time_data, value_data, freq_nhz, time_0,
             raw_time_type=raw_time_type,
@@ -645,17 +643,18 @@ class AtriumSDK:
             scale_m=scale_m,
             scale_b=scale_b)
 
-        # Write to Disk
+        # Write the encoded bytes to disk
         filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
 
-        # Use the header data to create rows to be inserted into the block_index and interval_index sql tables.
+        # Use the header data to create rows to be inserted into the block_index and interval_index SQL tables
         block_data, interval_data = get_block_and_interval_data(
             measure_id, device_id, encode_headers, byte_start_array, write_intervals)
 
-        # If we ended up overwriting data...
+        # If data was overwritten
         if overwrite_file_dict is not None:
-            # Add new data to sql insertion data.
+            # Add new data to SQL insertion data
             overwrite_file_dict[filename] = (block_data, interval_data)
+
             # Update SQL
             old_file_ids = [file_id for file_id, filename in old_file_list]
             _LOGGER.debug(
@@ -663,12 +662,12 @@ class AtriumSDK:
                 f"old_block_ids: {old_block_ids}\n old_file_ids: {old_file_ids}\n")
             self.sql_handler.update_tsc_file_data(overwrite_file_dict, old_block_ids, old_file_ids)
 
-            # Delete files
+            # Delete old files
             # for file_id, filename in old_file_list:
             #     file_path = Path(self.file_api.to_abs_path(filename, measure_id, device_id))
             #     file_path.unlink(missing_ok=True)
         else:
-            # Insert SQL Rows
+            # Insert SQL rows
             self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data)
 
         return encoded_bytes, encode_headers, byte_start_array, filename
