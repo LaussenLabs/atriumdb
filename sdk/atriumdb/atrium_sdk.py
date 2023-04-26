@@ -893,34 +893,71 @@ class AtriumSDK:
         return headers, r_times, r_values
 
     def get_block_requests_from_test_client(self, block_info_list):
+        """
+        Get block requests from the test client using the given block_info_list.
+
+        :param block_info_list: A list of dictionaries containing block information, such as block ID.
+        :return: A list of block requests.
+        """
         block_requests = []
+
+        # Iterate through the block_info_list
         for block_info in block_info_list:
+            # Extract the block ID from the block_info dictionary
             block_id = block_info['id']
+
+            # Create the endpoint URL for the block request
             endpoint = f"/sdk/blocks/{block_id}"
             block_request_url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
+
+            # Send a GET request for the block using the test client and store the response
             response = self.api_test_client.get(block_request_url)
             block_requests.append(response)
+
+        # Check the status code of each block request response
         for response in block_requests:
             if not response.status_code == 200:
                 raise response.raise_for_status()
+
         return block_requests
 
     def threaded_block_requests(self, block_info_list):
+        """
+        Get block bytes using multiple threads.
+
+        :param block_info_list: A list of dictionaries containing block information, such as block ID.
+        :return: A list of block bytes.
+        """
         with ThreadPoolExecutor(max_workers=10) as executor:
             block_byte_list_threaded = list(
                 executor.map(self.get_block_bytes_response, [row['id'] for row in block_info_list]))
         return block_byte_list_threaded
 
     def block_session_requests(self, block_info_list):
+        """
+        Get block bytes using a session for multiple requests.
+
+        :param block_info_list: A list of dictionaries containing block information, such as block ID.
+        :return: A list of block bytes.
+        """
         if not REQUESTS_INSTALLED:
             raise ImportError("requests module is not installed.")
+
+        # Create a session and set the Authorization header with the token
         session = Session()
         session.headers = {"Authorization": "Bearer {}".format(self.token)}
-        block_byte_list_2 = \
-            [self.get_block_bytes_response_from_session(row['id'], session) for row in block_info_list]
+
+        # Get the block bytes using the session for each block in the block_info_list
+        block_byte_list_2 = [self.get_block_bytes_response_from_session(row['id'], session) for row in block_info_list]
         return block_byte_list_2
 
     def threadless_block_requests(self, block_info_list):
+        """
+        Get block bytes without using threads or sessions.
+
+        :param block_info_list: A list of dictionaries containing block information, such as block ID.
+        :return: A list of block bytes.
+        """
         block_byte_list = [self.get_block_bytes_response(row['id']) for row in block_info_list]
         return block_byte_list
 
