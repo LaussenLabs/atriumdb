@@ -756,65 +756,74 @@ class AtriumSDK:
         """
         .. _write_data_easy_label:
 
-        The simplified method for writing new data to the dataset
+        The simplified method for writing new data to the dataset.
 
-        >>> import numpy as np
-        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
-        >>> new_measure_id = 21
-        >>> new_device_id = 21
-        >>> # Create some time data.
-        >>> freq_hz = 1
-        >>> time_data = np.arange(1234567890, 1234567890 + 3600, dtype=np.int64)
-        >>> # Create some value data of equal dimension.
-        >>> value_data = np.sin(time_data)
-        >>> sdk.write_data_easy(measure_id=new_measure_id, device_id=new_device_id, time_data=time_data, value_data=value_data, freq=freq_hz, freq_units="Hz", time_units="s")
+        This method makes it easy to write new data to the dataset by taking care of unit conversions and data type
+        handling internally. It supports various time units and frequency units for user convenience.
+
+        Example usage:
+
+            >>> import numpy as np
+            >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+            >>> new_measure_id = 21
+            >>> new_device_id = 21
+            >>> # Create some time data.
+            >>> freq_hz = 1
+            >>> time_data = np.arange(1234567890, 1234567890 + 3600, dtype=np.int64)
+            >>> # Create some value data of equal dimension.
+            >>> value_data = np.sin(time_data)
+            >>> sdk.write_data_easy(measure_id=new_measure_id, device_id=new_device_id, time_data=time_data, value_data=value_data, freq=freq_hz, freq_units="Hz", time_units="s")
 
         :param int measure_id: The measure identifier corresponding to the measures table in the linked
             relational database.
         :param int device_id: The device identifier corresponding to the devices table in the linked
             relational database.
-        :param numpy.ndarray time_data: A 1D numpy array representing the time information of the data to be written.
-        :param numpy.ndarray value_data: A 1D numpy array representing the value information of the data to be written.
-        :param int freq: The sample frequency, in nanohertz, of the data to be written. If you want to use units
-            other than nanohertz specify the desired unit using the "freq_units" parameter.
+        :param np.ndarray time_data: A 1D numpy array representing the time information of the data to be written.
+        :param np.ndarray value_data: A 1D numpy array representing the value information of the data to be written.
+        :param int freq: The sample frequency of the data to be written. If you want to use units
+            other than the default (nanohertz), specify the desired unit using the "freq_units" parameter.
         :param float scale_m: A constant factor to scale digital data to transform it to analog (None if raw data
             is already analog). The slope (m) in y = mx + b
         :param float scale_b: A constant factor to offset digital data to transform it to analog (None if raw data
             is already analog). The y-intercept (b) in y = mx + b
         :param str time_units: The unit used for the time data which can be one of ["s", "ms", "us", "ns"]. If units
-            other than nanoseconds are used the time values will be converted to nanoseconds and then rounded to the
+            other than nanoseconds are used, the time values will be converted to nanoseconds and then rounded to the
             nearest integer.
         :param str freq_units: The unit used for the specified frequency. This value can be one of ["nHz", "uHz", "mHz",
-            "Hz", "kHz", "MHz"]. Keep in mind if you use extreemly large values for this it will be converted to nanohertz
+            "Hz", "kHz", "MHz"]. If you use extremely large values for this, it will be converted to nanohertz
             in the backend, and you may overflow 64bit integers.
 
         """
+        # Set default time and frequency units if not provided
         time_units = "ns" if time_units is None else time_units
         freq_units = "nHz" if freq_units is None else freq_units
 
-        # Check if they are using time units other than nanoseconds and if they are convert time_data to nanoseconds
+        # Convert time_data to nanoseconds if a different time unit is used
         if time_units != "ns":
             time_data = convert_to_nanoseconds(time_data, time_units)
 
+        # Convert frequency to nanohertz if a different frequency unit is used
         if freq_units != "nHz":
             freq = convert_to_nanohz(freq, freq_units)
 
+        # Determine the raw time type based on the size of time_data and value_data
         if time_data.size == value_data.size:
             raw_t_t = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
         else:
             raw_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
-        # gap_arr = create_gap_arr_fast(time_data, 1, freq_nhz)
-
+        # Determine the encoded time type
         encoded_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
-        if np.issubdtype(value_data.dtype, np.integer):
 
+        # Determine the raw and encoded value types based on the dtype of value_data
+        if np.issubdtype(value_data.dtype, np.integer):
             raw_v_t = V_TYPE_INT64
             encoded_v_t = V_TYPE_DELTA_INT64
         else:
             raw_v_t = V_TYPE_DOUBLE
             encoded_v_t = V_TYPE_DOUBLE
 
+        # Call the write_data method with the determined parameters
         self.write_data(measure_id, device_id, time_data, value_data, freq, int(time_data[0]), raw_time_type=raw_t_t,
                         raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
                         scale_m=scale_m, scale_b=scale_b)
