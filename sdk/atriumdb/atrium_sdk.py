@@ -1741,9 +1741,6 @@ class AtriumSDK:
 
         return convert_from_nanohz(measure_tuple[3], freq_units)
 
-    def get_measure_tag(self, measure_id):
-        pass
-
     def get_all_devices(self):
         """
         .. _get_all_devices_label:
