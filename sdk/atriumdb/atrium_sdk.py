@@ -1116,15 +1116,20 @@ class AtriumSDK:
 
                 yield from yield_data(r_times, r_values, window_size, step_size, get_last_window and (current_blocks_meta[-1] is block_list[-1]), current_index)
 
+                # Update the current index by adding the size of the current batch of values
                 current_index += r_values.size
 
+                # If a window size is specified, calculate the next step
                 if window_size is not None:
                     next_step = (((r_values.size - window_size) // step_size) + 1) * step_size
                     times_before, values_before = r_times[next_step:], r_values[next_step:]
+                    # Update the current index by subtracting the size of the values before the next step
                     current_index -= values_before.size
 
+                # Clean up memory by removing headers, r_times and r_values
                 del headers, r_times, r_values
 
+                # Reset memory usage, current values, and current blocks metadata
                 current_memory_kb = 0
                 cur_values = 0
                 current_blocks_meta = []
@@ -1136,27 +1141,33 @@ class AtriumSDK:
                 auto_convert_gap_to_time_array, return_intervals,
                 times_before=times_before, values_before=values_before)
 
+            # If the window size is specified and the size of the current batch of values is smaller than the window size
             if window_size is not None and r_values.size < window_size:
                 if get_last_window:
                     current_index += r_values.size
                     last_num_values = 0
                     last_blocks_meta = [block_list[-1]]
+                    # Iterate through the blocks in reverse order to collect enough values for the last window
                     for block_metadata in reversed(block_list[:-1]):
                         last_blocks_meta = [block_metadata] + last_blocks_meta
                         last_num_values += block_metadata['num_values']
                         if last_num_values >= window_size:
                             break
 
+                    # Retrieve the last window's data
                     headers, r_times, r_values = self.get_blocks(
                         last_blocks_meta, filename_dict, measure_id, start_time_n, end_time_n, analog,
                         auto_convert_gap_to_time_array, return_intervals)
 
+                    # Get the last window's data by slicing the time and value arrays
                     r_times, r_values = r_times[-window_size:], r_values[-window_size:]
                     current_index -= window_size
 
+                    # Yield the last window's data if its size matches the window size
                     if r_values.size == window_size:
                         yield from yield_data(r_times, r_values, window_size, step_size, False, current_index)
             else:
+                # Yield the current batch's data if the window size condition is not met
                 yield from yield_data(r_times, r_values, window_size, step_size, get_last_window, current_index)
 
     def get_blocks(self, current_blocks_meta, filename_dict, measure_id, start_time_n, end_time_n, analog,
