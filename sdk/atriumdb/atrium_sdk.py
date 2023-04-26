@@ -1543,46 +1543,67 @@ class AtriumSDK:
         :param times_before: An optional array of times before the current data set.
         :return: A tuple containing an array of sorted timestamps and an array of sorted values.
         """
+        # Start performance benchmark
         start_bench = time.perf_counter()
+
+        # Determine the starting index for the new_times array
         new_times_index = 0 if times_before is None else times_before.size
+
+        # Check if all times are integers
         is_int_times = all([(10 ** 18) % h.freq_nhz == 0 for h in headers])
+
+        # Set the data type for the full_timestamps array based on is_int_times
         time_dtype = np.int64 if is_int_times else np.float64
+
+        # Create an empty array for the full timestamps
         full_timestamps = np.zeros(r_values.size + new_times_index, dtype=time_dtype)
+
+        # Initialize the current index and gap variables
         cur_index, cur_gap = 0, 0
 
         # Fill full_timestamps array with times based on headers and gaps
         if is_int_times:
+            # Loop through the headers and calculate the timestamps for integer times
             for block_i, h in enumerate(headers):
                 period_ns = freq_nhz_to_period_ns(h.freq_nhz)
                 full_timestamps[new_times_index:][cur_index:cur_index + h.num_vals] = \
                     np.arange(h.start_n, h.start_n + (h.num_vals * period_ns), period_ns)
 
+                # Apply the gaps to the timestamps
                 for _ in range(h.num_gaps):
                     full_timestamps[new_times_index:][cur_index + r_times[cur_gap]:cur_index + h.num_vals] += \
                         r_times[cur_gap + 1]
                     cur_gap += 2
 
+                # Update the current index
                 cur_index += h.num_vals
         else:
+            # Loop through the headers and calculate the timestamps for non-integer times
             for block_i, h in enumerate(headers):
                 period_ns = float(10 ** 18) / float(h.freq_nhz)
                 full_timestamps[new_times_index:][cur_index:cur_index + h.num_vals] = \
                     np.linspace(h.start_n, h.start_n + (h.num_vals * period_ns), num=h.num_vals, endpoint=False)
 
+                # Apply the gaps to the timestamps
                 for _ in range(h.num_gaps):
                     full_timestamps[new_times_index:][cur_index + r_times[cur_gap]:cur_index + h.num_vals] += \
                         r_times[cur_gap + 1]
                     cur_gap += 2
 
+                # Update the current index
                 cur_index += h.num_vals
 
+        # End performance benchmark and log the time taken
         end_bench = time.perf_counter()
         _LOGGER.debug(f"Expand Gap Data {(end_bench - start_bench) * 1000} ms")
 
         # Sort the data based on the timestamps
         sorted_times, sorted_values = sort_data(full_timestamps[new_times_index:], r_values, headers)
+
+        # Update the full_timestamps and r_values arrays with the sorted data
         full_timestamps[new_times_index:new_times_index + sorted_times.size], r_values = sorted_times, sorted_values
 
+        # Return the final sorted timestamps and values
         return full_timestamps[:new_times_index + sorted_times.size], r_values
 
     def metadata_insert_sql(self, measure_id: int, device_id: int, path: str, metadata: list, start_bytes: np.ndarray,
