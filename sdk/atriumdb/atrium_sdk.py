@@ -2668,11 +2668,39 @@ class AtriumSDK:
                                                first_seen, last_updated, source_id)
 
     def get_mrn_to_patient_id_map(self, mrn_list=None):
+        """
+        Get a mapping of Medical Record Numbers (MRNs) to patient IDs.
+
+        This method queries the SQL database for all patients with MRNs in the given list
+        and returns a dictionary with MRNs as keys and patient IDs as values.
+
+        :param mrn_list: A list of MRNs to filter the patients, or None to get all patients.
+        :type mrn_list: list, optional
+        :return: A dictionary with MRNs as keys and patient IDs as values.
+        :rtype: dict
+        """
+        # Query the SQL database for all patients with MRNs in the given list
         patient_list = self.sql_handler.select_all_patients_in_list(mrn_list=mrn_list)
+
+        # Return a dictionary with MRNs as keys and patient IDs as values
         return {row[1]: row[0] for row in patient_list}
 
     def get_patient_id_to_mrn_map(self, patient_id_list=None):
+        """
+        Get a mapping of patient IDs to Medical Record Numbers (MRNs).
+
+        This method queries the SQL database for all patients with IDs in the given list
+        and returns a dictionary with patient IDs as keys and MRNs as values.
+
+        :param patient_id_list: A list of patient IDs to filter the patients, or None to get all patients.
+        :type patient_id_list: list, optional
+        :return: A dictionary with patient IDs as keys and MRNs as values.
+        :rtype: dict
+        """
+        # Query the SQL database for all patients with IDs in the given list
         patient_list = self.sql_handler.select_all_patients_in_list(patient_id_list=patient_id_list)
+
+        # Return a dictionary with patient IDs as keys and MRNs as values
         return {row[0]: row[1] for row in patient_list}
 
     def _request(self, method: str, endpoint: str, **kwargs):
