@@ -435,65 +435,83 @@ class AtriumSDK:
 
     def _overwrite_delete_data(self, measure_id, device_id, new_time_data, time_0, raw_time_type, values_size,
                                freq_nhz):
+        # Set default values for auto_convert_gap_to_time_array, return_intervals and analog
         auto_convert_gap_to_time_array = True
         return_intervals = False
         analog = False
 
+        # Calculate the period in nanoseconds
         period_ns = int((10 ** 18) // freq_nhz)
+
+        # Check if the input data is already a timestamp array
         if raw_time_type == 1:
-            # already a timestamp array.
             end_time_ns = int(new_time_data[-1])
+        # Check if the input data is a gap array, and convert it to a timestamp array
         elif raw_time_type == 2:
-            # Convert Gap array to timestamp array.
             end_time_ns = time_0 + (values_size * period_ns) + np.sum(new_time_data[1::2])
             new_time_data = np.arange(time_0, end_time_ns, period_ns, dtype=np.int64)
         else:
             raise ValueError("Overwrite only supported for gap arrays and timestamp arrays.")
 
+        # Initialize dictionary to store overwritten files
         overwrite_file_dict = {}
+        # Initialize list to store all old file blocks
         all_old_file_blocks = []
+
+        # Get the list of old blocks
         old_block_list = self.get_block_id_list(measure_id, start_time_n=int(time_0),
                                                 end_time_n=end_time_ns, device_id=device_id)
-        _LOGGER.debug(
-            f"old_block_list:{old_block_list} = self.get_block_id_list(measure_id={measure_id}, start_time_n={int(time_0)}, end_time_n={end_time_ns}, device_id={device_id})")
 
+        # Get the dictionary of old file IDs and their corresponding filenames
         old_file_id_dict = self.get_filename_dict(list(set([row[3] for row in old_block_list])))
 
+        # Iterate through the old files
         for file_id, filename in old_file_id_dict.items():
+            # Get the list of blocks for the current file
             file_block_list = self.sql_handler.select_blocks_from_file(file_id)
+            # Extend the list of all old file blocks with the current file's blocks
             all_old_file_blocks.extend(file_block_list)
+
+            # Condense the byte read list
             read_list = condense_byte_read_list(file_block_list)
 
+            # Read the data from the old files
             encoded_bytes = self.file_api.read_file_list_3(measure_id, read_list, old_file_id_dict)
 
+            # Get the number of bytes for each block
             num_bytes_list = [row[5] for row in file_block_list]
 
-            # start_time_n and end_time_n are only used to truncate the output of decode block arr.
+            # Get the start and end times for the current file
             start_time_n = file_block_list[0][6]
             end_time_n = file_block_list[-1][7] * 2  # Just don't truncate output
+
+            # Decode the data from the old files
             old_headers, old_times, old_values = \
                 self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
                                       auto_convert_gap_to_time_array, return_intervals)
 
-            _LOGGER.debug(f"old_values: {old_values}")
-
+            # Convert old times to int64
             old_times = old_times.astype(np.int64)
+
+            # Get the mask for the difference between old and new times
             diff_mask = np.in1d(old_times, new_time_data, assume_unique=False, invert=True)
 
+            # If there is any difference, process it
             if np.any(diff_mask):
                 diff_times, diff_values = old_times[diff_mask], old_values[diff_mask]
-                # Since all the headers are from the same file they should have the same scale factors
-                # And data types.
+
+                # Get the scale factors and data types from the headers
                 freq_nhz = old_headers[0].freq_nhz
                 scale_m = old_headers[0].scale_m
                 scale_b = old_headers[0].scale_b
-
                 raw_value_type = old_headers[0].v_raw_type
                 encoded_value_type = old_headers[0].v_encoded_type
 
+                # Set the raw and encoded time types
                 raw_time_type = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
                 encoded_time_type = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
+                # Encode the difference data
                 encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(
                     diff_times, diff_values, freq_nhz, diff_times[0],
                     raw_time_type=raw_time_type,
@@ -503,13 +521,17 @@ class AtriumSDK:
                     scale_m=scale_m,
                     scale_b=scale_b)
 
+                # Write the encoded difference data to a new file
                 diff_filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
 
+                # Get the block and interval data for the encoded difference data
                 block_data, interval_data = get_block_and_interval_data(
                     measure_id, device_id, encode_headers, byte_start_array, [])
 
+                # Update the overwrite_file_dict with the new file and its associated data
                 overwrite_file_dict[diff_filename] = (block_data, interval_data)
 
+            # Return the dictionary of overwritten files, the list of old block IDs, and the list of old file ID pairs
         return overwrite_file_dict, [row[0] for row in old_block_list], list(old_file_id_dict.items())
 
     def write_data(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq_nhz: int,
