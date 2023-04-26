@@ -1810,12 +1810,21 @@ class AtriumSDK:
             model, type, bed_id, and source_id.
         :rtype: dict
         """
+        # Check if the metadata connection type is API
         if self.metadata_connection_type == "api":
+            # If so, use the API method to get all devices
             return self._api_get_all_devices()
+
+        # If the connection type is not API, use the SQL handler to get all devices
         device_tuple_list = self.sql_handler.select_all_devices()
+
+        # Initialize an empty dictionary to store device information
         device_dict = {}
+
+        # Iterate through the device tuple list
         for device_id, device_tag, device_name, device_manufacturer, device_model, device_type, device_bed_id, \
             device_source_id in device_tuple_list:
+            # Create a dictionary for each device with its details
             device_dict[device_id] = {
                 'id': device_id,
                 'tag': device_tag,
@@ -1827,6 +1836,7 @@ class AtriumSDK:
                 'source_id': device_source_id,
             }
 
+        # Return the dictionary containing all devices and their information
         return device_dict
 
     def get_all_measures(self):
