@@ -1522,19 +1522,35 @@ class AtriumSDK:
 
     def get_filename_dict(self, file_id_list):
         result_dict = {}
+
+        # Query file index table for file_id, filename pairs
         for row in self.sql_handler.select_files(file_id_list):
+            # Add them to a dictionary {file_id: filename}
             result_dict[row[0]] = row[1]
 
         return result_dict
 
     @staticmethod
     def filter_gap_data_to_timestamps(end_time_n, headers, r_times, r_values, start_time_n, times_before=None):
+        """
+        Convert gap data to timestamps and sort the data.
+
+        :param end_time_n: The end time in nanoseconds.
+        :param headers: A list of headers containing information about the data.
+        :param r_times: An array of times in nanoseconds with gaps.
+        :param r_values: An array of values corresponding to the times in r_times.
+        :param start_time_n: The start time in nanoseconds.
+        :param times_before: An optional array of times before the current data set.
+        :return: A tuple containing an array of sorted timestamps and an array of sorted values.
+        """
         start_bench = time.perf_counter()
         new_times_index = 0 if times_before is None else times_before.size
         is_int_times = all([(10 ** 18) % h.freq_nhz == 0 for h in headers])
         time_dtype = np.int64 if is_int_times else np.float64
         full_timestamps = np.zeros(r_values.size + new_times_index, dtype=time_dtype)
         cur_index, cur_gap = 0, 0
+
+        # Fill full_timestamps array with times based on headers and gaps
         if is_int_times:
             for block_i, h in enumerate(headers):
                 period_ns = freq_nhz_to_period_ns(h.freq_nhz)
@@ -1562,9 +1578,8 @@ class AtriumSDK:
 
         end_bench = time.perf_counter()
         _LOGGER.debug(f"Expand Gap Data {(end_bench - start_bench) * 1000} ms")
-        # full_timestamps[new_times_index:], r_values = \
-        #     sort_data(full_timestamps[new_times_index:], r_values, headers)
 
+        # Sort the data based on the timestamps
         sorted_times, sorted_values = sort_data(full_timestamps[new_times_index:], r_values, headers)
         full_timestamps[new_times_index:new_times_index + sorted_times.size], r_values = sorted_times, sorted_values
 
@@ -1573,9 +1588,11 @@ class AtriumSDK:
     def metadata_insert_sql(self, measure_id: int, device_id: int, path: str, metadata: list, start_bytes: np.ndarray,
                             intervals: list):
 
+        # Get the needed block and interval data from the metadata
         block_data, interval_data = get_block_and_interval_data(
             measure_id, device_id, metadata, start_bytes, intervals)
 
+        # Insert the block and interval data into the metadata table
         self.sql_handler.insert_tsc_file_data(path, block_data, interval_data)
 
     def get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
