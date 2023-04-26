@@ -2014,42 +2014,59 @@ class AtriumSDK:
 
         Retrieve information about all measures in the linked relational database that match the specified search criteria.
 
+        This function filters the measures based on the provided search criteria and returns a dictionary containing
+        information about each matching measure, including its id, tag, name, sample frequency (in nanohertz), code, unit,
+        unit label, unit code, and source_id.
+
         :param tag_match: A string to match against the `measure_tag` field. If not None, only measures with a `measure_tag`
             field containing this string will be returned.
-        :type tag_match: str
+        :type tag_match: str, optional
         :param freq: A value to match against the `measure_freq_nhz` field. If not None, only measures with a
             `measure_freq_nhz` field equal to this value will be returned.
-        :type freq: int
+        :type freq: int, optional
         :param unit: A string to match against the `measure_unit` field. If not None, only measures with a `measure_unit`
             field equal to this string will be returned.
-        :type unit: str
+        :type unit: str, optional
         :param name_match: A string to match against the `measure_name` field. If not None, only measures with a
             `measure_name` field containing this string will be returned.
-        :type name_match: str
+        :type name_match: str, optional
         :param freq_units: The units for the freq parameter. (Default: "Hz")
-        :type freq_units: str
-        :return: A dictionary containing information about each measure that matches the specified search criteria, including
-            its id, tag, name, sample frequency (in nanohertz), code, unit, unit label, unit code, and source_id.
+        :type freq_units: str, optional
+        :return: A dictionary containing information about each measure that matches the specified search criteria.
         :rtype: dict
         """
+        # Check the metadata connection type and call the appropriate API search method if necessary
         if self.metadata_connection_type == "api":
             return self._api_search_measures(tag_match, freq, unit, name_match, freq_units)
 
+        # Set the default frequency units to "Hz" if not provided
         freq_units = "Hz" if freq_units is None else freq_units
+
+        # Convert the frequency to nanohertz if necessary
         if freq_units != "nHz" and freq is not None:
             freq = convert_to_nanohz(freq, freq_units)
 
+        # Get all measures from the database
         all_measures = self.get_all_measures()
+
+        # Initialize the result dictionary
         result = {}
+
+        # Iterate through all measures and filter them based on the search criteria
         for measure_id, measure_info in all_measures.items():
+            # Create a list of boolean values for each search criterion
             match_bool_list = [
                 tag_match is None or tag_match in measure_info['tag'],
                 freq is None or freq == measure_info['freq_nhz'],
                 unit is None or unit == measure_info['unit'],
                 name_match is None or name_match in measure_info['name']
             ]
+
+            # If all search criteria match, add the measure to the result dictionary
             if all(match_bool_list):
                 result[measure_id] = measure_info
+
+        # Return the filtered measures as a dictionary
         return result
 
     def get_all_patient_ids(self, start=None, end=None):
