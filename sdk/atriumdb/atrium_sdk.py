@@ -2243,27 +2243,37 @@ class AtriumSDK:
         """
         .. _insert_device_label:
 
-        Defines a new source to be stored in the dataset, as well as defining metadata related to the source.
+        Insert a new device into the dataset and define its metadata.
 
-        device_id is required information, but it is also recommended to define a device_tag
-        (which can be done by specifying device_tag as an optional parameter).
+        This method defines a new device to be stored in the dataset, as well as
+        defining metadata related to the device. The device_tag is a required
+        parameter, while device_name is an optional parameter providing a
+        description of the device.
 
-        The other optional parameter is device_name (A description of the source).
+        If the device_tag already exists in the dataset, the method returns the
+        existing device_id. Otherwise, it inserts the new device into the dataset
+        using the sql_handler and returns the new device_id.
 
-        >>> # Define a new source.
+        Example usage:
+
+        >>> # Define a new device.
         >>> device_tag = "Monitor A3"
         >>> device_name = "Philips Monitor A3 in Room 2B"
         >>> new_device_id = sdk.insert_device(device_tag=device_tag, device_name=device_name)
 
-        :param int device_id: A number identifying a unique source.
-        :param str device_tag: A unique string identifying the source.
-        :param str device_name: A long form description of the source.
+        :param str device_tag: A unique string identifying the device (required).
+        :param str device_name: A long form description of the device (optional).
 
+        :return: The device_id of the inserted or existing device.
+        :rtype: int
         """
 
+        # Check if the device_tag already exists in the dataset
         if device_tag in self._device_ids:
+            # If it exists, return the existing device_id
             return self._device_ids[device_tag]
 
+        # If the device_tag does not exist, insert the new device using the sql_handler
         return self.sql_handler.insert_device(device_tag, device_name)
 
     def measure_device_start_time_exists(self, measure_id, device_id, start_time_nano):
