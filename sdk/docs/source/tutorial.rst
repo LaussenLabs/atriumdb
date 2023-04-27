@@ -59,74 +59,56 @@ Now that we have created a new dataset, let's insert some data into it. We will 
 from the MIT-BIH Arrhythmia Database and store it in our dataset. In this example, we will create a separate device
 for each record and handle multiple signals in a single record.
 
-First, we import the necessary libraries and get the list of record names from the MIT-BIH Arrhythmia Database.
-
 .. code-block:: python
 
-   import wfdb
-   from tqdm import tqdm
+    # Import the necessary libraries and get the list of record names from the MIT-BIH Arrhythmia Database
+    import wfdb
+    from tqdm import tqdm
+    import numpy as np
 
-   record_names = wfdb.get_record_list('mitdb')
+    record_names = wfdb.get_record_list('mitdb')
 
+    # Loop through each record in the record_names list and read the record using the `rdrecord` function from the wfdb library
+    for n in tqdm(record_names):
 
-Next, we loop through each record in the record_names list and read the record using the `rdrecord` function from the wfdb library.
+        record = wfdb.rdrecord(n, pn_dir="mitdb")
 
-.. code-block:: python
+        # For each record, create a new device in our dataset with the record name as the device tag
+        # Check if a device with the given tag already exists using the `get_device_id` function
+        # If it doesn't exist, create a new device using the `insert_device` function
+        device_id = sdk.get_device_id(device_tag=record.record_name)
+        if device_id is None:
+            device_id = sdk.insert_device(device_tag=record.record_name)
 
-   for n in tqdm(record_names):
+        # Calculate the frequency in nanoseconds for the record and create a time array
+        freq_nano = record.fs * 1_000_000_000
+        time_arr = np.arange(record.sig_len, dtype=np.int64) * int(10 ** 9 // record.fs)
 
-       record = wfdb.rdrecord(n, pn_dir="mitdb")
+        # If there are multiple signals in one record, split them into separate dataset entries
+        if record.n_sig > 1:
+            for i in range(len(record.sig_name)):
 
+                # Check if a measure with the given tag and frequency already exists in the dataset using the `get_measure_id` function
+                # If it doesn't exist, create a new measure using the `insert_measure` function
+                measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i])
+                if measure_id is None:
+                    measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i])
 
-For each record, we create a new device in our dataset with the record name as the device tag. We first check if a
-device with the given tag already exists using the `get_device_id` function. If it doesn't exist, we create a
-new device using the `insert_device` function.
+                # Write the data using the `write_data_easy` function
+                sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal.T[i],
+                                    freq_nano, scale_m=None, scale_b=None)
 
-.. code-block:: python
+        # If there is only one signal in the input file, insert it in the same way as for multiple signals
+        else:
+            # Check if a measure with the given tag and frequency already exists in the dataset using the `get_measure_id` function
+            # If it doesn't exist, create a new measure using the `insert_measure` function
+            measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, unit=record.units)
+            if measure_id is None:
+                measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano, unit=record.units)
 
-       device_id = sdk.get_device_id(device_tag=record.record_name)
-       if device_id is None:
-           device_id = sdk.insert_device(device_tag=record.record_name)
-
-
-We then calculate the frequency in nanoseconds for the record and create a time array.
-
-.. code-block:: python
-
-       freq_nano = record.fs * 1_000_000_000
-
-       time_arr = np.arange(record.sig_len, dtype=np.int64) * int(10 ** 9 // record.fs)
-
-
-If there are multiple signals in one record, we split them into separate dataset entries. For each signal,
-we first check if a measure with the given tag and frequency already exists in the dataset using the `get_measure_id`
-function. If it doesn't exist, we create a new measure using the `insert_measure` function. Finally, we write the data
-using the `write_data_easy` function.
-
-.. code-block:: python
-
-       if record.n_sig > 1:
-           for i in range(len(record.sig_name)):
-
-               measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i])
-               if measure_id is None:
-                   measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i])
-
-               sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal.T[i],
-                                   freq_nano, scale_m=None, scale_b=None)
-
-
-If there is only one signal in the input file, we insert it in the same way as for multiple signals.
-
-.. code-block:: python
-
-       else:
-           measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, unit=record.units)
-           if measure_id is None:
-               measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano, unit=record.units)
-
-           sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal,
-                               freq_nano, scale_m=None, scale_b=None)
+            # Write the data using the `write_data_easy` function
+            sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal,
+                                freq_nano, scale_m=None, scale_b=None)
 
 
 Surveying Data in the Dataset
