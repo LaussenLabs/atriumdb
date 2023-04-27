@@ -7,7 +7,7 @@ Prerequisites
 -------------
 
 - Python 3.8 or higher
-- AtriumSDK library
+- atriumdb library
 - wfdb library
 - matplotlib library
 - tqdm library
@@ -21,7 +21,7 @@ You can install the required libraries using pip:
 Creating a New Dataset
 ----------------------
 
-First, let's create a new dataset using the AtriumSDK library. We will use the default SQLite metadata database for simplicity.
+First, let's create a new dataset using the atriumdb library. We will use the default SQLite metadata database for simplicity.
 The :ref:`create_dataset <create_dataset_label>` method allows you to specify various options such as the type of metadata database to use,
 the protection mode, and the behavior when new data overlaps with existing data.
 
