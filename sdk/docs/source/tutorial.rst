@@ -1,7 +1,8 @@
 Comprehensive Tutorial
 ################################################################################
 
-In this tutorial, we will walk you through the process of creating a dataset, inserting new data, and querying that data using the AtriumSDK library. We will use the provided example to read data from the MIT-BIH Arrhythmia Database and store it in our dataset.
+In this tutorial, we will walk you through the process of creating a dataset, inserting new data, and querying that
+data using the atriumdb library. In this example we will pull data from the MIT-BIH Arrhythmia Database and store it in our dataset.
 
 Prerequisites
 -------------
@@ -22,9 +23,11 @@ Creating a New Dataset
 ----------------------
 
 First, let's create a new dataset using the atriumdb library. We will use the default SQLite metadata database for simplicity.
-The :ref:`create_dataset <create_dataset_label>` method allows you to specify various options such as the type of metadata database to use,
-the protection mode, and the behavior when new data overlaps with existing data.
+The :ref:`create_dataset <create_dataset_label>` method asks you to specify:
 
+- `dataset_location`: The local directory where the binary files will be written.
+- `database_type`: What type of supporting database technology to use (sqlite is the default, mariadb, mysql).
+- `connection_params`: If using mariadb or mysql, connection parameters described below used to connect to the database.
 
 .. code-block:: python
 
@@ -53,22 +56,31 @@ For example, to create a dataset with protection mode enabled and an overwrite b
 
    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", protected_mode=True, overwrite="error")
 
-These additional configurations allow you to customize the dataset according to your needs and preferences.
+Protected mode disables any data deletion operations.
+
+Overwrite determines what happens when multiple values are stored for the same signal from the same source at the same time.
+Allowed values are:
+
+- `"error"`: an error will be raised.
+- `"ignore"`: the new data will not be inserted.
+- `"overwrite"`: the old data will be overwritten with the new data.
+
+The default behavior can be changed in the `sdk/atriumdb/helpers/config.toml` file.
 
 Inserting Data into the Dataset
 --------------------------------
 
-Now that we have created a new dataset, let's insert some data into it. We will use the provided example to read data
+Now that we have created a new dataset, let's insert some data into it. Below, we read data
 from the MIT-BIH Arrhythmia Database and store it in our dataset. In this example, we will create a separate device
 for each record and handle multiple signals in a single record.
 
 .. code-block:: python
 
-    # Import the necessary libraries and get the list of record names from the MIT-BIH Arrhythmia Database
     import wfdb
     from tqdm import tqdm
     import numpy as np
 
+    # Get the list of record names from the MIT-BIH Arrhythmia Database
     record_names = wfdb.get_record_list('mitdb')
 
     # Loop through each record in the record_names list and read the record using the `rdrecord` function from the wfdb library
