@@ -129,10 +129,10 @@ The information includes:
 - `tag`: A short, human-readable identifier for the measure.
 - `name`: A more descriptive name for the measure (can be None if not defined).
 - `freq_nhz`: The sample frequency of the measure in nanohertz (1 Hz = 10^9 nHz).
-- `code`: A code (usually MDC) representing the measure (can be None if not defined).
+- `code`: A code (usually CF_CODE10) representing the measure (can be None if not defined).
 - `unit`: The unit of the measure (e.g., 'BPM' for beats per minute).
 - `unit_label`: A human-readable label for the unit (can be None if not defined).
-- `unit_code`: A code (usually MDC) representing the unit (can be None if not defined).
+- `unit_code`: A code (usually CF_CODE10) representing the unit (can be None if not defined).
 - `source_id`: The identifier of the data source (e.g., device or patient) associated with the measure.
 
 Here's an example of how to use the `get_all_measures` method:
