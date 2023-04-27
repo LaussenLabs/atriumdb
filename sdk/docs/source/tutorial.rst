@@ -246,7 +246,6 @@ dataset based on specific devices.
 
 Getting Data Availability
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
-insert_measure <insert_measure_label>
 To obtain the availability of a specified measure (signal) and a specified source (device id or patient id),
 you can use the :ref:`get_interval_array <get_interval_array_label>` method. This method provides information about the available data for a specific measure
 and source by returning a 2D array representing the data availability.
