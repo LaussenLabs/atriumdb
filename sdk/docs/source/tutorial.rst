@@ -245,14 +245,14 @@ Getting Data Availability
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 To obtain the availability of a specified measure (signal) and a specified source (device id or patient id),
-you can use the `get_interval_array` method. This method provides information about the available data for a specific measure
+you can use the :ref:`get_interval_array_label` method. This method provides information about the available data for a specific measure
 and source by returning a 2D array representing the data availability.
 
 Each row of the 2D array output represents a continuous interval of available data, with the first and second columns
 representing the start epoch and end epoch of that interval, respectively.
 This information can be useful when you want to analyze or visualize data within specific time periods or when you need to identify gaps in the data.
 
-Here's an example of how to use the `get_interval_array` method:
+Here's an example of how to use the :ref:`get_interval_array_label` method:
 
 .. code-block:: python
 
