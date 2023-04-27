@@ -9,13 +9,14 @@ Prerequisites
 - Python 3.8 or higher
 - AtriumSDK library
 - wfdb library
+- matplotlib library
 - tqdm library
 
 You can install the required libraries using pip:
 
 .. code-block:: bash
 
-   pip install atriumdb wfdb tqdm
+   pip install atriumdb wfdb tqdm matplotlib
 
 Creating a New Dataset
 ----------------------
@@ -329,23 +330,40 @@ Visualizing the Dataset
 -------------------------------
 
 Finally, let's retrieve data from our dataset and plot the first 1000 points of the first record's data.
+We will use the `matplotlib` library to create a simple line plot of the data.
 
 .. code-block:: python
 
-   import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt
 
+    # Define the measure_id and device_id we want to retrieve data for
     measure_id = 1
     device_id = 1
-    measure_info = get_measure_info(measure_id=measure_id)
+
+    # Get the measure information for the specified measure_id
+    measure_info = sdk.get_measure_info(measure_id=measure_id)
+    device_info = sdk.get_device_info(device_id=device_id)
+
+    # Extract the frequency in nanohertz from the measure information
     freq_nhz = measure_info['freq_nhz']
+
+    # Calculate the period in nanoseconds by dividing 10^18 by the frequency in nanohertz
     period_nhz = int((10 ** 18) // freq_nhz)
 
-    start_time_n, end_time = 0, 1001 * period_nhz  # [start, end)
-   _, times, values = sdk.get_data(measure_id=measure_id, device_id=device_id, start_time_n=start_time_n, end_time_n=end_time_n)
+    # Define the start and end time for the data we want to retrieve
+    # We want to retrieve the first 1000 points, so we set the end time to 1001 times the period
+    start_time_n, end_time_n = 0, 1001 * period_nhz  # [start, end)
 
-   # Plot the first 1000 points of the first patients data
-   plt.plot(values)
-   plt.show()
+    # Retrieve the data for the specified measure_id, device_id, start_time_n, and end_time_n
+    _, times, values = sdk.get_data(measure_id=measure_id, device_id=device_id, start_time_n=start_time_n,
+                                    end_time_n=end_time_n)
+
+    # Plot the first 1000 points of the first patient's data using matplotlib
+    plt.plot(times / (10 ** 9), values)  # convert x-axis units to seconds.
+    plt.xlabel("Time (Seconds)")
+    plt.ylabel("Signal Value")
+    plt.title(f"First 1000 Points of Measure {measure_info['tag']} and Device {device_info['tag']}")
+    plt.show()
 
 .. image:: mit_bih_1000_samples.png
    :alt: ECG plot
