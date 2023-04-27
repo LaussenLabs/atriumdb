@@ -435,7 +435,7 @@ class AtriumSDK:
 
     def _overwrite_delete_data(self, measure_id, device_id, new_time_data, time_0, raw_time_type, values_size,
                                freq_nhz):
-        # Set default values for auto_convert_gap_to_time_array, return_intervals and analog
+        # Make assumptions for auto_convert_gap_to_time_array, return_intervals and analog
         auto_convert_gap_to_time_array = True
         return_intervals = False
         analog = False
