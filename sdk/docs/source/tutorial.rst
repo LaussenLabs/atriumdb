@@ -1,4 +1,4 @@
-Creating a Dataset, Inserting Data, and Querying Data - A Comprehensive Tutorial
+Comprehensive Tutorial
 ################################################################################
 
 In this tutorial, we will walk you through the process of creating a dataset, inserting new data, and querying that data using the AtriumSDK library. We will use the provided example to read data from the MIT-BIH Arrhythmia Database and store it in our dataset.
@@ -9,12 +9,13 @@ Prerequisites
 - Python 3.8 or higher
 - AtriumSDK library
 - wfdb library
+- tqdm library
 
 You can install the required libraries using pip:
 
 .. code-block:: bash
 
-   pip install atriumdb wfdb
+   pip install atriumdb wfdb tqdm
 
 Creating a New Dataset
 ----------------------
@@ -27,7 +28,8 @@ First, let's create a new dataset using the AtriumSDK library. We will use the d
 
    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset")
 
-You can also create a dataset with a different metadata database, such as MariaDB or MySQL, by providing the `database_type` and `connection_params` parameters. For example:
+You can also create a dataset with a different metadata database, such as MariaDB or MySQL, by providing the
+`database_type` and `connection_params` parameters. For example:
 
 .. code-block:: python
 
@@ -40,7 +42,8 @@ You can also create a dataset with a different metadata database, such as MariaD
    }
    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", database_type="mysql", connection_params=connection_params)
 
-Additionally, you can set the protection mode and overwrite behavior using the `protected_mode` and `overwrite` parameters. For example, to create a dataset with protection mode enabled and an overwrite behavior set to "error":
+Additionally, you can set the protection mode and overwrite behavior using the `protected_mode` and `overwrite` parameters.
+For example, to create a dataset with protection mode enabled and an overwrite behavior set to "error":
 
 .. code-block:: python
 
@@ -51,49 +54,69 @@ These additional configurations allow you to customize the dataset according to 
 Inserting Data into the Dataset
 --------------------------------
 
-Now that we have created a new dataset, let's insert some data into it. We will use the provided example to read data from
-the MIT-BIH Arrhythmia Database and store it in our dataset. In this example, we will create a separate device
+Now that we have created a new dataset, let's insert some data into it. We will use the provided example to read data
+from the MIT-BIH Arrhythmia Database and store it in our dataset. In this example, we will create a separate device
 for each record and handle multiple signals in a single record.
 
-.. code-block:: python
+First, we import the necessary libraries and get the list of record names from the MIT-BIH Arrhythmia Database.
 
+.. code-block:: python
    import wfdb
    from tqdm import tqdm
 
    record_names = wfdb.get_record_list('mitdb')
 
+
+Next, we loop through each record in the record_names list and read the record using the `rdrecord` function from the wfdb library.
+
+.. code-block:: python
    for n in tqdm(record_names):
 
        record = wfdb.rdrecord(n, pn_dir="mitdb")
 
-       # make a new device for each record and make the device tag the name of the record
+
+For each record, we create a new device in our dataset with the record name as the device tag. We first check if a
+device with the given tag already exists using the `get_device_id` function. If it doesn't exist, we create a
+new device using the `insert_device` function.
+
+.. code-block:: python
        device_id = sdk.get_device_id(device_tag=record.record_name)
        if device_id is None:
            device_id = sdk.insert_device(device_tag=record.record_name)
 
+
+We then calculate the frequency in nanoseconds for the record and create a time array.
+
+.. code-block:: python
        freq_nano = record.fs * 1_000_000_000
 
        time_arr = np.arange(record.sig_len, dtype=np.int64) * int(10 ** 9 // record.fs)
 
-       # if there are multiple signals in one record split them into two different dataset entries
+
+If there are multiple signals in one record, we split them into separate dataset entries. For each signal,
+we first check if a measure with the given tag and frequency already exists in the dataset using the `get_measure_id`
+function. If it doesn't exist, we create a new measure using the `insert_measure` function. Finally, we write the data
+using the `write_data_easy` function.
+
+.. code-block:: python
        if record.n_sig > 1:
            for i in range(len(record.sig_name)):
 
-               # if the measure tag has already been entered into the DB find the associated measure ID
-               measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano)
+               measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i])
                if measure_id is None:
-                   # if the measure, frequency pair is not in the DB create a new entry
-                   measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano)
+                   measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i])
 
-               # write data
                sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal.T[i],
                                    freq_nano, scale_m=None, scale_b=None)
 
-       # if there is only one signal in the input file insert it
+
+If there is only one signal in the input file, we insert it in the same way as for multiple signals.
+
+.. code-block:: python
        else:
-           measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano)
+           measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, unit=record.units)
            if measure_id is None:
-               measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano)
+               measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano, unit=record.units)
 
            sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal,
                                freq_nano, scale_m=None, scale_b=None)
@@ -102,16 +125,38 @@ for each record and handle multiple signals in a single record.
 Surveying Data in the Dataset
 -----------------------------
 
-In this section, we will discuss how to survey the data in our dataset, including retrieving information about all measures and devices, and obtaining the availability of specified measures and sources.
+In this section, we will discuss how to survey the data in our dataset, including retrieving information about all
+measures and devices, and obtaining the availability of specified measures and sources.
 
 Retrieving All Measures
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-To retrieve information about all measures in the dataset, you can use the `get_all_measures` method. This method returns a dictionary containing information about each measure, including its id, tag, name, sample frequency (in nanohertz), code, unit, unit label, unit code, and source_id.
+To retrieve information about all measures in the dataset, you can use the `get_all_measures` method.
+This method queries the linked relational database and returns a dictionary containing detailed information about each measure stored in the dataset.
+
+The information includes:
+
+- `id`: The unique identifier of the measure in the dataset.
+- `tag`: A short, human-readable identifier for the measure.
+- `name`: A more descriptive name for the measure (can be None if not defined).
+- `freq_nhz`: The sample frequency of the measure in nanohertz (1 Hz = 10^9 nHz).
+- `code`: A code (usually MDC) representing the measure (can be None if not defined).
+- `unit`: The unit of the measure (e.g., 'BPM' for beats per minute).
+- `unit_label`: A human-readable label for the unit (can be None if not defined).
+- `unit_code`: A code (usually MDC) representing the unit (can be None if not defined).
+- `source_id`: The identifier of the data source (e.g., device or patient) associated with the measure.
+
+Here's an example of how to use the `get_all_measures` method:
 
 .. code-block:: python
 
+   # Instantiate the AtriumSDK object with the dataset location
+   sdk = AtriumSDK(dataset_location="./example_dataset")
+
+   # Retrieve information about all measures in the dataset
    all_measures = sdk.get_all_measures()
+
+   # Print the retrieved information
    print(all_measures)
 
 Example output:
@@ -125,7 +170,7 @@ Example output:
            'name': None,
            'freq_nhz': 360000000000,
            'code': None,
-           'unit': '',
+           'unit': 'mV',
            'unit_label': None,
            'unit_code': None,
            'source_id': 1
@@ -136,17 +181,26 @@ Example output:
            'name': None,
            'freq_nhz': 360000000000,
            'code': None,
-           'unit': '',
+           'unit': 'mV',
            'unit_label': None,
            'unit_code': None,
            'source_id': 1
        },
    }
 
+In this example, the dataset contains two measures: ECG Lead MLII and ECG Lead V5,
+both with a sample frequency of 360000000000 nanohertz (360 Hz) and units in millivolts (mV).
+
 Retrieving All Devices
 ^^^^^^^^^^^^^^^^^^^^^^
 
-To retrieve information about all devices in the dataset, you can use the `get_all_devices` method. This method returns a dictionary containing information about each device, including its id, tag, name, manufacturer, model, type, bed_id, and source_id.
+To retrieve information about all devices in the dataset, you can use the `get_all_devices` method.
+This method returns a dictionary containing information about each device, including its id, tag, name, manufacturer, model, type, bed_id, and source_id.
+
+The `get_all_devices` method is useful when you want to have an overview of all the devices in your dataset and their properties.
+By calling this method, you can quickly see the details of each device and use this information in subsequent operations or analyses.
+
+Here's an example of how to use the `get_all_devices` method:
 
 .. code-block:: python
 
@@ -181,14 +235,38 @@ Example output:
        # ...
    }
 
+In this example, the `get_all_devices` method returns a dictionary where the keys are the device ids and the values are
+dictionaries containing the device properties. You can see that the output includes information about the
+device's tag, name, manufacturer, model, type, bed_id, and source_id.
+
+By examining the output, you can gain insights into the devices present in your dataset and their characteristics.
+For example, you might notice that some devices have missing information (e.g., name, manufacturer, model),
+which you could then decide to update or investigate further. Additionally, you can use the device ids to query your
+dataset based on specific devices.
+
 Getting Data Availability
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-To obtain the availability of a specified measure (signal) and a specified source (device id or patient id), you can use the `get_interval_array` method. This method returns a 2D array representing the availability of the specified measure and source. Each row of the 2D array output represents a continuous interval of available data while the first and second columns represent the start epoch and end epoch of that interval, respectively.
+To obtain the availability of a specified measure (signal) and a specified source (device id or patient id),
+you can use the `get_interval_array` method. This method provides information about the available data for a specific measure
+and source by returning a 2D array representing the data availability.
+
+Each row of the 2D array output represents a continuous interval of available data, with the first and second columns
+representing the start epoch and end epoch of that interval, respectively.
+This information can be useful when you want to analyze or visualize data within specific time periods or when you need to identify gaps in the data.
+
+Here's an example of how to use the `get_interval_array` method:
 
 .. code-block:: python
 
-   interval_arr = sdk.get_interval_array(measure_id=1, device_id=1)
+   # Define the measure_id and device_id for which you want to get data availability
+   measure_id = 1
+   device_id = 1
+
+   # Call the get_interval_array method
+   interval_arr = sdk.get_interval_array(measure_id=measure_id, device_id=device_id)
+
+   # Print the resulting 2D array
    print(interval_arr)
 
 Example output:
@@ -197,50 +275,76 @@ Example output:
 
    [[            0 1805555050000]]
 
+In this example, the output shows that there is a single continuous interval of available data for the specified measure and device,
+starting at epoch 0 and ending at epoch 1805555050000. This is because there are no gaps in the source mit-bih data.
+
 These methods allow you to survey the data in your dataset and obtain information about the measures, devices, and data availability.
+By understanding the data availability, you can make informed decisions about how to process, analyze, or visualize the data in your dataset.
 
 Querying Data from the Dataset
 -------------------------------
 
-Now that we have inserted data into our dataset, let's query the data and verify that the data has been correctly inserted.
+Now that we have inserted and surveyed the data into our dataset, let's query the data and verify that the data has been correctly inserted.
 We will iterate through the records in the MIT-BIH Arrhythmia Database and compare the data in our dataset to the original data.
 
 .. code-block:: python
 
+   # Iterate through the record names in the MIT-BIH Arrhythmia Database
    for n in tqdm(record_names):
 
+       # Read the record from the MIT-BIH Arrhythmia Database
        record = wfdb.rdrecord(n, pn_dir="mitdb")
+       # Calculate the sample frequency in nanohertz
        freq_nano = record.fs * 1_000_000_000
+       # Create a time array for the record
        time_arr = np.arange(record.sig_len, dtype=np.int64) * ((10 ** 9) // record.fs)
+       # Get the device ID for the current record
        device_id = sdk.get_device_id(device_tag=record.record_name)
 
-       # If there are multiple signals in the record check both
+       # If there are multiple signals in the record, check both
        if record.n_sig > 1:
            for i in range(len(record.sig_name)):
+               # Get the measure ID for the current signal
                measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano)
 
+               # Query the data from the dataset
                _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
 
-               # check that both the signal and time arrays from mitDB and atriumDB are equal
+               # Check that both the signal and time arrays from MIT-BIH and AtriumDB are equal
                assert np.array_equal(record.p_signal.T[i], read_values) and np.array_equal(time_arr, read_times)
 
        # If there is only one signal in the record
        else:
+           # Get the measure ID for the signal
            measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano)
 
+           # Query the data from the dataset
            _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
 
+           # Check that both the signal and time arrays from MIT-BIH and AtriumDB are equal
            assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
 
-Finally, let's retrieve data from our dataset and plot the first 1000 points of the first patient's data.
+
+Visualizing the Dataset
+-------------------------------
+
+Finally, let's retrieve data from our dataset and plot the first 1000 points of the first record's data.
 
 .. code-block:: python
 
    import matplotlib.pyplot as plt
 
-   _, times, values = sdk.get_data(measure_id=1, device_id=1, start_time_n=0, end_time_n=(2**63)-1)
+    measure_id = 1
+    device_id = 1
+    measure_info = get_measure_info(measure_id=measure_id)
+    freq_nhz = measure_info['freq_nhz']
+    period_nhz = int((10 ** 18) // freq_nhz)
+
+    start_time_n, end_time = 0, 1001 * period_nhz  # [start, end)
+   _, times, values = sdk.get_data(measure_id=measure_id, device_id=device_id, start_time_n=start_time_n, end_time_n=end_time_n)
+
    # Plot the first 1000 points of the first patients data
-   plt.plot(values[:1000])
+   plt.plot(values)
    plt.show()
 
 .. image:: mit_bih_1000_samples.png
