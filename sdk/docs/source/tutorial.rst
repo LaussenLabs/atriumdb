@@ -62,6 +62,7 @@ for each record and handle multiple signals in a single record.
 First, we import the necessary libraries and get the list of record names from the MIT-BIH Arrhythmia Database.
 
 .. code-block:: python
+
    import wfdb
    from tqdm import tqdm
 
@@ -71,6 +72,7 @@ First, we import the necessary libraries and get the list of record names from t
 Next, we loop through each record in the record_names list and read the record using the `rdrecord` function from the wfdb library.
 
 .. code-block:: python
+
    for n in tqdm(record_names):
 
        record = wfdb.rdrecord(n, pn_dir="mitdb")
@@ -81,6 +83,7 @@ device with the given tag already exists using the `get_device_id` function. If 
 new device using the `insert_device` function.
 
 .. code-block:: python
+
        device_id = sdk.get_device_id(device_tag=record.record_name)
        if device_id is None:
            device_id = sdk.insert_device(device_tag=record.record_name)
@@ -89,6 +92,7 @@ new device using the `insert_device` function.
 We then calculate the frequency in nanoseconds for the record and create a time array.
 
 .. code-block:: python
+
        freq_nano = record.fs * 1_000_000_000
 
        time_arr = np.arange(record.sig_len, dtype=np.int64) * int(10 ** 9 // record.fs)
@@ -100,6 +104,7 @@ function. If it doesn't exist, we create a new measure using the `insert_measure
 using the `write_data_easy` function.
 
 .. code-block:: python
+
        if record.n_sig > 1:
            for i in range(len(record.sig_name)):
 
@@ -114,6 +119,7 @@ using the `write_data_easy` function.
 If there is only one signal in the input file, we insert it in the same way as for multiple signals.
 
 .. code-block:: python
+
        else:
            measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, unit=record.units)
            if measure_id is None:
