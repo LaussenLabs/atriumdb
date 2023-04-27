@@ -51,7 +51,9 @@ These additional configurations allow you to customize the dataset according to 
 Inserting Data into the Dataset
 --------------------------------
 
-Now that we have created a new dataset, let's insert some data into it. We will use the provided example to read data from the MIT-BIH Arrhythmia Database and store it in our dataset. In this more complex example, we will create a separate device for each record and handle multiple signals in a single record.
+Now that we have created a new dataset, let's insert some data into it. We will use the provided example to read data from
+the MIT-BIH Arrhythmia Database and store it in our dataset. In this example, we will create a separate device
+for each record and handle multiple signals in a single record.
 
 .. code-block:: python
 
@@ -96,10 +98,112 @@ Now that we have created a new dataset, let's insert some data into it. We will 
            sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal,
                                freq_nano, scale_m=None, scale_b=None)
 
+
+Surveying Data in the Dataset
+-----------------------------
+
+In this section, we will discuss how to survey the data in our dataset, including retrieving information about all measures and devices, and obtaining the availability of specified measures and sources.
+
+Retrieving All Measures
+^^^^^^^^^^^^^^^^^^^^^^^
+
+To retrieve information about all measures in the dataset, you can use the `get_all_measures` method. This method returns a dictionary containing information about each measure, including its id, tag, name, sample frequency (in nanohertz), code, unit, unit label, unit code, and source_id.
+
+.. code-block:: python
+
+   all_measures = sdk.get_all_measures()
+   print(all_measures)
+
+Example output:
+
+.. code-block:: python
+
+   {
+       1: {
+           'id': 1,
+           'tag': 'MLII',
+           'name': None,
+           'freq_nhz': 360000000000,
+           'code': None,
+           'unit': '',
+           'unit_label': None,
+           'unit_code': None,
+           'source_id': 1
+       },
+       2: {
+           'id': 2,
+           'tag': 'V5',
+           'name': None,
+           'freq_nhz': 360000000000,
+           'code': None,
+           'unit': '',
+           'unit_label': None,
+           'unit_code': None,
+           'source_id': 1
+       },
+   }
+
+Retrieving All Devices
+^^^^^^^^^^^^^^^^^^^^^^
+
+To retrieve information about all devices in the dataset, you can use the `get_all_devices` method. This method returns a dictionary containing information about each device, including its id, tag, name, manufacturer, model, type, bed_id, and source_id.
+
+.. code-block:: python
+
+   all_devices = sdk.get_all_devices()
+   print(all_devices)
+
+Example output:
+
+.. code-block:: python
+
+   {
+       1: {
+           'id': 1,
+           'tag': '100',
+           'name': None,
+           'manufacturer': None,
+           'model': None,
+           'type': 'static',
+           'bed_id': None,
+           'source_id': 1
+       },
+       2: {
+           'id': 2,
+           'tag': '101',
+           'name': None,
+           'manufacturer': None,
+           'model': None,
+           'type': 'static',
+           'bed_id': None,
+           'source_id': 1
+       },
+       # ...
+   }
+
+Getting Data Availability
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+To obtain the availability of a specified measure (signal) and a specified source (device id or patient id), you can use the `get_interval_array` method. This method returns a 2D array representing the availability of the specified measure and source. Each row of the 2D array output represents a continuous interval of available data while the first and second columns represent the start epoch and end epoch of that interval, respectively.
+
+.. code-block:: python
+
+   interval_arr = sdk.get_interval_array(measure_id=1, device_id=1)
+   print(interval_arr)
+
+Example output:
+
+.. code-block:: python
+
+   [[            0 1805555050000]]
+
+These methods allow you to survey the data in your dataset and obtain information about the measures, devices, and data availability.
+
 Querying Data from the Dataset
 -------------------------------
 
-Now that we have inserted data into our dataset, let's query the data and verify that the data has been correctly inserted. We will iterate through the records in the MIT-BIH Arrhythmia Database and compare the data in our dataset to the original data.
+Now that we have inserted data into our dataset, let's query the data and verify that the data has been correctly inserted.
+We will iterate through the records in the MIT-BIH Arrhythmia Database and compare the data in our dataset to the original data.
 
 .. code-block:: python
 
@@ -138,3 +242,7 @@ Finally, let's retrieve data from our dataset and plot the first 1000 points of 
    # Plot the first 1000 points of the first patients data
    plt.plot(values[:1000])
    plt.show()
+
+.. image:: mit_bih_1000_samples.png
+   :alt: ECG plot
+   :align: center

@@ -17,4 +17,5 @@ To learn more about AtriumDB, visit the `about page <about.html>`_.
    dataset_creation
    insert_data
    query_data
+   tutorial
    about
