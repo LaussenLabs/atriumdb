@@ -19,9 +19,6 @@ You can install the required libraries using pip:
 Creating a New Dataset
 ----------------------
 
-Creating a New Dataset
-----------------------
-
 First, let's create a new dataset using the AtriumSDK library. We will use the default SQLite metadata database for simplicity. The `create_dataset` method allows you to specify various options such as the type of metadata database to use, the protection mode, and the behavior when new data overlaps with existing data.
 
 .. code-block:: python
@@ -54,124 +51,90 @@ These additional configurations allow you to customize the dataset according to 
 Inserting Data into the Dataset
 --------------------------------
 
-Now that we have created a new dataset, let's insert some data into it. We will use the provided example to read data from the MIT-BIH Arrhythmia Database and store it in our dataset.
+Now that we have created a new dataset, let's insert some data into it. We will use the provided example to read data from the MIT-BIH Arrhythmia Database and store it in our dataset. In this more complex example, we will create a separate device for each record and handle multiple signals in a single record.
 
 .. code-block:: python
 
    import wfdb
-   from pathlib import Path
+   from tqdm import tqdm
 
-   DEFAULT_WFDB_DATA_DIR = Path(__file__).parent / 'wfdb_data'
-   DEFAULT_DATASET_NAME = 'mitdb'
+   record_names = wfdb.get_record_list('mitdb')
 
-   def get_records(dataset_name=None):
-       dataset_name = DEFAULT_DATASET_NAME if dataset_name is None else dataset_name
-       dataset_dir_path = DEFAULT_WFDB_DATA_DIR / dataset_name
+   for n in tqdm(record_names):
 
-       if not dataset_dir_path.is_dir():
-           dataset_dir_path.mkdir(parents=True, exist_ok=True)
-           wfdb.dl_database(dataset_name, str(dataset_dir_path))
+       record = wfdb.rdrecord(n, pn_dir="mitdb")
 
-       for record_name in wfdb.get_record_list(dataset_name):
-           record = wfdb.rdrecord(str(dataset_dir_path / record_name))
-           yield record
+       # make a new device for each record and make the device tag the name of the record
+       device_id = sdk.get_device_id(device_tag=record.record_name)
+       if device_id is None:
+           device_id = sdk.insert_device(device_tag=record.record_name)
 
-Now we need to define the measures, devices, and patients in our dataset. For our example, we will define a single measure for the ECG signal, a single device for the MIT-BIH Arrhythmia Database, and a single patient.
+       freq_nano = record.fs * 1_000_000_000
 
-.. code-block:: python
+       time_arr = np.arange(record.sig_len, dtype=np.int64) * int(10 ** 9 // record.fs)
 
-   # Define a new signal
-   freq = 360
-   freq_units = "Hz"
-   measure_tag = "ECG"
-   measure_name = "Electrocardiogram"
-   units = "mV"
+       # if there are multiple signals in one record split them into two different dataset entries
+       if record.n_sig > 1:
+           for i in range(len(record.sig_name)):
 
-   # Insert the new signal into the dataset
-   new_measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq, units=units, freq_units=freq_units, measure_name=measure_name)
+               # if the measure tag has already been entered into the DB find the associated measure ID
+               measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano)
+               if measure_id is None:
+                   # if the measure, frequency pair is not in the DB create a new entry
+                   measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano)
 
-   # Define a new data source
-   device_tag = "MIT-BIH"
-   device_name = "MIT-BIH Arrhythmia Database"
+               # write data
+               sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal.T[i],
+                                   freq_nano, scale_m=None, scale_b=None)
 
-   # Insert the new data source into the dataset
-   new_device_id = sdk.insert_device(device_tag=device_tag, device_name=device_name)
+       # if there is only one signal in the input file insert it
+       else:
+           measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano)
+           if measure_id is None:
+               measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano)
 
-   # Define a new patient record
-   patient_id = 1
-   mrn = "123456"
-   gender = "M"
-   dob = 946684800000000000
-   first_name = "John"
-   middle_name = "Doe"
-   last_name = "Smith"
-   first_seen = 1609459200000000000
-   last_updated = 1609459200000000000
-   source_id = 1
-
-   # Insert the new patient record into the dataset
-   new_patient_id = sdk.insert_patient(patient_id=patient_id, mrn=mrn, gender=gender, dob=dob,
-                                       first_name=first_name, middle_name=middle_name, last_name=last_name,
-                                       first_seen=first_seen, last_updated=last_updated, source_id=source_id)
-
-Next, we will iterate through the records in the MIT-BIH Arrhythmia Database and write the data to our dataset.
-
-.. code-block:: python
-
-   import numpy as np
-
-   for record in get_records():
-       time_data = np.arange(len(record.p_signal), dtype=np.int64) * (10 ** 9) // freq
-       value_data = record.p_signal[:, 0]
-
-       # Write the data to the dataset
-       sdk.write_data_easy(measure_id=new_measure_id, device_id=new_device_id, time_data=time_data, value_data=value_data, freq=freq, freq_units="Hz", time_units="s")
+           sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal,
+                               freq_nano, scale_m=None, scale_b=None)
 
 Querying Data from the Dataset
 -------------------------------
 
-Now that we have inserted data into our dataset, let's query the data and perform some basic analysis.
-
-First, let's retrieve information about the measures, devices, and patients in our dataset.
+Now that we have inserted data into our dataset, let's query the data and verify that the data has been correctly inserted. We will iterate through the records in the MIT-BIH Arrhythmia Database and compare the data in our dataset to the original data.
 
 .. code-block:: python
 
-   # Retrieve information about all measures in the dataset
-   all_measures = sdk.get_all_measures()
-   print(all_measures)
+   for n in tqdm(record_names):
 
-   # Retrieve information about all devices in the dataset
-   all_devices = sdk.get_all_devices()
-   print(all_devices)
+       record = wfdb.rdrecord(n, pn_dir="mitdb")
+       freq_nano = record.fs * 1_000_000_000
+       time_arr = np.arange(record.sig_len, dtype=np.int64) * ((10 ** 9) // record.fs)
+       device_id = sdk.get_device_id(device_tag=record.record_name)
 
-   # Retrieve information about all patients in the dataset
-   all_patients = sdk.get_all_patients()
-   print(all_patients)
+       # If there are multiple signals in the record check both
+       if record.n_sig > 1:
+           for i in range(len(record.sig_name)):
+               measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano)
 
-Next, let's retrieve the interval arrays for our measure and device.
+               _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
 
-.. code-block:: python
+               # check that both the signal and time arrays from mitDB and atriumDB are equal
+               assert np.array_equal(record.p_signal.T[i], read_values) and np.array_equal(time_arr, read_times)
 
-   interval_arr_device = sdk.get_interval_array(measure_id=new_measure_id, device_id=new_device_id)
-   print(interval_arr_device)
+       # If there is only one signal in the record
+       else:
+           measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano)
 
-Now, let's query the data for a specific time range and perform some basic analysis.
+           _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
 
-.. code-block:: python
+           assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
 
-   start_epoch_s = 0
-   end_epoch_s = start_epoch_s + 3600  # 1 hour after start.
-   start_epoch_nano = start_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
-   end_epoch_nano = end_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
-
-   _, r_times, r_values = sdk.get_data(measure_id=new_measure_id, start_time_n=start_epoch_nano, end_time_n=end_epoch_nano, device_id=new_device_id)
-
-   # Perform some basic analysis on the retrieved data, such as calculating the mean and standard deviation of the ECG signal.
+Finally, let's retrieve data from our dataset and plot the first 1000 points of the first patient's data.
 
 .. code-block:: python
 
-   mean_ecg = np.mean(r_values)
-   std_ecg = np.std(r_values)
+   import matplotlib.pyplot as plt
 
-   print(f"Mean ECG value: {mean_ecg}")
-   print(f"Standard deviation of ECG values: {std_ecg}")
+   _, times, values = sdk.get_data(measure_id=1, device_id=1, start_time_n=0, end_time_n=(2**63)-1)
+   # Plot the first 1000 points of the first patients data
+   plt.plot(values[:1000])
+   plt.show()
