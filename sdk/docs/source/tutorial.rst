@@ -21,7 +21,10 @@ You can install the required libraries using pip:
 Creating a New Dataset
 ----------------------
 
-First, let's create a new dataset using the AtriumSDK library. We will use the default SQLite metadata database for simplicity. The `create_dataset` method allows you to specify various options such as the type of metadata database to use, the protection mode, and the behavior when new data overlaps with existing data.
+First, let's create a new dataset using the AtriumSDK library. We will use the default SQLite metadata database for simplicity.
+The :ref:`create_dataset <create_dataset_label>` method allows you to specify various options such as the type of metadata database to use,
+the protection mode, and the behavior when new data overlaps with existing data.
+
 
 .. code-block:: python
 
@@ -120,7 +123,7 @@ measures and devices, and obtaining the availability of specified measures and s
 Retrieving All Measures
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-To retrieve information about all measures in the dataset, you can use the `get_all_measures` method.
+To retrieve information about all measures in the dataset, you can use the :ref:`get_all_measures <get_all_measures_label>` method.
 This method queries the linked relational database and returns a dictionary containing detailed information about each measure stored in the dataset.
 
 The information includes:
@@ -135,7 +138,7 @@ The information includes:
 - `unit_code`: A code (usually CF_CODE10) representing the unit (can be None if not defined).
 - `source_id`: The identifier of the data source (e.g., device or patient) associated with the measure.
 
-Here's an example of how to use the `get_all_measures` method:
+Here's an example of how to use the :ref:`get_all_measures <get_all_measures_label>` method:
 
 .. code-block:: python
 
@@ -183,7 +186,7 @@ both with a sample frequency of 360000000000 nanohertz (360 Hz) and units in mil
 Retrieving All Devices
 ^^^^^^^^^^^^^^^^^^^^^^
 
-To retrieve information about all devices in the dataset, you can use the `get_all_devices` method.
+To retrieve information about all devices in the dataset, you can use the :ref:`get_all_devices <get_all_devices_label>` method.
 This method returns a dictionary containing information about each device in the dataset.
 
 The information includes:
@@ -197,7 +200,7 @@ The information includes:
 - `bed_id`: The identifier of the bed associated with the device (can be None if not defined).
 - `source_id`: The identifier of the data source (e.g., device or patient) associated with the device.
 
-Here's an example of how to use the `get_all_devices` method:
+Here's an example of how to use the :ref:`get_all_devices <get_all_devices_label>` method:
 
 .. code-block:: python
 
@@ -232,7 +235,7 @@ Example output:
        # ...
    }
 
-In this example, the `get_all_devices` method returns a dictionary where the keys are the device ids and the values are
+In this example, the :ref:`get_all_devices <get_all_devices_label>` method returns a dictionary where the keys are the device ids and the values are
 dictionaries containing the device properties. You can see that the output includes information about the
 device's tag, name, manufacturer, model, type, bed_id, and source_id.
 
@@ -243,16 +246,16 @@ dataset based on specific devices.
 
 Getting Data Availability
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
-
+insert_measure <insert_measure_label>
 To obtain the availability of a specified measure (signal) and a specified source (device id or patient id),
-you can use the :ref:`get_interval_array_label` method. This method provides information about the available data for a specific measure
+you can use the :ref:`get_interval_array <get_interval_array_label>` method. This method provides information about the available data for a specific measure
 and source by returning a 2D array representing the data availability.
 
 Each row of the 2D array output represents a continuous interval of available data, with the first and second columns
 representing the start epoch and end epoch of that interval, respectively.
 This information can be useful when you want to analyze or visualize data within specific time periods or when you need to identify gaps in the data.
 
-Here's an example of how to use the :ref:`get_interval_array_label` method:
+Here's an example of how to use the :ref:`get_interval_array <get_interval_array_label>` method:
 
 .. code-block:: python
 
