@@ -184,10 +184,18 @@ Retrieving All Devices
 ^^^^^^^^^^^^^^^^^^^^^^
 
 To retrieve information about all devices in the dataset, you can use the `get_all_devices` method.
-This method returns a dictionary containing information about each device, including its id, tag, name, manufacturer, model, type, bed_id, and source_id.
+This method returns a dictionary containing information about each device in the dataset.
 
-The `get_all_devices` method is useful when you want to have an overview of all the devices in your dataset and their properties.
-By calling this method, you can quickly see the details of each device and use this information in subsequent operations or analyses.
+The information includes:
+
+- `id`: The unique identifier of the device in the dataset.
+- `tag`: A short, human-readable identifier for the device.
+- `name`: A more descriptive name for the device (can be None if not defined).
+- `manufacturer`: The manufacturer of the device (can be None if not defined).
+- `model`: The model of the device (can be None if not defined).
+- `type`: The type of the device (e.g., 'static', 'dynamic', 'monitor').
+- `bed_id`: The identifier of the bed associated with the device (can be None if not defined).
+- `source_id`: The identifier of the data source (e.g., device or patient) associated with the device.
 
 Here's an example of how to use the `get_all_devices` method:
 
