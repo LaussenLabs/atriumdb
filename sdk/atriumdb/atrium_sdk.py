@@ -455,7 +455,7 @@ class AtriumSDK:
 
         # Initialize dictionary to store overwritten files
         overwrite_file_dict = {}
-        # Initialize list to store all old file blocks
+        # Initialize list to store all old file blocks (The blocks before this latest write_data command)
         all_old_file_blocks = []
 
         # Get the list of old blocks
