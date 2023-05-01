@@ -870,7 +870,13 @@ class AtriumSDK:
             block_requests = self.get_block_requests_from_test_client(block_info_list)
         else:
             # Get block requests using threads
-            block_requests = self.threaded_block_requests(block_info_list)
+            # block_requests = self.threaded_block_requests(block_info_list)
+
+            # Get block requests using Session.
+            block_requests = self.block_session_requests(block_info_list)
+
+            # Get block requests using threaded Session.
+            # block_requests = self.threaded_session_requests(block_info_list)
 
             # Check if any response is not ok
             for response in block_requests:
@@ -928,9 +934,31 @@ class AtriumSDK:
         :param block_info_list: A list of dictionaries containing block information, such as block ID.
         :return: A list of block bytes.
         """
+        if not REQUESTS_INSTALLED:
+            raise ImportError("requests module is not installed.")
+
         with ThreadPoolExecutor(max_workers=10) as executor:
             block_byte_list_threaded = list(
                 executor.map(self.get_block_bytes_response, [row['id'] for row in block_info_list]))
+        return block_byte_list_threaded
+
+    def threaded_session_requests(self, block_info_list):
+        """
+                Get block bytes using multiple threads.
+
+                :param block_info_list: A list of dictionaries containing block information, such as block ID.
+                :return: A list of block bytes.
+                """
+        if not REQUESTS_INSTALLED:
+            raise ImportError("requests module is not installed.")
+
+        session = Session()
+        session_list = [session for _ in range(len(block_info_list))]
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            block_byte_list_threaded = list(
+                executor.map(self.get_block_bytes_response_from_session,
+                             [row['id'] for row in block_info_list],
+                             session_list))
         return block_byte_list_threaded
 
     def block_session_requests(self, block_info_list):
@@ -1051,7 +1079,7 @@ class AtriumSDK:
         >>> patient_id = 789
         >>> max_kbyte_in_memory = 1000
         >>> for total_query_index, times, values in sdk.get_batched_data_generator(measure_id=measure_id, start_time_n=start_time_n, end_time_n=end_time_n, device_id=device_id, patient_id=patient_id, max_kbyte_in_memory=max_kbyte_in_memory):
-        ...     print(f"total_query_index: {total_query_index}, times: {times}, values: {values}")
+        ...     # print(f"total_query_index: {total_query_index}, times: {times}, values: {values}")
 
         :param int measure_id: The measure identifier corresponding to the measures table in the linked relational database.
         :param int start_time_n: The start time of the data to be retrieved, in nanohertz.
@@ -1307,24 +1335,19 @@ class AtriumSDK:
                 block_list = self.get_block_id_list(int(measure_id), start_time_n=int(start_time_n),
                                                     end_time_n=int(end_time_n), device_id=device_id,
                                                     patient_id=patient_id)
-                end_bench = time.perf_counter()
-                _LOGGER.debug(f"get block info {(end_bench - start_bench) * 1000} ms")
 
                 # Concatenate continuous byte intervals to cut down on total number of reads.
-                start_bench = time.perf_counter()
                 read_list = condense_byte_read_list(block_list)
-                end_bench = time.perf_counter()
-                _LOGGER.debug(f"condense read list {(end_bench - start_bench) * 1000} ms")
 
                 # if no matching block ids
                 if len(read_list) == 0:
                     return [], np.array([]), np.array([])
 
                 # Map file_ids to filenames and return a dictionary.
-                start_bench = time.perf_counter()
                 file_id_list = [row[1] for row in read_list]
                 filename_dict = self.get_filename_dict(file_id_list)
                 end_bench = time.perf_counter()
+                # print(f"DB query took {round((end_bench - start_bench) * 1000, 4)} ms")
                 _LOGGER.debug(f"get filename dictionary  {(end_bench - start_bench) * 1000} ms")
 
             # If we already have the blocks
@@ -1346,12 +1369,16 @@ class AtriumSDK:
                 f"Total get data call took {round(end_bench_total - start_bench_total, 2)}: {r_values.size} values")
             _LOGGER.debug(f"{round(r_values.size / (end_bench_total - start_bench_total), 2)} values per second.")
 
+            start_bench = time.perf_counter()
             # convert time data from nanoseconds to unit of choice
-            r_times = r_times / time_unit_options[time_units]
+            if time_units != 'ns':
+                r_times = r_times / time_unit_options[time_units]
 
             # Cast times to integers if possible.
-            if np.all(r_times == np.floor(r_times)):
-                r_times = r_times.astype('int64')
+            # if np.all(r_times == np.floor(r_times)):
+            #     r_times = r_times.astype('int64')
+            end_bench = time.perf_counter()
+            # print(f"final checks took {round((end_bench - start_bench) * 1000, 4)} ms")
 
             return headers, r_times, r_values
 
@@ -1395,6 +1422,7 @@ class AtriumSDK:
 
         # End performance benchmark
         end_bench = time.perf_counter()
+        # print(f"read from disk took {round((end_bench - start_bench) * 1000, 4)} ms")
 
         # Log the time taken to read data from disk
         _LOGGER.debug(f"read from disk {(end_bench - start_bench) * 1000} ms")
@@ -1403,9 +1431,12 @@ class AtriumSDK:
         num_bytes_list = [row[5] for row in block_list]
 
         # Decode the data and separate it into headers, times, and values
+        start_bench = time.perf_counter()
         headers, r_times, r_values = \
             self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
                                   auto_convert_gap_to_time_array, return_intervals)
+        end_bench = time.perf_counter()
+        # print(f"decode bytes took {round((end_bench - start_bench) * 1000, 4)} ms")
 
         return headers, r_times, r_values
 
@@ -1431,15 +1462,18 @@ class AtriumSDK:
         byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]], axis=None)
 
         # Decode the blocks
+        tick = time.perf_counter()
         r_times, r_values, headers = self.block.decode_blocks(
             encoded_bytes, byte_start_array, analog=analog, times_before=times_before, values_before=values_before)
-
+        tock = time.perf_counter()
+        # print(f"C Wrapper took {round((tock - tick) * 1000, 4)} ms")
         new_times_index = 0 if times_before is None else times_before.size
         new_values_index = 0 if values_before is None else values_before.size
 
         # If all blocks are time type 2 (gap arrays)
         if auto_convert_gap_to_time_array and \
                 all([h.t_raw_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO for h in headers]):
+            # print("time type 2")
 
             if return_intervals:
                 # Convert gap arrays to intervals
@@ -1496,6 +1530,7 @@ class AtriumSDK:
 
         # If all blocks are time type 1 (timestamp arrays)
         elif all([h.t_raw_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO for h in headers]):
+            # print("time type 1")
             if times_before is None and values_before is None:
                 r_times, r_values = sort_data(
                     r_times, r_values, headers)
@@ -1752,11 +1787,11 @@ class AtriumSDK:
             >>> measure_id = 1
             >>> freq_units = "Hz"
             >>> frequency = sdk.get_freq(measure_id, freq_units)
-            >>> print(frequency)
+            >>> # print(frequency)
             ... 10.0
 
             >>> freq = sdk.get_freq(measure_id=1, freq_units="nHz")
-            >>> print(freq)
+            >>> # print(freq)
             ... 10000000000
 
         :param int measure_id: The measure identifier corresponding to the measures table in the
@@ -1788,7 +1823,7 @@ class AtriumSDK:
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> all_devices = sdk.get_all_devices()
-        >>> print(all_devices)
+        >>> # print(all_devices)
         {1: {'id': 1,
              'tag': 'Monitor A1',
              'name': 'Philips Monitor A1 in Room 2A',
@@ -1847,7 +1882,7 @@ class AtriumSDK:
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> all_measures = sdk.get_all_measures()
-        >>> print(all_measures)
+        >>> # print(all_measures)
         {1: {'id': 1,
              'tag': 'Heart Rate',
              'name': 'Heart Rate Measurement',
@@ -1909,7 +1944,7 @@ class AtriumSDK:
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> all_patients = sdk.get_all_patients()
-        >>> print(all_patients)
+        >>> # print(all_patients)
         {1: {'id': 1,
              'mrn': 123456,
              'gender': 'M',
@@ -2371,7 +2406,7 @@ class AtriumSDK:
         >>> # Retrieve information for measure with id=1
         >>> measure_id = 1
         >>> measure_info = sdk.get_measure_info(measure_id)
-        >>> print(measure_info)
+        >>> # print(measure_info)
         {
             'id': 1,
             'tag': 'Heart Rate',
@@ -2545,7 +2580,7 @@ class AtriumSDK:
         >>> # Retrieve the identifier of the device with tag "Monitor A1"
         >>> device_tag = "Monitor A1"
         >>> device_id = sdk.get_device_id(device_tag)
-        >>> print(device_id)
+        >>> # print(device_id)
         ... 1
         """
         # Check if the metadata connection type is API
@@ -2584,7 +2619,7 @@ class AtriumSDK:
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> device_id = 1
         >>> device_info = sdk.get_device_info(device_id)
-        >>> print(device_info)
+        >>> # print(device_info)
         {'id': 1,
          'tag': 'Device A1',
          'name': 'Philips Device A1 in Room 1A',

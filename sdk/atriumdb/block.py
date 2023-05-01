@@ -142,6 +142,7 @@ class Block:
         headers = self.decode_headers(encoded_bytes, byte_start_array)
         end_bench = time.perf_counter()
         logging.debug(f"decode headers {(end_bench - start_bench) * 1000} ms")
+        # print(f"decode headers {(end_bench - start_bench) * 1000} ms")
 
         start_bench = time.perf_counter()
         t_block_start = np.cumsum([h.t_raw_size for h in headers], dtype=np.uint64)
@@ -154,6 +155,7 @@ class Block:
         t_byte_start = np.concatenate([np.array([0], dtype=np.uint64), t_byte_start[:-1]], axis=None)
         end_bench = time.perf_counter()
         logging.debug(f"arrange intra-block information {(end_bench - start_bench) * 1000} ms")
+        # print(f"arrange intra-block information {(end_bench - start_bench) * 1000} ms")
 
         start_bench = time.perf_counter()
         if not all([h.t_compression == 1 for h in headers]):
@@ -163,12 +165,14 @@ class Block:
                 axis=None)
         end_bench = time.perf_counter()
         logging.debug(f"allocate extra memory {(end_bench - start_bench) * 1000} ms")
+        # print(f"allocate extra memory {(end_bench - start_bench) * 1000} ms")
 
         start_bench = time.perf_counter()
         time_data = np.zeros(sum(h.t_raw_size for h in headers) + new_times_index, dtype=np.uint8)
         value_data = np.zeros(sum(h.v_raw_size for h in headers) + new_values_index, dtype=np.uint8)
         end_bench = time.perf_counter()
         logging.debug(f"allocate data memory {(end_bench - start_bench) * 1000} ms")
+        # print(f"allocate data memory {(end_bench - start_bench) * 1000} ms")
 
         start_bench = time.perf_counter()
         self.wrapped_dll.decode_blocks_sdk(
@@ -176,6 +180,8 @@ class Block:
             t_block_start, v_block_start, byte_start_array, t_byte_start)
         end_bench = time.perf_counter()
         logging.debug(f"C Decode {(end_bench - start_bench) * 1000} ms")
+        # print(f"C Decode {(end_bench - start_bench) * 1000} ms")
+
 
         start_bench = time.perf_counter()
         time_data = np.frombuffer(time_data, dtype=np.int64)
@@ -202,6 +208,7 @@ class Block:
         # Apply the scale factors
         end_bench = time.perf_counter()
         logging.debug(f"interpret result bytes {(end_bench - start_bench) * 1000} ms")
+        # print(f"interpret result bytes {(end_bench - start_bench) * 1000} ms")
         #
         logging.debug("\n")
         logging.debug("Applying Scale Factors")
@@ -213,22 +220,26 @@ class Block:
             scale_b_array = np.array([h.scale_b for h in headers])
             end_bench = time.perf_counter()
             logging.debug(f"\tscale: arrange linear constants {(end_bench - start_bench) * 1000} ms")
+            # print(f"\tscale: arrange linear constants {(end_bench - start_bench) * 1000} ms")
 
             start_bench = time.perf_counter()
             value_data = value_data.astype(np.float64, copy=False)
             end_bench = time.perf_counter()
             logging.debug(f"\tscale: cast value data {(end_bench - start_bench) * 1000} ms")
+            # print(f"\tscale: cast value data {(end_bench - start_bench) * 1000} ms")
 
             if np.all(scale_m_array == scale_m_array[0]) and np.all(scale_b_array == scale_b_array[0]):
                 start_bench = time.perf_counter()
                 value_data[new_values_index:] *= scale_m_array[0]
                 end_bench = time.perf_counter()
                 logging.debug(f"\tscale: apply slope {(end_bench - start_bench) * 1000} ms")
+                # print(f"\tscale: apply slope {(end_bench - start_bench) * 1000} ms")
 
                 start_bench = time.perf_counter()
                 value_data[new_values_index:] += scale_b_array[0]
                 end_bench = time.perf_counter()
                 logging.debug(f"\tscale: apply y-int {(end_bench - start_bench) * 1000} ms")
+                # print(f"\tscale: apply y-int {(end_bench - start_bench) * 1000} ms")
 
             else:
                 v_data_regions = np.cumsum([h.num_vals for h in headers])
@@ -247,6 +258,7 @@ class Block:
         #     logging.debug("Didn't apply scale factors")
         end_bench_scale = time.perf_counter()
         logging.debug(f"apply scale factors total {(end_bench_scale - start_bench_scale) * 1000} ms")
+        # print(f"apply scale factors total {(end_bench_scale - start_bench_scale) * 1000} ms")
         logging.debug("\n")
 
         # if times_before is not None:

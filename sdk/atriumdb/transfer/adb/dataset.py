@@ -93,22 +93,33 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
     else:
         # Transfer devices
         transfer_devices(from_sdk, to_sdk, device_id_list=device_id_list)
+        print("devices transferred")
 
         for measure_id, measure_info in tqdm(from_sdk.get_all_measures().items()):
             to_measure_id = to_sdk.get_measure_id(measure_tag=measure_info['tag'],
                                                   freq=measure_info['freq_nhz'],
                                                   units=measure_info['unit'],)
+
+            print(f"measure_id: {measure_id}, to_measure_id: {to_measure_id}")
             if measure_id_list is not None and measure_id not in measure_id_list:
+                print("continue")
                 continue
+
+            print("ingest")
 
             for from_device_id, device_info in tqdm(from_sdk.get_all_devices().items(), leave=False):
                 to_device_id = to_sdk.get_device_id(device_tag=device_info['tag'])
+                print(f"from_device_id: {from_device_id}, to_device_id: {to_device_id}")
                 if device_id_list is not None and from_device_id not in device_id_list:
+                    print("continue")
                     continue
+
+                print("ingest")
 
                 block_list = from_sdk.get_block_id_list(int(measure_id), start_time_n=start,
                                                         end_time_n=end, device_id=from_device_id)
 
+                print(f"num blocks: {len(block_list)}")
                 if len(block_list) == 0:
                     continue
 
@@ -117,11 +128,13 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
 
                 start_block = 0
                 while start_block < len(block_list):
+                    print(f"while start_block: {start_block} < len(block_list): {len(block_list)}")
                     block_batch = block_list[start_block:start_block+batch_size]
                     try:
                         headers, times, values = from_sdk.get_data_from_blocks(block_batch, filename_dict, measure_id,
                                                                                MIN_TRANSFER_TIME, MAX_TRANSFER_TIME,
                                                                                analog=False)
+                        print(f"{values.size} values decoded")
                     except Exception as e:
                         print(e)
                         start_block += batch_size
@@ -135,14 +148,17 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
 
 
 def ingest_data(to_sdk, measure_id, device_id, headers, times, values):
+    print("Writing data")
     try:
         if all([h.scale_m == headers[0].scale_m and
                 h.scale_b == headers[0].scale_b and
                 h.freq_nhz == headers[0].freq_nhz for h in headers]):
+            print("easy")
             to_sdk.write_data_easy(measure_id, device_id, time_data=times, value_data=values,
                                    freq=headers[0].freq_nhz, scale_m=headers[0].scale_m,
                                    scale_b=headers[0].scale_b)
         else:
+            print("hard")
             val_index = 0
             for h in headers:
                 try:
