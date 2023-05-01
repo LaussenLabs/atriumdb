@@ -13,7 +13,7 @@ To learn more about AtriumDB, visit the `about page <about.html>`_.
 
    installation
    quickstart
-   contents
    tutorial
    cli
+   contents
    about
