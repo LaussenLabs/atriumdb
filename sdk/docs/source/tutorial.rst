@@ -1,4 +1,4 @@
-Comprehensive Tutorial
+Tutorial
 ################################################################################
 
 In this tutorial, we will walk you through the process of creating a dataset, inserting new data, and querying that

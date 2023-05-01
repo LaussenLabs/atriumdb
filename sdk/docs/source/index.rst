@@ -14,8 +14,9 @@ To learn more about AtriumDB, visit the `about page <about.html>`_.
    installation
    quickstart
    contents
+   tutorial
    dataset_creation
    insert_data
    query_data
-   tutorial
+   cli
    about
