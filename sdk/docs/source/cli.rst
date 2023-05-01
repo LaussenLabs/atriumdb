@@ -8,7 +8,7 @@ Overview
 
 The Atriumdb CLI is a powerful command-line interface tool designed to interact with Atriumdb datasets. It provides users with the ability to authenticate remote mode access, display quick information about the contents of Atriumdb datasets, and import/export data to and from Atriumdb in various popular formats such as CSV, Parquet, Numpy, and WFDB.
 
-The CLI is easy to install and use, with comprehensive help documentation available through the `atriumdb --help` command.
+The CLI is easy to install and use, with comprehensive help documentation available through the ``atriumdb --help`` command.
 
 Features
 ==============
@@ -122,7 +122,7 @@ To query metadata, use the following commands:
     --  -------   ------  -----------------  ----------  -----------   ---------  -------------   -------------   ----------
     1   12345678  M       326054449000000000  John        Doe           Smith      1588358449000   1589358449000   2
 
-You can also filter the results by using various options, such as `--tag-match`, `--name-match`, `--unit`, `--freq`, `--freq-units`, `--source-id`, `--manufacturer-match`, `--model-match`, `--bed-id`, `--gender`, `--age-years-min`, `--age-years-max`, `--first-seen`, and `--last-updated`.
+You can also filter the results by using various options, such as `--tag-match`, `--name-match`, `--unit`, `--freq`.
 
 For example, to filter measures by a specific tag or frequency, use the `--tag-match` or `--freq` options:
 
@@ -154,7 +154,177 @@ To filter devices by a specific tag or manufacturer, use the `--tag-match` or `-
 Import / Export
 **************************
 
+The Atriumdb CLI provides the ability to import and export data between different Atriumdb datasets and various popular formats such as CSV, Parquet, Numpy, and WFDB. This chapter will cover the usage of the import and export commands, along with their supported options and parameters.
+
+Export Command
+==============
+
+The ``export`` command allows you to transfer data from an Atriumdb dataset to another dataset or to various file formats. The command supports a range of options for specifying the data to be exported, the format, and the destination.
+
+Here's the basic syntax for the ``export`` command:
+
+.. code-block:: bash
+
+    atriumdb export [OPTIONS]
+
+The available options for the ``export`` command are:
+
+- ``--format``: The format of the exported data. Supported formats are "adb", "csv", "parquet", "numpy", and "wfdb". Default is "adb".
+- ``--packaging-type``: The type of packaging for the exported data. Supported types are "files", "tar", and "gzip". Default is "files".
+- ``--cohort-file``: Path to a cohort file for automatically configuring export parameters.
+- ``--measure-ids``: List of measure IDs to export.
+- ``--measures``: List of measure tags to export.
+- ``--device-ids``: List of device IDs to export.
+- ``--devices``: List of device tags to export.
+- ``--patient-ids``: List of patient IDs to export.
+- ``--mrns``: List of MRNs to export.
+- ``--start-time``: Start time for exporting data.
+- ``--end-time``: End time for exporting data.
+- ``--dataset-location-out``: Path to the export directory.
+- ``--metadata-uri-out``: The URI of a metadata server.
+- ``--database-type-out``: The metadata database type.
+- ``--by-patient``: Whether or not to include patient mapping. Default is False.
+
+Here's an example of using the ``export`` command to export data in CSV format:
+
+.. code-block:: bash
+
+    atriumdb export --format csv --dataset-location-out /path/to/export/directory
+
+Import Command
+==============
+
+The ``import`` command is currently under development and will be available in a future release. It will allow users to import data into an Atriumdb dataset from various file formats.
+
+For now, anything import could do you can do with export by switching the source and target datasets.
+
+Cohort Files
+============
+
+Cohort files are a convenient way to specify a set of export parameters in a single file. The Atriumdb CLI supports YAML-formatted cohort files, which can be used with the ``--cohort-file`` option in the ``export`` command.
+
+Here's an example of a cohort file:
+
+.. code-block:: yaml
+
+    measures:
+      - HR
+      - RR
+    measure_ids:
+      - 1
+      - 2
+    devices:
+      - device_A
+      - device_B
+    device_ids:
+      - 10
+      - 11
+    patient_ids:
+      - 100
+      - 101
+    mrns:
+      - 123456
+      - 789012
+    start_epoch_s: 1620000000
+    end_epoch_s: 1620100000
+
+To use a cohort file with the ``export`` command, simply provide the path to the file with the ``--cohort-file`` option:
+
+.. code-block:: bash
+
+    atriumdb export --cohort-file /path/to/cohort.yaml --dataset-location-out /path/to/export/directory
+
 *********************************
 List of Commands and Options
 *********************************
 
+This section provides an overview of the available commands and their respective options in the Atriumdb CLI.
+
+1. **login**: Authenticate with the Atriumdb server using a QR code.
+
+2. **export**: Export data from Atriumdb to various formats.
+
+   This command exports data from Atriumdb to the specified format and packaging type. Users can filter the data to be exported using various options such as measure ids, device ids, patient ids, and MRNs. The export command also supports specifying a cohort file to automatically configure export parameters.
+
+   Options:
+
+   - ``--format``: Format of the exported data (default: adb). Choices: adb, csv, parquet, numpy, wfdb. Currently, only adb and csv formats are supported for export.
+   - ``--packaging-type``: Type of packaging for the exported data (default: files). Choices: files, tar, gzip.
+   - ``--cohort-file``: Cohort file for automatically configuring export parameters. Supported formats: .yml, .yaml.
+   - ``--measure-ids``: List of measure ids to export.
+   - ``--measures``: List of measure tags to export. Measure ids matching the tags will be added to the export list.
+   - ``--device-ids``: List of device ids to export.
+   - ``--devices``: List of device tags to export. Device ids matching the tags will be added to the export list.
+   - ``--patient-ids``: List of patient ids to export.
+   - ``--mrns``: List of MRNs to export.
+   - ``--start-time``: Start time for exporting data in epoch seconds.
+   - ``--end-time``: End time for exporting data in epoch seconds.
+   - ``--dataset-location-out``: Path to export directory. This option or the ATRIUMDB_EXPORT_DATASET_LOCATION environment variable must be specified.
+   - ``--metadata-uri-out``: The URI of a metadata server. If not specified, the ATRIUMDB_METADATA_URI_OUT environment variable will be used.
+   - ``--database-type-out``: The metadata database type. If not specified, the ATRIUMDB_DATABASE_TYPE_OUT environment variable will be used.
+   - ``--by-patient``: Whether or not to include patient mapping (default: False).
+
+3. **import**: Import data to Atriumdb from various formats.
+
+   Options:
+
+   - ``--format``: Format of the imported data (default: adb). Choices: adb, csv, parquet, numpy, wfdb.
+   - ``--packaging-type``: Type of packaging for the imported data (default: files). Choices: files, tar, gzip.
+   - ``--dataset-location-in``: Path to import directory.
+   - ``--metadata-uri-in``: The URI of a metadata server to import from.
+   - ``--endpoint-url-in``: The endpoint to connect to for a remote AtriumDB server to import from.
+   - ``--measure-ids``: List of measure ids to import.
+   - ``--measures``: List of measure tags to import.
+   - ``--device-ids``: List of device ids to import.
+   - ``--devices``: List of device tags to import.
+   - ``--patient-ids``: List of patient ids to import.
+   - ``--mrns``: List of MRNs to import.
+   - ``--start-time``: Start time for importing data.
+   - ``--end-time``: End time for importing data.
+
+4. **measure**: A group command for managing measures in a relational database.
+
+   Subcommands:
+
+   - **ls**: Lists measures based on the provided search criteria.
+
+     Options:
+
+     - ``--tag-match``: Filters measures by matching the provided string against the measure's tag field. Only measures with a tag field containing the specified string will be returned.
+     - ``--name-match``: Filters measures by matching the provided string against the measure's name field. Only measures with a name field containing the specified string will be returned.
+     - ``--unit``: Filters measures by their units. Only measures with a unit field equal to the specified string will be returned.
+     - ``--freq``: Filters measures by their frequency. Only measures with a frequency field equal to the specified value will be returned.
+     - ``--freq-units``: Specifies the unit of frequency for the `--freq` option. The default unit is Hz.
+     - ``--source-id``: Filters measures by their source identifier. Only measures with a source identifier field equal to the specified value will be returned.
+
+5. **device**: Group command for managing devices in the linked relational database.
+
+   Subcommands:
+
+   - **ls**: List devices in the linked relational database that match the specified search criteria, such as tag, name, manufacturer, model, bed ID, and source ID.
+
+     Options:
+
+     - ``--tag-match``: Filter devices by tag string match. Only devices with a `device_tag` field containing this string will be returned.
+     - ``--name-match``: Filter devices by name string match. Only devices with a `device_name` field containing this string will be returned.
+     - ``--manufacturer-match``: Filter devices by manufacturer string match. Only devices with a `manufacturer` field containing this string will be returned.
+     - ``--model-match``: Filter devices by model string match. Only devices with a `model` field containing this string will be returned.
+     - ``--bed-id``: Filter devices by bed identifier. Only devices with a `bed_id` field matching this identifier will be returned.
+     - ``--source-id``: Filter devices by source identifier. Only devices with a `source_id` field matching this identifier will be returned.
+
+6. **patient**: Group command for managing patient records in a healthcare database.
+
+    Subcommands:
+
+    - **ls**: List patient records with optional filters. The command retrieves information about all patients in the linked relational database, including their id, medical record number (mrn), gender, date of birth (dob), first name, middle name, last name, first seen timestamp, last updated timestamp, and source identifier.
+
+    Options:
+
+    - ``--skip``: Number of patients to skip before starting to return the results. Useful for pagination.
+    - ``--limit``: Maximum number of patients to return in the result. Useful for pagination.
+    - ``--age-years-min``: Minimum age in years to filter patients. Filters patients whose age is greater than or equal to the specified value.
+    - ``--age-years-max``: Maximum age in years to filter patients. Filters patients whose age is less than or equal to the specified value.
+    - ``--gender``: Filter patients based on their gender. Accepts 'M' for male and 'F' for female.
+    - ``--source-id``: Filter patients by their source identifier. Useful for filtering patients from a specific data source.
+    - ``--first-seen``: Filter patients by the timestamp when they were first seen, in epoch time. Filters patients whose first seen timestamp is greater than or equal to the specified value.
+    - ``--last-updated``: Filter patients by the timestamp when their record was last updated, in epoch time. Filters patients whose last updated timestamp is greater than or equal to the specified value.
