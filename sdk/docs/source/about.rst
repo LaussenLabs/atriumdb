@@ -4,7 +4,7 @@ About
 .. toctree::
    :maxdepth: 2
 
-AtriumDB is a comprehensive solution for the management and analysis of physiological waveform data. It includes a powerful SDK for data compression, storage, and retrieval and a RESTful API for remote access and a WAL System which enables continuous ingestion of streaming data, making it ideal for storing data from clinical systems in real-time.
+AtriumDB is a comprehensive solution for the management and analysis of physiological waveform data. It includes a powerful SDK for data compression, storage and retrieval.
 
 The AtriumDB SDK is a powerful and versatile python library, designed to meet the needs of data scientists and organizations dealing with large amounts of physiological waveform data. This library combines the computational efficiency of a C library with the convenience and familiarity of a Python interface, making it easy for data scientists to use. The SDK provides a comprehensive solution for data compression, storage, and retrieval, with the ability to index data by signal type, data source, and time, providing efficient and reliable data access. Additionally, the SDK incorporates the core functionality of the API, enabling secure remote access to data through Auth0 authentication.
 
