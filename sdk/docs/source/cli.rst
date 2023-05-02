@@ -74,6 +74,55 @@ After logging in, the `atriumdb` CLI will store the API token in the `.env` file
 
 Now, you can access the remote dataset using the AtriumSDK object, as shown in the "Connecting to an Existing Dataset" section.
 
+
+*********************************************************
+Using AtriumSDK in Remote Mode with CLI Authentication
+*********************************************************
+
+Once you have successfully logged in using the Atriumdb CLI, as described in the `Authentication`_ section, you can use the AtriumSDK in remote mode with your Python scripts. The AtriumSDK will automatically detect the stored API token in the `.env` file when `metadata_connection_type` is set to `"api"`.
+
+To use the AtriumSDK in remote mode, follow these steps:
+
+1. Log in using the Atriumdb CLI, as described in the `Authentication`_ section.
+
+2. Create a Python script in the same directory as the `.env` file containing the stored API token.
+
+3. Import the `AtriumSDK` class from the `atriumdb` package:
+
+.. code-block:: python
+
+    from atriumdb import AtriumSDK
+
+4. Instantiate the `AtriumSDK` object with the `metadata_connection_type` parameter set to `"api"`:
+
+.. code-block:: python
+
+    sdk = AtriumSDK(metadata_connection_type="api", api_url="http://example.com/api/v1")
+
+By setting `metadata_connection_type` to `"api"`, the AtriumSDK will automatically detect and use the API token stored in the `.env` file for remote API calls (alternatively you can specify the token in the `token` parameter).
+
+Now, you can use the AtriumSDK's methods to interact with the remote dataset. Here are some examples:
+
+.. code-block:: python
+
+    # List all devices
+    devices = sdk.get_all_devices()
+    print(devices)
+
+    # List all measures
+    measures = sdk.get_all_measures()
+    print(measures)
+
+    # Search for measures by frequency and units
+    searched_measures = sdk.search_measures(freq=60, freq_units="Hz")
+    print(searched_measures)
+
+    # Get measure information by measure ID
+    measure_info = sdk.get_measure_info(measure_id=1)
+    print(measure_info)
+
+For more information on using the AtriumSDK methods, refer to the provided Python functions in the `AtriumSDK` page.
+
 **************************
 Querying Metadata
 **************************
