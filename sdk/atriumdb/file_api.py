@@ -11,7 +11,7 @@ class AtriumFileHandler:
         # Generate a random UUID and convert it to a hexadecimal string
         hex_str = uuid.uuid4().hex
 
-        # Create the directory structure: top_level_dir/device_id/measure_id/
+        # Create the parent directory.
         directory = "{}/{}/{}".format(self.top_level_dir, device_id, measure_id)
         Path(directory).mkdir(parents=True, exist_ok=True)
 
@@ -37,9 +37,9 @@ class AtriumFileHandler:
         return filename
 
     def read_bytes(self, measure_id, device_id, filename, start_byte, num_bytes):
-        # Check if the file exists
+        # Check if the file exists as is.
         if not Path(filename).is_file():
-            # Get the absolute path of the file if it doesn't exist
+            # If not, get the absolute path of the file.
             filename = self.to_abs_path(filename, measure_id, device_id)
 
         # Open the file in binary mode
