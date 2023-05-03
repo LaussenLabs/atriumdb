@@ -524,16 +524,22 @@ def get_compression_levels(compression_type=None):
 
 
 def merge_interval_data(blocked_interval_data, period_ns):
+    # Reshape the input data into a 2D array with two columns (start time and number of samples)
     blocked_interval_data = blocked_interval_data.flatten().reshape((-1, 2))
+
+    # Initialize an empty list to store the merged intervals
     merged_intervals = []
 
+    # Iterate through each interval in the reshaped input data
     for start_t, num_samples in blocked_interval_data:
-
+        # Check if the current interval is adjacent to the previous interval in the merged_intervals list
         if len(merged_intervals) > 0 and \
                 merged_intervals[-1][0] + ((merged_intervals[-1][1]) * period_ns) == start_t:
-
+            # Update the number of samples in the previous interval by adding the number of samples in the current interval
             merged_intervals[-1][1] += num_samples
         else:
+            # Add the current interval as a new interval in the merged_intervals list
             merged_intervals.append([start_t, num_samples])
 
+    # Convert the merged_intervals list into a flattened NumPy array with the int64 data type and return it
     return np.array(merged_intervals, dtype=np.int64).flatten()
