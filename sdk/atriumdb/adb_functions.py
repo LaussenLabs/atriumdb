@@ -40,8 +40,11 @@ def condense_byte_read_list(block_list):
 
     for row in block_list:
         if len(result) == 0 or result[-1][1] != row[3] or result[-1][2] + result[-1][3] != row[4]:
+            # append device_id, file_id, start_byte and num_bytes
             result.append([row[2], row[3], row[4], row[5]])
         else:
+            # if the blocks are continuous merge the reads together by adding the size of the next block to the
+            # to the num_bytes field
             result[-1][3] += row[5]
 
     return result
@@ -94,7 +97,7 @@ def merge_interval_lists(list_a, list_b):
                      if max(first[0], second[0]) <= min(first[1], second[1])])
 
 
-def sort_data(times, values, headers):
+def sort_data(times, values, headers, allow_duplicates=False):
     start_bench = time.perf_counter()
     if len(headers) == 0:
         return times, values
@@ -113,7 +116,9 @@ def sort_data(times, values, headers):
         return times, values
 
     start_bench = time.perf_counter()
-    _, sorted_block_i = np.unique(block_info.T[0], return_index=True)
+
+    # use argsort so duplicates aren't removed, use quicksort as it will be faster with smaller arrays
+    sorted_block_i = np.argsort(block_info.T[0], kind='quicksort')
     block_info = block_info[sorted_block_i]
 
     end_bench = time.perf_counter()
@@ -143,9 +148,17 @@ def sort_data(times, values, headers):
     else:
         # Blocks do intersect each other, so sort every value.
         start_bench = time.perf_counter()
-        sorted_times, sorted_time_indices = np.unique(times, return_index=True)
+        if allow_duplicates:
+            # If allowing duplicates use argsort to get the indices so duplicates aren't removed
+            # Use mergesort as it will be faster than quicksort on large arrays and since its mostly sorted already
+            sorted_time_indices = np.argsort(times, kind='mergesort')
+            sorted_times = times[sorted_time_indices]
+        else:
+            sorted_times, sorted_time_indices = np.unique(times, return_index=True)
+
         end_bench = time.perf_counter()
         logging.debug(f"sort every value {(end_bench - start_bench) * 1000} ms")
+
         return sorted_times, values[sorted_time_indices]
 
 
