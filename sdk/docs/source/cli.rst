@@ -497,7 +497,7 @@ Options
 Patient Command
 ===============
 
-This command group manages patient records in a healthcare database, tt has a subcommand called `ls` which lists patient records with optional filters.
+This command group manages patient records in a healthcare database, it has a subcommand called `ls` which lists patient records with optional filters.
 The command retrieves information about all patients in the linked relational database, including their id, medical record number (MRN), gender,
 date of birth (DOB), first name, middle name, last name, first seen timestamp, last updated timestamp, and source identifier.
 
