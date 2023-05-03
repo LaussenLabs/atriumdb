@@ -829,7 +829,7 @@ class AtriumSDK:
 
     def get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int,
                      device_id: int = None, patient_id: int = None, mrn: int = None,
-                     auto_convert_gap_to_time_array=True, return_intervals=False, analog=True):
+                     auto_convert_gap_to_time_array=True, return_intervals=False, analog=True, allow_duplicates=False):
         """
         .. _get_data_api_label:
 
@@ -845,6 +845,7 @@ class AtriumSDK:
         :param auto_convert_gap_to_time_array: Automatically convert gaps in the data to time arrays (default: True).
         :param return_intervals: Return data as intervals (default: False).
         :param analog: Convert digitized data to its analog values (default: True).
+        :param bool allow_duplicates: Whether to allow duplicate times in the returned data if they exist.
 
         :return: A tuple containing headers, request times, and request values.
 
@@ -894,7 +895,7 @@ class AtriumSDK:
         # Decode the concatenated bytes to get headers, request times and request values
         headers, r_times, r_values = \
             self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
-                                  auto_convert_gap_to_time_array, return_intervals)
+                                  auto_convert_gap_to_time_array, return_intervals, allow_duplicates=allow_duplicates)
 
         return headers, r_times, r_values
 
@@ -1260,7 +1261,7 @@ class AtriumSDK:
 
     def get_data(self, measure_id: int, start_time_n: int = None, end_time_n: int = None, device_id: int = None,
                  patient_id=None, auto_convert_gap_to_time_array=True, return_intervals=False, analog=True,
-                 block_info=None, time_units: str = None):
+                 block_info=None, time_units: str = None, allow_duplicates=False):
         """
         .. _get_data_label:
 
@@ -1297,6 +1298,7 @@ class AtriumSDK:
             relational database if you already have one open.
         :param str time_units: If you would like the time array returned in units other than nanoseconds you can
             choose from one of ["s", "ms", "us", "ns"].
+        :param bool allow_duplicates: Whether to allow duplicate times in the returned data if they exist.
 
         :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
         :returns: A list of the block header python objects.\n
@@ -1324,7 +1326,7 @@ class AtriumSDK:
             return self.get_data_api(measure_id, start_time_n, end_time_n,
                                      device_id=device_id, patient_id=patient_id,
                                      auto_convert_gap_to_time_array=auto_convert_gap_to_time_array,
-                                     return_intervals=return_intervals, analog=analog)
+                                     return_intervals=return_intervals, analog=analog, allow_duplicates=allow_duplicates)
 
         # If the dataset is in a local directory.
         elif self.mode == "local":
@@ -1362,7 +1364,8 @@ class AtriumSDK:
             # Read and decode the blocks.
             headers, r_times, r_values = self.get_data_from_blocks(block_list, filename_dict, measure_id, start_time_n,
                                                                    end_time_n, return_intervals, analog,
-                                                                   auto_convert_gap_to_time_array)
+                                                                   auto_convert_gap_to_time_array,
+                                                                   allow_duplicates=allow_duplicates)
 
             end_bench_total = time.perf_counter()
             _LOGGER.debug(
@@ -1383,7 +1386,8 @@ class AtriumSDK:
             return headers, r_times, r_values
 
     def get_data_from_blocks(self, block_list, filename_dict, measure_id, start_time_n, end_time_n,
-                             return_intervals=False, analog=True, auto_convert_gap_to_time_array=True):
+                             return_intervals=False, analog=True, auto_convert_gap_to_time_array=True,
+                             allow_duplicates=False):
         """
         Retrieve data from blocks.
 
@@ -1405,6 +1409,8 @@ class AtriumSDK:
         :type analog: bool, optional
         :param auto_convert_gap_to_time_array: Whether to automatically convert gaps to time arrays, defaults to True.
         :type auto_convert_gap_to_time_array: bool, optional
+        :param allow_duplicates: Whether to allow duplicate times in the returned data if they exist.
+        :type allow_duplicates: bool, optional
         :return: Tuple containing headers, times, and values.
         :rtype: tuple
         """
@@ -1434,14 +1440,15 @@ class AtriumSDK:
         start_bench = time.perf_counter()
         headers, r_times, r_values = \
             self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
-                                  auto_convert_gap_to_time_array, return_intervals)
+                                  auto_convert_gap_to_time_array, return_intervals, allow_duplicates=allow_duplicates)
         end_bench = time.perf_counter()
         # print(f"decode bytes took {round((end_bench - start_bench) * 1000, 4)} ms")
 
         return headers, r_times, r_values
 
     def decode_block_arr(self, encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
-                         auto_convert_gap_to_time_array, return_intervals, times_before=None, values_before=None):
+                         auto_convert_gap_to_time_array, return_intervals, times_before=None, values_before=None,
+                         allow_duplicates=False):
         """
         Decode a series of blocks of encoded bytes and return the corresponding time and value arrays.
 
@@ -1454,6 +1461,7 @@ class AtriumSDK:
         :param return_intervals: Whether to return intervals instead of timestamps.
         :param times_before: Time array of previous blocks, if any.
         :param values_before: Value array of previous blocks, if any.
+        :param bool allow_duplicates: Whether to allow duplicate times in the returned data if they exist.
         :return: Tuple containing headers, time array, and value array.
         """
 
@@ -1523,7 +1531,7 @@ class AtriumSDK:
                 # Convert time type 2 (gap arrays) to time type 1 (timestamp arrays)
                 r_times, new_values = self.filter_gap_data_to_timestamps(
                     end_time_n, headers, r_times[new_times_index:], r_values[new_values_index:],
-                    start_time_n, times_before=times_before)
+                    start_time_n, times_before=times_before, allow_duplicates=allow_duplicates)
 
                 r_values[new_values_index:new_values_index + new_values.size] = new_values
                 r_values = r_values[:new_values_index + new_values.size]
@@ -1533,10 +1541,10 @@ class AtriumSDK:
             # print("time type 1")
             if times_before is None and values_before is None:
                 r_times, r_values = sort_data(
-                    r_times, r_values, headers)
+                    r_times, r_values, headers, allow_duplicates)
             else:
                 r_times[new_times_index:], r_values[new_values_index:] = sort_data(
-                    r_times[new_times_index:], r_values[new_values_index:], headers)
+                    r_times[new_times_index:], r_values[new_values_index:], headers, allow_duplicates)
 
         # If blocks have mixed time types
         elif len(headers) > 0 and not all([h.t_raw_type == headers[0].t_raw_type for h in headers]):
@@ -1566,7 +1574,8 @@ class AtriumSDK:
         return result_dict
 
     @staticmethod
-    def filter_gap_data_to_timestamps(end_time_n, headers, r_times, r_values, start_time_n, times_before=None):
+    def filter_gap_data_to_timestamps(end_time_n, headers, r_times, r_values, start_time_n, times_before=None,
+                                      allow_duplicates=False):
         """
         Convert gap data to timestamps and sort the data.
 
@@ -1576,6 +1585,7 @@ class AtriumSDK:
         :param r_values: An array of values corresponding to the times in r_times.
         :param start_time_n: The start time in nanoseconds.
         :param times_before: An optional array of times before the current data set.
+        :param bool allow_duplicates: Whether to allow duplicate times in the returned data if they exist.
         :return: A tuple containing an array of sorted timestamps and an array of sorted values.
         """
         # Start performance benchmark
@@ -1633,7 +1643,7 @@ class AtriumSDK:
         _LOGGER.debug(f"Expand Gap Data {(end_bench - start_bench) * 1000} ms")
 
         # Sort the data based on the timestamps
-        sorted_times, sorted_values = sort_data(full_timestamps[new_times_index:], r_values, headers)
+        sorted_times, sorted_values = sort_data(full_timestamps[new_times_index:], r_values, headers, allow_duplicates)
 
         # Update the full_timestamps and r_values arrays with the sorted data
         full_timestamps[new_times_index:new_times_index + sorted_times.size], r_values = sorted_times, sorted_values
