@@ -37,20 +37,32 @@ class AtriumFileHandler:
         return filename
 
     def read_bytes(self, measure_id, device_id, filename, start_byte, num_bytes):
+        # Check if the file exists
         if not Path(filename).is_file():
+            # Get the absolute path of the file if it doesn't exist
             filename = self.to_abs_path(filename, measure_id, device_id)
+
+        # Open the file in binary mode
         with open(filename, 'rb') as file:
+            # Seek to the specified start byte position
             file.seek(start_byte)
+            # Read the specified number of bytes and return the data as a NumPy array of unsigned 8-bit integers
             return np.frombuffer(file.read(num_bytes), dtype=np.uint8)
 
     def read_bytes_fast(self, measure_id, device_id, filename, start_byte, num_bytes):
+        # Open the file in binary mode with the absolute path provided by the to_abs_path function
         with open(self.to_abs_path(filename, measure_id, device_id), 'rb') as file:
+            # Seek to the specified start byte position
             file.seek(start_byte)
+            # Read the specified number of bytes and return the data as a byte string
             return file.read(num_bytes)
 
     def read_into_bytearray(self, measure_id, device_id, filename, start_byte, buffer):
+        # Open the file in binary mode with the absolute path provided by the to_abs_path function
         with open(self.to_abs_path(filename, measure_id, device_id), 'rb') as file:
+            # Seek to the specified start byte position
             file.seek(start_byte)
+            # Read the data into the given bytearray object
             file.readinto(buffer)
 
     def read_file_list_1(self, measure_id, read_list, filename_dict):
