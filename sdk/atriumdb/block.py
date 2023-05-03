@@ -44,37 +44,47 @@ class Block:
     def encode_blocks(self, times, values, freq_nhz: int, start_ns: int,
                       raw_time_type=None, raw_value_type=None, encoded_time_type=None,
                       encoded_value_type=None, scale_m: float = None, scale_b: float = None):
+        # Choose the raw time type if not provided
         if raw_time_type is None:
             raw_time_type = t_type_raw_choose(len(times), len(values), freq_nhz)
 
+        # Choose the raw value type if not provided
         if raw_value_type is None:
             raw_value_type = v_type_raw_choose(values[0])
 
+        # Choose the encoded time type if not provided
         if encoded_time_type is None:
             encoded_time_type = t_type_encoded_choose(raw_time_type, freq_nhz)
 
+        # Choose the encoded value type if not provided
         if encoded_value_type is None:
             encoded_value_type = v_type_encoded_choose(raw_value_type)
 
+        # Convert times and values to numpy arrays with appropriate data types
         times = np.array(times, dtype=np.int64)
         values = np.array(values, dtype=np.int64) if raw_value_type == VALUE_TYPES['INT64'] else \
             np.array(values, dtype=np.float64)
 
+        # Calculate the number of blocks needed to store the data
         num_blocks = (values.size + self.block_size - 1) // self.block_size
 
+        # Initialize time_info_data variable
         time_info_data = None
+        # Check if raw time type is START_TIME_NUM_SAMPLES and process accordingly
         if raw_time_type == TIME_TYPES['START_TIME_NUM_SAMPLES']:
-            # times = self.blockify_intervals(times, num_blocks)
             times, time_info_data = self.blockify_intervals(freq_nhz, num_blocks, times, values.size)
 
+        # Generate metadata for the blocks
         times, headers, options, t_block_start, v_block_start = \
             self._gen_metadata(times, values, freq_nhz, start_ns, num_blocks,
                                raw_time_type, raw_value_type, encoded_time_type, encoded_value_type,
                                scale_m=scale_m, scale_b=scale_b, time_data=time_info_data)
 
+        # Encode the blocks using the wrapped_dll's encode_blocks_sdk function
         encoded_bytes, byte_start_array = self.wrapped_dll.encode_blocks_sdk(
             times, values, num_blocks, t_block_start, v_block_start, cast(headers, POINTER(BlockMetadata)), options)
 
+        # Return the encoded bytes, headers, and byte start array
         return encoded_bytes, headers, byte_start_array
 
     def blockify_intervals(self, freq_nhz, num_blocks, times, value_size):
