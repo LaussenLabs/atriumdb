@@ -88,49 +88,71 @@ class Block:
         return encoded_bytes, headers, byte_start_array
 
     def blockify_intervals(self, freq_nhz, num_blocks, times, value_size):
+        # Calculate the period in nanoseconds based on the input frequency
         period_ns = freq_nhz_to_period_ns(freq_nhz)
+
+        # Reshape the input times array into a list of pairs (intervals)
         true_intervals = times.reshape((-1, 2)).tolist()
+
+        # Check if the sum of interval lengths is equal to the input value_size
         assert sum([t[1] for t in true_intervals]) == value_size
 
+        # Initialize variables and lists to store the blocked intervals and additional information
         blocked_intervals = []
         interval_block_start = []
         cur_blocked_interval = 0
-
         num_block_intervals = []
         elapsed_block_time = []
 
+        # Iterate through the specified number of blocks
         for block_i in range(num_blocks):
+            # Calculate the actual size of each block
             actual_block_size = self.block_size if block_i < num_blocks - 1 else \
                 value_size - ((num_blocks - 1) * self.block_size)
 
+            # Append the starting index of the current block
             interval_block_start.append(cur_blocked_interval)
 
+            # Initialize variables for the current block
             interval_count = 0
             elapsed_time = 0
+
+            # Iterate through the input intervals and add them to the current block
             while actual_block_size > 0:
+                # If the remaining block size is greater than or equal to the first interval's length
                 if actual_block_size >= true_intervals[0][1]:
+                    # Subtract the interval length from the remaining block size
                     actual_block_size -= true_intervals[0][1]
+                    # Add the interval to the blocked intervals and remove it from the true intervals list
                     blocked_intervals.append(true_intervals.pop(0))
 
+                    # Update the elapsed time based on the remaining intervals
                     if len(true_intervals) > 0:
                         elapsed_time += true_intervals[0][0] - blocked_intervals[-1][0]
                     else:
                         elapsed_time += blocked_intervals[-1][1] * period_ns
 
+                # If the remaining block size is less than the first interval's length
                 else:
+                    # Add a partial interval with the remaining block size
                     blocked_intervals.append([true_intervals[0][0], actual_block_size])
+                    # Update the true interval's start time and length based on the added partial interval
                     true_intervals[0][0] += int(period_ns * actual_block_size)
                     true_intervals[0][1] -= actual_block_size
 
+                    # Update the elapsed time and set the remaining block size to 0
                     elapsed_time += actual_block_size * period_ns
                     actual_block_size = 0
 
+                # Increment the interval count for the current block
                 interval_count += 1
 
+            # Update the variables for the next block
             cur_blocked_interval += interval_count
             num_block_intervals.append(interval_count)
             elapsed_block_time.append(elapsed_time)
 
+        # Convert the lists to numpy arrays and return the results
         times = np.array(blocked_intervals, dtype=np.int64).flatten()
         interval_block_start = np.array(interval_block_start, dtype=np.int64) * 16
 
