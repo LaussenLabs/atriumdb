@@ -289,91 +289,246 @@ List of Commands and Options
 
 This section provides an overview of the available commands and their respective options in the Atriumdb CLI.
 
-1. **login**: Authenticate with the Atriumdb server using a QR code.
+AtriumDB Command
+================
+The atriumdb command is a command line interface for the Atrium database, allowing you to import and export data from the database. The import subcommand is used to import data into the database from common formats, while the export subcommand is used to export data from the database to common formats.
 
-2. **export**: Export data from Atriumdb to various formats.
+The atriumdb dataset is defined by the following environment variables or corresponding command line options. You can use command line options in place of the environment variables for a more flexible configuration.
 
-   This command exports data from Atriumdb to the specified format and packaging type. Users can filter the data to be exported using various options such as measure ids, device ids, patient ids, and MRNs. The export command also supports specifying a cohort file to automatically configure export parameters.
+Usage
+-----
 
-   Options:
+.. code-block:: bash
 
-   - ``--format``: Format of the exported data (default: adb). Choices: adb, csv, parquet, numpy, wfdb. Currently, only adb and csv formats are supported for export.
-   - ``--packaging-type``: Type of packaging for the exported data (default: files). Choices: files, tar, gzip.
-   - ``--cohort-file``: Cohort file for automatically configuring export parameters. Supported formats: .yml, .yaml.
-   - ``--measure-ids``: List of measure ids to export.
-   - ``--measures``: List of measure tags to export. Measure ids matching the tags will be added to the export list.
-   - ``--device-ids``: List of device ids to export.
-   - ``--devices``: List of device tags to export. Device ids matching the tags will be added to the export list.
-   - ``--patient-ids``: List of patient ids to export.
-   - ``--mrns``: List of MRNs to export.
-   - ``--start-time``: Start time for exporting data in epoch seconds.
-   - ``--end-time``: End time for exporting data in epoch seconds.
-   - ``--dataset-location-out``: Path to export directory. This option or the ATRIUMDB_EXPORT_DATASET_LOCATION environment variable must be specified.
-   - ``--metadata-uri-out``: The URI of a metadata server. If not specified, the ATRIUMDB_METADATA_URI_OUT environment variable will be used.
-   - ``--database-type-out``: The metadata database type. If not specified, the ATRIUMDB_DATABASE_TYPE_OUT environment variable will be used.
-   - ``--by-patient``: Whether or not to include patient mapping (default: False).
+   atriumdb [options]
 
-3. **import**: Import data to Atriumdb from various formats.
+Options
+-------
 
-   Options:
++-------------------+--------------------------------------------------------------------------------------------------------------------+
+| Option            | Description                                                                                                        |
++===================+====================================================================================================================+
+| --dataset-location| The local path to a dataset.                                                                                       |
++-------------------+--------------------------------------------------------------------------------------------------------------------+
+| --metadata-uri    | The URI of a metadata server.                                                                                      |
++-------------------+--------------------------------------------------------------------------------------------------------------------+
+| --database-type   | The type of metadata database supporting the dataset. Choices: sqlite, mariadb, mysql, api.                        |
++-------------------+--------------------------------------------------------------------------------------------------------------------+
+| --endpoint-url    | The endpoint to connect to for a remote AtriumDB server.                                                           |
++-------------------+--------------------------------------------------------------------------------------------------------------------+
+| --api-token       | A token to authorize API access.                                                                                   |
++-------------------+--------------------------------------------------------------------------------------------------------------------+
 
-   - ``--format``: Format of the imported data (default: adb). Choices: adb, csv, parquet, numpy, wfdb.
-   - ``--packaging-type``: Type of packaging for the imported data (default: files). Choices: files, tar, gzip.
-   - ``--dataset-location-in``: Path to import directory.
-   - ``--metadata-uri-in``: The URI of a metadata server to import from.
-   - ``--endpoint-url-in``: The endpoint to connect to for a remote AtriumDB server to import from.
-   - ``--measure-ids``: List of measure ids to import.
-   - ``--measures``: List of measure tags to import.
-   - ``--device-ids``: List of device ids to import.
-   - ``--devices``: List of device tags to import.
-   - ``--patient-ids``: List of patient ids to import.
-   - ``--mrns``: List of MRNs to import.
-   - ``--start-time``: Start time for importing data.
-   - ``--end-time``: End time for importing data.
 
-4. **measure**: A group command for managing measures in a relational database.
+Login Command
+=============
 
-   Subcommands:
+This command authenticates the user with the Atriumdb server using a QR code. It sends a request to the server to get the authentication configuration, generates a device code, displays a QR code for the user to scan, and then checks if the user has completed the authentication process. If successful, the API token is set in the user's environment variables.
 
-   - **ls**: Lists measures based on the provided search criteria.
+Usage
+-----
 
-     Options:
+.. code-block:: bash
 
-     - ``--tag-match``: Filters measures by matching the provided string against the measure's tag field. Only measures with a tag field containing the specified string will be returned.
-     - ``--name-match``: Filters measures by matching the provided string against the measure's name field. Only measures with a name field containing the specified string will be returned.
-     - ``--unit``: Filters measures by their units. Only measures with a unit field equal to the specified string will be returned.
-     - ``--freq``: Filters measures by their frequency. Only measures with a frequency field equal to the specified value will be returned.
-     - ``--freq-units``: Specifies the unit of frequency for the `--freq` option. The default unit is Hz.
-     - ``--source-id``: Filters measures by their source identifier. Only measures with a source identifier field equal to the specified value will be returned.
+   atriumdb login
 
-5. **device**: Group command for managing devices in the linked relational database.
+Options
+-------
 
-   Subcommands:
+This command does not have any options.
 
-   - **ls**: List devices in the linked relational database that match the specified search criteria, such as tag, name, manufacturer, model, bed ID, and source ID.
+Export Command
+==============
+This command exports data from Atriumdb to the specified format and packaging type. Users can filter the data to be exported using various options such as measure ids, device ids, patient ids, and MRNs. The export command also supports specifying a cohort file to automatically configure export parameters.
 
-     Options:
+Usage
+-----
 
-     - ``--tag-match``: Filter devices by tag string match. Only devices with a `device_tag` field containing this string will be returned.
-     - ``--name-match``: Filter devices by name string match. Only devices with a `device_name` field containing this string will be returned.
-     - ``--manufacturer-match``: Filter devices by manufacturer string match. Only devices with a `manufacturer` field containing this string will be returned.
-     - ``--model-match``: Filter devices by model string match. Only devices with a `model` field containing this string will be returned.
-     - ``--bed-id``: Filter devices by bed identifier. Only devices with a `bed_id` field matching this identifier will be returned.
-     - ``--source-id``: Filter devices by source identifier. Only devices with a `source_id` field matching this identifier will be returned.
+.. code-block:: bash
 
-6. **patient**: Group command for managing patient records in a healthcare database.
+   atriumdb export [options]
 
-    Subcommands:
+Options
+-------
 
-    - **ls**: List patient records with optional filters. The command retrieves information about all patients in the linked relational database, including their id, medical record number (mrn), gender, date of birth (dob), first name, middle name, last name, first seen timestamp, last updated timestamp, and source identifier.
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Option               | Description                                                                                                                                                                       |
++======================+===================================================================================================================================================================================+
+| --format             | Format of the exported data (default: adb). Choices: adb, csv, parquet, numpy, wfdb. Currently, only adb and csv formats are supported for export.                                |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --packaging-type     | Type of packaging for the exported data (default: files). Choices: files, tar, gzip.                                                                                              |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --cohort-file        | Cohort file for automatically configuring export parameters. Supported formats: .yml, .yaml.                                                                                      |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --measure-ids        | List of measure ids to export.                                                                                                                                                    |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --measures           | List of measure tags to export. Measure ids matching the tags will be added to the export list.                                                                                   |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --device-ids         | List of device ids to export.                                                                                                                                                     |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --devices            | List of device tags to export. Device ids matching the tags will be added to the export list.                                                                                     |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --patient-ids        | List of patient ids to export.                                                                                                                                                    |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --mrns               | List of MRNs to export.                                                                                                                                                           |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --start-time         | Start time for exporting data in epoch seconds.                                                                                                                                   |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --end-time           | End time for exporting data in epoch seconds.                                                                                                                                     |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --dataset-location-out | Path to export directory. This option or the ATRIUMDB_EXPORT_DATASET_LOCATION environment variable must be specified.                                                           |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --metadata-uri-out   | The URI of a metadata server. If not specified, the ATRIUMDB_METADATA_URI_OUT environment variable will be used.                                                                  |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --database-type-out  | The metadata database type. If not specified, the ATRIUMDB_DATABASE_TYPE_OUT environment variable will be used.                                                                   |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --by-patient         | Whether or not to include patient mapping (default: False).                                                                                                                       |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 
-    Options:
+Import Command
+==============
 
-    - ``--skip``: Number of patients to skip before starting to return the results. Useful for pagination.
-    - ``--limit``: Maximum number of patients to return in the result. Useful for pagination.
-    - ``--age-years-min``: Minimum age in years to filter patients. Filters patients whose age is greater than or equal to the specified value.
-    - ``--age-years-max``: Maximum age in years to filter patients. Filters patients whose age is less than or equal to the specified value.
-    - ``--gender``: Filter patients based on their gender. Accepts 'M' for male and 'F' for female.
-    - ``--source-id``: Filter patients by their source identifier. Useful for filtering patients from a specific data source.
-    - ``--first-seen``: Filter patients by the timestamp when they were first seen, in epoch time. Filters patients whose first seen timestamp is greater than or equal to the specified value.
-    - ``--last-updated``: Filter patients by the timestamp when their record was last updated, in epoch time. Filters patients whose last updated timestamp is greater than or equal to the specified value.
+This command imports data to AtriumDB from various formats.
+
+Usage
+-----
+
+.. code-block:: bash
+
+   atriumdb import [options]
+
+Options
+-------
+
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Option               | Description                                                                                                                                                                       |
++======================+===================================================================================================================================================================================+
+| --format             | Format of the imported data (default: adb). Choices: adb, csv, parquet, numpy, wfdb.                                                                                              |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --packaging-type     | Type of packaging for the imported data (default: files). Choices: files, tar, gzip.                                                                                              |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --dataset-location-in| Path to import directory.                                                                                                                                                         |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --metadata-uri-in    | The URI of a metadata server to import from.                                                                                                                                      |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --endpoint-url-in    | The endpoint to connect to for a remote AtriumDB server to import from.                                                                                                           |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --measure-ids        | List of measure ids to import.                                                                                                                                                    |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --measures           | List of measure tags to import.                                                                                                                                                   |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --device-ids         | List of device ids to import.                                                                                                                                                     |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --devices            | List of device tags to import.                                                                                                                                                    |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --patient-ids        | List of patient ids to import.                                                                                                                                                    |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --mrns               | List of MRNs to import.                                                                                                                                                           |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --start-time         | Start time for importing data.                                                                                                                                                    |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| --end-time           | End time for importing data.                                                                                                                                                      |
++----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+Measure Command
+===============
+
+The measure command is a group command for managing measures in a relational database. It has a subcommand `ls` which lists measures based on the provided search criteria.
+
+Usage
+-----
+
+.. code-block:: bash
+
+   atriumdb measure ls [options]
+
+Options
+-------
+
++----------------+------------------------------------------------------------------------------------------------------------------------------------------+
+| Option         | Description                                                                                                                              |
++================+==========================================================================================================================================+
+| --tag-match    | Filters measures by matching the provided string against the measure's tag field. Only measures with a tag field containing the          |
+|                | specified string will be returned.                                                                                                       |
++----------------+------------------------------------------------------------------------------------------------------------------------------------------+
+| --name-match   | Filters measures by matching the provided string against the measure's name field. Only measures with a name field containing the        |
+|                | specified string will be returned.                                                                                                       |
++----------------+------------------------------------------------------------------------------------------------------------------------------------------+
+| --unit         | Filters measures by their units. Only measures with a unit field equal to the specified string will be returned.                         |
++----------------+------------------------------------------------------------------------------------------------------------------------------------------+
+| --freq         | Filters measures by their frequency. Only measures with a frequency field equal to the specified value will be returned.                 |
++----------------+------------------------------------------------------------------------------------------------------------------------------------------+
+| --freq-units   | Specifies the unit of frequency for the `--freq` option. The default unit is Hz.                                                         |
++----------------+------------------------------------------------------------------------------------------------------------------------------------------+
+| --source-id    | Filters measures by their source identifier. Only measures with a source identifier field equal to the specified value will be returned. |
++----------------+------------------------------------------------------------------------------------------------------------------------------------------+
+
+Device Command
+==============
+
+The device command is a group command for managing devices in the linked relational database. It has a subcommand called `ls` which lists devices in the linked relational database that match the specified search criteria, such as tag, name, manufacturer, model, bed ID, and source ID.
+
+Usage
+-----
+
+.. code-block:: bash
+
+   atriumdb device ls [options]
+
+Options
+-------
+
++----------------------+------------------------------------------------------------------------------------------+
+| Option               | Description                                                                              |
++======================+==========================================================================================+
+| --tag-match          | Filter devices by tag string match                                                       |
++----------------------+------------------------------------------------------------------------------------------+
+| --name-match         | Filter devices by name string match                                                      |
++----------------------+------------------------------------------------------------------------------------------+
+| --manufacturer-match | Filter devices by manufacturer string match                                              |
++----------------------+------------------------------------------------------------------------------------------+
+| --model-match        | Filter devices by model string match                                                     |
++----------------------+------------------------------------------------------------------------------------------+
+| --bed-id             | Filter devices by bed identifier                                                         |
++----------------------+------------------------------------------------------------------------------------------+
+| --source-id          | Filter devices by source identifier                                                      |
++----------------------+------------------------------------------------------------------------------------------+
+
+Patient Command
+===============
+
+This command group manages patient records in a healthcare database, tt has a subcommand called `ls` which lists patient records with optional filters.
+The command retrieves information about all patients in the linked relational database, including their id, medical record number (MRN), gender,
+date of birth (DOB), first name, middle name, last name, first seen timestamp, last updated timestamp, and source identifier.
+
+Usage
+-----
+
+.. code-block:: bash
+
+   atriumdb patient ls [options]
+
+Options
+-------
+
++----------------+---------------------------------------------------------------------------------------------------------------------------------------------+
+| Option         | Description                                                                                                                                 |
++================+=============================================================================================================================================+
+| --skip         | Number of patients to skip before starting to return the results. Useful for pagination.                                                    |
++----------------+---------------------------------------------------------------------------------------------------------------------------------------------+
+| --limit        | Maximum number of patients to return in the result. Useful for pagination.                                                                  |
++----------------+---------------------------------------------------------------------------------------------------------------------------------------------+
+| --age-years-min| Minimum age in years to filter patients. Filters patients whose age is greater than or equal to the specified value.                        |
++----------------+---------------------------------------------------------------------------------------------------------------------------------------------+
+| --age-years-max| Maximum age in years to filter patients. Filters patients whose age is less than or equal to the specified value.                           |
++----------------+---------------------------------------------------------------------------------------------------------------------------------------------+
+| --gender       | Filter patients based on their gender.                                                                                                      |
++----------------+---------------------------------------------------------------------------------------------------------------------------------------------+
+| --source-id    | Filter patients by their source identifier. Useful for filtering patients from a specific data source.                                      |
++----------------+---------------------------------------------------------------------------------------------------------------------------------------------+
+| --first-seen   | Filter patients by the timestamp when they were first seen, in epoch time. Filters patients whose first seen timestamp is greater than or   |
+|                | equal to the specified value.                                                                                                               |
++----------------+---------------------------------------------------------------------------------------------------------------------------------------------+
+| --last-updated | Filter patients by the timestamp when their record was last updated, in epoch time. Filters patients whose last updated timestamp is        |
+|                | greater than or equal to the specified value.                                                                                               |
++----------------+---------------------------------------------------------------------------------------------------------------------------------------------+
