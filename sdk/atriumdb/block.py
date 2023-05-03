@@ -427,11 +427,15 @@ def create_gap_arr_fast(message_time_arr, samples_per_message, freq_nhz):
 
 
 def interpret_gap_arr(gap_array, start_time_ns, num_messages, samples_per_message, freq_nhz):
+    # Ensure that the product of samples_per_message and 10^18 is divisible by freq_nhz
     assert ((10 ** 18) * samples_per_message) % freq_nhz == 0
+    # Calculate the message period in nanoseconds
     message_period_ns = ((10 ** 18) * samples_per_message) // freq_nhz
 
+    # Create an array of time values for each message, taking into account the message period
     time_arr = np.arange(start_time_ns, start_time_ns + (num_messages * message_period_ns), message_period_ns)
 
+    # Iterate through the gap array and adjust the time values based on the gaps between messages
     for gap_i, gap_dur in gap_array.reshape((-1, 2)):
         time_arr[gap_i // samples_per_message:] += gap_dur
 
@@ -439,48 +443,67 @@ def interpret_gap_arr(gap_array, start_time_ns, num_messages, samples_per_messag
 
 
 def convert_gap_array_to_intervals(start_time, gap_arr: np.ndarray, num_values, freq_nhz):
+    # Reshape the gap array
     gap_arr = gap_arr.reshape((-1, 2))
+    # Initialize a flag for warning about interval precision loss
     no_warnings_yet = True
+    # Initialize an empty list for storing intervals
     intervals = []
 
+    # Initialize current time and values counter
     cur_time = start_time
     values_so_far = 0
+    # Iterate through the gap array
     for gap_ind, gap_dur in gap_arr:
+        # Calculate the number of values in the current interval
         interval_num_values = gap_ind - values_so_far
 
-        # If the interval before the gap doesn't represent an integer number of nanoseconds,
-        # the value will be truncated. The user will be warned once per get_data statement.
+        # Warn the user if the interval before the gap doesn't represent an integer number of nanoseconds
         if no_warnings_yet and (int(interval_num_values) * (10 ** 18)) % freq_nhz != 0:
             warnings.warn("Interval Precision Loss: Rounded to the Nearest Nanosecond")
+            no_warnings_yet = False
 
+        # Calculate the end time of the current interval
         end_time = cur_time + calc_time_by_freq(freq_nhz, interval_num_values)
+        # Append the interval to the list
         intervals.append([cur_time, end_time, interval_num_values])
 
+        # Update values counter and current time for the next iteration
         values_so_far = gap_ind
         cur_time = end_time + gap_dur
 
-    # Last interval
+    # Add the last interval
     interval_num_values = num_values - values_so_far
     end_time = cur_time + calc_time_by_freq(freq_nhz, interval_num_values)
     intervals.append([cur_time, end_time, interval_num_values])
 
+    # Convert the list of intervals to a numpy array
     return np.array(intervals, dtype=np.int64)
 
 
 def convert_intervals_to_gap_array(intervals: np.ndarray):
+    # Reshape the intervals array
     intervals = intervals.reshape((-1, 3))
 
+    # If there are less than two intervals, return an empty gap array
     if len(intervals) < 2:
         return np.array([], dtype=np.int64)
 
+    # Initialize an empty list for storing the gap array
     gap_array = []
 
+    # Initialize a counter for the current index
     cur_index = 0
+    # Iterate through pairs of consecutive intervals
     for (start_1, end_1, num_1), (start_2, end_2, num_2) in zip(intervals[:-1], intervals[1:]):
+        # Update the current index
         cur_index += num_1
+        # If the end time of the first interval is not equal to the start time of the second interval,
+        # there is a gap between them, so add it to the gap array
         if end_1 != start_2:
             gap_array.append([cur_index, start_2 - end_1])
 
+    # Convert the list of gaps to a numpy array
     return np.array(gap_array, dtype=np.int64)
 
 
