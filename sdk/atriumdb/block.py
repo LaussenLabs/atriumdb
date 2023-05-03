@@ -388,26 +388,41 @@ class Block:
 
 
 def create_gap_arr(message_time_arr, samples_per_message, freq_nhz):
+    # Check if the product of samples_per_message and 10^18 is divisible by freq_nhz
     assert ((10 ** 18) * samples_per_message) % freq_nhz == 0
+    # Calculate the message period in nanoseconds
     message_period_ns = ((10 ** 18) * samples_per_message) // freq_nhz
+    # Initialize an empty list to store the results
     result_list = []
 
+    # Iterate through the time differences between consecutive message times
     for sample_i, delta_t in np.ndenumerate(message_time_arr[1:] - message_time_arr[:-1]):
+        # If the time difference is not equal to the message period
         if delta_t != message_period_ns:
+            # Add the sample index and the time gap to the result list
             result_list.extend([(int(sample_i[0]) + 1) * samples_per_message, delta_t - message_period_ns])
 
+    # Convert the result list to a NumPy array of integers
     return np.array(result_list, dtype=np.int64)
 
 
 def create_gap_arr_fast(message_time_arr, samples_per_message, freq_nhz):
+    # Check if the product of samples_per_message and 10^18 is divisible by freq_nhz
     assert ((10 ** 18) * samples_per_message) % freq_nhz == 0
+    # Calculate the message period in nanoseconds
     message_period_ns = ((10 ** 18) * samples_per_message) // freq_nhz
 
+    # Calculate the time gaps between consecutive message times and subtract the message period
     time_gaps = np.diff(message_time_arr) - message_period_ns
+    # Find the indices of the non-zero time gaps
     non_zero_inds = np.nonzero(time_gaps)[0]
+    # Initialize an array to store the results
     result_arr = np.zeros((non_zero_inds.size, 2))
+    # Fill the first column of the result array with the sample indices
     result_arr.T[0] = (non_zero_inds + 1) * samples_per_message
+    # Fill the second column of the result array with the non-zero time gaps
     result_arr.T[1] = time_gaps[non_zero_inds]
+    # Flatten the result array and return it
     return result_arr.flatten()
 
 
