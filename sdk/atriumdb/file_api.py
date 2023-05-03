@@ -8,18 +8,32 @@ class AtriumFileHandler:
         self.top_level_dir = top_level_dir
 
     def generate_tsc_filename(self, measure_id, device_id):
+        # Generate a random UUID and convert it to a hexadecimal string
         hex_str = uuid.uuid4().hex
+
+        # Create the directory structure: top_level_dir/device_id/measure_id/
         directory = "{}/{}/{}".format(self.top_level_dir, device_id, measure_id)
         Path(directory).mkdir(parents=True, exist_ok=True)
+
+        # Return the unique filename with a .tsc extension
         return "{}.tsc".format(hex_str)
 
     def to_abs_path(self, filename, measure_id, device_id):
+        # Return the absolute path of the file in the directory structure
         return "{}/{}/{}/{}".format(self.top_level_dir, device_id, measure_id, filename)
 
     def write_bytes(self, measure_id, device_id, encoded_buffer):
+        # Generate a unique filename using the generate_tsc_filename function
         filename = self.generate_tsc_filename(measure_id, device_id)
-        with open(self.to_abs_path(filename, measure_id, device_id), 'wb') as file:
+
+        # Get the absolute path of the file using the to_abs_path function
+        abs_path = self.to_abs_path(filename, measure_id, device_id)
+
+        # Write the binary data (encoded_buffer) to the file
+        with open(abs_path, 'wb') as file:
             file.write(encoded_buffer)
+
+        # Return the generated filename
         return filename
 
     def read_bytes(self, measure_id, device_id, filename, start_byte, num_bytes):
