@@ -308,51 +308,65 @@ class Block:
                       raw_time_type: int, raw_value_type: int, encoded_time_type: int, encoded_value_type: int,
                       scale_m: float = None, scale_b: float = None, time_data=None):
 
+        # Make a copy of the input times array
         times = np.copy(times)
+
+        # Unpack time_data if it's not None, otherwise use default values
         num_block_intervals, elapsed_block_time, interval_block_start = \
             time_data if time_data is not None else ([], [], [])
 
+        # Initialize an array of BlockMetadata objects
         headers = (BlockMetadata * num_blocks)()
-        options = BlockOptions()
 
+        # Initialize a BlockOptions object and set its properties
+        options = BlockOptions()
         options.bytes_per_value_min = 0
         options.delta_order_min = 0
         options.delta_order_max = 5
 
+        # Initialize arrays to store the starting positions of time and value data in each block
         t_block_start = np.zeros(num_blocks, dtype=np.uint64)
         v_block_start = np.zeros(num_blocks, dtype=np.uint64)
 
+        # Initialize variables to keep track of the current position in the time and value data
         val_offset = 0
         cur_time, cur_gap = int(start_ns), 0
+
+        # Loop through each block
         for i in range(num_blocks):
+            # Set the raw and encoded time and value types for the current block
             headers[i].t_raw_type = raw_time_type
             headers[i].t_encoded_type = encoded_time_type
             headers[i].v_raw_type = raw_value_type
             headers[i].v_encoded_type = encoded_value_type
 
+            # Set the compression settings for the current block
             headers[i].t_compression = self.t_compression
             headers[i].v_compression = self.v_compression
             headers[i].t_compression_level = self.t_compression_level
             headers[i].v_compression_level = self.v_compression_level
 
+            # Set the frequency for the current block
             headers[i].freq_nhz = freq_nhz
 
+            # Determine the number of values in the current block
             if val_offset + self.block_size <= len(values):
                 headers[i].num_vals = self.block_size
             else:
                 headers[i].num_vals = len(values) - val_offset
 
-            # Mean, Median, Mode.. All that Jazz
+            # Calculate statistics (min, max, mean, std) for the values in the current block
             val_slice = values[val_offset:val_offset + headers[i].num_vals]
-
             headers[i].max = c_double(val_slice.max())
             headers[i].min = c_double(val_slice.min())
             headers[i].mean = c_double(val_slice.mean())
             headers[i].std = c_double(val_slice.std())
 
+            # Set the scale factors for the current block
             headers[i].scale_m = 0 if scale_m is None else c_double(scale_m)
             headers[i].scale_b = 0 if scale_b is None else c_double(scale_b)
 
+            # Determine the start and end times for the current block based on the raw time type
             if raw_time_type == TIME_TYPES['TIME_ARRAY_INT64_NS']:
                 t_block_start[i] = val_offset * 8
                 headers[i].start_n = times[val_offset]
@@ -360,13 +374,10 @@ class Block:
 
             elif raw_time_type == TIME_TYPES['START_TIME_NUM_SAMPLES']:
                 headers[i].start_n = int(cur_time)
-
                 headers[i].num_gaps = num_block_intervals[i]
                 elapsed_time = elapsed_block_time[i]
                 t_block_start[i] = interval_block_start[i]
-
                 cur_time += elapsed_time
-
                 headers[i].end_n = int(cur_time) - int(freq_nhz_to_period_ns(freq_nhz))
 
             else:
@@ -384,13 +395,15 @@ class Block:
 
                 cur_time += elapsed_time
                 cur_gap += headers[i].num_gaps
-
                 headers[i].end_n = int(cur_time) - period_ns
 
+            # Set the starting position of the value data for the current block
             v_block_start[i] = val_offset * 8
 
+            # Update the value offset for the next block
             val_offset += self.block_size
 
+        # Return the processed times array, headers, options, and starting positions of time and value data
         return times, headers, options, t_block_start, v_block_start
 
 
