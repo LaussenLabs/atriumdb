@@ -6,7 +6,7 @@ CLI
 Overview
 ****************
 
-The Atriumdb CLI is a powerful command-line interface tool designed to interact with Atriumdb datasets. It provides users with the ability to authenticate remote mode access, display quick information about the contents of Atriumdb datasets, and import/export data to and from Atriumdb in various popular formats such as CSV, Parquet, Numpy, and WFDB.
+The AtriumDB CLI is a powerful command-line interface tool designed to interact with AtriumDB datasets. It provides users with the ability to authenticate remote mode access, display quick information about the contents of AtriumDB datasets, and import/export data to and from AtriumDB in various popular formats such as CSV, Parquet, Numpy, and WFDB.
 
 The CLI is easy to install and use, with comprehensive help documentation available through the ``atriumdb --help`` command.
 
@@ -14,8 +14,8 @@ Features
 ==============
 
 - Authenticate remote mode access for secure data handling
-- Display quick information about Atriumdb datasets, including measures, devices, and patients
-- Import and export data to and from Atriumdb in various formats (CSV, Parquet, Numpy, WFDB)
+- Display quick information about AtriumDB datasets, including measures, devices, and patients
+- Import and export data to and from AtriumDB in various formats (CSV, Parquet, Numpy, WFDB)
 - Filter and search data using various parameters (e.g., tags, names, units, frequency, identifiers)
 - Support for cohort files to automatically configure export parameters
 - Customizable export options, including packaging type and output location
@@ -23,7 +23,7 @@ Features
 Installation
 ==============
 
-To install the Atriumdb CLI, simply run the following command:
+To install the AtriumDB CLI, simply run the following command:
 
 .. code-block::
 
@@ -79,11 +79,11 @@ Now, you can access the remote dataset using the AtriumSDK object, as shown in t
 Using AtriumSDK in Remote Mode with CLI Authentication
 *********************************************************
 
-Once you have successfully logged in using the Atriumdb CLI, as described in the `Authentication`_ section, you can use the AtriumSDK in remote mode with your Python scripts. The AtriumSDK will automatically detect the stored API token in the `.env` file when `metadata_connection_type` is set to `"api"`.
+Once you have successfully logged in using the AtriumDB CLI, as described in the `Authentication`_ section, you can use the AtriumSDK in remote mode with your Python scripts. The AtriumSDK will automatically detect the stored API token in the `.env` file when `metadata_connection_type` is set to `"api"`.
 
 To use the AtriumSDK in remote mode, follow these steps:
 
-1. Log in using the Atriumdb CLI, as described in the `Authentication`_ section.
+1. Log in using the AtriumDB CLI, as described in the `Authentication`_ section.
 
 2. Create a Python script in the same directory as the `.env` file containing the stored API token.
 
@@ -203,12 +203,12 @@ To filter devices by a specific tag or manufacturer, use the `--tag-match` or `-
 Import / Export
 **************************
 
-The Atriumdb CLI provides the ability to import and export data between different Atriumdb datasets and various popular formats such as CSV, Parquet, Numpy, and WFDB. This chapter will cover the usage of the import and export commands, along with their supported options and parameters.
+The AtriumDB CLI provides the ability to import and export data between different AtriumDB datasets and various popular formats such as CSV, Parquet, Numpy, and WFDB. This chapter will cover the usage of the import and export commands, along with their supported options and parameters.
 
 Export Command
 ==============
 
-The ``export`` command allows you to transfer data from an Atriumdb dataset to another dataset or to various file formats. The command supports a range of options for specifying the data to be exported, the format, and the destination.
+The ``export`` command allows you to transfer data from an AtriumDB dataset to another dataset or to various file formats. The command supports a range of options for specifying the data to be exported, the format, and the destination.
 
 Here's the basic syntax for the ``export`` command:
 
@@ -243,14 +243,14 @@ Here's an example of using the ``export`` command to export data in CSV format:
 Import Command
 ==============
 
-The ``import`` command is currently under development and will be available in a future release. It will allow users to import data into an Atriumdb dataset from various file formats.
+The ``import`` command is currently under development and will be available in a future release. It will allow users to import data into an AtriumDB dataset from various file formats.
 
 For now, anything import could do you can do with export by switching the source and target datasets.
 
 Cohort Files
 ============
 
-Cohort files are a convenient way to specify a set of export parameters in a single file. The Atriumdb CLI supports YAML-formatted cohort files, which can be used with the ``--cohort-file`` option in the ``export`` command.
+Cohort files are a convenient way to specify a set of export parameters in a single file. The AtriumDB CLI supports YAML-formatted cohort files, which can be used with the ``--cohort-file`` option in the ``export`` command.
 
 Here's an example of a cohort file:
 
@@ -287,7 +287,7 @@ To use a cohort file with the ``export`` command, simply provide the path to the
 List of Commands and Options
 *********************************
 
-This section provides an overview of the available commands and their respective options in the Atriumdb CLI.
+This section provides an overview of the available commands and their respective options in the AtriumDB CLI.
 
 AtriumDB Command
 ================
@@ -323,7 +323,7 @@ Options
 Login Command
 =============
 
-This command authenticates the user with the Atriumdb server using a QR code. It sends a request to the server to get the authentication configuration, generates a device code, displays a QR code for the user to scan, and then checks if the user has completed the authentication process. If successful, the API token is set in the user's environment variables.
+This command authenticates the user with the AtriumDB server using a QR code. It sends a request to the server to get the authentication configuration, generates a device code, displays a QR code for the user to scan, and then checks if the user has completed the authentication process. If successful, the API token is set in the user's environment variables.
 
 Usage
 -----
@@ -339,7 +339,7 @@ This command does not have any options.
 
 Export Command
 ==============
-This command exports data from Atriumdb to the specified format and packaging type. Users can filter the data to be exported using various options such as measure ids, device ids, patient ids, and MRNs. The export command also supports specifying a cohort file to automatically configure export parameters.
+This command exports data from AtriumDB to the specified format and packaging type. Users can filter the data to be exported using various options such as measure ids, device ids, patient ids, and MRNs. The export command also supports specifying a cohort file to automatically configure export parameters.
 
 Usage
 -----
