@@ -176,7 +176,7 @@ class Block:
         end_bench = time.perf_counter()
         logging.debug(f"decode headers {(end_bench - start_bench) * 1000} ms")
 
-        # Calculate the start of the time and value blocks within the encoded bytes
+        # Calculate the start of the time and value blocks for the decoded bytes
         start_bench = time.perf_counter()
         t_block_start = np.cumsum([h.t_raw_size for h in headers], dtype=np.uint64)
         t_block_start = np.concatenate([np.array([0], dtype=np.uint64), t_block_start[:-1]], axis=None)
