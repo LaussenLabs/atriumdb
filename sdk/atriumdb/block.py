@@ -159,7 +159,7 @@ class Block:
         return times, (num_block_intervals, elapsed_block_time, interval_block_start)
 
     def decode_blocks(self, encoded_bytes, byte_start_array, analog=True, times_before=None, values_before=None):
-        # times_before, values_before = np.array([99], dtype=np.int64), np.array([42], dtype=np.int64)
+        # Determine the index for new values and new times based on the input values_before and times_before
         if values_before is None:
             new_values_index = 0
         else:
@@ -170,12 +170,13 @@ class Block:
         else:
             new_times_index = times_before.size * times_before.itemsize
 
+        # Decode the headers from the encoded bytes
         start_bench = time.perf_counter()
         headers = self.decode_headers(encoded_bytes, byte_start_array)
         end_bench = time.perf_counter()
         logging.debug(f"decode headers {(end_bench - start_bench) * 1000} ms")
-        # print(f"decode headers {(end_bench - start_bench) * 1000} ms")
 
+        # Calculate the start of the time and value blocks within the encoded bytes
         start_bench = time.perf_counter()
         t_block_start = np.cumsum([h.t_raw_size for h in headers], dtype=np.uint64)
         t_block_start = np.concatenate([np.array([0], dtype=np.uint64), t_block_start[:-1]], axis=None)
@@ -183,12 +184,13 @@ class Block:
         v_block_start = np.cumsum([h.v_raw_size for h in headers], dtype=np.uint64)
         v_block_start = np.concatenate([np.array([0], dtype=np.uint64), v_block_start[:-1]], axis=None)
 
+        # Calculate the start of the time bytes within the encoded bytes
         t_byte_start = np.cumsum([h.t_encoded_size if h.t_compression != 1 else 0 for h in headers], dtype=np.uint64)
         t_byte_start = np.concatenate([np.array([0], dtype=np.uint64), t_byte_start[:-1]], axis=None)
         end_bench = time.perf_counter()
         logging.debug(f"arrange intra-block information {(end_bench - start_bench) * 1000} ms")
-        # print(f"arrange intra-block information {(end_bench - start_bench) * 1000} ms")
 
+        # Allocate extra memory for the encoded bytes if necessary
         start_bench = time.perf_counter()
         if not all([h.t_compression == 1 for h in headers]):
             encoded_bytes = np.concatenate(
@@ -197,24 +199,23 @@ class Block:
                 axis=None)
         end_bench = time.perf_counter()
         logging.debug(f"allocate extra memory {(end_bench - start_bench) * 1000} ms")
-        # print(f"allocate extra memory {(end_bench - start_bench) * 1000} ms")
 
+        # Allocate memory for the decoded time and value data
         start_bench = time.perf_counter()
         time_data = np.zeros(sum(h.t_raw_size for h in headers) + new_times_index, dtype=np.uint8)
         value_data = np.zeros(sum(h.v_raw_size for h in headers) + new_values_index, dtype=np.uint8)
         end_bench = time.perf_counter()
         logging.debug(f"allocate data memory {(end_bench - start_bench) * 1000} ms")
-        # print(f"allocate data memory {(end_bench - start_bench) * 1000} ms")
 
+        # Call the wrapped C library function to decode the blocks
         start_bench = time.perf_counter()
         self.wrapped_dll.decode_blocks_sdk(
             time_data[new_times_index:], value_data[new_values_index:], encoded_bytes, len(byte_start_array),
             t_block_start, v_block_start, byte_start_array, t_byte_start)
         end_bench = time.perf_counter()
         logging.debug(f"C Decode {(end_bench - start_bench) * 1000} ms")
-        # print(f"C Decode {(end_bench - start_bench) * 1000} ms")
 
-
+        # Convert the decoded time and value data into the appropriate data types
         start_bench = time.perf_counter()
         time_data = np.frombuffer(time_data, dtype=np.int64)
         period_ns = freq_nhz_to_period_ns(headers[0].freq_nhz)
@@ -227,21 +228,10 @@ class Block:
             value_data = np.frombuffer(value_data, dtype=np.float64)
         else:
             raise ValueError("Header had an unsupported raw value type, {}.".format(headers[0].v_raw_type))
-
-        # if all([h.t_raw_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO for h in headers]):
-        #     # Carry on
-        #     pass
-        #
-        # else:
-        #     logging.debug("data wasn't all gap data, that shouldn't be")
-        #     logging.debug("block time times:")
-        #     logging.debug([h.t_raw_type for h in headers])
-
-        # Apply the scale factors
         end_bench = time.perf_counter()
         logging.debug(f"interpret result bytes {(end_bench - start_bench) * 1000} ms")
-        # print(f"interpret result bytes {(end_bench - start_bench) * 1000} ms")
-        #
+
+        # Apply the scale factors to the value data if necessary
         logging.debug("\n")
         logging.debug("Applying Scale Factors")
         logging.debug("------------------------")
@@ -252,28 +242,26 @@ class Block:
             scale_b_array = np.array([h.scale_b for h in headers])
             end_bench = time.perf_counter()
             logging.debug(f"\tscale: arrange linear constants {(end_bench - start_bench) * 1000} ms")
-            # print(f"\tscale: arrange linear constants {(end_bench - start_bench) * 1000} ms")
 
             start_bench = time.perf_counter()
             value_data = value_data.astype(np.float64, copy=False)
             end_bench = time.perf_counter()
             logging.debug(f"\tscale: cast value data {(end_bench - start_bench) * 1000} ms")
-            # print(f"\tscale: cast value data {(end_bench - start_bench) * 1000} ms")
 
+            # Apply the scale factors to the value data
             if np.all(scale_m_array == scale_m_array[0]) and np.all(scale_b_array == scale_b_array[0]):
                 start_bench = time.perf_counter()
                 value_data[new_values_index:] *= scale_m_array[0]
                 end_bench = time.perf_counter()
                 logging.debug(f"\tscale: apply slope {(end_bench - start_bench) * 1000} ms")
-                # print(f"\tscale: apply slope {(end_bench - start_bench) * 1000} ms")
 
                 start_bench = time.perf_counter()
                 value_data[new_values_index:] += scale_b_array[0]
                 end_bench = time.perf_counter()
                 logging.debug(f"\tscale: apply y-int {(end_bench - start_bench) * 1000} ms")
-                # print(f"\tscale: apply y-int {(end_bench - start_bench) * 1000} ms")
 
             else:
+                # Apply the scale factors to each region of the value data
                 v_data_regions = np.cumsum([h.num_vals for h in headers])
                 v_data_regions = np.concatenate([np.array([0], dtype=np.uint64), v_data_regions], axis=None)
 
@@ -286,19 +274,11 @@ class Block:
                         value_data[new_values_index:][int(v_data_regions[i]):int(v_data_regions[i + 1])] += \
                             scale_b_array[i]
 
-        # else:
-        #     logging.debug("Didn't apply scale factors")
         end_bench_scale = time.perf_counter()
         logging.debug(f"apply scale factors total {(end_bench_scale - start_bench_scale) * 1000} ms")
-        # print(f"apply scale factors total {(end_bench_scale - start_bench_scale) * 1000} ms")
         logging.debug("\n")
 
-        # if times_before is not None:
-        #     time_data[:times_before.size] = times_before
-        #
-        # if values_before is not None:
-        #     value_data[:values_before.size] = values_before
-
+        # Return the decoded time data, value data, and headers
         return time_data, value_data, headers
 
     def decode_headers(self, encoded_bytes, byte_start_array):
