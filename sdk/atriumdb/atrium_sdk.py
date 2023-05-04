@@ -829,7 +829,7 @@ class AtriumSDK:
 
     def get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int,
                      device_id: int = None, patient_id: int = None, mrn: int = None,
-                     auto_convert_gap_to_time_array=True, return_intervals=False, analog=True, allow_duplicates=False):
+                     auto_convert_gap_to_time_array=True, return_intervals=False, analog=True, allow_duplicates=True):
         """
         .. _get_data_api_label:
 
@@ -1261,7 +1261,7 @@ class AtriumSDK:
 
     def get_data(self, measure_id: int, start_time_n: int = None, end_time_n: int = None, device_id: int = None,
                  patient_id=None, auto_convert_gap_to_time_array=True, return_intervals=False, analog=True,
-                 block_info=None, time_units: str = None, allow_duplicates=False):
+                 block_info=None, time_units: str = None, allow_duplicates=True):
         """
         .. _get_data_label:
 
@@ -1387,7 +1387,7 @@ class AtriumSDK:
 
     def get_data_from_blocks(self, block_list, filename_dict, measure_id, start_time_n, end_time_n,
                              return_intervals=False, analog=True, auto_convert_gap_to_time_array=True,
-                             allow_duplicates=False):
+                             allow_duplicates=True):
         """
         Retrieve data from blocks.
 
@@ -1448,7 +1448,7 @@ class AtriumSDK:
 
     def decode_block_arr(self, encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
                          auto_convert_gap_to_time_array, return_intervals, times_before=None, values_before=None,
-                         allow_duplicates=False):
+                         allow_duplicates=True):
         """
         Decode a series of blocks of encoded bytes and return the corresponding time and value arrays.
 
@@ -1575,7 +1575,7 @@ class AtriumSDK:
 
     @staticmethod
     def filter_gap_data_to_timestamps(end_time_n, headers, r_times, r_values, start_time_n, times_before=None,
-                                      allow_duplicates=False):
+                                      allow_duplicates=True):
         """
         Convert gap data to timestamps and sort the data.
 
