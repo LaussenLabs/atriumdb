@@ -9,7 +9,7 @@ The SDK is a powerful Python library, and the API provides secure remote access 
 To learn more about AtriumDB, visit the `about page <about.html>`_.
 
 .. toctree::
-   :maxdepth: 2
+   :hidden:
 
    installation
    quickstart

@@ -2,16 +2,19 @@
 CLI
 ##################
 
-****************
+.. toctree::
+   :maxdepth: 1
+
+================
 Overview
-****************
+================
 
 The AtriumDB CLI is a powerful command-line interface tool designed to interact with AtriumDB datasets. It provides users with the ability to authenticate remote mode access, display quick information about the contents of AtriumDB datasets, and import/export data to and from AtriumDB in various popular formats such as CSV, Parquet, Numpy, and WFDB.
 
 The CLI is easy to install and use, with comprehensive help documentation available through the ``atriumdb --help`` command.
 
 Features
-==============
+------------------
 
 - Authenticate remote mode access for secure data handling
 - Display quick information about AtriumDB datasets, including measures, devices, and patients
@@ -21,7 +24,7 @@ Features
 - Customizable export options, including packaging type and output location
 
 Installation
-==============
+-----------------
 
 To install the AtriumDB CLI, simply run the following command:
 
@@ -35,9 +38,9 @@ Once installed, you can access the CLI by running the `atriumdb` command. For he
 
     atriumdb --help
 
-**************************
+=========================
 Authentication
-**************************
+=========================
 
 To use the CLI for authentication and remote access, you will need to install the `atriumdb` package with the `cli` and `remote` optional dependency.
 
@@ -75,9 +78,9 @@ After logging in, the `atriumdb` CLI will store the API token in the `.env` file
 Now, you can access the remote dataset using the AtriumSDK object, as shown in the "Connecting to an Existing Dataset" section.
 
 
-*********************************************************
+========================================================
 Using AtriumSDK in Remote Mode with CLI Authentication
-*********************************************************
+========================================================
 
 Once you have successfully logged in using the AtriumDB CLI, as described in the `Authentication`_ section, you can use the AtriumSDK in remote mode with your Python scripts. The AtriumSDK will automatically detect the stored API token in the `.env` file when `metadata_connection_type` is set to `"api"`.
 
@@ -123,9 +126,9 @@ Now, you can use the AtriumSDK's methods to interact with the remote dataset. He
 
 For more information on using the AtriumSDK methods, refer to the provided Python functions in the `AtriumSDK` page.
 
-**************************
+========================================================
 Querying Metadata
-**************************
+========================================================
 
 The `atriumdb` CLI allows you to query metadata about measures, devices, and patients. This can be helpful when you want to quickly explore and understand the contents of your dataset.
 
@@ -199,14 +202,14 @@ To filter devices by a specific tag or manufacturer, use the `--tag-match` or `-
     1          monitor   HeartMonitor  Philips       IntelliVue MP70  monitor  101     1
     2          monitor   HeartMonitor  Philips       IntelliVue MP50  monitor  102     1
 
-**************************
+========================================================
 Import / Export
-**************************
+========================================================
 
 The AtriumDB CLI provides the ability to import and export data between different AtriumDB datasets and various popular formats such as CSV, Parquet, Numpy, and WFDB. This chapter will cover the usage of the import and export commands, along with their supported options and parameters.
 
-Export Command
-==============
+Export
+------------
 
 The ``export`` command allows you to transfer data from an AtriumDB dataset to another dataset or to various file formats. The command supports a range of options for specifying the data to be exported, the format, and the destination.
 
@@ -240,15 +243,15 @@ Here's an example of using the ``export`` command to export data in CSV format:
 
     atriumdb export --format csv --dataset-location-out /path/to/export/directory
 
-Import Command
-==============
+Import
+--------------
 
 The ``import`` command is currently under development and will be available in a future release. It will allow users to import data into an AtriumDB dataset from various file formats.
 
 For now, anything import could do you can do with export by switching the source and target datasets.
 
 Cohort Files
-============
+---------------
 
 Cohort files are a convenient way to specify a set of export parameters in a single file. The AtriumDB CLI supports YAML-formatted cohort files, which can be used with the ``--cohort-file`` option in the ``export`` command.
 
@@ -283,27 +286,19 @@ To use a cohort file with the ``export`` command, simply provide the path to the
 
     atriumdb export --cohort-file /path/to/cohort.yaml --dataset-location-out /path/to/export/directory
 
-*********************************
+========================================================
 List of Commands and Options
-*********************************
+========================================================
 
 This section provides an overview of the available commands and their respective options in the AtriumDB CLI.
 
-AtriumDB Command
-================
 The atriumdb command is a command line interface for the Atrium database, allowing you to import and export data from the database. The import subcommand is used to import data into the database from common formats, while the export subcommand is used to export data from the database to common formats.
 
 The atriumdb dataset is defined by the following environment variables or corresponding command line options. You can use command line options in place of the environment variables for a more flexible configuration.
 
-Usage
------
-
 .. code-block:: bash
 
    atriumdb [options]
-
-Options
--------
 
 +-------------------+--------------------------------------------------------------------------------------------------------------------+
 | Option            | Description                                                                                                        |
@@ -320,36 +315,50 @@ Options
 +-------------------+--------------------------------------------------------------------------------------------------------------------+
 
 
-Login Command
-=============
+Login
+----------
 
 This command authenticates the user with the AtriumDB server using a QR code. It sends a request to the server to get the authentication configuration, generates a device code, displays a QR code for the user to scan, and then checks if the user has completed the authentication process. If successful, the API token is set in the user's environment variables.
 
-Usage
------
+.. _usage-login:
+
+.. hidden::
+
+    Usage
+    ^^^^^^^
 
 .. code-block:: bash
 
    atriumdb login
 
-Options
--------
+
+.. _options-login:
+
+.. hidden::
+
+    Options
+    ^^^^^^^^
 
 This command does not have any options.
 
-Export Command
-==============
+Export
+--------------
 This command exports data from AtriumDB to the specified format and packaging type. Users can filter the data to be exported using various options such as measure ids, device ids, patient ids, and MRNs. The export command also supports specifying a cohort file to automatically configure export parameters.
 
-Usage
------
+
+.. hidden::
+
+    Usage
+    ^^^^^^^^
 
 .. code-block:: bash
 
    atriumdb export [options]
 
-Options
--------
+.. hidden::
+
+    Options
+    ^^^^^^^^
 
 +------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 | Option                 | Description                                                                                                                                                                       |
@@ -385,20 +394,24 @@ Options
 | --by-patient           | Whether or not to include patient mapping (default: False).                                                                                                                       |
 +------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 
-Import Command
-==============
+Import
+--------------
 
 This command imports data to AtriumDB from various formats.
 
-Usage
------
+.. hidden::
+
+    Usage
+    ^^^^^^^^
 
 .. code-block:: bash
 
    atriumdb import [options]
 
-Options
--------
+.. hidden::
+
+    Options
+    ^^^^^^^^
 
 +----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 | Option               | Description                                                                                                                                                                       |
@@ -430,20 +443,24 @@ Options
 | --end-time           | End time for importing data.                                                                                                                                                      |
 +----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 
-Measure Command
-===============
+Measure
+--------------
 
 The measure command is a group command for managing measures in a relational database. It has a subcommand `ls` which lists measures based on the provided search criteria.
 
-Usage
------
+.. hidden::
+
+    Usage
+    ^^^^^^^^
 
 .. code-block:: bash
 
    atriumdb measure ls [options]
 
-Options
--------
+.. hidden::
+
+    Options
+    ^^^^^^^^
 
 +----------------+------------------------------------------------------------------------------------------------------------------------------------------+
 | Option         | Description                                                                                                                              |
@@ -463,20 +480,24 @@ Options
 | --source-id    | Filters measures by their source identifier. Only measures with a source identifier field equal to the specified value will be returned. |
 +----------------+------------------------------------------------------------------------------------------------------------------------------------------+
 
-Device Command
-==============
+Device
+--------------
 
 The device command is a group command for managing devices in the linked relational database. It has a subcommand called `ls` which lists devices in the linked relational database that match the specified search criteria, such as tag, name, manufacturer, model, bed ID, and source ID.
 
-Usage
------
+.. hidden::
+
+    Usage
+    ^^^^^^^^
 
 .. code-block:: bash
 
    atriumdb device ls [options]
 
-Options
--------
+.. hidden::
+
+    Options
+    ^^^^^^^^
 
 +----------------------+------------------------------------------------------------------------------------------+
 | Option               | Description                                                                              |
@@ -494,22 +515,26 @@ Options
 | --source-id          | Filter devices by source identifier                                                      |
 +----------------------+------------------------------------------------------------------------------------------+
 
-Patient Command
-===============
+Patient
+--------------
 
 This command group manages patient records in a healthcare database, it has a subcommand called `ls` which lists patient records with optional filters.
 The command retrieves information about all patients in the linked relational database, including their id, medical record number (MRN), gender,
 date of birth (DOB), first name, middle name, last name, first seen timestamp, last updated timestamp, and source identifier.
 
-Usage
------
+.. hidden::
+
+    Usage
+    ^^^^^^^^
 
 .. code-block:: bash
 
    atriumdb patient ls [options]
 
-Options
--------
+.. hidden::
+
+    Options
+    ^^^^^^^^
 
 +----------------+---------------------------------------------------------------------------------------------------------------------------------------------+
 | Option         | Description                                                                                                                                 |
