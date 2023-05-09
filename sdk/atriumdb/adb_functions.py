@@ -110,8 +110,11 @@ def sort_data(times, values, headers, allow_duplicates=True):
     end_bench = time.perf_counter()
     logging.debug(f"rearrange block data info {(end_bench - start_bench) * 1000} ms")
 
-    if np.all(np.greater_equal(block_info.T[0][1:], block_info.T[1][:-1])) and \
-            np.all(np.greater(block_info.T[0][1:], block_info.T[0][:-1])):
+    # check if the start times are sorted
+    start_times_sorted = np.all(np.greater(block_info.T[0][1:], block_info.T[0][:-1]))
+    # check if the blocks overlap each other
+    start_end_times_dont_intersect = np.all(np.greater_equal(block_info.T[0][1:], block_info.T[1][:-1]))
+    if start_end_times_dont_intersect and start_times_sorted:
         logging.debug("Already Sorted.")
 
         # if duplicates are allowed then just return times and values
@@ -123,29 +126,22 @@ def sort_data(times, values, headers, allow_duplicates=True):
 
     start_bench = time.perf_counter()
 
-    # use argsort so duplicates aren't removed, use quicksort as it will be faster with smaller arrays
-    sorted_block_i = np.argsort(block_info.T[0], kind='quicksort')
-    block_info = block_info[sorted_block_i]
+    # if the start times were not sorted, sort them if they were then don't bother running the sort
+    if not start_times_sorted:
+        # use quicksort as it will be faster with smaller arrays
+        sorted_block_i = np.argsort(block_info.T[0], kind='quicksort')
+        block_info = block_info[sorted_block_i]
+        # recheck if the blocks intersect
+        start_end_times_dont_intersect = np.all(np.greater_equal(block_info.T[0][1:], block_info.T[1][:-1]))
 
-    end_bench = time.perf_counter()
     logging.debug(f"sort data by block {(end_bench - start_bench) * 1000} ms")
     if allow_duplicates:
-        if np.all(np.greater_equal(block_info.T[0][1:], block_info.T[1][:-1])):
+        if start_end_times_dont_intersect:
             # Blocks don't intersect each other.
             start_bench = time.perf_counter()
 
             # Original Index Creation
             sorted_time_indices = np.concatenate([np.arange(i_start, i_end) for _, _, i_start, i_end in block_info])
-
-            # New Index Creation.
-            # sorted_time_indices = np.arange(times.size)
-            # new_times, new_values = np.zeros(times.size, dtype=times.dtype), np.zeros(values.size, dtype=values.dtype)
-            # sorted_index = 0
-            # for _, _, i_start, i_end in block_info:
-            #     dur = i_end - i_start
-            #     new_times[sorted_index:sorted_index + dur], new_values[sorted_index:sorted_index + dur] = \
-            #         times[i_start:i_end], values[i_start:i_end]
-            #     sorted_index += dur
 
             times, values = times[sorted_time_indices], values[sorted_time_indices]
             end_bench = time.perf_counter()
