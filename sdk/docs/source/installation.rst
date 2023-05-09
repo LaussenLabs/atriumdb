@@ -55,4 +55,4 @@ password, and port when instantiating an AtriumDB object later.
 
 .. code-block:: bash
 
-    $ docker run --name mariadb -d -p 127.0.0.1:3306:3306 -v /path/for/mariadb/data/on/host:/var/lib/mysql -e MARIADB_ROOT_PASSWORD='example' mariadb:latest
+    $ docker run --name mariadb -d -p 127.0.0.1:3306:3306 -v /path/for/mariadb/data/on/host:/var/lib/mysql -e MARIADB_ROOT_PASSWORD='password' mariadb:latest
