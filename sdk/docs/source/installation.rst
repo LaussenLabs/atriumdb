@@ -50,7 +50,7 @@ MariaDB image from dockerhub.
     $ docker pull mariadb
 
 Then specify where you want MariaDB's data to sit on your host machine in the command below and it will start up a
-MariaDB container running on port 3306 with the root user with the password example. You will use this username,
+MariaDB container running on port 3306 with the root user with the password, "password". You will use this username,
 password, and port when instantiating an AtriumDB object later.
 
 .. code-block:: bash
