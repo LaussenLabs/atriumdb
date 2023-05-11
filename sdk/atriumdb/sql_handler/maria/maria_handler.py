@@ -9,7 +9,7 @@ from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from
     maria_select_measure_from_id, \
     maria_insert_ignore_measure_query, maria_insert_ignore_device_query, maria_select_device_from_tag_query, \
     maria_select_device_from_id_query, maria_insert_file_index_query, maria_insert_block_query, \
-    maria_insert_interval_index_query, maria_select_file_by_id, maria_select_file_by_values, maria_select_block_by_id, \
+    maria_select_file_by_id, maria_select_file_by_values, maria_select_block_by_id, \
     maria_select_block_by_values, maria_select_interval_by_id, maria_select_interval_by_values, \
     mariadb_setting_insert_query, mariadb_setting_select_query, maria_select_all_query, \
     maria_insert_ignore_device_encounter_query, maria_insert_ignore_encounter_query, maria_insert_ignore_patient_query, \
@@ -29,7 +29,7 @@ from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query
     mariadb_log_hl7_adt_create_query, mariadb_log_hl7_adt_source_id_create_index, mariadb_current_census_view, \
     mariadb_device_patient_table, maria_encounter_device_encounter_insert_trigger, \
     maria_encounter_device_encounter_update_trigger, maria_encounter_device_patient_insert_trigger, \
-    maria_encounter_device_patient_update_trigger
+    maria_encounter_device_patient_update_trigger, maria_insert_interval_stored_procedure
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
 from atriumdb.sql_handler.sql_helper import join_sql_and_bools
@@ -164,6 +164,9 @@ class MariaDBHandler(SQLHandler):
         cursor.execute(maria_encounter_device_patient_insert_trigger)
         cursor.execute(maria_encounter_device_patient_update_trigger)
 
+        # Stored Procedures
+        cursor.execute(maria_insert_interval_stored_procedure)
+
         conn.commit()
         cursor.close()
         conn.close()
@@ -244,9 +247,12 @@ class MariaDBHandler(SQLHandler):
             cursor.executemany(maria_insert_block_query, block_tuples)
 
             # insert into interval_index
-            interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                interval["end_time_n"]) for interval in interval_data]
-            cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+            # interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
+            #                     interval["end_time_n"]) for interval in interval_data]
+            # cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+
+            [cursor.callproc("insert_interval", (interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                interval["end_time_n"])) for interval in interval_data]
 
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
                              file_ids_to_delete: List[int]):
@@ -265,10 +271,14 @@ class MariaDBHandler(SQLHandler):
                 cursor.executemany(maria_insert_block_query, block_tuples)
 
                 # insert into interval_index
-                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"]) for interval in interval_data]
-                if len(interval_tuples) > 0:
-                    cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+                # interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                #                     interval["end_time_n"]) for interval in interval_data]
+                # if len(interval_tuples) > 0:
+                #     cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+                if len(interval_data) > 0:
+                    [cursor.callproc("insert_interval",
+                                     (interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                      interval["end_time_n"])) for interval in interval_data]
 
             # delete old block data
             cursor.executemany(maria_delete_block_query, [(block_id,) for block_id in block_ids_to_delete])

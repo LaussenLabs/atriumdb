@@ -277,3 +277,47 @@ BEGIN
     WHERE patient_id=NEW.patient_id AND start_time=NEW.start_time AND end_time IS NULL;
 END;
 """
+
+maria_insert_interval_stored_procedure = """
+CREATE PROCEDURE IF NOT EXISTS insert_interval(
+    IN p_measure_id INT UNSIGNED,
+    IN p_device_id INT UNSIGNED,
+    IN p_start_time_n BIGINT,
+    IN p_end_time_n BIGINT
+)
+BEGIN
+    DECLARE overlapping_row_id INT;
+    DECLARE existing_start_time_n BIGINT;
+    DECLARE existing_end_time_n BIGINT;
+
+    -- Check if there's an existing row with overlapping intervals
+    SELECT id, start_time_n, end_time_n INTO overlapping_row_id, existing_start_time_n, existing_end_time_n
+    FROM interval_index
+    WHERE device_id = p_device_id AND measure_id = p_measure_id
+    AND ((p_start_time_n BETWEEN start_time_n AND end_time_n) OR
+         (p_end_time_n BETWEEN start_time_n AND end_time_n) OR
+         (p_end_time_n > end_time_n AND p_start_time_n < start_time_n))
+    LIMIT 1;
+
+    IF overlapping_row_id IS NOT NULL THEN
+        -- Make sure the new end time is greater than the old before updating
+        IF p_end_time_n > existing_end_time_n THEN
+            -- Update the existing row's end_time_n with the new end_time_n
+            UPDATE interval_index
+            SET end_time_n = p_end_time_n
+            WHERE id = overlapping_row_id;
+        END IF;
+
+        IF p_start_time_n < existing_start_time_n THEN
+            -- Update the existing row's start_time_n with the new start_time_n
+            UPDATE interval_index
+            SET start_time_n = p_start_time_n
+            WHERE id = overlapping_row_id;
+        END IF;
+    ELSE
+        -- Insert the new row into the table
+        INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n)
+        VALUES (p_measure_id, p_device_id, p_start_time_n, p_end_time_n);
+    END IF;
+END;
+"""
