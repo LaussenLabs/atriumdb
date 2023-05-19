@@ -1,6 +1,6 @@
 from click.testing import CliRunner
 
-from atriumdb.cli.atriumdb_cli import import_csv, export_csv
+from atriumdb.cli.atriumdb_cli import export, import_
 from atriumdb.cli.hello import hello
 
 from pathlib import Path
@@ -38,14 +38,14 @@ def test_import_export_cli():
     filename = Path(__file__).parent / "example_data" / "import_data_1.formats"
     imported_df = pd.read_csv(filename)
 
-    result = runner.invoke(import_csv, ["--input-file", str(filename)])
+    result = runner.invoke(import_, ["--input-file", str(filename)])
     assert result.exit_code == 0, f"Import failed with error: {result.output}"
     print()
     print(result.output)
 
     # Export data to a CSV file
     export_filename = Path(__file__).parent / "example_data" / "export_data_1.formats"
-    result = runner.invoke(export_csv, ["--output-file", str(export_filename),
+    result = runner.invoke(export, ["--output-file", str(export_filename),
                                         "--measure-id", "1",
                                         "--device-id", "1",
                                         "--start-time", "0",

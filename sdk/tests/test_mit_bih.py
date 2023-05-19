@@ -47,8 +47,8 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
                 measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano,
                                                 units=record.units[i])
 
-                headers, read_times, read_values = sdk.get_data(
-                    measure_id, time_arr[0], time_arr[-1] + period_ns, **query_args)
+                headers, read_times, read_values = sdk.get_data(measure_id, time_arr[0], time_arr[-1] + period_ns,
+                                                                **query_args)
 
                 assert np.array_equal(record.p_signal.T[i], read_values) and np.array_equal(time_arr, read_times)
 
@@ -57,8 +57,8 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
             measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano,
                                             units=record.units)
 
-            headers, read_times, read_values = sdk.get_data(
-                measure_id, time_arr[0], time_arr[-1] + period_ns, **query_args)
+            headers, read_times, read_values = sdk.get_data(measure_id, time_arr[0], time_arr[-1] + period_ns,
+                                                            **query_args)
 
             assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
 

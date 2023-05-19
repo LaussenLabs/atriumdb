@@ -18,18 +18,13 @@ from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from
     maria_interval_exists_query
 from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query, \
     maria_file_index_create_query, maria_block_index_create_query, maria_interval_index_create_query, \
-    maria_settings_create_query, maria_device_encounter_device_id_create_index, \
-    maria_device_encounter_encounter_id_create_index, maria_device_encounter_source_id_create_index, \
-    maria_device_encounter_create_query, maria_source_create_query, maria_institution_create_query, \
-    maria_unit_create_query, maria_unit_institution_id_create_index, maria_bed_create_query, \
-    maria_bed_unit_id_create_index, maria_patient_create_query, maria_patient_index_query, maria_encounter_create_query, \
-    maria_encounter_create_index_bed_id_query, maria_encounter_create_index_patient_id_query, \
-    maria_encounter_create_index_source_id_query, mariadb_device_create_query, mariadb_device_bed_id_create_index, \
-    mariadb_device_source_id_create_index, maria_insert_adb_source, mariadb_measure_source_id_create_index, \
-    mariadb_log_hl7_adt_create_query, mariadb_log_hl7_adt_source_id_create_index, mariadb_current_census_view, \
-    mariadb_device_patient_table, maria_encounter_device_encounter_insert_trigger, \
-    maria_encounter_device_encounter_update_trigger, maria_encounter_device_patient_insert_trigger, \
-    maria_encounter_device_patient_update_trigger, maria_insert_interval_stored_procedure
+    maria_settings_create_query, maria_device_encounter_create_query, maria_source_create_query, \
+    maria_institution_create_query, maria_unit_create_query, maria_bed_create_query, maria_patient_create_query,\
+    maria_encounter_create_query, mariadb_device_create_query, maria_insert_adb_source, \
+    mariadb_log_hl7_adt_create_query, mariadb_current_census_view, mariadb_device_patient_table, \
+    maria_encounter_device_encounter_insert_trigger, maria_encounter_device_encounter_update_trigger, \
+    maria_encounter_device_patient_insert_trigger, maria_encounter_device_patient_update_trigger, \
+    maria_insert_interval_stored_procedure
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
 from atriumdb.sql_handler.sql_helper import join_sql_and_bools
@@ -133,30 +128,11 @@ class MariaDBHandler(SQLHandler):
         cursor.execute(mariadb_log_hl7_adt_create_query)
         cursor.execute(mariadb_device_patient_table)
 
-        # Create Indices
-        cursor.execute(maria_unit_institution_id_create_index)
-        cursor.execute(maria_bed_unit_id_create_index)
-        cursor.execute(mariadb_measure_source_id_create_index)
-
-        cursor.execute(maria_patient_index_query)
-
-        cursor.execute(maria_encounter_create_index_bed_id_query)
-        cursor.execute(maria_encounter_create_index_patient_id_query)
-        cursor.execute(maria_encounter_create_index_source_id_query)
-
-        cursor.execute(mariadb_device_bed_id_create_index)
-        cursor.execute(mariadb_device_source_id_create_index)
-
         # Create Views
         cursor.execute(mariadb_current_census_view)
 
         # Insert Default Values
         cursor.execute(maria_insert_adb_source)
-
-        cursor.execute(maria_device_encounter_device_id_create_index)
-        cursor.execute(maria_device_encounter_encounter_id_create_index)
-        cursor.execute(maria_device_encounter_source_id_create_index)
-        cursor.execute(mariadb_log_hl7_adt_source_id_create_index)
 
         # Triggers
         cursor.execute(maria_encounter_device_encounter_insert_trigger)
@@ -247,10 +223,6 @@ class MariaDBHandler(SQLHandler):
             cursor.executemany(maria_insert_block_query, block_tuples)
 
             # insert into interval_index
-            # interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-            #                     interval["end_time_n"]) for interval in interval_data]
-            # cursor.executemany(maria_insert_interval_index_query, interval_tuples)
-
             [cursor.callproc("insert_interval", (interval["measure_id"], interval["device_id"], interval["start_time_n"],
                                 interval["end_time_n"])) for interval in interval_data]
 
@@ -271,10 +243,6 @@ class MariaDBHandler(SQLHandler):
                 cursor.executemany(maria_insert_block_query, block_tuples)
 
                 # insert into interval_index
-                # interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                #                     interval["end_time_n"]) for interval in interval_data]
-                # if len(interval_tuples) > 0:
-                #     cursor.executemany(maria_insert_interval_index_query, interval_tuples)
                 if len(interval_data) > 0:
                     [cursor.callproc("insert_interval",
                                      (interval["measure_id"], interval["device_id"], interval["start_time_n"],

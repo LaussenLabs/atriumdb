@@ -13,7 +13,7 @@ def test_settings():
 
         sdk = AtriumSDK.create_dataset(dataset_location=str(TSC_DATASET_DIR))
         assert sdk.settings_dict['protected_mode'] == 'True'
-        assert sdk.settings_dict['overwrite'] == 'False'
+        assert sdk.settings_dict['overwrite'] == 'error'
 
     finally:
         shutil.rmtree(TSC_DATASET_DIR)

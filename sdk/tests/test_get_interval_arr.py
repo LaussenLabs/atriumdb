@@ -71,6 +71,7 @@ def _test_get_interval_arr(db_type, dataset_location, connection_params):
     assert np.array_equal(interval_arr_device, np.array(combined_intervals, dtype=np.int64)), "Unexpected intervals for device"
 
     # Test get_interval_array based on patient
+    # Needs Fixing
     for patient_id in patient_ids:
         interval_arr_patient = sdk.get_interval_array(measure_id=measure_id, patient_id=patient_id,
                                                       start=start_time_nano, end=end_time_nano)

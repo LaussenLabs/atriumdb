@@ -41,8 +41,7 @@ def _test_insert_data_with_patient_mapping(db_type, dataset_location, connection
     end_time = int(og_time_data[-1] + period_ns)
     sdk.insert_device_patient_data([(device_id, patient_id, start_time, end_time)])
 
-    _, patient_read_times, patient_read_values = sdk.get_data(
-        measure_id, start_time, end_time, patient_id=patient_id)
+    _, patient_read_times, patient_read_values = sdk.get_data(measure_id, start_time, end_time, patient_id=patient_id)
 
     assert np.array_equal(og_time_data, patient_read_times)
     assert np.array_equal(og_value_data, patient_read_values)

@@ -61,8 +61,7 @@ def assert_mit_bih_to_dataset_api(api_sdk, max_records=None):
                 end_time = time_arr[-1] + period_ns
 
                 # Replace sdk.get_data_api call with TestClient
-                headers, r_times, r_values = api_sdk.get_data_api(
-                    measure_id, start_time, end_time, device_id=device_id)
+                headers, r_times, r_values = api_sdk.get_data_api(measure_id, start_time, end_time, device_id=device_id)
 
                 assert np.array_equal(record.p_signal.T[i], r_values) and np.array_equal(time_arr, r_times)
 
@@ -74,8 +73,7 @@ def assert_mit_bih_to_dataset_api(api_sdk, max_records=None):
             start_time = time_arr[0]
             end_time = time_arr[-1] + period_ns
 
-            headers, r_times, r_values = api_sdk.get_data_api(
-                measure_id, end_time, start_time, device_id=device_id)
+            headers, r_times, r_values = api_sdk.get_data_api(measure_id, end_time, start_time, device_id=device_id)
 
             assert np.array_equal(record.p_signal, r_values) and np.array_equal(time_arr, r_times)
 
@@ -96,6 +94,5 @@ def mock_get_data_api(sdk, client: TestClient, measure_id, end_time, start_time,
         [np.frombuffer(response.content, dtype=np.uint8) for response in block_requests], axis=None)
     num_bytes_list = [row['num_bytes'] for row in block_info_list]
     headers, r_times, r_values = \
-        sdk.decode_block_arr(encoded_bytes, num_bytes_list, start_time, end_time, True,
-                             True, False)
+        sdk.decode_block_arr(encoded_bytes, num_bytes_list, start_time, end_time, True, True)
     return headers, r_times, r_values

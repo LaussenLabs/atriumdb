@@ -435,9 +435,8 @@ class AtriumSDK:
 
     def _overwrite_delete_data(self, measure_id, device_id, new_time_data, time_0, raw_time_type, values_size,
                                freq_nhz):
-        # Make assumptions for auto_convert_gap_to_time_array, return_intervals and analog
+        # Make assumptions for auto_convert_gap_to_time_array and analog
         auto_convert_gap_to_time_array = True
-        return_intervals = False
         analog = False
 
         # Calculate the period in nanoseconds
@@ -488,7 +487,7 @@ class AtriumSDK:
             # Decode the data from the old files
             old_headers, old_times, old_values = \
                 self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
-                                      auto_convert_gap_to_time_array, return_intervals)
+                                      auto_convert_gap_to_time_array, sort=True, allow_duplicates=False)
 
             # Convert old times to int64
             old_times = old_times.astype(np.int64)
@@ -790,7 +789,7 @@ class AtriumSDK:
             nearest integer.
         :param str freq_units: The unit used for the specified frequency. This value can be one of ["nHz", "uHz", "mHz",
             "Hz", "kHz", "MHz"]. If you use extremely large values for this, it will be converted to nanohertz
-            in the backend, and you may overflow 64bit integers.
+            in the backend, and you may overflow 64-bit integers.
 
         """
         # Set default time and frequency units if not provided
@@ -827,9 +826,9 @@ class AtriumSDK:
                         raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
                         scale_m=scale_m, scale_b=scale_b)
 
-    def get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int,
-                     device_id: int = None, patient_id: int = None, mrn: int = None,
-                     auto_convert_gap_to_time_array=True, return_intervals=False, analog=True, allow_duplicates=True):
+    def get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int, device_id: int = None,
+                     patient_id: int = None, mrn: int = None, auto_convert_gap_to_time_array=True, analog=True,
+                     sort=True, allow_duplicates=True):
         """
         .. _get_data_api_label:
 
@@ -843,9 +842,12 @@ class AtriumSDK:
         :param patient_id: (Optional) The ID of the patient to retrieve data for.
         :param mrn: (Optional) The medical record number (MRN) to retrieve data for.
         :param auto_convert_gap_to_time_array: Automatically convert gaps in the data to time arrays (default: True).
-        :param return_intervals: Return data as intervals (default: False).
+        If set to false you may receive a mixture of time type 1 and time type 2 timestamps.
         :param analog: Convert digitized data to its analog values (default: True).
-        :param bool allow_duplicates: Whether to allow duplicate times in the returned data if they exist.
+        :param bool sort: Whether to sort the returned data. If false you may receive more data than just
+            [start_time_n:end_time_n).
+        :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
+        nothing if sort is false.
 
         :return: A tuple containing headers, request times, and request values.
 
@@ -895,7 +897,11 @@ class AtriumSDK:
         # Decode the concatenated bytes to get headers, request times and request values
         headers, r_times, r_values = \
             self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
-                                  auto_convert_gap_to_time_array, return_intervals, allow_duplicates=allow_duplicates)
+                                  auto_convert_gap_to_time_array, sort=False, allow_duplicates=allow_duplicates)
+
+        # Sort the data based on the timestamps if sort is true
+        if sort:
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
         return headers, r_times, r_values
 
@@ -1063,10 +1069,11 @@ class AtriumSDK:
 
         return block_info_url
 
+    # TODO Fix function since times/values before has been removed from get functions
     def get_batched_data_generator(self, measure_id: int, start_time_n: int = None, end_time_n: int = None,
                                    device_id: int = None, patient_id=None, auto_convert_gap_to_time_array=True,
-                                   return_intervals=False, analog=True, block_info=None, max_kbyte_in_memory=None,
-                                   window_size=None, step_size=None, get_last_window=True):
+                                   analog=True, block_info=None, max_kbyte_in_memory=None, window_size=None,
+                                   step_size=None, get_last_window=True):
         """
         .. _get_batched_data_generator_label:
 
@@ -1079,7 +1086,7 @@ class AtriumSDK:
         >>> device_id = 456
         >>> patient_id = 789
         >>> max_kbyte_in_memory = 1000
-        >>> for total_query_index, times, values in sdk.get_batched_data_generator(measure_id=measure_id, start_time_n=start_time_n, end_time_n=end_time_n, device_id=device_id, patient_id=patient_id, max_kbyte_in_memory=max_kbyte_in_memory):
+        >>> for total_query_index, times, values in sdk.get_batched_data_generator(measure_id=measure_id,start_time_n=start_time_n,end_time_n=end_time_n,device_id=device_id,patient_id=patient_id,max_kbyte_in_memory=max_kbyte_in_memory):
         ...     # print(f"total_query_index: {total_query_index}, times: {times}, values: {values}")
 
         :param int measure_id: The measure identifier corresponding to the measures table in the linked relational database.
@@ -1087,8 +1094,8 @@ class AtriumSDK:
         :param int end_time_n: The end time of the data to be retrieved, in nanohertz.
         :param int device_id: The device identifier corresponding to the devices table in the linked relational database.
         :param patient_id: The patient identifier.
-        :param bool auto_convert_gap_to_time_array: If True, convert gap in time data to a numpy array.
-        :param bool return_intervals: If True, return intervals instead of values.
+        :param bool auto_convert_gap_to_time_array: If True, convert gap in time data to a numpy array. If set to false
+        you may receive a mixture of time type 1 and time type 2 timestamps.
         :param bool analog: If True, return analog data.
         :param dict block_info: A dictionary containing information about blocks.
         :param int max_kbyte_in_memory: The maximum amount of memory to use, in kilobytes.
@@ -1138,12 +1145,12 @@ class AtriumSDK:
 
             # Process blocks when memory limit is reached or when enough values are collected for a window
             if current_memory_kb >= max_kbyte_in_memory and (window_size is None or cur_values >= window_size):
-                headers, r_times, r_values = self.get_blocks(
-                    current_blocks_meta, filename_dict, measure_id, start_time_n, end_time_n, analog,
-                    auto_convert_gap_to_time_array, return_intervals,
-                    times_before=times_before, values_before=values_before)
+                headers, r_times, r_values = self.get_blocks(current_blocks_meta, filename_dict, measure_id,
+                                                             start_time_n, end_time_n, analog,
+                                                             auto_convert_gap_to_time_array)
 
-                yield from yield_data(r_times, r_values, window_size, step_size, get_last_window and (current_blocks_meta[-1] is block_list[-1]), current_index)
+                yield from yield_data(r_times, r_values, window_size, step_size, get_last_window and
+                                      (current_blocks_meta[-1] is block_list[-1]), current_index)
 
                 # Update the current index by adding the size of the current batch of values
                 current_index += r_values.size
@@ -1165,10 +1172,8 @@ class AtriumSDK:
 
         # Process the remaining blocks if there is any memory left
         if current_memory_kb > 0:
-            headers, r_times, r_values = self.get_blocks(
-                current_blocks_meta, filename_dict, measure_id, start_time_n, end_time_n, analog,
-                auto_convert_gap_to_time_array, return_intervals,
-                times_before=times_before, values_before=values_before)
+            headers, r_times, r_values = self.get_blocks(current_blocks_meta, filename_dict, measure_id, start_time_n,
+                                                         end_time_n, analog, auto_convert_gap_to_time_array)
 
             # If the window size is specified and the size of the current batch of values is smaller than the window size
             if window_size is not None and r_values.size < window_size:
@@ -1184,9 +1189,9 @@ class AtriumSDK:
                             break
 
                     # Retrieve the last window's data
-                    headers, r_times, r_values = self.get_blocks(
-                        last_blocks_meta, filename_dict, measure_id, start_time_n, end_time_n, analog,
-                        auto_convert_gap_to_time_array, return_intervals)
+                    headers, r_times, r_values = self.get_blocks(last_blocks_meta, filename_dict, measure_id,
+                                                                 start_time_n, end_time_n, analog,
+                                                                 auto_convert_gap_to_time_array)
 
                     # Get the last window's data by slicing the time and value arrays
                     r_times, r_values = r_times[-window_size:], r_values[-window_size:]
@@ -1200,7 +1205,7 @@ class AtriumSDK:
                 yield from yield_data(r_times, r_values, window_size, step_size, get_last_window, current_index)
 
     def get_blocks(self, current_blocks_meta, filename_dict, measure_id, start_time_n, end_time_n, analog,
-                   auto_convert_gap_to_time_array, return_intervals, times_before=None, values_before=None):
+                   auto_convert_gap_to_time_array, sort=True, allow_duplicates=True):
         """
         Get the headers, times, and values of blocks from the specified measure_id and time range.
 
@@ -1210,10 +1215,11 @@ class AtriumSDK:
         :param start_time_n: The starting time (in nanoseconds) for the data to be retrieved.
         :param end_time_n: The ending time (in nanoseconds) for the data to be retrieved.
         :param analog: Whether the data is analog or not.
-        :param auto_convert_gap_to_time_array: Whether to automatically convert gaps to time arrays.
-        :param return_intervals: Whether to return intervals or not.
-        :param times_before: Array of times from previous blocks.
-        :param values_before: Array of values from previous blocks.
+        :param auto_convert_gap_to_time_array: Whether to automatically convert gaps to time arrays. If set to false you
+         may receive a mixture of time type 1 and time type 2 timestamps.
+        :param bool sort: Whether to sort the returned data.
+        :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
+        nothing if sort is false.
         :return: Tuple containing headers, times, and values of the blocks.
         """
         # Condense the byte read list from the current blocks metadata
@@ -1226,9 +1232,13 @@ class AtriumSDK:
         num_bytes_list = [row[5] for row in current_blocks_meta]
 
         # Decode the block array and get the headers, times, and values
-        headers, r_times, r_values = self.decode_block_arr(
-            encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog, auto_convert_gap_to_time_array,
-            return_intervals, times_before=times_before, values_before=values_before)
+        headers, r_times, r_values = self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n,
+                                                           analog, auto_convert_gap_to_time_array, sort=False,
+                                                           allow_duplicates=allow_duplicates)
+
+        # Sort the data based on the timestamps if sort is true
+        if sort:
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
         return headers, r_times, r_values
 
@@ -1260,8 +1270,8 @@ class AtriumSDK:
         return {'block_list': block_list, 'filename_dict': filename_dict}
 
     def get_data(self, measure_id: int, start_time_n: int = None, end_time_n: int = None, device_id: int = None,
-                 patient_id=None, auto_convert_gap_to_time_array=True, return_intervals=False, analog=True,
-                 block_info=None, time_units: str = None, allow_duplicates=True):
+                 patient_id=None, auto_convert_gap_to_time_array=True, analog=True, block_info=None,
+                 time_units: str = None, sort=True, allow_duplicates=True):
         """
         .. _get_data_label:
 
@@ -1272,7 +1282,7 @@ class AtriumSDK:
         >>> end_epoch_s = start_epoch_s + 3600  # 1 hour after start.
         >>> start_epoch_nano = start_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
         >>> end_epoch_nano = end_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
-        >>> _, r_times, r_values = sdk.get_data(measure_id=1, start_time_n=start_epoch_s, end_time_n=end_epoch_nano, device_id=4)
+        >>> _, r_times, r_values = sdk.get_data(measure_id=1,start_time_n=start_epoch_s,end_time_n=end_epoch_nano,device_id=4)
         >>> r_times
         array([1669668855000000000, 1669668856000000000, 1669668857000000000, ...,
         1669672452000000000, 1669672453000000000, 1669672454000000000],
@@ -1290,15 +1300,18 @@ class AtriumSDK:
             linked relational database.
         :param int patient_id: The patient identifier corresponding to the encounter table in the
             linked relational database.
-        :param bool auto_convert_gap_to_time_array: If the raw time format type is type gap array,
-            automatically convert returned time data as an array of timestamps.
-        :param bool return_intervals: Automatically convert time return type to time intervals.
+        :param bool auto_convert_gap_to_time_array: If the raw time format type is type gap array, automatically convert
+         returned time data as an array of timestamps. If set to false you may receive a mixture of time type 1 and
+         time type 2 timestamps.
         :param bool analog: Automatically convert value return type to analog signal.
         :param sqlalchemy.engine.Connection connection: You can pass in an sqlalchemy connection object from the
             relational database if you already have one open.
         :param str time_units: If you would like the time array returned in units other than nanoseconds you can
             choose from one of ["s", "ms", "us", "ns"].
-        :param bool allow_duplicates: Whether to allow duplicate times in the returned data if they exist.
+        :param bool sort: Whether to sort the returned data. If false you may receive more data than just
+            [start_time_n:end_time_n).
+        :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
+        nothing if sort is false.
 
         :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
         :returns: A list of the block header python objects.\n
@@ -1323,10 +1336,9 @@ class AtriumSDK:
 
         # If the data is from the api.
         if self.mode == "api":
-            return self.get_data_api(measure_id, start_time_n, end_time_n,
-                                     device_id=device_id, patient_id=patient_id,
-                                     auto_convert_gap_to_time_array=auto_convert_gap_to_time_array,
-                                     return_intervals=return_intervals, analog=analog, allow_duplicates=allow_duplicates)
+            return self.get_data_api(measure_id, start_time_n, end_time_n, device_id=device_id, patient_id=patient_id,
+                                     auto_convert_gap_to_time_array=auto_convert_gap_to_time_array, analog=analog,
+                                     sort=False, allow_duplicates=allow_duplicates)
 
         # If the dataset is in a local directory.
         elif self.mode == "local":
@@ -1363,31 +1375,26 @@ class AtriumSDK:
 
             # Read and decode the blocks.
             headers, r_times, r_values = self.get_data_from_blocks(block_list, filename_dict, measure_id, start_time_n,
-                                                                   end_time_n, return_intervals, analog,
-                                                                   auto_convert_gap_to_time_array,
-                                                                   allow_duplicates=allow_duplicates)
+                                                                   end_time_n, analog, auto_convert_gap_to_time_array,
+                                                                   sort=False, allow_duplicates=allow_duplicates)
+
+            # Sort the data based on the timestamps if sort is true
+            if sort:
+                r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
             end_bench_total = time.perf_counter()
             _LOGGER.debug(
                 f"Total get data call took {round(end_bench_total - start_bench_total, 2)}: {r_values.size} values")
             _LOGGER.debug(f"{round(r_values.size / (end_bench_total - start_bench_total), 2)} values per second.")
 
-            start_bench = time.perf_counter()
             # convert time data from nanoseconds to unit of choice
             if time_units != 'ns':
                 r_times = r_times / time_unit_options[time_units]
 
-            # Cast times to integers if possible.
-            # if np.all(r_times == np.floor(r_times)):
-            #     r_times = r_times.astype('int64')
-            end_bench = time.perf_counter()
-            # print(f"final checks took {round((end_bench - start_bench) * 1000, 4)} ms")
-
             return headers, r_times, r_values
 
-    def get_data_from_blocks(self, block_list, filename_dict, measure_id, start_time_n, end_time_n,
-                             return_intervals=False, analog=True, auto_convert_gap_to_time_array=True,
-                             allow_duplicates=True):
+    def get_data_from_blocks(self, block_list, filename_dict, measure_id, start_time_n, end_time_n, analog=True,
+                             auto_convert_gap_to_time_array=True, sort=True, allow_duplicates=True):
         """
         Retrieve data from blocks.
 
@@ -1403,13 +1410,15 @@ class AtriumSDK:
         :type start_time_n: int
         :param end_time_n: End time of the data to read.
         :type end_time_n: int
-        :param return_intervals: Whether to return intervals or not, defaults to False.
-        :type return_intervals: bool, optional
         :param analog: Whether the data is analog or not, defaults to True.
         :type analog: bool, optional
         :param auto_convert_gap_to_time_array: Whether to automatically convert gaps to time arrays, defaults to True.
+        If set to false you may receive a mixture of time type 1 and time type 2 timestamps.
         :type auto_convert_gap_to_time_array: bool, optional
-        :param allow_duplicates: Whether to allow duplicate times in the returned data if they exist.
+        :param sort: Whether to sort the returned data.
+        :type sort: bool, optional
+        :param allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
+        nothing if sort is false.
         :type allow_duplicates: bool, optional
         :return: Tuple containing headers, times, and values.
         :rtype: tuple
@@ -1437,18 +1446,21 @@ class AtriumSDK:
         num_bytes_list = [row[5] for row in block_list]
 
         # Decode the data and separate it into headers, times, and values
-        start_bench = time.perf_counter()
+        # start_bench = time.perf_counter()
         headers, r_times, r_values = \
             self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
-                                  auto_convert_gap_to_time_array, return_intervals, allow_duplicates=allow_duplicates)
-        end_bench = time.perf_counter()
+                                  auto_convert_gap_to_time_array, sort=False, allow_duplicates=allow_duplicates)
+        # end_bench = time.perf_counter()
         # print(f"decode bytes took {round((end_bench - start_bench) * 1000, 4)} ms")
+
+        # Sort the data based on the timestamps if sort is true
+        if sort:
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
         return headers, r_times, r_values
 
     def decode_block_arr(self, encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
-                         auto_convert_gap_to_time_array, return_intervals, times_before=None, values_before=None,
-                         allow_duplicates=True):
+                         auto_convert_gap_to_time_array, sort=True, allow_duplicates=True):
         """
         Decode a series of blocks of encoded bytes and return the corresponding time and value arrays.
 
@@ -1457,11 +1469,11 @@ class AtriumSDK:
         :param start_time_n: The start time of the query in nanoseconds.
         :param end_time_n: The end time of the query in nanoseconds.
         :param analog: Whether the values should be converted to anolog or not.
-        :param auto_convert_gap_to_time_array: Whether to automatically convert gap arrays to time arrays.
-        :param return_intervals: Whether to return intervals instead of timestamps.
-        :param times_before: Time array of previous blocks, if any.
-        :param values_before: Value array of previous blocks, if any.
-        :param bool allow_duplicates: Whether to allow duplicate times in the returned data if they exist.
+        :param auto_convert_gap_to_time_array: Whether to automatically convert gap arrays to time arrays. If set to
+        false you may receive a mixture of time type 1 and time type 2 timestamps.
+        :param bool sort: Whether to sort the returned data.
+        :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
+        nothing if sort is false.
         :return: Tuple containing headers, time array, and value array.
         """
 
@@ -1469,97 +1481,142 @@ class AtriumSDK:
         byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
         byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]], axis=None)
 
-        # Decode the blocks
-        tick = time.perf_counter()
-        r_times, r_values, headers = self.block.decode_blocks(
-            encoded_bytes, byte_start_array, analog=analog, times_before=times_before, values_before=values_before)
-        tock = time.perf_counter()
-        # print(f"C Wrapper took {round((tock - tick) * 1000, 4)} ms")
-        new_times_index = 0 if times_before is None else times_before.size
-        new_values_index = 0 if values_before is None else values_before.size
+        # Decode the block headers
+        headers = self.block.decode_headers(encoded_bytes, byte_start_array)
+
+        # new_times_index = 0 if times_before is None else times_before.size
+        # new_values_index = 0 if values_before is None else values_before.size
+
+        # check if there is a mix of time type 1 and 2 in the blocks (will be the most likely case)
+        if len(headers) > 0 and auto_convert_gap_to_time_array and not all([h.t_raw_type == headers[0].t_raw_type for h in headers]):
+            time1_bytes, time1_num_bytes, time2_bytes, time2_num_bytes = [], [], [], []
+            for i, h in enumerate(headers):
+                # block is time type 1
+                if h.t_raw_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+                    time1_num_bytes.append(num_bytes_list[i])
+                    time1_bytes.append(encoded_bytes[byte_start_array[i]:byte_start_array[i+1]])
+                # block is time type 2
+                elif h.t_raw_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
+                    time2_num_bytes.append(num_bytes_list[i])
+                    time2_bytes.append(encoded_bytes[byte_start_array[i]:byte_start_array[i+1]])
+                # block is time type 3 or 4 error I have not accounted for this
+                else:
+                    raise ValueError("Time type 3 or 4 detected didn't code for this. SDK will need code upgrade")
+
+            # decode the time type 1 data recursively
+            time1_bytes, time_type1_num_bytes = np.concatenate(time1_bytes), np.concatenate(time1_num_bytes)
+            time1_byte_start_array = np.cumsum(time1_num_bytes, dtype=np.uint64)
+            time1_byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), time1_byte_start_array[:-1]], axis=None)
+            headers1, times1, values1 = self.decode_block_arr(time1_bytes, time1_byte_start_array, start_time_n,
+                                                              end_time_n, analog, auto_convert_gap_to_time_array,
+                                                              sort=False)
+
+            # decode the time type 2 data recursively
+            time2_bytes, time2_num_bytes = np.concatenate(time2_bytes), np.concatenate(time2_num_bytes)
+            time2_byte_start_array = np.cumsum(time2_num_bytes, dtype=np.uint64)
+            time2_byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), time2_byte_start_array[:-1]], axis=None)
+            headers2, times2, values2 = self.decode_block_arr(time2_bytes, time2_byte_start_array, start_time_n,
+                                                              end_time_n, analog, auto_convert_gap_to_time_array,
+                                                              sort=False)
+
+            # concatenate the decoded time type 1 and 2 data
+            headers, r_times, r_values = \
+                np.concatenate((headers1, headers2)), np.concatenate((times1, times2)), np.concatenate((values1, values2))
 
         # If all blocks are time type 2 (gap arrays)
-        if auto_convert_gap_to_time_array and \
+        elif auto_convert_gap_to_time_array and \
                 all([h.t_raw_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO for h in headers]):
-            # print("time type 2")
 
-            if return_intervals:
-                # Convert gap arrays to intervals
-                intervals = []
-                gap_arr = r_times[new_times_index:].reshape((-1, 2))
+            # decode blocks
+            r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, byte_start_array, analog=analog)
 
-                cur_gap = 0
+            # if return_intervals:
+            #     # Convert gap arrays to intervals
+            #     intervals = []
+            #     gap_arr = r_times[new_times_index:].reshape((-1, 2))
+            #
+            #     cur_gap = 0
+            #
+            #     # Create a list of intervals from all blocks
+            #     for h in headers:
+            #         intervals.extend(
+            #             convert_gap_array_to_intervals(h.start_n,
+            #                                            gap_arr[cur_gap:cur_gap + h.num_gaps],
+            #                                            h.num_vals,
+            #                                            h.freq_nhz))
+            #
+            #         cur_gap += h.num_gaps
+            #
+            #     intervals = np.array(intervals, dtype=np.int64)
+            #
+            #     # Sort intervals by start time
+            #     interval_order = np.argsort(intervals.T[0])
+            #     sorted_intervals = intervals[interval_order]
+            #
+            #     # Sort the value array according to the sorted intervals
+            #     org_value_order_arr = np.zeros((intervals.shape[0], 2), dtype=np.uint64)
+            #     cur_index = 0
+            #
+            #     for block_i, block_num_values in enumerate(intervals.T[2]):
+            #         org_value_order_arr[block_i] = (cur_index, block_num_values)
+            #         cur_index += block_num_values
+            #
+            #     # Populate new value array in correct order
+            #     sorted_values = np.zeros(r_values[new_values_index:].shape, dtype=r_values.dtype)
+            #     cur_index = 0
+            #     for org_index, block_num_values in org_value_order_arr[interval_order]:
+            #         org_index = int(org_index)
+            #         block_num_values = int(block_num_values)
+            #         sorted_values[cur_index:cur_index + block_num_values] = \
+            #             r_values[new_values_index:][org_index:org_index + block_num_values]
+            #
+            #         cur_index += block_num_values
+            #
+            #     r_times, r_values = sorted_intervals, sorted_values
+            # else:
 
-                # Create a list of intervals from all blocks
-                for h in headers:
-                    intervals.extend(
-                        convert_gap_array_to_intervals(h.start_n,
-                                                       gap_arr[cur_gap:cur_gap + h.num_gaps],
-                                                       h.num_vals,
-                                                       h.freq_nhz))
+            # Convert time type 2 (gap arrays) to time type 1 (timestamp arrays)
+            r_times, new_values = self.convert_gap_data_to_timestamps(headers, r_times, r_values)
 
-                    cur_gap += h.num_gaps
-
-                intervals = np.array(intervals, dtype=np.int64)
-
-                # Sort intervals by start time
-                interval_order = np.argsort(intervals.T[0])
-                sorted_intervals = intervals[interval_order]
-
-                # Sort the value array according to the sorted intervals
-                org_value_order_arr = np.zeros((intervals.shape[0], 2), dtype=np.uint64)
-                cur_index = 0
-
-                for block_i, block_num_values in enumerate(intervals.T[2]):
-                    org_value_order_arr[block_i] = (cur_index, block_num_values)
-                    cur_index += block_num_values
-
-                # Populate new value array in correct order
-                sorted_values = np.zeros(r_values[new_values_index:].shape, dtype=r_values.dtype)
-                cur_index = 0
-                for org_index, block_num_values in org_value_order_arr[interval_order]:
-                    org_index = int(org_index)
-                    block_num_values = int(block_num_values)
-                    sorted_values[cur_index:cur_index + block_num_values] = \
-                        r_values[new_values_index:][org_index:org_index + block_num_values]
-
-                    cur_index += block_num_values
-
-                r_times, r_values = sorted_intervals, sorted_values
-
-            else:
-                # Convert time type 2 (gap arrays) to time type 1 (timestamp arrays)
-                r_times, new_values = self.filter_gap_data_to_timestamps(
-                    end_time_n, headers, r_times[new_times_index:], r_values[new_values_index:],
-                    start_time_n, times_before=times_before, allow_duplicates=allow_duplicates)
-
-                r_values[new_values_index:new_values_index + new_values.size] = new_values
-                r_values = r_values[:new_values_index + new_values.size]
+            # r_times, new_values = self.filter_gap_data_to_timestamps(
+            #     end_time_n, headers, r_times[new_times_index:], r_values[new_values_index:],
+            #     start_time_n, times_before=times_before, allow_duplicates=allow_duplicates)
+            # r_values[new_values_index:new_values_index + new_values.size] = new_values
+            # r_values = r_values[:new_values_index + new_values.size]
 
         # If all blocks are time type 1 (timestamp arrays)
         elif all([h.t_raw_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO for h in headers]):
-            # print("time type 1")
-            if times_before is None and values_before is None:
-                r_times, r_values = sort_data(
-                    r_times, r_values, headers, allow_duplicates)
-            else:
-                r_times[new_times_index:], r_values[new_values_index:] = sort_data(
-                    r_times[new_times_index:], r_values[new_values_index:], headers, allow_duplicates)
+            # decode blocks
+            r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, byte_start_array, analog=analog)
 
-        # If blocks have mixed time types
-        elif len(headers) > 0 and not all([h.t_raw_type == headers[0].t_raw_type for h in headers]):
-            raise ValueError("Blocks pulled were not homogeneously encoded. TODO: handle this case.")
+        # If you don't want to convert time type 2 to time type 1 you may or may not receive a combination of time type
+        # 2 and time type 1 data in the returned times
+        elif not auto_convert_gap_to_time_array:
+            r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, byte_start_array, analog=analog)
+            return headers, r_times, r_values
 
-        # Include previous block data, if any
-        if times_before is not None:
-            r_times[:times_before.size] = times_before
+        # if data is time type 3 or 4 raise error since I haven't coded for that situation
+        else:
+            raise ValueError("Time type 3 or 4 detected didn't code for this. SDK will need code upgrade")
 
-        if values_before is not None:
-            r_values[:values_before.size] = values_before
+        #     if times_before is None and values_before is None:
+        #         r_times, r_values = sort_data(
+        #             r_times, r_values, headers, allow_duplicates)
+        #     else:
+        #         r_times[new_times_index:], r_values[new_values_index:] = sort_data(
+        #             r_times[new_times_index:], r_values[new_values_index:], headers, allow_duplicates)
+        #
+        #
+        # # Include previous block data, if any
+        # if times_before is not None:
+        #     r_times[:times_before.size] = times_before
+        #
+        # if values_before is not None:
+        #     r_values[:values_before.size] = values_before
 
-        # Truncate data to match query
-        left, right = bisect.bisect_left(r_times, start_time_n), bisect.bisect_left(r_times, end_time_n)
-        r_times, r_values = r_times[left:right], r_values[left:right]
+        # Sort the data based on the timestamps if sort is true
+        if sort:
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
         return headers, r_times, r_values
 
@@ -1574,25 +1631,25 @@ class AtriumSDK:
         return result_dict
 
     @staticmethod
-    def filter_gap_data_to_timestamps(end_time_n, headers, r_times, r_values, start_time_n, times_before=None,
-                                      allow_duplicates=True):
+    def convert_gap_data_to_timestamps(headers, r_times, r_values, start_time_n=None, end_time_n=None, sort=True, allow_duplicates=True):
         """
-        Convert gap data to timestamps and sort the data.
+        Convert gap data to timestamps.
 
-        :param end_time_n: The end time in nanoseconds.
         :param headers: A list of headers containing information about the data.
         :param r_times: An array of times in nanoseconds with gaps.
         :param r_values: An array of values corresponding to the times in r_times.
-        :param start_time_n: The start time in nanoseconds.
-        :param times_before: An optional array of times before the current data set.
-        :param bool allow_duplicates: Whether to allow duplicate times in the returned data if they exist.
-        :return: A tuple containing an array of sorted timestamps and an array of sorted values.
+        :param start_time_n: The start time in nanoseconds. Only needs to be specified if sorting result.
+        :param end_time_n: The end time in nanoseconds. Only needs to be specified if sorting result.
+        :param bool sort: Whether to sort the returned data.
+        :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
+        nothing if sort is false.
+        :return: A tuple containing an array of timestamps and an array of values.
         """
         # Start performance benchmark
         start_bench = time.perf_counter()
 
-        # Determine the starting index for the new_times array
-        new_times_index = 0 if times_before is None else times_before.size
+        # # Determine the starting index for the new_times array
+        # new_times_index = 0 if times_before is None else times_before.size
 
         # Check if all times are integers
         is_int_times = all([(10 ** 18) % h.freq_nhz == 0 for h in headers])
@@ -1601,7 +1658,8 @@ class AtriumSDK:
         time_dtype = np.int64 if is_int_times else np.float64
 
         # Create an empty array for the full timestamps
-        full_timestamps = np.zeros(r_values.size + new_times_index, dtype=time_dtype)
+        # full_timestamps = np.zeros(r_values.size + new_times_index, dtype=time_dtype)
+        full_timestamps = np.zeros(r_values.size, dtype=time_dtype)
 
         # Initialize the current index and gap variables
         cur_index, cur_gap = 0, 0
@@ -1611,13 +1669,15 @@ class AtriumSDK:
             # Loop through the headers and calculate the timestamps for integer times
             for block_i, h in enumerate(headers):
                 period_ns = freq_nhz_to_period_ns(h.freq_nhz)
-                full_timestamps[new_times_index:][cur_index:cur_index + h.num_vals] = \
+                # full_timestamps[new_times_index:][cur_index:cur_index + h.num_vals] = \
+                full_timestamps[cur_index:cur_index + h.num_vals] = \
                     np.arange(h.start_n, h.start_n + (h.num_vals * period_ns), period_ns)
 
                 # Apply the gaps to the timestamps
                 for _ in range(h.num_gaps):
-                    full_timestamps[new_times_index:][cur_index + r_times[cur_gap]:cur_index + h.num_vals] += \
-                        r_times[cur_gap + 1]
+                    # full_timestamps[new_times_index:][cur_index + r_times[cur_gap]:cur_index + h.num_vals] += \
+                    #     r_times[cur_gap + 1]
+                    full_timestamps[cur_index + r_times[cur_gap]:cur_index + h.num_vals] += r_times[cur_gap + 1]
                     cur_gap += 2
 
                 # Update the current index
@@ -1626,13 +1686,15 @@ class AtriumSDK:
             # Loop through the headers and calculate the timestamps for non-integer times
             for block_i, h in enumerate(headers):
                 period_ns = float(10 ** 18) / float(h.freq_nhz)
-                full_timestamps[new_times_index:][cur_index:cur_index + h.num_vals] = \
+                # full_timestamps[new_times_index:][cur_index:cur_index + h.num_vals] = \
+                full_timestamps[cur_index:cur_index + h.num_vals] = \
                     np.linspace(h.start_n, h.start_n + (h.num_vals * period_ns), num=h.num_vals, endpoint=False)
 
                 # Apply the gaps to the timestamps
                 for _ in range(h.num_gaps):
-                    full_timestamps[new_times_index:][cur_index + r_times[cur_gap]:cur_index + h.num_vals] += \
-                        r_times[cur_gap + 1]
+                    # full_timestamps[new_times_index:][cur_index + r_times[cur_gap]:cur_index + h.num_vals] += \
+                    #     r_times[cur_gap + 1]
+                    full_timestamps[cur_index + r_times[cur_gap]:cur_index + h.num_vals] += r_times[cur_gap + 1]
                     cur_gap += 2
 
                 # Update the current index
@@ -1642,14 +1704,18 @@ class AtriumSDK:
         end_bench = time.perf_counter()
         _LOGGER.debug(f"Expand Gap Data {(end_bench - start_bench) * 1000} ms")
 
-        # Sort the data based on the timestamps
-        sorted_times, sorted_values = sort_data(full_timestamps[new_times_index:], r_values, headers, allow_duplicates)
+        # # Sort the data based on the timestamps
+        # sorted_times, sorted_values = sort_data(full_timestamps[new_times_index:], r_values, headers, allow_duplicates)
+        # # Update the full_timestamps and r_values arrays with the sorted data
+        # full_timestamps[new_times_index:new_times_index + sorted_times.size], r_values = sorted_times, sorted_values
+        # # Return the final sorted timestamps and values
+        # return full_timestamps[:new_times_index + sorted_times.size], r_values
 
-        # Update the full_timestamps and r_values arrays with the sorted data
-        full_timestamps[new_times_index:new_times_index + sorted_times.size], r_values = sorted_times, sorted_values
+        # Sort the data based on the timestamps if sort is true
+        if sort and start_time_n is not None and end_time_n is not None:
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
-        # Return the final sorted timestamps and values
-        return full_timestamps[:new_times_index + sorted_times.size], r_values
+        return full_timestamps, r_values
 
     def metadata_insert_sql(self, measure_id: int, device_id: int, path: str, metadata: list, start_bytes: np.ndarray,
                             intervals: list):
@@ -2200,9 +2266,9 @@ class AtriumSDK:
         dest_device_id_list = [None for _ in range(len(function_list))] if \
             dest_device_id_list is None else dest_device_id_list
 
+        # TODO removed return_intervals=True from here check effect
         headers, intervals, values = self.get_data(measure_id, start, end, device_id,
-                                                   auto_convert_gap_to_time_array=True, return_intervals=True,
-                                                   analog=False)
+                                                   auto_convert_gap_to_time_array=True, analog=False)
 
         results = []
 

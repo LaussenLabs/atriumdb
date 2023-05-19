@@ -3,6 +3,7 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 from numpy.lib.stride_tricks import sliding_window_view
 import logging
+import bisect
 
 from atriumdb.helpers.block_calculations import calc_time_by_freq
 from atriumdb.helpers.block_constants import TIME_TYPES
@@ -97,7 +98,8 @@ def merge_interval_lists(list_a, list_b):
                      if max(first[0], second[0]) <= min(first[1], second[1])])
 
 
-def sort_data(times, values, headers, allow_duplicates=True):
+# if you want to just use this to sort data will have to add default vals for start/end time and skip bisect
+def sort_data(times, values, headers, start_time, end_time, allow_duplicates=True):
     start_bench = time.perf_counter()
     if len(headers) == 0:
         return times, values
@@ -115,7 +117,10 @@ def sort_data(times, values, headers, allow_duplicates=True):
     # check if the blocks overlap each other
     start_end_times_dont_intersect = np.all(np.greater_equal(block_info.T[0][1:], block_info.T[1][:-1]))
     if start_end_times_dont_intersect and start_times_sorted:
-        logging.debug("Already Sorted.")
+        logging.debug("Blocks already Sorted and don't intersect.")
+
+        left, right = bisect.bisect_left(times, start_time), bisect.bisect_left(times, end_time)
+        times, values = times[left:right], values[left:right]
 
         # if duplicates are allowed then just return times and values
         if allow_duplicates:
@@ -125,7 +130,6 @@ def sort_data(times, values, headers, allow_duplicates=True):
         return sorted_times, values[sorted_time_indices]
 
     start_bench = time.perf_counter()
-
     # if the start times were not sorted, sort them if they were then don't bother running the sort
     if not start_times_sorted:
         # use quicksort as it will be faster with smaller arrays
@@ -134,7 +138,9 @@ def sort_data(times, values, headers, allow_duplicates=True):
         # recheck if the blocks intersect
         start_end_times_dont_intersect = np.all(np.greater_equal(block_info.T[0][1:], block_info.T[1][:-1]))
 
+    end_bench = time.perf_counter()
     logging.debug(f"sort data by block {(end_bench - start_bench) * 1000} ms")
+
     if allow_duplicates:
         if start_end_times_dont_intersect:
             # Blocks don't intersect each other.
@@ -145,9 +151,7 @@ def sort_data(times, values, headers, allow_duplicates=True):
 
             times, values = times[sorted_time_indices], values[sorted_time_indices]
             end_bench = time.perf_counter()
-            logging.debug(f"Sort by blocks {(end_bench - start_bench) * 1000} ms")
-            # return new_times, new_values
-            return times, values
+            logging.debug(f"Blocks don't intersect, sort by blocks {(end_bench - start_bench) * 1000} ms")
 
         else:
             # Blocks do intersect each other, so sort every value.
@@ -158,13 +162,20 @@ def sort_data(times, values, headers, allow_duplicates=True):
             sorted_time_indices = np.argsort(times, kind='mergesort')
 
             end_bench = time.perf_counter()
-            logging.debug(f"sort every value {(end_bench - start_bench) * 1000} ms")
+            logging.debug(f"Blocks intersect, sort every value {(end_bench - start_bench) * 1000} ms")
 
-            return times[sorted_time_indices], values[sorted_time_indices]
+            times, values = times[sorted_time_indices], values[sorted_time_indices]
+    else:
+        # if duplicates are not allowed then remove them using np.unique
+        times, sorted_time_indices = np.unique(times, return_index=True)
+        values = values[sorted_time_indices]
 
-    # if duplicates are not allowed then remove them using np.unique
-    sorted_times, sorted_time_indices = np.unique(times, return_index=True)
-    return sorted_times, values[sorted_time_indices]
+    # if the start or end time is in the middle of a block, more times/values will be decoded than are needed so
+    # bisect the array on the left and right sides to truncate the data
+    left, right = bisect.bisect_left(times, start_time), bisect.bisect_left(times, end_time)
+    times, values = times[left:right], values[left:right]
+
+    return times, values
 
 
 def yield_data(r_times, r_values, window_size, step_size, get_last_window, total_query_index):

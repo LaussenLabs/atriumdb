@@ -76,8 +76,8 @@ def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[
                 device_info = from_sdk.get_device_info(from_device_id)
                 to_device_id = to_sdk.get_device_id(device_tag=device_info['tag'])
                 try:
-                    headers, times, values = from_sdk.get_data(
-                        measure_id, start_time, end_time, device_id=from_device_id, analog=False)
+                    headers, times, values = from_sdk.get_data(measure_id, start_time, end_time,
+                                                               device_id=from_device_id, analog=False)
                 except Exception as e:
                     print(e)
                     continue
