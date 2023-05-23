@@ -1,5 +1,6 @@
 import numpy as np
 import time
+from urllib.parse import urlsplit, urlunsplit
 from numpy.lib.stride_tricks import sliding_window_view
 import logging
 
@@ -213,3 +214,49 @@ def convert_from_nanohz(freq_nhz, freq_units):
         freq = int(freq)
 
     return freq
+
+
+def parse_metadata_uri(metadata_uri):
+    parsed_uri = urlsplit(metadata_uri)
+
+    if not parsed_uri.scheme or not parsed_uri.netloc:
+        raise ValueError(f"Invalid metadata_uri format: expected 'sqltype://username:password@host:port[/dbname]', got {metadata_uri}")
+
+    sqltype = parsed_uri.scheme
+
+    if not parsed_uri.username or not parsed_uri.password:
+        raise ValueError(f"Invalid metadata_uri format: expected 'sqltype://username:password@host:port[/dbname]', got {metadata_uri}")
+
+    username = parsed_uri.username
+    password = parsed_uri.password
+
+    if not parsed_uri.hostname or not parsed_uri.port:
+        raise ValueError(f"Invalid metadata_uri format: expected 'sqltype://username:password@host:port[/dbname]', got {metadata_uri}")
+
+    host = parsed_uri.hostname
+    port = parsed_uri.port
+
+    dbname = parsed_uri.path.lstrip('/')
+
+    return {
+        'sqltype': sqltype,
+        'user': username,
+        'password': password,
+        'host': host,
+        'port': int(port),
+        'database': dbname if dbname else None
+    }
+
+
+def generate_metadata_uri(metadata):
+    sqltype = metadata['sqltype']
+    username = metadata['user']
+    password = metadata['password']
+    host = metadata['host']
+    port = metadata['port']
+    dbname = metadata.get('database')
+
+    netloc = f"{username}:{password}@{host}:{port}"
+    path = f"/{dbname}" if dbname else ""
+
+    return urlunsplit((sqltype, netloc, path, "", ""))

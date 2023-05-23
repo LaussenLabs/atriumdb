@@ -1,90 +1,141 @@
 from atriumdb import AtriumSDK
-import wfdb
 import numpy as np
-from pathlib import Path
-import shutil
 
-TSC_DATASET_DIR = Path(__file__).parent / 'mit_bih'
+from tests.generate_wfdb import get_records
+from tests.testing_framework import _test_for_both
+
+DB_NAME = 'atrium-mit-bih'
+
 
 def test_mit_bih():
-    # Define where on disk the dataset will sit.
-    try:
-        TSC_DATASET_DIR.mkdir(parents=True, exist_ok=True)
+    _test_for_both(DB_NAME, _test_mit_bih)
 
-        sdk = AtriumSDK(dataset_location=str(TSC_DATASET_DIR))
 
-        record_names = wfdb.get_record_list('mitdb')
+def _test_mit_bih(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-        # populate database
-        for n in record_names:
+    write_mit_bih_to_dataset(sdk)
+    assert_mit_bih_to_dataset(sdk)
 
-            record = wfdb.rdrecord(n, pn_dir="mitdb")
 
-            # make a new device for each record and make the device tag the name of the record
-            device_id = sdk.get_device_id(device_tag=record.record_name)
-            if device_id is None:
-                device_id = sdk.insert_device(device_tag=record.record_name)
+def assert_mit_bih_to_dataset(sdk, max_records=None):
+    num_records = 0
+    for record in get_records(dataset_name='mitdb'):
+        if max_records and num_records >= max_records:
+            return
+        num_records += 1
+        device_id = sdk.insert_device(device_tag=record.record_name)
+        freq_nano = record.fs * 1_000_000_000
+        period_ns = int(10 ** 9 // record.fs)
 
-            freq_nano = record.fs * 1_000_000_000
+        time_arr = np.arange(record.sig_len, dtype=np.int64) * period_ns
 
-            time_arr = np.arange(record.sig_len, dtype=np.int64) * int(10 ** 9 // record.fs)
+        # if there are multiple signals in one record split them into two different dataset entries
+        if record.n_sig > 1:
+            for i in range(len(record.sig_name)):
+                measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano,
+                                                units=record.units[i])
 
-            # if there are multiple signals in one record split them into two different dataset entries
-            if record.n_sig > 1:
-                for i in range(len(record.sig_name)):
+                headers, read_times, read_values = sdk.get_data(
+                    measure_id, time_arr[0], time_arr[-1] + period_ns, device_id=device_id)
 
-                    # if the measure tag has already been entered into the DB find the associated measure ID
-                    measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i])
-                    if measure_id is None:
-                        # if the measure, frequency pair is not in the DB create a new entry
-                        measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq_nhz=freq_nano, units=record.units[i])
+                assert np.array_equal(record.p_signal.T[i], read_values) and np.array_equal(time_arr, read_times)
 
-                    # write data
-                    sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal.T[i],
-                                        freq_nano, scale_m=None, scale_b=None)
+        # if there is only one signal in the input file insert it
+        else:
+            measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano,
+                                            units=record.units)
 
-            # if there is only one signal in the input file insert it
-            else:
-                measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, units=record.units)
-                if measure_id is None:
-                    measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq_nhz=freq_nano, units=record.units)
+            headers, read_times, read_values = sdk.get_data(
+                measure_id, time_arr[0], time_arr[-1] + period_ns, device_id=device_id)
 
-                sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal,
+            assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
+
+
+def assert_partial_mit_bih_to_dataset(sdk, measure_id_list=None, device_id_list=None, start_nano=None, end_nano=None,
+                                      max_records=None):
+    records_tested = 0
+    for record in get_records(dataset_name='mitdb'):
+        device_id = sdk.get_device_id(device_tag=record.record_name)
+        freq_nano = record.fs * 1_000_000_000
+        period_ns = int(10 ** 9 // record.fs)
+        time_arr = np.arange(record.sig_len, dtype=np.int64) * period_ns
+
+        if max_records is not None and records_tested >= max_records:
+            break
+
+        records_tested += 1
+
+        if device_id not in device_id_list:
+            assert device_id is None
+            continue
+
+        if record.n_sig > 1:
+            for i in range(len(record.sig_name)):
+                measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i])
+
+                if measure_id not in measure_id_list:
+                    assert measure_id is None
+                    continue
+
+                # Get the correct slice of data according to start and end nanoseconds
+                start_index = 0 if start_nano is None else np.searchsorted(time_arr, start_nano)
+                end_index = time_arr.size if end_nano is None else np.searchsorted(time_arr, end_nano, side='left')
+                expected_data = record.p_signal.T[i][start_index:end_index]
+
+                # Read data
+                start_nano = time_arr[0] if start_nano is None else start_nano
+                end_nano = time_arr[-1] + (2 * period_ns) if end_nano is None else end_nano
+                _, _, read_data = sdk.get_data(measure_id, start_nano, end_nano, device_id=device_id)
+
+                # Check if the read data is equal to the expected data
+                assert np.array_equal(read_data, expected_data)
+
+        else:
+            measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, units=record.units)
+
+            if measure_id not in measure_id_list:
+                assert measure_id is None
+                continue
+
+            # Get the correct slice of data according to start and end nanoseconds
+            start_index = 0 if start_nano is None else np.searchsorted(time_arr, start_nano)
+            end_index = time_arr.size if end_nano is None else np.searchsorted(time_arr, end_nano, side='left')
+            expected_data = record.p_signal[start_index:end_index]
+
+            start_nano = time_arr[0] if start_nano is None else start_nano
+            end_nano = time_arr[-1] + (2 * period_ns) if end_nano is None else end_nano
+            _, _, read_data = sdk.get_data(measure_id, start_nano, end_nano, device_id=device_id)
+
+            # Check if the read data is equal to the expected data
+            assert np.array_equal(read_data, expected_data)
+
+
+def write_mit_bih_to_dataset(sdk, max_records=None):
+    num_records = 0
+    for record in get_records(dataset_name='mitdb'):
+        if max_records and num_records >= max_records:
+            return
+        num_records += 1
+        device_id = sdk.insert_device(device_tag=record.record_name)
+        freq_nano = record.fs * 1_000_000_000
+
+        time_arr = np.arange(record.sig_len, dtype=np.int64) * int(10 ** 9 // record.fs)
+
+        # if there are multiple signals in one record split them into two different dataset entries
+        if record.n_sig > 1:
+            for i in range(len(record.sig_name)):
+                measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano,
+                                                units=record.units[i])
+                # write data
+                sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal.T[i],
                                     freq_nano, scale_m=None, scale_b=None)
 
+        # if there is only one signal in the input file insert it
+        else:
+            measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano,
+                                            units=record.units)
 
-        # Check if all entries have been entered correctly
-        for n in record_names:
-
-            record = wfdb.rdrecord(n, pn_dir="mitdb")
-            freq_nano = record.fs * 1_000_000_000
-            time_arr = np.arange(record.sig_len, dtype=np.int64) * ((10 ** 9) // record.fs)
-            device_id = sdk.get_device_id(device_tag=record.record_name)
-
-            # If there are multiple signals in the record check both
-            if record.n_sig > 1:
-                for i in range(len(record.sig_name)):
-                    measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i])
-
-                    _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
-
-                    # check that both the signal and time arrays from mitDB and atriumDB are equal
-                    assert np.array_equal(record.p_signal.T[i], read_values) and np.array_equal(time_arr, read_times)
-
-            # If there is only one signal in the record
-            else:
-                measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, units=record.units)
-
-                _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
-
-                assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
-    finally:
-        shutil.rmtree(TSC_DATASET_DIR)
-
-def reset_database(highest_level_dir):
-    db_path = f"{highest_level_dir}/meta/index.db"
-    tsc_path = f"{highest_level_dir}/tsc"
-
-    Path(db_path).unlink(missing_ok=True)
-    if Path(tsc_path).is_dir():
-        shutil.rmtree(tsc_path)
+            sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal,
+                                freq_nano, scale_m=None, scale_b=None)

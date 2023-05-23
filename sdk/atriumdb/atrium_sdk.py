@@ -91,7 +91,6 @@ class AtriumSDK:
     :param str atriumdb_lib_path: Legacy variable supporting old versions, do not use. A file path pointing to the CDLL that powers the compression and decompression.
     """
 
-
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
                  connection_params: dict = None, num_threads: int = None, api_url: str = None, token: str = None,
                  tsc_file_location: str = None, atriumdb_lib_path: str = None):
@@ -401,8 +400,8 @@ class AtriumSDK:
 
         overwrite_file_dict, old_block_ids, old_file_list = None, None, None
         if current_intervals_o.intersection(write_intervals_o).duration() > 0:
-            _LOGGER.debug(f"Overlap measure_id {measure_id}, device_id {device_id}, "
-                         f"existing intervals {current_intervals}, new intervals {write_intervals}")
+            _LOGGER.debug(f"Overlap measure_id {measure_id}, device_id {device_id}, " 
+                          f"existing intervals {current_intervals}, new intervals {write_intervals}")
             if OVERWRITE_SETTING_NAME not in self.settings_dict:
                 raise ValueError("Overwrite detected, but overwrite behavior not set.")
 
@@ -531,8 +530,8 @@ class AtriumSDK:
         return measure_id, device_id, filename, encode_headers, byte_start_array, intervals
 
     def write_data_easy(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray,
-                        freq: int, scale_m: float = None, scale_b: float = None, time_units: str = "ns",
-                        freq_units: str = "nHz"):
+                        freq: int, scale_m: float = None, scale_b: float = None, time_units: str = None,
+                        freq_units: str = None):
         """
         The simplified method for writing new data to the dataset
 
@@ -567,6 +566,8 @@ class AtriumSDK:
             in the backend, and you may overflow 64bit integers.
 
         """
+        time_units = "ns" if time_units is None else time_units
+        freq_units = "nHz" if freq_units is None else freq_units
 
         # Check if they are using time units other than nanoseconds and if they are convert time_data to nanoseconds
         if time_units != "ns":
@@ -1364,7 +1365,7 @@ class AtriumSDK:
         return result
 
     def get_all_patient_ids(self, start=None, end=None):
-        pass
+        return [row[0] for row in self.sql_handler.select_all_patients_in_list()]
 
     def get_available_measures(self, device_id=None, patient_id=None, start=None, end=None):
         pass
@@ -1476,7 +1477,7 @@ class AtriumSDK:
                         raw_time_type=t_t, raw_value_type=raw_v_t, encoded_time_type=t_t,
                         encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b)
 
-    def insert_measure(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = "nHz",
+    def insert_measure(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None,
                        measure_name: str = None):
         """
         Defines a new signal type to be stored in the dataset, as well as defining metadata related to the signal.
@@ -1493,7 +1494,7 @@ class AtriumSDK:
         >>> measure_tag = "ECG Lead II - 500 Hz"
         >>> measure_name = "Electrocardiogram Lead II Configuration 500 Hertz"
         >>> units = "mV"
-        >>> measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq, freq_units=freq_units, measure_name=measure_name, units=units)
+        >>> measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq, units=units, freq_units=freq_units, measure_name=measure_name)
 
         :param freq: The sample frequency of the signal.
         :param str optional freq_units: The unit used for the specified frequency. This value can be one of ["Hz",
@@ -1509,6 +1510,8 @@ class AtriumSDK:
         assert isinstance(measure_tag, str)
         assert isinstance(measure_name, str) or measure_name is None
         assert isinstance(units, str) or units is None
+
+        freq_units = "nHz" if freq_units is None else freq_units
 
         if freq_units != "nHz":
             freq = convert_to_nanohz(freq, freq_units)
