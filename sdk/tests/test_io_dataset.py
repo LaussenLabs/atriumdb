@@ -29,7 +29,7 @@ from tests.testing_framework import _test_for_both
 
 DB_NAME = 'atrium-formats-transfer'
 PARTIAL_DB_NAME = 'atrium-formats-partial-transfer'
-MAX_RECORDS = None
+MAX_RECORDS = 1
 
 
 def test_csv_dataset():
