@@ -1282,7 +1282,7 @@ class AtriumSDK:
         return {'block_list': block_list, 'filename_dict': filename_dict}
 
     def get_data(self, measure_id: int, start_time_n: int = None, end_time_n: int = None, device_id: int = None,
-                 patient_id=None, time_type=2, analog=True, block_info=None, time_units: str = None, sort=True,
+                 patient_id=None, time_type=1, analog=True, block_info=None, time_units: str = None, sort=True,
                  allow_duplicates=True):
         """
         .. _get_data_label:
