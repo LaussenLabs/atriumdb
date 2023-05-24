@@ -159,15 +159,21 @@ class Block:
         return times, (num_block_intervals, elapsed_block_time, interval_block_start)
 
     def decode_blocks(self, encoded_bytes, byte_start_array, analog=True, time_type=1):
-
+        headers = self.decode_headers(encoded_bytes, byte_start_array)
+        print([h.t_raw_type for h in headers])
+        print(encoded_bytes[:40])
         # add 13 to the start bytes to get the location of the time type byte for each block
-        time_type_bytes = byte_start_array+13
+        time_type_bytes = byte_start_array+16
+
+
         # change the value at those indexes to the time type specified
         encoded_bytes[time_type_bytes] = time_type
+        print(encoded_bytes[:40])
 
         # Decode the headers from the encoded bytes
         start_bench = time.perf_counter()
         headers = self.decode_headers(encoded_bytes, byte_start_array)
+        print([h.t_raw_type for h in headers])
         end_bench = time.perf_counter()
         logging.debug(f"decode headers {(end_bench - start_bench) * 1000} ms")
 
