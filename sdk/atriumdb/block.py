@@ -158,21 +158,14 @@ class Block:
 
         return times, (num_block_intervals, elapsed_block_time, interval_block_start)
 
-    def decode_blocks(self, encoded_bytes, byte_start_array, analog=True, time_type=1):
-        # headers = self.decode_headers(encoded_bytes, byte_start_array)
-        # add 20 to the start bytes to get the location of the time type byte for each block
-        # time_type_bytes = byte_start_array+20
-        # change the value at those indexes to the time type specified
-        # encoded_bytes[time_type_bytes] = time_type
+    def decode_blocks(self, encoded_bytes, num_bytes_list, analog=True, time_type=1):
 
-        # pack time type into bytes, 'B' will make it an unsigned char type in c which is the same as c_uint8
-        # time_type = struct.pack('B', time_type)
+        # Calculate the starting byte positions of each block in the encoded bytes array
+        byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
+        byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), num_bytes_list[:-1]], axis=None)
 
-        # bytes = encoded_bytes.tobytes()
-        # print(encoded_bytes[:40])
-        # pack the raw types into bytes, 'Q' means unsigned long long which is the same as c_uint64
-        # struct.pack('Q', 8 * h.num_vals)
-
+        # trick C dll into decoding the data directly into the time type you want by editing the t_raw_type field in
+        # each of the block headers in the encoded_bytes_stream so the python sdk doesn't have to do it
         if time_type == 1:
             for start_byte in byte_start_array:
                 # using from_buffer() on the header will allow us to directly modify the encoded_bytes variable through

@@ -484,10 +484,10 @@ class AtriumSDK:
             end_time_n = file_block_list[-1][7] * 2  # Just don't truncate output
 
             # Decode the data from the old files
-            old_headers, old_times, old_values = \
-                self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog,
-                                      time_type=1, sort=True, allow_duplicates=False)
-
+            old_times, old_values, old_headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
+                                                                          time_type=1)
+            old_times, old_values = sort_data(old_times, old_values, old_headers, start_time_n, end_time_n,
+                                              allow_duplicates=False)
             # Convert old times to int64
             old_times = old_times.astype(np.int64)
 
@@ -904,9 +904,8 @@ class AtriumSDK:
         num_bytes_list = [row['num_bytes'] for row in block_info_list]
 
         # Decode the concatenated bytes to get headers, request times and request values
-        headers, r_times, r_values = \
-            self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog, time_type,
-                                  sort=False, allow_duplicates=allow_duplicates)
+        r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
+                                                              time_type=time_type)
 
         # Sort the data based on the timestamps if sort is true
         if sort:
@@ -1243,9 +1242,8 @@ class AtriumSDK:
         num_bytes_list = [row[5] for row in current_blocks_meta]
 
         # Decode the block array and get the headers, times, and values
-        headers, r_times, r_values = self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n,
-                                                           analog, time_type, sort=False,
-                                                           allow_duplicates=allow_duplicates)
+        r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
+                                                              time_type=time_type)
 
         # Sort the data based on the timestamps if sort is true
         if sort:
@@ -1462,106 +1460,10 @@ class AtriumSDK:
 
         # Decode the data and separate it into headers, times, and values
         # start_bench = time.perf_counter()
-        headers, r_times, r_values = \
-            self.decode_block_arr(encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog, time_type,
-                                  sort=False, allow_duplicates=allow_duplicates)
+        r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
+                                                              time_type=time_type)
         # end_bench = time.perf_counter()
         # print(f"decode bytes took {round((end_bench - start_bench) * 1000, 4)} ms")
-
-        # Sort the data based on the timestamps if sort is true
-        if sort and time_type == 1:
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
-
-        return headers, r_times, r_values
-
-    def decode_block_arr(self, encoded_bytes, num_bytes_list, start_time_n, end_time_n, analog, time_type=1, sort=True,
-                         allow_duplicates=True):
-        """
-        Decode a series of blocks of encoded bytes and return the corresponding time and value arrays.
-
-        :param encoded_bytes: The encoded bytes to be decoded.
-        :param num_bytes_list: List of the number of bytes in each block.
-        :param start_time_n: The start time of the query in nanoseconds.
-        :param end_time_n: The end time of the query in nanoseconds.
-        :param analog: Whether the values should be converted to anolog or not.
-        :param time_type: The time type returned to you. Time_type=1 is time stamps, which is what most people will
-        want. Time_type=2 is gap array and should only be used by advanced users. Note that sorting will not work for
-        time type 2 and you may receive more values than you asked for because of this.
-        :param bool sort: Whether to sort the returned data by time.
-        :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
-        nothing if sort is false.
-        :return: Tuple containing headers, time array, and value array.
-        """
-
-        # Calculate the starting byte positions of each block in the encoded bytes array
-        byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
-        byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]], axis=None)
-
-        # # Decode the block headers
-        # headers = self.block.decode_headers(encoded_bytes, byte_start_array)
-        #
-        # # check if there is a mix of time type 1 and 2 in the blocks (will be the most likely case)
-        # if len(headers) > 0 and time_type and not all([h.t_raw_type == headers[0].t_raw_type for h in headers]):
-        #     time1_bytes, time1_num_bytes, time2_bytes, time2_num_bytes = [], [], [], []
-        #     for i, h in enumerate(headers):
-        #         # block is time type 1
-        #         if h.t_raw_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
-        #             time1_num_bytes.append(num_bytes_list[i])
-        #             time1_bytes.append(encoded_bytes[byte_start_array[i]:byte_start_array[i+1]])
-        #         # block is time type 2
-        #         elif h.t_raw_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
-        #             time2_num_bytes.append(num_bytes_list[i])
-        #             time2_bytes.append(encoded_bytes[byte_start_array[i]:byte_start_array[i+1]])
-        #         # block is time type 3 or 4 error I have not accounted for this
-        #         else:
-        #             raise ValueError("Time type 3 or 4 detected didn't code for this. SDK will need code upgrade")
-        #
-        #     # decode the time type 1 data recursively
-        #     time1_bytes, time_type1_num_bytes = np.concatenate(time1_bytes), np.concatenate(time1_num_bytes)
-        #     time1_byte_start_array = np.cumsum(time1_num_bytes, dtype=np.uint64)
-        #     time1_byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), time1_byte_start_array[:-1]], axis=None)
-        #     headers1, times1, values1 = self.decode_block_arr(time1_bytes, time1_byte_start_array, start_time_n,
-        #                                                       end_time_n, analog, time_type, sort=False)
-        #
-        #     # decode the time type 2 data recursively
-        #     time2_bytes, time2_num_bytes = np.concatenate(time2_bytes), np.concatenate(time2_num_bytes)
-        #     time2_byte_start_array = np.cumsum(time2_num_bytes, dtype=np.uint64)
-        #     time2_byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), time2_byte_start_array[:-1]], axis=None)
-        #     headers2, times2, values2 = self.decode_block_arr(time2_bytes, time2_byte_start_array, start_time_n,
-        #                                                       end_time_n, analog, time_type, sort=False)
-        #
-        #     # concatenate the decoded time type 1 and 2 data
-        #     headers, r_times, r_values = \
-        #         np.concatenate((headers1, headers2)), np.concatenate((times1, times2)), np.concatenate((values1, values2))
-        #
-        # # If all blocks are time type 2 (gap arrays)
-        # elif time_type and \
-        #         all([h.t_raw_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO for h in headers]):
-        #
-        #     # decode blocks
-        #     r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, byte_start_array, analog=analog)
-        #
-        #     # Convert time type 2 (gap arrays) to time type 1 (timestamp arrays)
-        #     r_times, new_values = self.convert_gap_data_to_timestamps(headers, r_times, r_values)
-        #
-        #
-        # # If all blocks are time type 1 (timestamp arrays)
-        # elif all([h.t_raw_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO for h in headers]):
-        #     # decode blocks
-        #     r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, byte_start_array, analog=analog)
-        #
-        # # If you don't want to convert time type 2 to time type 1 you may or may not receive a combination of time type
-        # # 2 and time type 1 data in the returned times
-        # elif not time_type:
-        #     r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, byte_start_array, analog=analog)
-        #     return headers, r_times, r_values
-        #
-        # # if data is time type 3 or 4 raise error since I haven't coded for that situation
-        # else:
-        #     raise ValueError("Time type 3 or 4 detected didn't code for this. SDK will need code upgrade")
-
-        r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, byte_start_array, analog=analog,
-                                                              time_type=time_type)
 
         # Sort the data based on the timestamps if sort is true
         if sort and time_type == 1:
