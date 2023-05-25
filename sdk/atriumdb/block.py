@@ -194,7 +194,7 @@ class Block:
         # Decode the headers from the encoded bytes
         start_bench = time.perf_counter()
         headers = self.decode_headers(encoded_bytes, byte_start_array)
-        print([h.t_raw_type for h in headers])
+
         end_bench = time.perf_counter()
         logging.debug(f"decode headers {(end_bench - start_bench) * 1000} ms")
 
