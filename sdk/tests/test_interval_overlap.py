@@ -1,6 +1,6 @@
 import unittest
 
-from atriumdb.atrium_sdk import is_interval_overlap, is_interval_overlap_2
+from atriumdb.interval_overlap import is_interval_overlap, is_interval_overlap_2
 
 
 class TestIsIntervalOverlap(unittest.TestCase):

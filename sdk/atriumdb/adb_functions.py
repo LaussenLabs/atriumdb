@@ -3,6 +3,7 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 from numpy.lib.stride_tricks import sliding_window_view
 import logging
+import bisect
 
 from atriumdb.helpers.block_calculations import calc_time_by_freq
 from atriumdb.helpers.block_constants import TIME_TYPES
@@ -40,8 +41,11 @@ def condense_byte_read_list(block_list):
 
     for row in block_list:
         if len(result) == 0 or result[-1][1] != row[3] or result[-1][2] + result[-1][3] != row[4]:
+            # append device_id, file_id, start_byte and num_bytes
             result.append([row[2], row[3], row[4], row[5]])
         else:
+            # if the blocks are continuous merge the reads together by adding the size of the next block to the
+            # to the num_bytes field
             result[-1][3] += row[5]
 
     return result
@@ -54,10 +58,10 @@ def find_intervals(freq_nhz, raw_time_type, time_data, data_start_time, num_valu
         time_deltas = time_data[1:] - time_data[:-1]
         for time_arr_i in range(time_data.size - 1):
             if time_deltas[time_arr_i] > period_ns:
-                intervals[-1][-1] = time_data[time_arr_i]
+                intervals[-1][-1] = time_data[time_arr_i] + period_ns
                 intervals.append([time_data[time_arr_i + 1], 0])
 
-        intervals[-1][-1] = time_data[-1]
+        intervals[-1][-1] = time_data[-1] + period_ns
 
     elif raw_time_type == TIME_TYPES['START_TIME_NUM_SAMPLES']:
         intervals = [[time_data[0], time_data[0] + ((time_data[1] - 1) * period_ns)]]
@@ -94,7 +98,8 @@ def merge_interval_lists(list_a, list_b):
                      if max(first[0], second[0]) <= min(first[1], second[1])])
 
 
-def sort_data(times, values, headers):
+# if you want to just use this to sort data will have to add default vals for start/end time and skip bisect
+def sort_data(times, values, headers, start_time, end_time, allow_duplicates=True):
     start_bench = time.perf_counter()
     if len(headers) == 0:
         return times, values
@@ -107,46 +112,70 @@ def sort_data(times, values, headers):
     end_bench = time.perf_counter()
     logging.debug(f"rearrange block data info {(end_bench - start_bench) * 1000} ms")
 
-    if np.all(np.greater_equal(block_info.T[0][1:], block_info.T[1][:-1])) and \
-            np.all(np.greater(block_info.T[0][1:], block_info.T[0][:-1])):
-        logging.debug("Already Sorted.")
-        return times, values
+    # check if the start times are sorted
+    start_times_sorted = np.all(np.greater(block_info.T[0][1:], block_info.T[0][:-1]))
+    # check if the blocks overlap each other
+    start_end_times_dont_intersect = np.all(np.greater_equal(block_info.T[0][1:], block_info.T[1][:-1]))
+    if start_end_times_dont_intersect and start_times_sorted:
+        logging.debug("Blocks already Sorted and don't intersect.")
+
+        left, right = bisect.bisect_left(times, start_time), bisect.bisect_left(times, end_time)
+        times, values = times[left:right], values[left:right]
+
+        # if duplicates are allowed then just return times and values
+        if allow_duplicates:
+            return times, values
+        # if duplicates are not allowed then remove them using np.unique
+        sorted_times, sorted_time_indices = np.unique(times, return_index=True)
+        return sorted_times, values[sorted_time_indices]
 
     start_bench = time.perf_counter()
-    _, sorted_block_i = np.unique(block_info.T[0], return_index=True)
-    block_info = block_info[sorted_block_i]
+    # if the start times were not sorted, sort them if they were then don't bother running the sort
+    if not start_times_sorted:
+        # use quicksort as it will be faster with smaller arrays
+        sorted_block_i = np.argsort(block_info.T[0], kind='quicksort')
+        block_info = block_info[sorted_block_i]
+        # recheck if the blocks intersect
+        start_end_times_dont_intersect = np.all(np.greater_equal(block_info.T[0][1:], block_info.T[1][:-1]))
 
     end_bench = time.perf_counter()
     logging.debug(f"sort data by block {(end_bench - start_bench) * 1000} ms")
-    if np.all(np.greater_equal(block_info.T[0][1:], block_info.T[1][:-1])):
-        # Blocks don't intersect each other.
-        start_bench = time.perf_counter()
-        # Original Index Creation
-        sorted_time_indices = np.concatenate([np.arange(i_start, i_end) for _, _, i_start, i_end in block_info])
 
-        # New Index Creation.
-        # sorted_time_indices = np.arange(times.size)
+    if allow_duplicates:
+        if start_end_times_dont_intersect:
+            # Blocks don't intersect each other.
+            start_bench = time.perf_counter()
 
-        # new_times, new_values = np.zeros(times.size, dtype=times.dtype), np.zeros(values.size, dtype=values.dtype)
-        # sorted_index = 0
-        # for _, _, i_start, i_end in block_info:
-        #     dur = i_end - i_start
-        #     new_times[sorted_index:sorted_index + dur], new_values[sorted_index:sorted_index + dur] = \
-        #         times[i_start:i_end], values[i_start:i_end]
-        #     sorted_index += dur
-        #
-        times, values = times[sorted_time_indices], values[sorted_time_indices]
-        end_bench = time.perf_counter()
-        logging.debug(f"Sort by blocks {(end_bench - start_bench) * 1000} ms")
-        # return new_times, new_values
-        return times, values
+            # Original Index Creation
+            sorted_time_indices = np.concatenate([np.arange(i_start, i_end) for _, _, i_start, i_end in block_info])
+
+            times, values = times[sorted_time_indices], values[sorted_time_indices]
+            end_bench = time.perf_counter()
+            logging.debug(f"Blocks don't intersect, sort by blocks {(end_bench - start_bench) * 1000} ms")
+
+        else:
+            # Blocks do intersect each other, so sort every value.
+            start_bench = time.perf_counter()
+
+            # If allowing duplicates use argsort to get the indices so duplicates aren't removed
+            # Use mergesort as it will be faster than quicksort on large arrays and since its mostly sorted already
+            sorted_time_indices = np.argsort(times, kind='mergesort')
+
+            end_bench = time.perf_counter()
+            logging.debug(f"Blocks intersect, sort every value {(end_bench - start_bench) * 1000} ms")
+
+            times, values = times[sorted_time_indices], values[sorted_time_indices]
     else:
-        # Blocks do intersect each other, so sort every value.
-        start_bench = time.perf_counter()
-        sorted_times, sorted_time_indices = np.unique(times, return_index=True)
-        end_bench = time.perf_counter()
-        logging.debug(f"sort every value {(end_bench - start_bench) * 1000} ms")
-        return sorted_times, values[sorted_time_indices]
+        # if duplicates are not allowed then remove them using np.unique
+        times, sorted_time_indices = np.unique(times, return_index=True)
+        values = values[sorted_time_indices]
+
+    # if the start or end time is in the middle of a block, more times/values will be decoded than are needed so
+    # bisect the array on the left and right sides to truncate the data
+    left, right = bisect.bisect_left(times, start_time), bisect.bisect_left(times, end_time)
+    times, values = times[left:right], values[left:right]
+
+    return times, values
 
 
 def yield_data(r_times, r_values, window_size, step_size, get_last_window, total_query_index):

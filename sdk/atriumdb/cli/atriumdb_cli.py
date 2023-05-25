@@ -2,6 +2,14 @@ import click
 from tabulate import tabulate
 from pathlib import Path
 
+import requests
+import qrcodeT
+import urllib3
+import os
+import time
+
+from auth0.authentication.token_verifier import TokenVerifier, AsymmetricSignatureVerifier
+
 from dotenv import load_dotenv
 
 from atriumdb import AtriumSDK
@@ -16,9 +24,9 @@ from atriumdb.transfer.formats.import_data import import_data_to_sdk
 
 import logging
 
-load_dotenv()
-
 _LOGGER = logging.getLogger(__name__)
+
+load_dotenv(dotenv_path="./.env", override=True)
 
 cli_help_text = """
 The atriumdb command is a command line interface for the Atrium database, 
@@ -29,14 +37,16 @@ is used to export data from the database to common formats.
 
 The SDK data is defined by the following environment variables or corresponding command line options:
 
-ATRIUMDB_ENDPOINT_URL (--endpoint-url): This environment variable specifies the endpoint to connect to for a remote AtriumDB server.
-
 ATRIUMDB_DATASET_LOCATION (--dataset-location): This environment variable specifies the directory location where the Atrium SDK data will 
 be stored.
 
 ATRIUMDB_METADATA_URI (--metadata-uri): This environment variable specifies the URI of a metadata server, which includes the db_type, host, password, db_name, and other relevant connection details. The format should be "<db_type>://<user>:<password>@<host>:<port>/<database_name>".
 
-ATRIUMDB_DATABASE_TYPE (--database-type): This environment variable specifies the type of metadata database supporting the dataset. The possible values are "sqlite", "mariadb", or "mysql".
+ATRIUMDB_DATABASE_TYPE (--database-type): This environment variable specifies the type of metadata database supporting the dataset. The possible values are "sqlite", "mariadb", "mysql" or "api".
+
+ATRIUMDB_ENDPOINT_URL (--endpoint-url): This environment variable specifies the endpoint to connect to for a remote AtriumDB server.
+
+ATRIUMDB_API_TOKEN (--api-token): This environment variable specifies a token to authorize api access.
 
 You can use command line options in place of the environment variables for a more flexible configuration.
 
@@ -46,20 +56,105 @@ and the Atrium database, please visit the documentation at https://atriumdb.sick
 
 
 @click.group(help=cli_help_text)
-@click.option("--endpoint-url", type=str, envvar="ATRIUMDB_ENDPOINT_URL",
-              help="The endpoint to connect to for a remote AtriumDB server")
 @click.option("--dataset-location", type=click.Path(), envvar="ATRIUMDB_DATASET_LOCATION",
-              help="The local path to a dataset")
-@click.option("--metadata-uri", type=str, envvar="ATRIUMDB_METADATA_URI", help="The URI of a metadata server")
-@click.option("--database-type", type=click.Choice(SUPPORTED_DB_TYPES), envvar="ATRIUMDB_DATABASE_TYPE",
-              help="The type of metadata database supporting the dataset.")
+              default=None, help="The local path to a dataset")
+@click.option("--metadata-uri", type=str, envvar="ATRIUMDB_METADATA_URI",
+              default=None, help="The URI of a metadata server")
+@click.option("--database-type", type=click.Choice(SUPPORTED_DB_TYPES + ["api"]), envvar="ATRIUMDB_DATABASE_TYPE",
+              default=None, help="The type of metadata database supporting the dataset.")
+@click.option("--endpoint-url", type=str, envvar="ATRIUMDB_ENDPOINT_URL",
+              default=None, help="The endpoint to connect to for a remote AtriumDB server")
+@click.option("--api-token", type=str, envvar="ATRIUMDB_API_TOKEN",
+              default=None, help="A token to authorize api access.")
 @click.pass_context
-def cli(ctx, endpoint_url, dataset_location, metadata_uri, database_type):
+def cli(ctx, dataset_location, metadata_uri, database_type, endpoint_url, api_token):
     ctx.ensure_object(dict)
+
     ctx.obj["endpoint_url"] = endpoint_url
+    ctx.obj["api_token"] = api_token
     ctx.obj["dataset_location"] = dataset_location
     ctx.obj["metadata_uri"] = metadata_uri
     ctx.obj["database_type"] = database_type
+
+
+@click.command(help="Endpoint to login with QR code.")
+@click.pass_context
+def login(ctx):
+    endpoint_url = ctx.obj["endpoint_url"]
+
+    endpoint_url = endpoint_url.rstrip('/')
+
+    auth_conf_res = requests.get(f'{endpoint_url}/auth/cli/code')
+
+    if auth_conf_res.status_code == 404:
+        _LOGGER.error("Invalid Endpoint URL")
+        exit()
+
+    if auth_conf_res.status_code != 200:
+        _LOGGER.error("Something went wrong")
+        exit()
+
+    auth_conf = auth_conf_res.json()
+    auth0_domain = auth_conf['auth0_tenant']
+    auth0_client_id = auth_conf['auth0_client_id']
+    api_audience = auth_conf['auth0_audience']
+    algorithms = auth_conf['algorithms']
+
+    def validate_token(id_token):
+        jwks_url = f'https://{auth0_domain}/.well-known/jwks.json'
+        issuer = f'https://{auth0_domain}/'
+        sv = AsymmetricSignatureVerifier(jwks_url)
+        tv = TokenVerifier(signature_verifier=sv, issuer=issuer, audience=auth0_client_id)
+        tv.verify(id_token)
+
+    device_code_payload = {
+        'client_id': auth0_client_id,
+        'scope': 'openid profile',
+        'audience': api_audience
+    }
+    device_code_response = requests.post(f'https://{auth0_domain}/oauth/device/code', data=device_code_payload)
+
+    if device_code_response.status_code != 200:
+        click.echo('Error generating the device code')
+        exit(1)
+
+    click.echo('Device code successful')
+    device_code_data = device_code_response.json()
+    click.echo(f"1. On your computer or mobile device navigate to: \n{device_code_data['verification_uri_complete']}")
+    click.echo(f"2. Enter the following code: \n{device_code_data['user_code']}")
+    qrcodeT.qrcodeT(device_code_data['verification_uri_complete'])
+
+    token_payload = {
+        'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
+        'device_code': device_code_data['device_code'],
+        'client_id': auth0_client_id
+    }
+
+    authenticated = False
+    while not authenticated:
+        # click.echo('Checking if the user completed the flow...')
+        token_response = requests.post(f'https://{auth0_domain}/oauth/token', data=token_payload)
+
+        token_data = token_response.json()
+        if token_response.status_code == 200:
+            click.echo('Authenticated!')
+
+            validate_token(token_data['id_token'])
+
+            authenticated = True
+
+            set_env_var_in_dotenv("ATRIUMDB_API_TOKEN", token_data['access_token'])
+            set_env_var_in_dotenv("ATRIUMDB_DATABASE_TYPE", "api")
+            click.echo("Your API Token is:\n")
+            click.echo(token_data['access_token'])
+            click.echo("The variable ATRIUMDB_API_TOKEN has been set in your .env file and")
+            load_dotenv(dotenv_path="./.env", override=True)
+
+        elif token_data['error'] not in ('authorization_pending', 'slow_down'):
+            click.echo(token_data['error_description'])
+            exit(1)
+        else:
+            time.sleep(device_code_data['interval'])
 
 
 @click.command()
@@ -81,11 +176,11 @@ def cli(ctx, endpoint_url, dataset_location, metadata_uri, database_type):
               envvar='ATRIUMDB_EXPORT_DATASET_LOCATION')
 @click.option("--metadata-uri-out", type=str, help="The URI of a metadata server",
               envvar='ATRIUMDB_METADATA_URI_OUT')
-@click.option("--endpoint-url-out", type=str, help="The endpoint to connect to for a remote AtriumDB server",
-              envvar='ATRIUMDB_ENDPOINT_URL_OUT')
+@click.option("--database-type-out", type=str, help="The metadata database type",
+              envvar='ATRIUMDB_DATABASE_TYPE_OUT')
 @click.option("--by-patient", type=bool, default=False, help="Whether or not to include patient mapping")
 def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measures, device_ids, devices, patient_ids,
-           mrns, start_time, end_time, dataset_location_out, metadata_uri_out, endpoint_url_out, by_patient):
+           mrns, start_time, end_time, dataset_location_out, metadata_uri_out, database_type_out, by_patient):
     measure_ids = None if measure_ids is not None and len(measure_ids) == 0 else list(measure_ids)
     measures = None if measures is not None and len(measures) == 0 else list(measures)
     device_ids = None if device_ids is not None and len(device_ids) == 0 else list(device_ids)
@@ -94,6 +189,7 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
     mrns = None if mrns is not None and len(mrns) == 0 else list(mrns)
 
     endpoint_url = ctx.obj["endpoint_url"]
+    api_token = ctx.obj["api_token"]
     dataset_location = ctx.obj["dataset_location"]
     metadata_uri = ctx.obj["metadata_uri"]
     database_type = ctx.obj["database_type"]
@@ -103,7 +199,7 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
     if export_format not in implemented_formats:
         raise NotImplementedError(f"Only {implemented_formats} formats are currently supported for export")
 
-    from_sdk = get_sdk_from_cli_params(dataset_location, metadata_uri)
+    from_sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
 
     # If a cohort file is specified, parse it and use its parameters for transfer_data
     if cohort_file:
@@ -148,11 +244,11 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
                                                  "envvar must be specified."
 
         # Transfer the data using the specified parameters
-        to_sdk = get_sdk_from_cli_params(dataset_location_out, metadata_uri_out)
+        to_sdk = get_sdk_from_cli_params(dataset_location_out, metadata_uri_out, database_type_out, None,
+                                         None)
 
-        transfer_data(from_sdk=from_sdk, to_sdk=to_sdk, measure_id_list=measure_ids,
-                      device_id_list=device_ids, patient_id_list=patient_ids, mrn_list=mrns,
-                      start=start_time, end=end_time)
+        transfer_data(from_sdk=from_sdk, to_sdk=to_sdk, measure_id_list=measure_ids, device_id_list=device_ids,
+                      patient_id_list=patient_ids, mrn_list=mrns, start=start_time, end=end_time)
 
     else:
         assert dataset_location_out is not None, "dataset-location-out option or ATRIUMDB_EXPORT_DATASET_LOCATION " \
@@ -164,12 +260,11 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
                        by_patient=by_patient, measure_id_list=measure_ids)
 
 
-def get_sdk_from_cli_params(dataset_location, metadata_uri):
+def get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, api_url, api_token):
     connection_params = None if metadata_uri is None else parse_metadata_uri(metadata_uri)
-    metadata_connection_type = None if connection_params is None else connection_params['sqltype']
-    from_sdk = AtriumSDK(dataset_location=dataset_location, connection_params=connection_params,
-                         metadata_connection_type=metadata_connection_type)
-    return from_sdk
+    sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type=database_type,
+                    connection_params=connection_params, api_url=api_url, token=api_token)
+    return sdk
 
 
 @click.command(name="import")
@@ -203,8 +298,10 @@ def import_(ctx, import_format, packaging_type, dataset_location_in, metadata_ur
     mrns = None if mrns is not None and len(mrns) == 0 else list(mrns)
 
     endpoint_url = ctx.obj["endpoint_url"]
+    api_token = ctx.obj["api_token"]
     dataset_location = ctx.obj["dataset_location"]
     metadata_uri = ctx.obj["metadata_uri"]
+    database_type = ctx.obj["database_type"]
 
     implemented_formats = ["csv", "parquet"]
 
@@ -217,7 +314,7 @@ def import_(ctx, import_format, packaging_type, dataset_location_in, metadata_ur
     if not Path(dataset_location_in).is_dir():
         raise ValueError(f"{dataset_location_in} is not a valid directory.")
 
-    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri)
+    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, None, None)
 
     import_dataset(sdk, directory=dataset_location_in, data_format=import_format)
 
@@ -233,16 +330,19 @@ def atriumdb_measure(ctx):
 @click.option("--tag-match", type=str, help="Filter measures by tag string match")
 @click.option("--name-match", type=str, help="Filter measures by name string match")
 @click.option("--unit", type=str, help="Filter measures by units")
-@click.option("--freq-hz", type=float, help="Filter measures by frequency in Hertz")
-@click.option("--freq-nhz", type=int, help="Filter measures by frequency in Nanohertz")
+@click.option("--freq", type=float, help="Filter measures by frequency")
+@click.option("--freq-units", type=str, help="Unit of frequency", default="Hz")
 @click.option("--source-id", type=int, help="Filter measures by source identifier")
-def measure_ls(ctx, tag_match, name_match, unit, freq_hz, freq_nhz, source_id):
+def measure_ls(ctx, tag_match, name_match, unit, freq, freq_units, source_id):
     endpoint_url = ctx.obj["endpoint_url"]
+    api_token = ctx.obj["api_token"]
     dataset_location = ctx.obj["dataset_location"]
     metadata_uri = ctx.obj["metadata_uri"]
+    database_type = ctx.obj["database_type"]
 
-    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri)
-    result = sdk.search_measures(tag_match=tag_match, freq_nhz=freq_nhz, unit=unit, name_match=name_match)
+    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
+    result = sdk.search_measures(
+        tag_match=tag_match, freq=freq, unit=unit, name_match=name_match, freq_units=freq_units)
 
     headers = ["Measure ID", "Tag", "Name", "Frequency (nHz)", "Code", "Unit", "Unit Label", "Unit Code", "Source ID"]
     table = []
@@ -273,10 +373,12 @@ def atriumdb_device(ctx):
 @click.option("--source-id", type=str, help="Filter devices by source identifier")
 def device_ls(ctx, tag_match, name_match, manufacturer_match, model_match, bed_id, source_id):
     endpoint_url = ctx.obj["endpoint_url"]
+    api_token = ctx.obj["api_token"]
     dataset_location = ctx.obj["dataset_location"]
     metadata_uri = ctx.obj["metadata_uri"]
+    database_type = ctx.obj["database_type"]
 
-    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri)
+    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
     result = sdk.search_devices(tag_match=tag_match, name_match=name_match)
 
     headers = ["Device ID", "Tag", "Name", "Manufacturer", "Model", "Type", "Bed ID", "Source ID"]
@@ -300,33 +402,38 @@ def atriumdb_patient(ctx):
 
 @atriumdb_patient.command(name="ls")
 @click.pass_context
+@click.option("--skip", type=int, help="Offset number of patients to return")
+@click.option("--limit", type=int, help="Limit number of patients to return")
 @click.option("--age-years-min", type=float, help="Filter patients by minimum age in years")
 @click.option("--age-years-max", type=float, help="Filter patients by maximum age in years")
 @click.option("--gender", type=str, help="Filter patients by gender")
 @click.option("--source-id", type=str, help="Filter patients by source identifier")
 @click.option("--first-seen", type=int, help="Filter patients by first seen timestamp in epoch time")
 @click.option("--last-updated", type=int, help="Filter patients by last updated timestamp in epoch time")
-def patient_ls(ctx, age_years_min, age_years_max, gender, source_id, first_seen, last_updated):
+def patient_ls(ctx, skip, limit, age_years_min, age_years_max, gender, source_id, first_seen, last_updated):
     endpoint_url = ctx.obj["endpoint_url"]
+    api_token = ctx.obj["api_token"]
     dataset_location = ctx.obj["dataset_location"]
     metadata_uri = ctx.obj["metadata_uri"]
+    database_type = ctx.obj["database_type"]
 
-    click.echo("_LOGGER.infoing list of patients available in the configured dataset")
-    click.echo(f"Endpoint URL: {endpoint_url}")
-    click.echo(f"Dataset location: {dataset_location}")
-    click.echo(f"Metadata URI: {metadata_uri}")
-    if age_years_min:
-        click.echo(f"Filter patients by minimum age in years: {age_years_min}")
-    if age_years_max:
-        click.echo(f"Filter patients by maximum age in years: {age_years_max}")
-    if gender:
-        click.echo(f"Filter patients by gender: {gender}")
-    if source_id:
-        click.echo(f"Filter patients by source identifier: {source_id}")
-    if first_seen:
-        click.echo(f"Filter patients by first seen timestamp in epoch time: {first_seen}")
-    if last_updated:
-        click.echo(f"Filter patients by last updated timestamp in epoch time: {last_updated}")
+    print(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
+
+    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
+
+    result = sdk.get_all_patients(skip=skip, limit=limit)
+
+    if len(result) == 0:
+        return
+
+    headers = list(list(result.values())[0].keys())
+    table = []
+
+    for patient_id, patient_info in result.items():
+        table.append(list(patient_info.values()))
+
+    click.echo("\nPatients:")
+    click.echo(tabulate(table, headers=headers))
 
 
 cli.add_command(export)
@@ -334,3 +441,22 @@ cli.add_command(import_)
 cli.add_command(atriumdb_patient)
 cli.add_command(atriumdb_measure)
 cli.add_command(atriumdb_device)
+cli.add_command(login)
+
+
+def set_env_var_in_dotenv(name, value):
+    dotenv_file = ".env"
+    env_vars = {}
+
+    if os.path.exists(dotenv_file):
+        with open(dotenv_file, "r") as file:
+            for line in file:
+                if line.strip() and not line.startswith("#"):
+                    key, val = line.strip().split("=", 1)
+                    env_vars[key] = val
+
+    env_vars[name] = value
+
+    with open(dotenv_file, "w") as file:
+        for key, val in env_vars.items():
+            file.write(f"{key}={val}\n")

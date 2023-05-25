@@ -3,12 +3,13 @@ from typing import List, Dict, Tuple
 from contextlib import contextmanager
 
 import mariadb
+import uuid
 
 from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from_triplet_query, \
     maria_select_measure_from_id, \
     maria_insert_ignore_measure_query, maria_insert_ignore_device_query, maria_select_device_from_tag_query, \
     maria_select_device_from_id_query, maria_insert_file_index_query, maria_insert_block_query, \
-    maria_insert_interval_index_query, maria_select_file_by_id, maria_select_file_by_values, maria_select_block_by_id, \
+    maria_select_file_by_id, maria_select_file_by_values, maria_select_block_by_id, \
     maria_select_block_by_values, maria_select_interval_by_id, maria_select_interval_by_values, \
     mariadb_setting_insert_query, mariadb_setting_select_query, maria_select_all_query, \
     maria_insert_ignore_device_encounter_query, maria_insert_ignore_encounter_query, maria_insert_ignore_patient_query, \
@@ -17,18 +18,13 @@ from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from
     maria_interval_exists_query
 from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query, \
     maria_file_index_create_query, maria_block_index_create_query, maria_interval_index_create_query, \
-    maria_settings_create_query, maria_device_encounter_device_id_create_index, \
-    maria_device_encounter_encounter_id_create_index, maria_device_encounter_source_id_create_index, \
-    maria_device_encounter_create_query, maria_source_create_query, maria_institution_create_query, \
-    maria_unit_create_query, maria_unit_institution_id_create_index, maria_bed_create_query, \
-    maria_bed_unit_id_create_index, maria_patient_create_query, maria_patient_index_query, maria_encounter_create_query, \
-    maria_encounter_create_index_bed_id_query, maria_encounter_create_index_patient_id_query, \
-    maria_encounter_create_index_source_id_query, mariadb_device_create_query, mariadb_device_bed_id_create_index, \
-    mariadb_device_source_id_create_index, maria_insert_adb_source, mariadb_measure_source_id_create_index, \
-    mariadb_log_hl7_adt_create_query, mariadb_log_hl7_adt_source_id_create_index, mariadb_current_census_view, \
-    mariadb_device_patient_table, maria_encounter_device_encounter_insert_trigger, \
-    maria_encounter_device_encounter_update_trigger, maria_encounter_device_patient_insert_trigger, \
-    maria_encounter_device_patient_update_trigger
+    maria_settings_create_query, maria_device_encounter_create_query, maria_source_create_query, \
+    maria_institution_create_query, maria_unit_create_query, maria_bed_create_query, maria_patient_create_query,\
+    maria_encounter_create_query, mariadb_device_create_query, maria_insert_adb_source, \
+    mariadb_log_hl7_adt_create_query, mariadb_current_census_view, mariadb_device_patient_table, \
+    maria_encounter_device_encounter_insert_trigger, maria_encounter_device_encounter_update_trigger, \
+    maria_encounter_device_patient_insert_trigger, maria_encounter_device_patient_update_trigger, \
+    maria_insert_interval_stored_procedure
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
 from atriumdb.sql_handler.sql_helper import join_sql_and_bools
@@ -40,7 +36,8 @@ DEFAULT_PORT = 3306
 
 
 class MariaDBHandler(SQLHandler):
-    def __init__(self, host: str, user: str, password: str, database: str, port: int = None):
+    def __init__(self, host: str, user: str, password: str, database: str, port: int = None, pool_size: int = 1,
+                 no_pool=False):
         self.host = host
         self.user = user
         self.password = password
@@ -54,9 +51,22 @@ class MariaDBHandler(SQLHandler):
             'password': self.password,
             'database': self.database,
         }
+        self.pool_size = pool_size
+        self.no_pool = no_pool
+        self.pool = None
 
     def maria_connect(self):
         return mariadb.connect(**self.connection_params)
+
+    def create_pool(self):
+        pool_guid = str(uuid.uuid4())
+        self.pool = mariadb.ConnectionPool(pool_name=f"atriumdb_pool_{pool_guid}", pool_size=self.pool_size,
+                                           **self.connection_params)
+
+    def get_connection_from_pool(self):
+        if self.pool is None:
+            self.create_pool()
+        return self.pool.get_connection()
 
     def maria_connect_no_db(self, db_name=None):
         conn = mariadb.connect(
@@ -70,7 +80,10 @@ class MariaDBHandler(SQLHandler):
 
     @contextmanager
     def maria_db_connection(self, begin=False):
-        conn = self.maria_connect()
+        if self.no_pool:
+            conn = self.maria_connect()
+        else:
+            conn = self.get_connection_from_pool()
         cursor = conn.cursor()
 
         try:
@@ -115,36 +128,20 @@ class MariaDBHandler(SQLHandler):
         cursor.execute(mariadb_log_hl7_adt_create_query)
         cursor.execute(mariadb_device_patient_table)
 
-        # Create Indices
-        cursor.execute(maria_unit_institution_id_create_index)
-        cursor.execute(maria_bed_unit_id_create_index)
-        cursor.execute(mariadb_measure_source_id_create_index)
-
-        cursor.execute(maria_patient_index_query)
-
-        cursor.execute(maria_encounter_create_index_bed_id_query)
-        cursor.execute(maria_encounter_create_index_patient_id_query)
-        cursor.execute(maria_encounter_create_index_source_id_query)
-
-        cursor.execute(mariadb_device_bed_id_create_index)
-        cursor.execute(mariadb_device_source_id_create_index)
-
         # Create Views
         cursor.execute(mariadb_current_census_view)
 
         # Insert Default Values
         cursor.execute(maria_insert_adb_source)
 
-        cursor.execute(maria_device_encounter_device_id_create_index)
-        cursor.execute(maria_device_encounter_encounter_id_create_index)
-        cursor.execute(maria_device_encounter_source_id_create_index)
-        cursor.execute(mariadb_log_hl7_adt_source_id_create_index)
-
         # Triggers
         cursor.execute(maria_encounter_device_encounter_insert_trigger)
         cursor.execute(maria_encounter_device_encounter_update_trigger)
         cursor.execute(maria_encounter_device_patient_insert_trigger)
         cursor.execute(maria_encounter_device_patient_update_trigger)
+
+        # Stored Procedures
+        cursor.execute(maria_insert_interval_stored_procedure)
 
         conn.commit()
         cursor.close()
@@ -165,6 +162,12 @@ class MariaDBHandler(SQLHandler):
     def select_all_measures(self):
         with self.maria_db_connection() as (conn, cursor):
             cursor.execute("SELECT * FROM measure")
+            rows = cursor.fetchall()
+        return rows
+
+    def select_all_patients(self):
+        with self.maria_db_connection() as (conn, cursor):
+            cursor.execute("SELECT * FROM patient")
             rows = cursor.fetchall()
         return rows
 
@@ -220,9 +223,8 @@ class MariaDBHandler(SQLHandler):
             cursor.executemany(maria_insert_block_query, block_tuples)
 
             # insert into interval_index
-            interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                interval["end_time_n"]) for interval in interval_data]
-            cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+            [cursor.callproc("insert_interval", (interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                interval["end_time_n"])) for interval in interval_data]
 
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
                              file_ids_to_delete: List[int]):
@@ -241,10 +243,10 @@ class MariaDBHandler(SQLHandler):
                 cursor.executemany(maria_insert_block_query, block_tuples)
 
                 # insert into interval_index
-                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"]) for interval in interval_data]
-                if len(interval_tuples) > 0:
-                    cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+                if len(interval_data) > 0:
+                    [cursor.callproc("insert_interval",
+                                     (interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                      interval["end_time_n"])) for interval in interval_data]
 
             # delete old block data
             cursor.executemany(maria_delete_block_query, [(block_id,) for block_id in block_ids_to_delete])
@@ -335,13 +337,12 @@ class MariaDBHandler(SQLHandler):
             cursor.execute(maria_insert_ignore_bed_query, (unit_id, b_name))
             return cursor.lastrowid
 
-    def insert_patient(self, mrn, gender=None, dob=None, first_name=None, middle_name=None, last_name=None,
-                       first_seen=None,
-                       last_updated=None, source_id=1):
-        first_seen = time.time_ns() if first_seen is None else first_seen
+    def insert_patient(self, patient_id=None, mrn=None, gender=None, dob=None, first_name=None, middle_name=None,
+                       last_name=None, first_seen=None, last_updated=None, source_id=1):
         with self.maria_db_connection(begin=False) as (conn, cursor):
             cursor.execute(maria_insert_ignore_patient_query,
-                           (mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id))
+                           (patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated,
+                            source_id))
             return cursor.lastrowid
 
     def insert_encounter(self, patient_id, bed_id, start_time, end_time=None, source_id=1, visit_number=None,
@@ -359,86 +360,120 @@ class MariaDBHandler(SQLHandler):
             return cursor.lastrowid
 
     def select_blocks(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
-        """
-        block_index.measure_id = measure_id
-        if start_time_n is not Null: block_index.end_time_n > start_time_n
-        if end_time_n is not Null: block_index.start_time_n < end_time_n
-        if device_id is not Null: block_index.device_id = device_id
-        if patient_id is not Null:
-            encounter.patient_id = patient_id
-            and encounter.id = device_encounter.encounter_id
-            and device_encounter.device_id = block_index.device_id
-            and device_encounter.start_time < block_index.end_time_n
-            and block_index.start_time < device_encounter.end_time_n
-        """
-        arg_tuple = ()
-        maria_select_block_query = \
-            "SELECT block_index.id, block_index.measure_id, block_index.device_id, block_index.file_id, " \
-            "block_index.start_byte, block_index.num_bytes, block_index.start_time_n, block_index.end_time_n, " \
-            "block_index.num_values FROM block_index"
+
+        assert device_id is not None or patient_id is not None, "Either device_id or patient_id must be provided"
+
+        # Query by patient.
         if patient_id is not None:
-            maria_select_block_query += \
-                " INNER JOIN device_encounter ON device_encounter.device_id = block_index.device_id"
-            maria_select_block_query += \
-                " INNER JOIN encounter ON encounter.id = device_encounter.encounter_id"
-        maria_select_block_query += " WHERE block_index.measure_id = ?"
-        arg_tuple += (measure_id,)
-        if start_time_n is not None:
-            maria_select_block_query += " AND block_index.end_time_n >= ?"
-            arg_tuple += (start_time_n,)
+            device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
+
+            block_query = """
+                            SELECT
+                                id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
+                            FROM
+                                block_index
+                            WHERE
+                                measure_id = ? AND device_id = ? AND end_time_n >= ? AND start_time_n <= ?
+                            ORDER BY
+                                file_id, start_byte ASC"""
+
+            block_results = []
+
+            with self.maria_db_connection(begin=False) as (conn, cursor):
+                for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
+                    args = (measure_id, encounter_device_id, encounter_start_time, encounter_end_time)
+
+                    cursor.execute(block_query, args)
+                    block_results.extend(cursor.fetchall())
+
+            return block_results
+
+        # Query by device.
+        block_query = """
+                        SELECT
+                            id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
+                        FROM
+                            block_index
+                        WHERE
+                            measure_id = ? AND device_id = ?"""
+
+        args = (measure_id, device_id)
+
         if end_time_n is not None:
-            maria_select_block_query += " AND block_index.start_time_n <= ?"
-            arg_tuple += (end_time_n,)
-        if device_id is not None:
-            maria_select_block_query += " AND block_index.device_id = ?"
-            arg_tuple += (device_id,)
-        if patient_id is not None:
-            maria_select_block_query += " AND encounter.patient_id = ?"
-            arg_tuple += (patient_id,)
-            maria_select_block_query += " AND device_encounter.start_time < block_index.end_time_n"
-            maria_select_block_query += " AND block_index.start_time_n < device_encounter.end_time"
-        maria_select_block_query += " ORDER BY block_index.file_id ASC, block_index.start_byte ASC"
+            block_query += " AND start_time_n <= ?"
+            args += (end_time_n,)
+
+        if start_time_n is not None:
+            block_query += " AND end_time_n >= ?"
+            args += (start_time_n,)
+
+        block_query += " ORDER BY file_id, start_byte ASC"
 
         with self.maria_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(maria_select_block_query, arg_tuple)
+            cursor.execute(block_query, args)
             return cursor.fetchall()
 
-    def select_intervals(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
-        """
-        interval_index.measure_id = measure_id
-        if start_time_n is not Null: interval_index.end_time_n > start_time_n
-        if end_time_n is not Null: interval_index.start_time_n < end_time_n
-        if device_id is not Null: interval_index.device_id = device_id
-        if patient_id is not Null:
-            encounter.patient_id = patient_id
-            and encounter.id = device_encounter.encounter_id
-            and device_encounter.device_id = interval_index.device_id
-            and device_encounter.start_time < interval_index.end_time_n
-            and interval_index.start_time < device_encounter.end_time_n
-        """
-        arg_tuple = ()
-        maria_select_interval_query = "SELECT interval_index.id, interval_index.measure_id, interval_index.device_id, interval_index.start_time_n, interval_index.end_time_n FROM interval_index"
-        if patient_id is not None:
-            maria_select_interval_query += " INNER JOIN device_encounter ON device_encounter.device_id = interval_index.device_id"
-            maria_select_interval_query += " INNER JOIN encounter ON encounter.id = device_encounter.encounter_id"
-        maria_select_interval_query += " WHERE interval_index.measure_id = ?"
-        arg_tuple += (measure_id,)
+    def get_device_time_ranges_by_patient(self, patient_id, end_time_n, start_time_n):
+        # patient_device_query = "SELECT device_id, start_time, end_time FROM device_patient WHERE patient_id = ? AND end_time IS NOT NULL"
+        patient_device_query = "SELECT device_id, start_time, end_time FROM device_patient WHERE patient_id = ?"
+        args = (patient_id,)
         if start_time_n is not None:
-            maria_select_interval_query += " AND interval_index.end_time_n > ?"
-            arg_tuple += (start_time_n,)
+            patient_device_query += " AND end_time >= ? "
+            args += (start_time_n,)
         if end_time_n is not None:
-            maria_select_interval_query += " AND interval_index.start_time_n < ?"
-            arg_tuple += (end_time_n,)
-        if device_id is not None:
-            maria_select_interval_query += " AND interval_index.device_id = ?"
-            arg_tuple += (device_id,)
+            patient_device_query += " AND start_time <= ? "
+            args += (end_time_n,)
+        with self.maria_db_connection(begin=False) as (conn, cursor):
+            cursor.execute(patient_device_query, args)
+            device_time_ranges = cursor.fetchall()
+        return device_time_ranges
+
+    def select_intervals(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
+        assert device_id is not None or patient_id is not None, "Either device_id or patient_id must be provided"
+
+        # Query by patient.
         if patient_id is not None:
-            maria_select_interval_query += " AND encounter.patient_id = ?"
-            arg_tuple += (patient_id,)
-            maria_select_interval_query += " AND device_encounter.start_time < interval_index.end_time_n"
-            maria_select_interval_query += " AND interval_index.start_time_n < device_encounter.end_time"
-        maria_select_interval_query += " ORDER BY interval_index.start_time_n ASC"
+            device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
+
+            interval_query = """
+                                    SELECT
+                                        id, measure_id, device_id, start_time_n, end_time_n
+                                    FROM
+                                        interval_index
+                                    WHERE
+                                        measure_id = ? AND device_id = ? AND end_time_n >= ? AND start_time_n <= ?"""
+
+            interval_results = []
+
+            with self.maria_db_connection(begin=False) as (conn, cursor):
+                for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
+                    args = (measure_id, encounter_device_id, encounter_start_time, encounter_end_time)
+
+                    cursor.execute(interval_query, args)
+                    interval_results.extend(cursor.fetchall())
+
+            return interval_results
+
+        # Query by device.
+
+        interval_query = """
+                        SELECT
+                            id, measure_id, device_id, start_time_n, end_time_n
+                        FROM
+                            interval_index
+                        WHERE
+                            measure_id = ? AND device_id = ?"""
+
+        args = (measure_id, device_id)
+
+        if end_time_n is not None:
+            interval_query += " AND start_time_n <= ?"
+            args += (end_time_n,)
+
+        if start_time_n is not None:
+            interval_query += " AND end_time_n >= ?"
+            args += (start_time_n,)
 
         with self.maria_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(maria_select_interval_query, arg_tuple)
+            cursor.execute(interval_query, args)
             return cursor.fetchall()

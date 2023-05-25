@@ -53,9 +53,27 @@ sqlite_insert_ignore_source_query = "INSERT OR IGNORE INTO source (name, descrip
 sqlite_insert_ignore_institution_query = "INSERT OR IGNORE INTO institution (name) VALUES (?);"
 sqlite_insert_ignore_unit_query = "INSERT OR IGNORE INTO unit (institution_id, name, type) VALUES (?, ?, ?);"
 sqlite_insert_ignore_bed_query = "INSERT OR IGNORE INTO bed (unit_id, name) VALUES (?, ?);"
-sqlite_insert_ignore_patient_query = "INSERT OR IGNORE INTO patient (mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id) " \
-                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);"
+sqlite_insert_ignore_patient_query = "INSERT OR IGNORE INTO patient (id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id) " \
+                                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
 sqlite_insert_ignore_encounter_query = "INSERT OR IGNORE INTO encounter (patient_id, bed_id, start_time, end_time, source_id, visit_number, last_updated) " \
                                        "VALUES (?, ?, ?, ?, ?, ?, ?);"
 sqlite_insert_ignore_device_encounter_query = "INSERT OR IGNORE INTO device_encounter (device_id, encounter_id, start_time, end_time, source_id) " \
                                               "VALUES (?, ?, ?, ?, ?);"
+
+
+def sqlite_get_query_with_patient_id(measure_id, patient_id, start_time_n=None, end_time_n=None):
+    query = \
+        "FROM block_index " \
+        "INNER JOIN device_patient ON device_patient.device_id = block_index.device_id " \
+        "WHERE block_index.measure_id = ? " \
+        "AND device_patient.patient_id = ? " \
+        "AND device_patient.start_time < block_index.end_time_n " \
+        "AND block_index.start_time_n < device_patient.end_time "
+    arg_tuple = (measure_id, patient_id)
+    if start_time_n is not None:
+        query += " AND block_index.end_time_n >= ?"
+        arg_tuple += (start_time_n,)
+    if end_time_n is not None:
+        query += " AND block_index.start_time_n <= ?"
+        arg_tuple += (end_time_n,)
+    return query, arg_tuple

@@ -2,7 +2,7 @@ from atriumdb import AtriumSDK
 from atriumdb.atrium_sdk import convert_to_nanohz
 from tests.testing_framework import _test_for_both
 
-DB_NAME = 'atriumdb-uat'
+DB_NAME = 'get_measure_device'
 
 
 def test_insert_get_measure_device():

@@ -9,13 +9,9 @@ unit VARCHAR(64) NOT NULL,
 unit_label VARCHAR(255) NULL,
 unit_code VARCHAR(64) NULL,
 source_id INT UNSIGNED DEFAULT 1 NULL,
-CONSTRAINT source_ibfk_1 FOREIGN KEY (source_id) REFERENCES source (id),
+CONSTRAINT FOREIGN KEY (source_id) REFERENCES source (id),
 CONSTRAINT tag_frequency_unit UNIQUE (tag, freq_nhz, unit)
 );
-"""
-
-mariadb_measure_source_id_create_index = """
-CREATE INDEX IF NOT EXISTS source_id ON measure (source_id);
 """
 
 maria_file_index_create_query = """CREATE TABLE IF NOT EXISTS file_index(
@@ -34,11 +30,11 @@ maria_block_index_create_query = """CREATE TABLE IF NOT EXISTS block_index(
     start_time_n BIGINT NOT NULL,
     end_time_n BIGINT NOT NULL,
     num_values BIGINT NOT NULL,
-    CONSTRAINT block_index_ibfk_1 FOREIGN KEY (measure_id) REFERENCES measure (id),
-    CONSTRAINT block_index_ibfk_2 FOREIGN KEY (device_id) REFERENCES device (id),
-    CONSTRAINT block_index_ibfk_3 FOREIGN KEY (file_id) REFERENCES file_index (id)
+    CONSTRAINT FOREIGN KEY (measure_id) REFERENCES measure (id),
+    CONSTRAINT FOREIGN KEY (device_id) REFERENCES device (id),
+    CONSTRAINT FOREIGN KEY (file_id) REFERENCES file_index (id)
     ON DELETE CASCADE,
-    INDEX (start_time_n, end_time_n)
+    INDEX (measure_id, device_id, start_time_n, end_time_n)
 );"""
 
 maria_interval_index_create_query = """CREATE TABLE IF NOT EXISTS interval_index(
@@ -47,9 +43,9 @@ maria_interval_index_create_query = """CREATE TABLE IF NOT EXISTS interval_index
     device_id INT UNSIGNED NOT NULL,
     start_time_n BIGINT NOT NULL,
     end_time_n BIGINT NOT NULL,
-    CONSTRAINT INTerval_index_ibfk_1 FOREIGN KEY (measure_id) REFERENCES measure(id),
-    CONSTRAINT INTerval_index_ibfk_2 FOREIGN KEY (device_id) REFERENCES device(id),
-    INDEX (start_time_n, end_time_n)
+    CONSTRAINT FOREIGN KEY (measure_id) REFERENCES measure(id),
+    CONSTRAINT FOREIGN KEY (device_id) REFERENCES device(id),
+    INDEX (measure_id ASC, device_id ASC, end_time_n DESC, start_time_n DESC)
 );"""
 
 
@@ -81,42 +77,34 @@ CREATE TABLE IF NOT EXISTS unit (
   institution_id INT UNSIGNED NOT NULL,
   name VARCHAR(255) NOT NULL,
   type VARCHAR(255) NOT NULL,
-  CONSTRAINT unit_ibfk_1 FOREIGN KEY (institution_id) REFERENCES institution (id)
+  CONSTRAINT FOREIGN KEY (institution_id) REFERENCES institution (id)
 );
 """
-
-maria_unit_institution_id_create_index = "CREATE INDEX IF NOT EXISTS institutionId ON unit (institution_id);"
 
 maria_bed_create_query = """
 CREATE TABLE IF NOT EXISTS bed (
   id INT UNSIGNED auto_increment PRIMARY KEY,
   unit_id INT UNSIGNED NOT NULL,
   name VARCHAR(255) NOT NULL,
-  CONSTRAINT bed_ibfk_1 FOREIGN KEY (unit_id) REFERENCES unit (id)
+  CONSTRAINT FOREIGN KEY (unit_id) REFERENCES unit (id)
 );
 """
-
-maria_bed_unit_id_create_index = "CREATE INDEX IF NOT EXISTS unit_id ON bed (unit_id);"
 
 maria_patient_create_query = """
 CREATE TABLE IF NOT EXISTS patient (
   id INT UNSIGNED auto_increment PRIMARY KEY,
-  mrn INT UNSIGNED NOT NULL,
+  mrn INT UNSIGNED NULL,
   gender VARCHAR(1) NULL,
   dob bigint NULL,
   first_name VARCHAR(255) NULL,
   middle_name VARCHAR(255) NULL,
   last_name VARCHAR(255) NULL,
-  first_seen bigint DEFAULT CURRENT_TIMESTAMP NOT NULL,
+  first_seen bigint DEFAULT CURRENT_TIMESTAMP NULL,
   last_updated bigint NULL,
   source_id INT UNSIGNED DEFAULT 1 NULL,
   CONSTRAINT mrn UNIQUE (mrn),
-  CONSTRAINT patient_ibfk_1 FOREIGN KEY (source_id) REFERENCES source (id)
+  CONSTRAINT FOREIGN KEY (source_id) REFERENCES source (id)
 );
-"""
-
-maria_patient_index_query = """
-CREATE INDEX IF NOT EXISTS source_id ON patient (source_id);
 """
 
 maria_encounter_create_query = """
@@ -129,22 +117,10 @@ CREATE TABLE IF NOT EXISTS encounter (
   source_id INT UNSIGNED DEFAULT 1 null,
   visit_number VARCHAR(15) null,
   last_updated bigint not null,
-  CONSTRAINT encounter_ibfk_1 FOREIGN KEY (patient_id) REFERENCES patient (id),
-  CONSTRAINT encounter_ibfk_2 FOREIGN KEY (bed_id) REFERENCES bed (id),
-  CONSTRAINT encounter_ibfk_3 FOREIGN KEY (source_id) REFERENCES source (id)
+  CONSTRAINT FOREIGN KEY (patient_id) REFERENCES patient (id),
+  CONSTRAINT FOREIGN KEY (bed_id) REFERENCES bed (id),
+  CONSTRAINT FOREIGN KEY (source_id) REFERENCES source (id)
 );
-"""
-
-maria_encounter_create_index_bed_id_query = """
-CREATE INDEX IF NOT EXISTS bed_id ON encounter (bed_id);
-"""
-
-maria_encounter_create_index_patient_id_query = """
-CREATE INDEX IF NOT EXISTS patient_id ON encounter (patient_id);
-"""
-
-maria_encounter_create_index_source_id_query = """
-CREATE INDEX IF NOT EXISTS source_id ON encounter (source_id);
 """
 
 mariadb_device_create_query = """
@@ -158,19 +134,10 @@ type ENUM('static', 'dynamic') DEFAULT 'static' NOT NULL,
 bed_id INT UNSIGNED NULL,
 source_id INT UNSIGNED DEFAULT 1 NOT NULL,
 UNIQUE KEY (tag),
-CONSTRAINT device_ibfk_2 FOREIGN KEY (source_id) REFERENCES source (id),
-CONSTRAINT device_ibfk_3 FOREIGN KEY (bed_id) REFERENCES bed (id)
+CONSTRAINT FOREIGN KEY (source_id) REFERENCES source (id),
+CONSTRAINT FOREIGN KEY (bed_id) REFERENCES bed (id)
 );
 """
-
-mariadb_device_bed_id_create_index = """
-CREATE INDEX IF NOT EXISTS bed_id ON device (bed_id);
-"""
-
-mariadb_device_source_id_create_index = """
-CREATE INDEX IF NOT EXISTS source_id ON device (source_id);
-"""
-
 
 maria_device_encounter_create_query = """CREATE TABLE IF NOT EXISTS device_encounter (
   id INT UNSIGNED auto_increment PRIMARY KEY,
@@ -179,16 +146,11 @@ maria_device_encounter_create_query = """CREATE TABLE IF NOT EXISTS device_encou
   start_time BIGINT NOT NULL,
   end_time BIGINT NULL,
   source_id INT UNSIGNED DEFAULT 1 NULL,
-  CONSTRAINT device_encounter_ibfk_1 FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE CASCADE,
-  CONSTRAINT device_encounter_ibfk_2 FOREIGN KEY (encounter_id) REFERENCES encounter (id) ON DELETE CASCADE,
-  CONSTRAINT device_encounter_ibfk_3 FOREIGN KEY (source_id) REFERENCES source (id)
+  CONSTRAINT FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE CASCADE,
+  CONSTRAINT FOREIGN KEY (encounter_id) REFERENCES encounter (id) ON DELETE CASCADE,
+  CONSTRAINT FOREIGN KEY (source_id) REFERENCES source (id)
 );
 """
-
-maria_device_encounter_device_id_create_index = "CREATE INDEX IF NOT EXISTS device_id_index ON device_encounter (device_id);"
-maria_device_encounter_encounter_id_create_index = "CREATE INDEX IF NOT EXISTS encounter_id_index ON device_encounter (encounter_id);"
-maria_device_encounter_source_id_create_index = "CREATE INDEX IF NOT EXISTS source_id_index ON device_encounter (source_id);"
-
 
 mariadb_log_hl7_adt_create_query = """CREATE TABLE IF NOT EXISTS log_hl7_adt(
 id INT PRIMARY KEY AUTO_INCREMENT,
@@ -207,11 +169,8 @@ previous_location VARCHAR(255) DEFAULT NULL,
 admit_time BIGINT DEFAULT NULL,
 discharge_time BIGINT DEFAULT NULL,
 source_id INT UNSIGNED DEFAULT 1 NULL,
-CONSTRAINT log_hl7_adt_ibfk_1 FOREIGN KEY (source_id) REFERENCES source (id)
+CONSTRAINT FOREIGN KEY (source_id) REFERENCES source (id)
 );"""
-
-mariadb_log_hl7_adt_source_id_create_index = """CREATE INDEX IF NOT EXISTS source_id
-ON log_hl7_adt (source_id);"""
 
 mariadb_current_census_view = """CREATE OR REPLACE VIEW current_census AS select `e`.`start_time` AS 
 `admission_start`,`u`.`id` AS `unit_id`,`u`.`name` AS `unit_name`,`b`.`id` AS `bed_id`,`b`.`name` AS `bed_name`,
@@ -231,7 +190,7 @@ source_id INT UNSIGNED NOT NULL DEFAULT 1,
 FOREIGN KEY (device_id) REFERENCES device(id),
 FOREIGN KEY (patient_id) REFERENCES patient(id),
 FOREIGN KEY (source_id) REFERENCES source(id),
-INDEX device_patient_index (device_id, patient_id, start_time, end_time)
+INDEX (device_id, patient_id, start_time, end_time)
 );
 """
 
@@ -275,5 +234,60 @@ FOR EACH ROW
 BEGIN
     UPDATE device_patient SET end_time=NEW.end_time 
     WHERE patient_id=NEW.patient_id AND start_time=NEW.start_time AND end_time IS NULL;
+END;
+"""
+
+maria_insert_interval_stored_procedure = """
+CREATE PROCEDURE IF NOT EXISTS insert_interval(
+    IN p_measure_id INT UNSIGNED,
+    IN p_device_id INT UNSIGNED,
+    IN p_start_time_n BIGINT,
+    IN p_end_time_n BIGINT
+)
+BEGIN
+    DECLARE overlapping_row_id INT;
+    DECLARE existing_start_time_n BIGINT;
+    DECLARE existing_end_time_n BIGINT;
+    DECLARE max_end_time_n BIGINT;
+
+    SELECT MAX(end_time_n) INTO max_end_time_n from interval_index
+                                               WHERE device_id = p_device_id AND measure_id = p_measure_id;
+
+    -- If new start time is greater than the max end time there will be no overlapping interval match so don't check
+    IF p_start_time_n > max_end_time_n THEN
+        -- Insert the new row into the table
+        INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n)
+        VALUES (p_measure_id, p_device_id, p_start_time_n, p_end_time_n);
+    ELSE
+        -- Check if there's an existing row with overlapping intervals
+        SELECT id, start_time_n, end_time_n INTO overlapping_row_id, existing_start_time_n, existing_end_time_n
+        FROM interval_index
+        WHERE device_id = p_device_id AND measure_id = p_measure_id
+        AND ((p_start_time_n BETWEEN start_time_n AND end_time_n) OR
+             (p_end_time_n BETWEEN start_time_n AND end_time_n) OR
+             (p_end_time_n > end_time_n AND p_start_time_n < start_time_n))
+        LIMIT 1;
+    
+        IF overlapping_row_id IS NOT NULL THEN
+            -- Make sure the new end time is greater than the old before updating
+            IF p_end_time_n > existing_end_time_n THEN
+                -- Update the existing row's end_time_n with the new end_time_n
+                UPDATE interval_index
+                SET end_time_n = p_end_time_n
+                WHERE id = overlapping_row_id;
+            END IF;
+    
+            IF p_start_time_n < existing_start_time_n THEN
+                -- Update the existing row's start_time_n with the new start_time_n
+                UPDATE interval_index
+                SET start_time_n = p_start_time_n
+                WHERE id = overlapping_row_id;
+            END IF;
+        ELSE
+            -- Insert the new row into the table
+            INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n)
+            VALUES (p_measure_id, p_device_id, p_start_time_n, p_end_time_n);
+        END IF;
+    END IF;
 END;
 """
