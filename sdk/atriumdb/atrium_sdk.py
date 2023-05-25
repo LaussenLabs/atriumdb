@@ -816,7 +816,6 @@ class AtriumSDK:
         if time_data.size == value_data.size:
             raw_t_t = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
         else:
-            # if its 2 but if it can be 1 then convert it and set raw
             raw_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
         # Determine the encoded time type

@@ -159,11 +159,37 @@ class Block:
         return times, (num_block_intervals, elapsed_block_time, interval_block_start)
 
     def decode_blocks(self, encoded_bytes, byte_start_array, analog=True, time_type=1):
-
+        # headers = self.decode_headers(encoded_bytes, byte_start_array)
         # add 20 to the start bytes to get the location of the time type byte for each block
-        time_type_bytes = byte_start_array+20
+        # time_type_bytes = byte_start_array+20
         # change the value at those indexes to the time type specified
-        encoded_bytes[time_type_bytes] = time_type
+        # encoded_bytes[time_type_bytes] = time_type
+
+        # pack time type into bytes, 'B' will make it an unsigned char type in c which is the same as c_uint8
+        # time_type = struct.pack('B', time_type)
+
+        # bytes = encoded_bytes.tobytes()
+        # print(encoded_bytes[:40])
+        # pack the raw types into bytes, 'Q' means unsigned long long which is the same as c_uint64
+        # struct.pack('Q', 8 * h.num_vals)
+
+        if time_type == 1:
+            for start_byte in byte_start_array:
+                # using from_buffer() on the header will allow us to directly modify the encoded_bytes variable through
+                # the headers ctypes fields. This is because both the header struct and encoded_bytes variable point at
+                # the same bytes in memory so modifying one will modify the other
+                header = BlockMetadata.from_buffer(encoded_bytes, start_byte)
+                if header.t_raw_type != 1:
+                    header.t_raw_type = time_type
+                    header.t_raw_size = 8 * header.num_vals
+        elif time_type == 2:
+            for start_byte in byte_start_array:
+                header = BlockMetadata.from_buffer(encoded_bytes, start_byte)
+                if header.t_raw_type != 2:
+                    header.t_raw_type = time_type
+                    header.t_raw_size = 16 * header.num_gaps
+        else:
+            raise ValueError("Time type must be in [1, 2]")
 
         # Decode the headers from the encoded bytes
         start_bench = time.perf_counter()
