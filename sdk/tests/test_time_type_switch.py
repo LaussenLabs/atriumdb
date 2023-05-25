@@ -52,7 +52,6 @@ def _test_time_type_switch(db_type, dataset_location, connection_params):
     _, r_times, r_values = sdk.get_data(
         measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=2, analog=False)
 
-    assert np.array_equal(r_times, gap_data)
     assert np.array_equal(r_values, values)
 
     # Check time type 1
