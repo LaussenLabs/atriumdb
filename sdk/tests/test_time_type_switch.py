@@ -44,7 +44,9 @@ def _test_time_type_switch(db_type, dataset_location, connection_params):
     measure_id = sdk.insert_measure(measure_tag="sig1", freq=freq_nhz, units="mV")
     device_id = sdk.insert_device(device_tag="dev1")
 
-    sdk.write_data_easy(measure_id, device_id, gap_data, values, freq=freq_nhz)
+    sdk.write_data(measure_id, device_id, gap_data, values, freq_nhz, start_time_nano, raw_time_type=2,
+                   raw_value_type=1, encoded_time_type=2, encoded_value_type=3,
+                   scale_m=None, scale_b=None)
 
     # Check time type 2
     _, r_times, r_values = sdk.get_data(
@@ -59,4 +61,3 @@ def _test_time_type_switch(db_type, dataset_location, connection_params):
 
     assert np.array_equal(r_times, timestamp_arr)
     assert np.array_equal(r_values, values)
-
