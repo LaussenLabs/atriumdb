@@ -26,7 +26,7 @@ from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from
     maria_select_measure_from_id, \
     maria_insert_ignore_measure_query, maria_insert_ignore_device_query, maria_select_device_from_tag_query, \
     maria_select_device_from_id_query, maria_insert_file_index_query, maria_insert_block_query, \
-    maria_insert_interval_index_query, maria_select_file_by_id, maria_select_file_by_values, maria_select_block_by_id, \
+    maria_select_file_by_id, maria_select_file_by_values, maria_select_block_by_id, \
     maria_select_block_by_values, maria_select_interval_by_id, maria_select_interval_by_values, \
     mariadb_setting_insert_query, mariadb_setting_select_query, maria_select_all_query, \
     maria_insert_ignore_device_encounter_query, maria_insert_ignore_encounter_query, maria_insert_ignore_patient_query, \
@@ -35,18 +35,13 @@ from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from
     maria_interval_exists_query
 from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query, \
     maria_file_index_create_query, maria_block_index_create_query, maria_interval_index_create_query, \
-    maria_settings_create_query, maria_device_encounter_device_id_create_index, \
-    maria_device_encounter_encounter_id_create_index, maria_device_encounter_source_id_create_index, \
-    maria_device_encounter_create_query, maria_source_create_query, maria_institution_create_query, \
-    maria_unit_create_query, maria_unit_institution_id_create_index, maria_bed_create_query, \
-    maria_bed_unit_id_create_index, maria_patient_create_query, maria_patient_index_query, maria_encounter_create_query, \
-    maria_encounter_create_index_bed_id_query, maria_encounter_create_index_patient_id_query, \
-    maria_encounter_create_index_source_id_query, mariadb_device_create_query, mariadb_device_bed_id_create_index, \
-    mariadb_device_source_id_create_index, maria_insert_adb_source, mariadb_measure_source_id_create_index, \
-    mariadb_log_hl7_adt_create_query, mariadb_log_hl7_adt_source_id_create_index, mariadb_current_census_view, \
-    mariadb_device_patient_table, maria_encounter_device_encounter_insert_trigger, \
-    maria_encounter_device_encounter_update_trigger, maria_encounter_device_patient_insert_trigger, \
-    maria_encounter_device_patient_update_trigger
+    maria_settings_create_query, maria_device_encounter_create_query, maria_source_create_query, \
+    maria_institution_create_query, maria_unit_create_query, maria_bed_create_query, maria_patient_create_query,\
+    maria_encounter_create_query, mariadb_device_create_query, maria_insert_adb_source, \
+    mariadb_log_hl7_adt_create_query, mariadb_current_census_view, mariadb_device_patient_table, \
+    maria_encounter_device_encounter_insert_trigger, maria_encounter_device_encounter_update_trigger, \
+    maria_encounter_device_patient_insert_trigger, maria_encounter_device_patient_update_trigger, \
+    maria_insert_interval_stored_procedure
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
 from atriumdb.sql_handler.sql_helper import join_sql_and_bools
@@ -150,36 +145,20 @@ class MariaDBHandler(SQLHandler):
         cursor.execute(mariadb_log_hl7_adt_create_query)
         cursor.execute(mariadb_device_patient_table)
 
-        # Create Indices
-        cursor.execute(maria_unit_institution_id_create_index)
-        cursor.execute(maria_bed_unit_id_create_index)
-        cursor.execute(mariadb_measure_source_id_create_index)
-
-        cursor.execute(maria_patient_index_query)
-
-        cursor.execute(maria_encounter_create_index_bed_id_query)
-        cursor.execute(maria_encounter_create_index_patient_id_query)
-        cursor.execute(maria_encounter_create_index_source_id_query)
-
-        cursor.execute(mariadb_device_bed_id_create_index)
-        cursor.execute(mariadb_device_source_id_create_index)
-
         # Create Views
         cursor.execute(mariadb_current_census_view)
 
         # Insert Default Values
         cursor.execute(maria_insert_adb_source)
 
-        cursor.execute(maria_device_encounter_device_id_create_index)
-        cursor.execute(maria_device_encounter_encounter_id_create_index)
-        cursor.execute(maria_device_encounter_source_id_create_index)
-        cursor.execute(mariadb_log_hl7_adt_source_id_create_index)
-
         # Triggers
         cursor.execute(maria_encounter_device_encounter_insert_trigger)
         cursor.execute(maria_encounter_device_encounter_update_trigger)
         cursor.execute(maria_encounter_device_patient_insert_trigger)
         cursor.execute(maria_encounter_device_patient_update_trigger)
+
+        # Stored Procedures
+        cursor.execute(maria_insert_interval_stored_procedure)
 
         conn.commit()
         cursor.close()
@@ -261,9 +240,8 @@ class MariaDBHandler(SQLHandler):
             cursor.executemany(maria_insert_block_query, block_tuples)
 
             # insert into interval_index
-            interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                interval["end_time_n"]) for interval in interval_data]
-            cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+            [cursor.callproc("insert_interval", (interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                interval["end_time_n"])) for interval in interval_data]
 
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
                              file_ids_to_delete: List[int]):
@@ -282,10 +260,10 @@ class MariaDBHandler(SQLHandler):
                 cursor.executemany(maria_insert_block_query, block_tuples)
 
                 # insert into interval_index
-                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"]) for interval in interval_data]
-                if len(interval_tuples) > 0:
-                    cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+                if len(interval_data) > 0:
+                    [cursor.callproc("insert_interval",
+                                     (interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                      interval["end_time_n"])) for interval in interval_data]
 
             # delete old block data
             cursor.executemany(maria_delete_block_query, [(block_id,) for block_id in block_ids_to_delete])
@@ -516,141 +494,3 @@ class MariaDBHandler(SQLHandler):
         with self.maria_db_connection(begin=False) as (conn, cursor):
             cursor.execute(interval_query, args)
             return cursor.fetchall()
-
-    def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[int] = None, start_time: int = None,
-                          end_time: int = None):
-        assert (patient_id_list is None) != (
-                mrn_list is None), "Either patient_id_list or mrn_list must be provided, but not both"
-        arg_tuple = ()
-        maria_select_encounter_query = \
-            "SELECT encounter.id, encounter.patient_id, encounter.bed_id, encounter.start_time, encounter.end_time, " \
-            "encounter.source_id, encounter.visit_number, encounter.last_updated FROM encounter"
-        if patient_id_list is not None:
-            maria_select_encounter_query += \
-                " INNER JOIN patient ON encounter.patient_id = patient.id WHERE encounter.patient_id IN ({})".format(
-                    ','.join(['?'] * len(patient_id_list)))
-            arg_tuple += tuple(patient_id_list)
-        else:
-            maria_select_encounter_query += \
-                " INNER JOIN patient ON encounter.patient_id = patient.id WHERE patient.mrn IN ({})".format(
-                    ','.join(['?'] * len(mrn_list)))
-
-            arg_tuple += tuple(mrn_list)
-        if start_time is not None:
-            maria_select_encounter_query += " AND encounter.end_time > ?"
-            arg_tuple += (start_time,)
-        if end_time is not None:
-            maria_select_encounter_query += " AND encounter.start_time < ?"
-            arg_tuple += (end_time,)
-        maria_select_encounter_query += " ORDER BY encounter.id ASC"
-
-        with self.maria_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(maria_select_encounter_query, arg_tuple)
-            return cursor.fetchall()
-
-    def select_all_measures_in_list(self, measure_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(measure_id_list))
-        maria_select_measures_by_id_list = f"SELECT * FROM measure WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_measures_by_id_list, measure_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[int] = None):
-        if patient_id_list is not None:
-            placeholders = ', '.join(['?'] * len(patient_id_list))
-            maria_select_patients_by_id_list = f"SELECT * FROM patient WHERE id IN ({placeholders})"
-        elif mrn_list is not None:
-            patient_id_list = mrn_list
-            placeholders = ', '.join(['?'] * len(patient_id_list))
-            maria_select_patients_by_id_list = f"SELECT * FROM patient WHERE mrn IN ({placeholders})"
-        else:
-            maria_select_patients_by_id_list = "SELECT * FROM patient"
-            patient_id_list = tuple()
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_patients_by_id_list, patient_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_devices_in_list(self, device_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(device_id_list))
-        maria_select_devices_by_id_list = f"SELECT * FROM device WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_devices_by_id_list, device_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_beds_in_list(self, bed_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(bed_id_list))
-        maria_select_beds_by_id_list = f"SELECT * FROM bed WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_beds_by_id_list, bed_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_units_in_list(self, unit_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(unit_id_list))
-        maria_select_units_by_id_list = f"SELECT * FROM unit WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_units_by_id_list, unit_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_institutions_in_list(self, institution_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(institution_id_list))
-        maria_select_institutions_by_id_list = f"SELECT * FROM institution WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_institutions_by_id_list, institution_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_device_encounters_by_encounter_list(self, encounter_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(encounter_id_list))
-        maria_select_device_encounters_by_encounter_list = f"SELECT * FROM device_encounter WHERE encounter_id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_device_encounters_by_encounter_list, encounter_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_sources_in_list(self, source_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(source_id_list))
-        maria_select_sources_by_id_list = f"SELECT * FROM source WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_sources_by_id_list, source_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_device_patients(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
-                               start_time: int = None, end_time: int = None):
-        arg_tuple = ()
-        maria_select_device_patient_query = \
-            "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
-        where_clauses = []
-        if device_id_list is not None and len(device_id_list) > 0:
-            where_clauses.append("device_id IN ({})".format(
-                ','.join(['?'] * len(device_id_list))))
-            arg_tuple += tuple(device_id_list)
-        if patient_id_list is not None and len(patient_id_list) > 0:
-            where_clauses.append("patient_id IN ({})".format(
-                ','.join(['?'] * len(patient_id_list))))
-            arg_tuple += tuple(patient_id_list)
-        if start_time is not None:
-            where_clauses.append("end_time > ?")
-            arg_tuple += (start_time,)
-        if end_time is not None:
-            where_clauses.append("start_time < ?")
-            arg_tuple += (end_time,)
-        maria_select_device_patient_query += join_sql_and_bools(where_clauses)
-        maria_select_device_patient_query += " ORDER BY id ASC"
-
-        with self.maria_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(maria_select_device_patient_query, arg_tuple)
-            return cursor.fetchall()
-
-    def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
-        maria_insert_device_patient_query = \
-            "INSERT INTO device_patient (device_id, patient_id, start_time, end_time) VALUES (?, ?, ?, ?)"
-
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.executemany(maria_insert_device_patient_query, device_patient_data)
-            conn.commit()

@@ -31,9 +31,6 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
 maria_insert_file_index_query = """INSERT INTO file_index (path) VALUES (?);"""
 maria_delete_file_query = "DELETE FROM file_index WHERE id = ?;"
 
-maria_insert_interval_index_query = """INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n)
-VALUES (?, ?, ?, ?);"""
-
 maria_select_block_by_id = "SELECT * FROM block_index WHERE id = ?;"
 maria_select_block_by_values = """SELECT * FROM block_index 
 WHERE measure_id = ? AND device_id = ? AND file_id = ? 
@@ -51,15 +48,8 @@ maria_select_interval_by_values = """SELECT * FROM interval_index
 WHERE measure_id = ? AND device_id = ? AND start_time_n = ? AND end_time_n = ?;
 """
 
-maria_interval_exists_query = """
-    SELECT EXISTS(
-      SELECT id
-      FROM interval_index
-      WHERE measure_id = ?
-        AND device_id = ?
-        AND start_time_n = ?
-    )
-    """
+maria_interval_exists_query = """SELECT EXISTS(
+SELECT id FROM interval_index WHERE measure_id = ? AND device_id = ? AND start_time_n = ?)"""
 
 mariadb_setting_insert_query = "INSERT IGNORE INTO setting (name, value) VALUES (?, ?)"
 mariadb_setting_select_query = "SELECT * FROM setting WHERE name = ?"

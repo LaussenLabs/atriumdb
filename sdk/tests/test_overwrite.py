@@ -53,8 +53,8 @@ def _test_overwrite(db_type, dataset_location, connection_params):
     sdk.write_data_easy(
         measure_id, device_id, og_time_data, og_value_data, freq_hz, freq_units="Hz", time_units='s')
 
-    _, og_read_times, og_read_values = sdk.get_data(
-        measure_id, int(og_time_data[0]), int(og_time_data[-1] + period), device_id=device_id, time_units='s')
+    _, og_read_times, og_read_values = sdk.get_data(measure_id, int(og_time_data[0]), int(og_time_data[-1] + period),
+                                                    device_id=device_id, time_units='s')
 
     assert np.array_equal(og_time_data, og_read_times)
     assert np.array_equal(og_value_data, og_read_values)
@@ -68,8 +68,9 @@ def _test_overwrite(db_type, dataset_location, connection_params):
     sdk.write_data_easy(
         measure_id, device_id, new_time_data, new_value_data, freq_hz, freq_units="Hz", time_units='s')
 
-    _, diff_read_times, diff_read_values = sdk.get_data(
-        measure_id, int(og_time_data[0]), int(og_time_data[-1] + period), device_id=device_id, time_units='s')
+    _, diff_read_times, diff_read_values = sdk.get_data(measure_id, int(og_time_data[0]),
+                                                        int(og_time_data[-1] + period), device_id=device_id,
+                                                        time_units='s')
 
     print(diff_read_times)
     print(diff_read_values)
