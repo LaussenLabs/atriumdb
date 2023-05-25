@@ -631,24 +631,48 @@ class AtriumSDK:
             else:
                 raise ValueError(f"Overwrite setting {overwrite_setting} not recognized.")
 
-        # # check if the write data will make more than one full block and find the size of the small block at the end
-        # num_full_blocks, small_block_size = value_data.size / self.block.block_size, value_data.size % self.block.block_size
-        # if num_full_blocks > 1 and small_block_size != 0:
-        #     # calculate the size of the oversized last block
-        #     last_block_size = self.block.block_size + (self.block.block_size*small_block_size)
-        #     # remove 1 from num_full_blocks since one full block will be a part of the last oversized block
-        #     num_full_blocks -= 1
+        # check if the write data will make more than one full block and find the size of the small block at the end
+        num_full_blocks, small_block_size = value_data.size / self.block.block_size, value_data.size % self.block.block_size
+        if num_full_blocks > 1 and small_block_size != 0:
+            # calculate the size of the oversized last block
+            last_block_size = self.block.block_size + (self.block.block_size*small_block_size)
+            # remove 1 from num_full_blocks since one full block will be a part of the last oversized block
+            num_full_blocks -= 1
 
+            # if the time type is 1
+            if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+                # slice off enough data to fill the full blocks
+                full_time_blocks, full_value_blocks = time_data[:num_full_blocks*self.block.block_size], value_data[:num_full_blocks*self.block.block_size]
+                # write the full blocks
+                encoded_bytes_1, encode_headers_1, byte_start_array_1 = self.block.encode_blocks(
+                    full_time_blocks, full_value_blocks, freq_nhz, full_time_blocks[0],
+                    raw_time_type=raw_time_type,
+                    raw_value_type=raw_value_type,
+                    encoded_time_type=encoded_time_type,
+                    encoded_value_type=encoded_value_type,
+                    scale_m=scale_m,
+                    scale_b=scale_b)
 
-        # Encode the blocks
-        encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(
-            time_data, value_data, freq_nhz, time_0,
-            raw_time_type=raw_time_type,
-            raw_value_type=raw_value_type,
-            encoded_time_type=encoded_time_type,
-            encoded_value_type=encoded_value_type,
-            scale_m=scale_m,
-            scale_b=scale_b)
+                # the rest of the data will be in one block that is bigger than the optimal block size
+                last_time_block, last_value_block = time_data[num_full_blocks*self.block.block_size:], value_data[num_full_blocks*self.block.block_size:]
+                encoded_bytes_2, encode_headers_2, byte_start_array_2 = self.block.encode_blocks(
+                    last_time_block, last_value_block, freq_nhz, last_time_block[0],
+                    raw_time_type=raw_time_type,
+                    raw_value_type=raw_value_type,
+                    encoded_time_type=encoded_time_type,
+                    encoded_value_type=encoded_value_type,
+                    scale_m=scale_m,
+                    scale_b=scale_b)
+        else:
+            # Encode the blocks
+            encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(
+                time_data, value_data, freq_nhz, time_0,
+                raw_time_type=raw_time_type,
+                raw_value_type=raw_value_type,
+                encoded_time_type=encoded_time_type,
+                encoded_value_type=encoded_value_type,
+                scale_m=scale_m,
+                scale_b=scale_b)
 
         # Write the encoded bytes to disk
         filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
