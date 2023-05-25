@@ -10,14 +10,6 @@ from atriumdb.helpers.block_calculations import freq_nhz_to_period_ns, calc_gap_
 from atriumdb.helpers.type_helpers import *
 from atriumdb.helpers.block_constants import *
 import logging
-#
-# logging.basicConfig(
-#     level=logging.debug,
-#     format="%(asctime)s [%(levelname)s] %(message)s",
-#     handlers=[
-#         logging.StreamHandler()
-#     ]
-# )
 
 
 class Block:
@@ -162,7 +154,7 @@ class Block:
 
         # Calculate the starting byte positions of each block in the encoded bytes array
         byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
-        byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), num_bytes_list[:-1]], axis=None)
+        byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]], axis=None)
 
         # trick C dll into decoding the data directly into the time type you want by editing the t_raw_type field in
         # each of the block headers in the encoded_bytes_stream so the python sdk doesn't have to do it
