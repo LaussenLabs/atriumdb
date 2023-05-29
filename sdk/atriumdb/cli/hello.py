@@ -15,4 +15,9 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from atriumdb.intervals.intervals import Intervals
+import click
+
+
+@click.command()
+def hello():
+    click.echo("Hello, World!")
