@@ -1,3 +1,20 @@
+# AtriumDB is a timeseries database software designed to best handle the unique features and
+# challenges that arise from clinical waveform data.
+#     Copyright (C) 2023  The Hospital for Sick Children
+#
+#     This program is free software: you can redistribute it and/or modify
+#     it under the terms of the GNU General Public License as published by
+#     the Free Software Foundation, either version 3 of the License, or
+#     (at your option) any later version.
+#
+#     This program is distributed in the hope that it will be useful,
+#     but WITHOUT ANY WARRANTY; without even the implied warranty of
+#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#     GNU General Public License for more details.
+#
+#     You should have received a copy of the GNU General Public License
+#     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple
 
@@ -146,61 +163,4 @@ class SQLHandler(ABC):
     @abstractmethod
     def select_intervals(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
         # Get all matching intervals.
-        pass
-
-    @abstractmethod
-    def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[int] = None, start_time: int = None,
-                          end_time: int = None):
-        # Get all matching encounters.
-        pass
-
-    @abstractmethod
-    def select_all_measures_in_list(self, measure_id_list: List[int]):
-        # Get all matching measures.
-        pass
-
-    @abstractmethod
-    def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[int] = None):
-        # Get all matching patients.
-        pass
-
-    @abstractmethod
-    def select_all_devices_in_list(self, device_id_list: List[int]):
-        # Get all matching devices.
-        pass
-
-    @abstractmethod
-    def select_all_beds_in_list(self, bed_id_list: List[int]):
-        # Get all matching beds.
-        pass
-
-    @abstractmethod
-    def select_all_units_in_list(self, unit_id_list: List[int]):
-        # Get all matching units.
-        pass
-
-    @abstractmethod
-    def select_all_institutions_in_list(self, institution_id_list: List[int]):
-        # Get all matching institutions.
-        pass
-
-    @abstractmethod
-    def select_all_device_encounters_by_encounter_list(self, encounter_id_list: List[int]):
-        # Get all matching device_encounters by encounter id list.
-        pass
-
-    @abstractmethod
-    def select_all_sources_in_list(self, source_id_list: List[int]):
-        # Get all matching sources.
-        pass
-
-    @abstractmethod
-    def select_device_patients(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
-                               start_time: int = None, end_time: int = None):
-        # Get all device_patient rows.
-        pass
-
-    @abstractmethod
-    def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
-        # Insert device_patient rows.
         pass

@@ -1,3 +1,20 @@
+# AtriumDB is a timeseries database software designed to best handle the unique features and
+# challenges that arise from clinical waveform data.
+#     Copyright (C) 2023  The Hospital for Sick Children
+#
+#     This program is free software: you can redistribute it and/or modify
+#     it under the terms of the GNU General Public License as published by
+#     the Free Software Foundation, either version 3 of the License, or
+#     (at your option) any later version.
+#
+#     This program is distributed in the hope that it will be useful,
+#     but WITHOUT ANY WARRANTY; without even the implied warranty of
+#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#     GNU General Public License for more details.
+#
+#     You should have received a copy of the GNU General Public License
+#     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import time
 from typing import List, Dict, Tuple
 from contextlib import contextmanager
@@ -477,141 +494,3 @@ class MariaDBHandler(SQLHandler):
         with self.maria_db_connection(begin=False) as (conn, cursor):
             cursor.execute(interval_query, args)
             return cursor.fetchall()
-
-    def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[int] = None, start_time: int = None,
-                          end_time: int = None):
-        assert (patient_id_list is None) != (
-                mrn_list is None), "Either patient_id_list or mrn_list must be provided, but not both"
-        arg_tuple = ()
-        maria_select_encounter_query = \
-            "SELECT encounter.id, encounter.patient_id, encounter.bed_id, encounter.start_time, encounter.end_time, " \
-            "encounter.source_id, encounter.visit_number, encounter.last_updated FROM encounter"
-        if patient_id_list is not None:
-            maria_select_encounter_query += \
-                " INNER JOIN patient ON encounter.patient_id = patient.id WHERE encounter.patient_id IN ({})".format(
-                    ','.join(['?'] * len(patient_id_list)))
-            arg_tuple += tuple(patient_id_list)
-        else:
-            maria_select_encounter_query += \
-                " INNER JOIN patient ON encounter.patient_id = patient.id WHERE patient.mrn IN ({})".format(
-                    ','.join(['?'] * len(mrn_list)))
-
-            arg_tuple += tuple(mrn_list)
-        if start_time is not None:
-            maria_select_encounter_query += " AND encounter.end_time > ?"
-            arg_tuple += (start_time,)
-        if end_time is not None:
-            maria_select_encounter_query += " AND encounter.start_time < ?"
-            arg_tuple += (end_time,)
-        maria_select_encounter_query += " ORDER BY encounter.id ASC"
-
-        with self.maria_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(maria_select_encounter_query, arg_tuple)
-            return cursor.fetchall()
-
-    def select_all_measures_in_list(self, measure_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(measure_id_list))
-        maria_select_measures_by_id_list = f"SELECT * FROM measure WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_measures_by_id_list, measure_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[int] = None):
-        if patient_id_list is not None:
-            placeholders = ', '.join(['?'] * len(patient_id_list))
-            maria_select_patients_by_id_list = f"SELECT * FROM patient WHERE id IN ({placeholders})"
-        elif mrn_list is not None:
-            patient_id_list = mrn_list
-            placeholders = ', '.join(['?'] * len(patient_id_list))
-            maria_select_patients_by_id_list = f"SELECT * FROM patient WHERE mrn IN ({placeholders})"
-        else:
-            maria_select_patients_by_id_list = "SELECT * FROM patient"
-            patient_id_list = tuple()
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_patients_by_id_list, patient_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_devices_in_list(self, device_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(device_id_list))
-        maria_select_devices_by_id_list = f"SELECT * FROM device WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_devices_by_id_list, device_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_beds_in_list(self, bed_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(bed_id_list))
-        maria_select_beds_by_id_list = f"SELECT * FROM bed WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_beds_by_id_list, bed_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_units_in_list(self, unit_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(unit_id_list))
-        maria_select_units_by_id_list = f"SELECT * FROM unit WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_units_by_id_list, unit_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_institutions_in_list(self, institution_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(institution_id_list))
-        maria_select_institutions_by_id_list = f"SELECT * FROM institution WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_institutions_by_id_list, institution_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_device_encounters_by_encounter_list(self, encounter_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(encounter_id_list))
-        maria_select_device_encounters_by_encounter_list = f"SELECT * FROM device_encounter WHERE encounter_id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_device_encounters_by_encounter_list, encounter_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_sources_in_list(self, source_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(source_id_list))
-        maria_select_sources_by_id_list = f"SELECT * FROM source WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_sources_by_id_list, source_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_device_patients(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
-                               start_time: int = None, end_time: int = None):
-        arg_tuple = ()
-        maria_select_device_patient_query = \
-            "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
-        where_clauses = []
-        if device_id_list is not None and len(device_id_list) > 0:
-            where_clauses.append("device_id IN ({})".format(
-                ','.join(['?'] * len(device_id_list))))
-            arg_tuple += tuple(device_id_list)
-        if patient_id_list is not None and len(patient_id_list) > 0:
-            where_clauses.append("patient_id IN ({})".format(
-                ','.join(['?'] * len(patient_id_list))))
-            arg_tuple += tuple(patient_id_list)
-        if start_time is not None:
-            where_clauses.append("end_time > ?")
-            arg_tuple += (start_time,)
-        if end_time is not None:
-            where_clauses.append("start_time < ?")
-            arg_tuple += (end_time,)
-        maria_select_device_patient_query += join_sql_and_bools(where_clauses)
-        maria_select_device_patient_query += " ORDER BY id ASC"
-
-        with self.maria_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(maria_select_device_patient_query, arg_tuple)
-            return cursor.fetchall()
-
-    def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
-        maria_insert_device_patient_query = \
-            "INSERT INTO device_patient (device_id, patient_id, start_time, end_time) VALUES (?, ?, ?, ?)"
-
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.executemany(maria_insert_device_patient_query, device_patient_data)
-            conn.commit()
