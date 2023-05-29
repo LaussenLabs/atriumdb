@@ -29,14 +29,7 @@ def _test_time_type_switch(db_type, dataset_location, connection_params):
 
     gap_data = [10_000, 24_000_000, 12_000, 138_000_000, 54_403, 34_560_000_000, 104_903, 56_530_000_000]
     gap_data = np.array(gap_data, dtype=np.int64)
-    timestamp_arr = np.arange(start_time_nano, start_time_nano + (num_values * period_ns), period_ns, dtype=np.int64)
-
-    # Add the gaps
-    for i in range(gap_data.size // 2):
-        index = gap_data[(i * 2)]
-        gap = gap_data[(i * 2) + 1]
-
-        timestamp_arr[index:] += gap
+    timestamp_arr = convert_gap_data_to_timestamp_arr(gap_data, num_values, period_ns, start_time_nano)
 
     # Create values
     values = (1000 * np.sin(timestamp_arr)).astype(np.int64)
@@ -70,3 +63,14 @@ def _test_time_type_switch(db_type, dataset_location, connection_params):
 
     assert np.array_equal(r_times, timestamp_arr)
     assert np.array_equal(r_values, values)
+
+
+def convert_gap_data_to_timestamp_arr(gap_data, num_values, period_ns, start_time_nano):
+    timestamp_arr = np.arange(start_time_nano, start_time_nano + (num_values * period_ns), period_ns, dtype=np.int64)
+    # Add the gaps
+    for i in range(gap_data.size // 2):
+        index = gap_data[(i * 2)]
+        gap = gap_data[(i * 2) + 1]
+
+        timestamp_arr[index:] += gap
+    return timestamp_arr
