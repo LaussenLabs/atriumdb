@@ -1310,26 +1310,22 @@ class AtriumSDK:
         >>> end_epoch_nano = end_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
         >>> _, r_times, r_values = sdk.get_data(measure_id=1,start_time_n=start_epoch_s,end_time_n=end_epoch_nano,device_id=4)
         >>> r_times
-        array([1669668855000000000, 1669668856000000000, 1669668857000000000, ...,
-        1669672452000000000, 1669672453000000000, 1669672454000000000],
-        dtype=int64)
+        ... array([1669668855000000000, 1669668856000000000, 1669668857000000000, ...,
+        ... 1669672452000000000, 1669672453000000000, 1669672454000000000],
+        ... dtype=int64)
         >>> r_values
-        array([ 0.32731968,  0.79003189,  0.99659552, ..., -0.59080797,
-        -0.93542358, -0.97675089])
+        ... array([ 0.32731968,  0.79003189,  0.99659552, ..., -0.59080797, -0.93542358, -0.97675089])
 
-        :param block_info:
-        :param int measure_id: The measure identifier corresponding to the measures table in the
-            linked relational database.
+        :param int measure_id: The measure identifier corresponding to the measures table in the linked relational database.
         :param int start_time_n: The start epoch in nanoseconds of the data you would like to query.
         :param int end_time_n: The end epoch in nanoseconds of the data you would like to query.
-        :param int device_id: The device identifier corresponding to the devices table in the
-            linked relational database.
-        :param int patient_id: The patient identifier corresponding to the encounter table in the
-            linked relational database.
+        :param int device_id: The device identifier corresponding to the devices table in the linked relational database.
+        :param int patient_id: The patient identifier corresponding to the encounter table in the linked relational database.
         :param int time_type: The time type returned to you. Time_type=1 is time stamps, which is what most people will
-        want. Time_type=2 is gap array and should only be used by advanced users. Note that sorting will not work for
-        time type 2 and you may receive more values than you asked for because of this.
+            want. Time_type=2 is gap array and should only be used by advanced users. Note that sorting will not work for
+            time type 2 and you may receive more values than you asked for because of this.
         :param bool analog: Automatically convert value return type to analog signal.
+        :param block_info: Parameter to pass in your own block_info list to skip the need to check the metadata table.
         :param sqlalchemy.engine.Connection connection: You can pass in an sqlalchemy connection object from the
             relational database if you already have one open.
         :param str time_units: If you would like the time array returned in units other than nanoseconds you can
@@ -1337,14 +1333,12 @@ class AtriumSDK:
         :param bool sort: Whether to sort the returned data by time. If false you may receive more data than just
             [start_time_n:end_time_n).
         :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
-        nothing if sort is false. Most data won't have duplicates and making this false will slow down data retreival
-         so only use if you absolutly can't have duplicate times.
-
+            nothing if sort is false. Most data won't have duplicates and making this false will slow down data retreival
+            so only use if you absolutly can't have duplicate times.
         :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
         :returns: A list of the block header python objects.\n
             A numpy 1D array representing the time data (usually an array of timestamps).\n
             A numpy 1D array representing the value data.
-
         """
 
         # check that a correct unit type was entered
