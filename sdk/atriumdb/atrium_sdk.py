@@ -632,155 +632,16 @@ class AtriumSDK:
             else:
                 raise ValueError(f"Overwrite setting {overwrite_setting} not recognized.")
 
-        # check if the write data will make more than one full block and if there will be a small block at the end
+        # check if the write data will make at least one full block and if there will be a small block at the end
         num_full_blocks = value_data.size // self.block.block_size
         if num_full_blocks > 0 and value_data.size % self.block.block_size != 0:
-            # remove 1 from num_full_blocks since one full block will be a part of the last oversized block
-            num_full_blocks -= 1
-            # save original optimal block size, so you can switch back later
-            optimal_block_size = self.block.block_size
-
-            # slice off enough data to fill the full blocks
-            full_value_blocks = value_data[:num_full_blocks*optimal_block_size]
-            # the rest of the data will be in one block that is bigger than the optimal block size
-            last_value_block = value_data[num_full_blocks*optimal_block_size:]
-
-            # free up space since we don't need this array anymore
-            del value_data
-
-            # if the time type is 1
-            if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
-
-                # slice the time array to get the last oversized block
-                last_time_block = time_data[num_full_blocks*optimal_block_size:]
-
-                # change block size to the size of the last oversized block
-                self.block.block_size = last_value_block.size
-
-                encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
-                    last_time_block, last_value_block, freq_nhz, last_time_block[0],
-                    raw_time_type=raw_time_type, raw_value_type=raw_value_type, encoded_time_type=encoded_time_type,
-                    encoded_value_type=encoded_value_type, scale_m=scale_m, scale_b=scale_b)
-
-                # change the optimal block size back to the original size
-                self.block.block_size = optimal_block_size
-
-                # if there was more than one full block (if there was only one it will be included in the oversized one)
-                if num_full_blocks > 0:
-                    # slice off the full blocks from the time array
-                    full_time_blocks = time_data[:num_full_blocks*optimal_block_size]
-                    # write the full blocks
-                    encoded_bytes_1, encoded_headers_1, byte_start_array_1 = self.block.encode_blocks(
-                        full_time_blocks, full_value_blocks, freq_nhz, full_time_blocks[0],
-                        raw_time_type=raw_time_type, raw_value_type=raw_value_type, encoded_time_type=encoded_time_type,
-                        encoded_value_type=encoded_value_type, scale_m=scale_m, scale_b=scale_b)
-
-                    # concatenate the encoded bytes and the headers together, so they are written to the same tsc file
-                    encoded_bytes = np.concatenate((encoded_bytes_1, encoded_bytes))
-
-                    # concatenate the encoded headers
-                    headers = (BlockMetadata * (num_full_blocks+1))()
-                    for i, h in enumerate(encoded_headers_1):
-                        headers[i] = h
-                    headers[-1] = encoded_headers[0]
-                    encoded_headers = headers
-
-                    # fix byte start array by appending the start byte of the last oversized block to byte_start_array_1
-                    # the start byte will be equal to start byte of the block before the oversized block plus the
-                    # number of header, value and time bytes it has
-                    byte_start_array = np.concatenate((byte_start_array_1, (byte_start_array_1[-1:] +
-                                                       encoded_headers_1[-1].meta_num_bytes +
-                                                       encoded_headers_1[-1].t_num_bytes +
-                                                       encoded_headers_1[-1].v_num_bytes)))
-
-            elif raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
-                if full_value_blocks.size > 0:
-                    # reshape time data so the flattened gap data has the form [[idx1, time1],[idx2,time2], ...]
-                    gap_data = time_data.reshape(-1, 2)
-                    gap_indexes = time_data[::2]
-                    gap_times = time_data[1::2]
-
-                    # find the index to split the time array at by figuring out where in the index column of the gap
-                    # array the index of the number of values in the full blocks would go
-                    split_idx = np.searchsorted(gap_indexes, full_value_blocks.size-1, side='right')
-
-                    # if the split point is after the last gap serachsorted will just return len(gap_indexes) which will
-                    # cause index out of bounds errors so change it to the last array index in this case
-                    # split_idx = split_idx-1 if split_idx == len(gap_indexes) else split_idx
-
-                    # if there is a gap starting right where the split should happen
-                    if gap_indexes[split_idx-1] == (full_value_blocks.size-1):
-                        # make gap data for the full optimal blocks
-                        gap_array1 = gap_data[:split_idx].flatten()
-
-                        # gap data for the oversized block
-                        gap_array2 = gap_data[split_idx:]
-                        # subtract the index your splitting at from all the indexes in the gap array
-                        gap_array2[:, 0] -= full_value_blocks.size
-                        gap_array2 = gap_array2.flatten()
-                        # get the start time for the oversized block
-                        start_time2 = time_0 + (full_value_blocks.size*(10**18//freq_nhz)) + np.sum(gap_times[:split_idx])
-
-                    # if the place to split is in the middle of a gap
-                    else:
-                        # split_idx+1 because we want to include the last gap since the split is in its middle somewhere
-                        gap_array1 = gap_data[:split_idx].flatten()
-
-                        # gap data for the oversized block (split_idx+1 because we dont want to include the last gap
-                        # as its data will be captured in the new start time
-                        gap_array2 = gap_data[split_idx:]
-                        # subtract the index your splitting at from all the indexes in the gap array
-                        gap_array2[:, 0] -= full_value_blocks.size
-                        gap_array2 = gap_array2.flatten()
-                        start_time2 = time_0 + (full_value_blocks.size*(10**18//freq_nhz)) + np.sum(gap_times[:split_idx])
-
-                    # write the full blocks
-                    encoded_bytes_1, encoded_headers_1, byte_start_array_1 = self.block.encode_blocks(
-                        gap_array1, full_value_blocks, freq_nhz, time_0,
-                        raw_time_type=raw_time_type, raw_value_type=raw_value_type, encoded_time_type=encoded_time_type,
-                        encoded_value_type=encoded_value_type, scale_m=scale_m, scale_b=scale_b)
-
-                    # change block size to the size of the last optimal block
-                    self.block.block_size = last_value_block.size
-
-                    encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
-                        gap_array2, last_value_block, freq_nhz, start_time2,
-                        raw_time_type=raw_time_type, raw_value_type=raw_value_type, encoded_time_type=encoded_time_type,
-                        encoded_value_type=encoded_value_type, scale_m=scale_m, scale_b=scale_b)
-
-                    # change the optimal block size back to the original size
-                    self.block.block_size = optimal_block_size
-
-                    # concatenate the encoded bytes and the headers together, so they are written to the same tsc file
-                    encoded_bytes = np.concatenate((encoded_bytes_1, encoded_bytes))
-                    # concatenate the encoded headers
-                    headers = (BlockMetadata * (num_full_blocks+1))()
-                    for i, h in enumerate(encoded_headers_1):
-                        headers[i] = h
-                    headers[-1] = encoded_headers[0]
-                    encoded_headers = headers
-
-                    # fix byte start array
-                    byte_start_array = np.concatenate((byte_start_array_1, (byte_start_array_1[-1:] +
-                                                       encoded_headers_1[-1].meta_num_bytes +
-                                                       encoded_headers_1[-1].t_num_bytes +
-                                                       encoded_headers_1[-1].v_num_bytes)))
-
-                # if there is only enough data to make the oversized block (there is only one full block)
-                else:
-                    # change block size to the size of the last optimal block
-                    self.block.block_size = last_value_block.size
-
-                    encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
-                        time_data, last_value_block, freq_nhz, time_0,
-                        raw_time_type=raw_time_type, raw_value_type=raw_value_type, encoded_time_type=encoded_time_type,
-                        encoded_value_type=encoded_value_type, scale_m=scale_m, scale_b=scale_b)
-
-                    # change the optimal block size back to the original size
-                    self.block.block_size = optimal_block_size
-
-            else:
-                raise ValueError("Time type must be one of [1, 2]")
+            byte_start_array, encoded_bytes, encoded_headers = self.make_oversized_block(encoded_time_type,
+                                                                                         encoded_value_type, freq_nhz,
+                                                                                         num_full_blocks, raw_time_type,
+                                                                                         raw_value_type, scale_b,
+                                                                                         scale_m, time_0, time_data,
+                                                                                         value_data)
+        # if all blocks are perfectly sized or there is less than one optimal block worth of data
         else:
             # Encode the blocks
             encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
@@ -820,6 +681,133 @@ class AtriumSDK:
             self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data)
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
+
+    def make_oversized_block(self, encoded_time_type, encoded_value_type, freq_nhz, num_full_blocks, raw_time_type,
+                             raw_value_type, scale_b, scale_m, time_0, time_data, value_data):
+        # remove 1 from num_full_blocks since one full block will be a part of the last oversized block
+        num_full_blocks -= 1
+        # save original optimal block size, so you can switch back later
+        optimal_block_size = self.block.block_size
+        # slice off enough data to fill the full blocks
+        full_value_blocks = value_data[:num_full_blocks * optimal_block_size]
+        # the rest of the data will be in one block that is bigger than the optimal block size
+        last_value_block = value_data[num_full_blocks * optimal_block_size:]
+        # free up space since we don't need this array anymore
+        del value_data
+        # if the time type is 1
+        if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+
+            # slice the time array to get the last oversized block
+            last_time_block = time_data[num_full_blocks * optimal_block_size:]
+
+            # change block size to the size of the last oversized block
+            self.block.block_size = last_value_block.size
+
+            encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
+                last_time_block, last_value_block, freq_nhz, last_time_block[0],
+                raw_time_type=raw_time_type, raw_value_type=raw_value_type, encoded_time_type=encoded_time_type,
+                encoded_value_type=encoded_value_type, scale_m=scale_m, scale_b=scale_b)
+
+            # change the optimal block size back to the original size
+            self.block.block_size = optimal_block_size
+
+            # if there was more than one full block (if there was only one it will be included in the oversized one)
+            if num_full_blocks > 0:
+                # slice off the full blocks from the time array
+                full_time_blocks = time_data[:num_full_blocks * optimal_block_size]
+                # write the full blocks
+                encoded_bytes_1, encoded_headers_1, byte_start_array_1 = self.block.encode_blocks(
+                    full_time_blocks, full_value_blocks, freq_nhz, full_time_blocks[0],
+                    raw_time_type=raw_time_type, raw_value_type=raw_value_type, encoded_time_type=encoded_time_type,
+                    encoded_value_type=encoded_value_type, scale_m=scale_m, scale_b=scale_b)
+
+                # concatenate the encoded bytes and the headers together, so they are written to the same tsc file
+                encoded_bytes = np.concatenate((encoded_bytes_1, encoded_bytes))
+
+                # concatenate the encoded headers
+                headers = (BlockMetadata * (num_full_blocks + 1))()
+                for i, h in enumerate(encoded_headers_1):
+                    headers[i] = h
+                headers[-1] = encoded_headers[0]
+                encoded_headers = headers
+
+                # fix byte start array by appending the start byte of the last oversized block to byte_start_array_1
+                # the start byte will be equal to start byte of the block before the oversized block plus the
+                # number of header, value and time bytes it has
+                byte_start_array = np.concatenate((byte_start_array_1, (byte_start_array_1[-1:] +
+                                                                        encoded_headers_1[-1].meta_num_bytes +
+                                                                        encoded_headers_1[-1].t_num_bytes +
+                                                                        encoded_headers_1[-1].v_num_bytes)))
+
+        elif raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
+            if full_value_blocks.size > 0:
+                # reshape time data so the flattened gap data has the form [[idx1, time1],[idx2,time2], ...]
+                gap_data = time_data.reshape(-1, 2)
+                gap_indexes = time_data[::2]
+                gap_times = time_data[1::2]
+
+                # find the index to split the time array at by figuring out where in the index column of the gap
+                # array the index of the number of values in the full blocks would go
+                split_idx = np.searchsorted(gap_indexes, full_value_blocks.size - 1, side='right')
+
+                # slice off the gaps that are part of the optimal block size array
+                gap_array1 = gap_data[:split_idx].flatten()
+
+                # slice of the gap data for the one oversized block
+                gap_array2 = gap_data[split_idx:]
+                # subtract the index your splitting at from all the indexes in the second gap array
+                gap_array2[:, 0] -= full_value_blocks.size
+                gap_array2 = gap_array2.flatten()
+                start_time2 = time_0 + (full_value_blocks.size * (10 ** 18 // freq_nhz)) + np.sum(gap_times[:split_idx])
+
+                # write the full blocks
+                encoded_bytes_1, encoded_headers_1, byte_start_array_1 = self.block.encode_blocks(
+                    gap_array1, full_value_blocks, freq_nhz, time_0,
+                    raw_time_type=raw_time_type, raw_value_type=raw_value_type, encoded_time_type=encoded_time_type,
+                    encoded_value_type=encoded_value_type, scale_m=scale_m, scale_b=scale_b)
+
+                # change block size to the size of the last optimal block
+                self.block.block_size = last_value_block.size
+
+                encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
+                    gap_array2, last_value_block, freq_nhz, start_time2,
+                    raw_time_type=raw_time_type, raw_value_type=raw_value_type, encoded_time_type=encoded_time_type,
+                    encoded_value_type=encoded_value_type, scale_m=scale_m, scale_b=scale_b)
+
+                # change the optimal block size back to the original size
+                self.block.block_size = optimal_block_size
+
+                # concatenate the encoded bytes and the headers together, so they are written to the same tsc file
+                encoded_bytes = np.concatenate((encoded_bytes_1, encoded_bytes))
+                # concatenate the encoded headers
+                headers = (BlockMetadata * (num_full_blocks + 1))()
+                for i, h in enumerate(encoded_headers_1):
+                    headers[i] = h
+                headers[-1] = encoded_headers[0]
+                encoded_headers = headers
+
+                # fix byte start array
+                byte_start_array = np.concatenate((byte_start_array_1, (byte_start_array_1[-1:] +
+                                                                        encoded_headers_1[-1].meta_num_bytes +
+                                                                        encoded_headers_1[-1].t_num_bytes +
+                                                                        encoded_headers_1[-1].v_num_bytes)))
+
+            # if there is only enough data to make the oversized block (there is only one full block)
+            else:
+                # change block size to the size of the last optimal block
+                self.block.block_size = last_value_block.size
+
+                encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
+                    time_data, last_value_block, freq_nhz, time_0,
+                    raw_time_type=raw_time_type, raw_value_type=raw_value_type, encoded_time_type=encoded_time_type,
+                    encoded_value_type=encoded_value_type, scale_m=scale_m, scale_b=scale_b)
+
+                # change the optimal block size back to the original size
+                self.block.block_size = optimal_block_size
+
+        else:
+            raise ValueError("Time type must be one of [1, 2]")
+        return byte_start_array, encoded_bytes, encoded_headers
 
     def write_data_file_only(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray,
                              freq_nhz: int, time_0: int, raw_time_type: int = None, raw_value_type: int = None,
