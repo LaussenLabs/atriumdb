@@ -635,7 +635,7 @@ class AtriumSDK:
         # check if the write data will make at least one full block and if there will be a small block at the end
         num_full_blocks = value_data.size // self.block.block_size
         if num_full_blocks > 0 and value_data.size % self.block.block_size != 0:
-            byte_start_array, encoded_bytes, encoded_headers = self.make_oversized_block(encoded_time_type,
+            byte_start_array, encoded_bytes, encoded_headers = self._make_oversized_block(encoded_time_type,
                                                                                          encoded_value_type, freq_nhz,
                                                                                          num_full_blocks, raw_time_type,
                                                                                          raw_value_type, scale_b,
@@ -682,7 +682,7 @@ class AtriumSDK:
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
 
-    def make_oversized_block(self, encoded_time_type, encoded_value_type, freq_nhz, num_full_blocks, raw_time_type,
+    def _make_oversized_block(self, encoded_time_type, encoded_value_type, freq_nhz, num_full_blocks, raw_time_type,
                              raw_value_type, scale_b, scale_m, time_0, time_data, value_data):
         # remove 1 from num_full_blocks since one full block will be a part of the last oversized block
         num_full_blocks -= 1
