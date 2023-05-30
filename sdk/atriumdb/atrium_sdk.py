@@ -702,38 +702,37 @@ class AtriumSDK:
 
                     # find the index to split the time array at by figuring out where in the index column of the gap
                     # array the index of the number of values in the full blocks would go
-                    split_idx = np.searchsorted(gap_indexes, full_value_blocks.size-1)
+                    split_idx = np.searchsorted(gap_indexes, full_value_blocks.size-1, side='right')
 
                     # if the split point is after the last gap serachsorted will just return len(gap_indexes) which will
                     # cause index out of bounds errors so change it to the last array index in this case
                     # split_idx = split_idx-1 if split_idx == len(gap_indexes) else split_idx
-                    split_idx -= 1
 
                     # if there is a gap starting right where the split should happen
-                    if gap_indexes[split_idx] == (full_value_blocks.size-1):
+                    if gap_indexes[split_idx-1] == (full_value_blocks.size-1):
                         # make gap data for the full optimal blocks
                         gap_array1 = gap_data[:split_idx].flatten()
 
                         # gap data for the oversized block
-                        gap_array2 = gap_data[split_idx+1:]
+                        gap_array2 = gap_data[split_idx:]
                         # subtract the index your splitting at from all the indexes in the gap array
-                        gap_array2[:, 0] -= gap_indexes[split_idx]
+                        gap_array2[:, 0] -= full_value_blocks.size
                         gap_array2 = gap_array2.flatten()
                         # get the start time for the oversized block
-                        start_time2 = time_0 + (full_value_blocks.size*(10**18//freq_nhz)) + np.sum(gap_times[:split_idx+1])
+                        start_time2 = time_0 + (full_value_blocks.size*(10**18//freq_nhz)) + np.sum(gap_times[:split_idx])
 
                     # if the place to split is in the middle of a gap
                     else:
                         # split_idx+1 because we want to include the last gap since the split is in its middle somewhere
-                        gap_array1 = gap_data[:split_idx+1].flatten()
+                        gap_array1 = gap_data[:split_idx].flatten()
 
                         # gap data for the oversized block (split_idx+1 because we dont want to include the last gap
                         # as its data will be captured in the new start time
-                        gap_array2 = gap_data[split_idx+1:]
+                        gap_array2 = gap_data[split_idx:]
                         # subtract the index your splitting at from all the indexes in the gap array
                         gap_array2[:, 0] -= full_value_blocks.size
                         gap_array2 = gap_array2.flatten()
-                        start_time2 = time_0 + (full_value_blocks.size*(10**18//freq_nhz)) + np.sum(gap_times[:split_idx+1])
+                        start_time2 = time_0 + (full_value_blocks.size*(10**18//freq_nhz)) + np.sum(gap_times[:split_idx])
 
                     # write the full blocks
                     encoded_bytes_1, encoded_headers_1, byte_start_array_1 = self.block.encode_blocks(

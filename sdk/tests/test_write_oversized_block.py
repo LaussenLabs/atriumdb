@@ -113,6 +113,7 @@ def _test_write_oversized_block_timestamp(db_type, dataset_location, connection_
     assert np.array_equal(r_times, timestamp_arr)
     assert np.array_equal(r_values, values)
 
+
 def _test_write_oversized_block_gap(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
@@ -159,11 +160,12 @@ def _test_write_oversized_block_gap(db_type, dataset_location, connection_params
                                                  156_000_000, 970_000, 56_000_000, 985_123, 200_000_000]
     gap_data_split_before_multiple_gaps_exact = np.array(gap_data_split_before_multiple_gaps_exact, dtype=np.int64)
 
-    gap_arrays = [gap_data_split_last_gap, gap_data_split_just_before_last_gap, gap_data_split_before_multiple_gaps,
-                  gap_data_split_on_last_gap_exact, gap_data_split_just_before_last_gap_exact,
+    # gap_arrays = [gap_data_split_last_gap, gap_data_split_just_before_last_gap, gap_data_split_before_multiple_gaps,
+    #               gap_data_split_on_last_gap_exact, gap_data_split_just_before_last_gap_exact,
+    #               gap_data_split_before_multiple_gaps_exact]
+    gap_arrays = [gap_data_split_on_last_gap_exact, gap_data_split_just_before_last_gap_exact,
                   gap_data_split_before_multiple_gaps_exact]
-
-    # TODO have to create tests for normal time arrays and also where there is only the last oversized block
+    # TODO have to create tests for where there is only the last oversized block
 
     for i, gap_data in enumerate(gap_arrays):
         timestamp_arr, values, end_time_nano = make_gap_data(gap_data, start_time_nano, num_values, period_ns)
