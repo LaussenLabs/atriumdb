@@ -635,12 +635,9 @@ class AtriumSDK:
         # check if the write data will make at least one full block and if there will be a small block at the end
         num_full_blocks = value_data.size // self.block.block_size
         if num_full_blocks > 0 and value_data.size % self.block.block_size != 0:
-            byte_start_array, encoded_bytes, encoded_headers = self._make_oversized_block(encoded_time_type,
-                                                                                         encoded_value_type, freq_nhz,
-                                                                                         num_full_blocks, raw_time_type,
-                                                                                         raw_value_type, scale_b,
-                                                                                         scale_m, time_0, time_data,
-                                                                                         value_data)
+            byte_start_array, encoded_bytes, encoded_headers = self._make_oversized_block(
+                encoded_time_type, encoded_value_type, freq_nhz,num_full_blocks, raw_time_type, raw_value_type, scale_b,
+                scale_m, time_0, time_data, value_data)
         # if all blocks are perfectly sized or there is less than one optimal block worth of data
         else:
             # Encode the blocks
@@ -692,8 +689,7 @@ class AtriumSDK:
         full_value_blocks = value_data[:num_full_blocks * optimal_block_size]
         # the rest of the data will be in one block that is bigger than the optimal block size
         last_value_block = value_data[num_full_blocks * optimal_block_size:]
-        # free up space since we don't need this array anymore
-        del value_data
+
         # if the time type is 1
         if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
 
@@ -774,9 +770,6 @@ class AtriumSDK:
                     raw_time_type=raw_time_type, raw_value_type=raw_value_type, encoded_time_type=encoded_time_type,
                     encoded_value_type=encoded_value_type, scale_m=scale_m, scale_b=scale_b)
 
-                # change the optimal block size back to the original size
-                self.block.block_size = optimal_block_size
-
                 # concatenate the encoded bytes and the headers together, so they are written to the same tsc file
                 encoded_bytes = np.concatenate((encoded_bytes_1, encoded_bytes))
                 # concatenate the encoded headers
@@ -801,12 +794,12 @@ class AtriumSDK:
                     time_data, last_value_block, freq_nhz, time_0,
                     raw_time_type=raw_time_type, raw_value_type=raw_value_type, encoded_time_type=encoded_time_type,
                     encoded_value_type=encoded_value_type, scale_m=scale_m, scale_b=scale_b)
-
-                # change the optimal block size back to the original size
-                self.block.block_size = optimal_block_size
-
         else:
             raise ValueError("Time type must be one of [1, 2]")
+
+        # change the optimal block size back to the original size
+        self.block.block_size = optimal_block_size
+
         return byte_start_array, encoded_bytes, encoded_headers
 
     def write_data_file_only(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray,
