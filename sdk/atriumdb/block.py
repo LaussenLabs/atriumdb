@@ -27,14 +27,6 @@ from atriumdb.helpers.block_calculations import freq_nhz_to_period_ns, calc_gap_
 from atriumdb.helpers.type_helpers import *
 from atriumdb.helpers.block_constants import *
 import logging
-#
-# logging.basicConfig(
-#     level=logging.debug,
-#     format="%(asctime)s [%(levelname)s] %(message)s",
-#     handlers=[
-#         logging.StreamHandler()
-#     ]
-# )
 
 
 class Block:
@@ -175,21 +167,36 @@ class Block:
 
         return times, (num_block_intervals, elapsed_block_time, interval_block_start)
 
-    def decode_blocks(self, encoded_bytes, byte_start_array, analog=True, times_before=None, values_before=None):
-        # Determine the index for new values and new times based on the input values_before and times_before
-        if values_before is None:
-            new_values_index = 0
-        else:
-            new_values_index = values_before.size * values_before.itemsize
+    def decode_blocks(self, encoded_bytes, num_bytes_list, analog=True, time_type=1):
 
-        if times_before is None:
-            new_times_index = 0
+        # Calculate the starting byte positions of each block in the encoded bytes array
+        byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
+        byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]], axis=None)
+
+        # trick C dll into decoding the data directly into the time type you want by editing the t_raw_type field in
+        # each of the block headers in the encoded_bytes_stream so the python sdk doesn't have to do it
+        if time_type == 1:
+            for start_byte in byte_start_array:
+                # using from_buffer() on the header will allow us to directly modify the encoded_bytes variable through
+                # the headers ctypes fields. This is because both the header struct and encoded_bytes variable point at
+                # the same bytes in memory so modifying one will modify the other
+                header = BlockMetadata.from_buffer(encoded_bytes, start_byte)
+                if header.t_raw_type != 1:
+                    header.t_raw_type = time_type
+                    header.t_raw_size = 8 * header.num_vals
+        elif time_type == 2:
+            for start_byte in byte_start_array:
+                header = BlockMetadata.from_buffer(encoded_bytes, start_byte)
+                if header.t_raw_type != 2:
+                    header.t_raw_type = time_type
+                    header.t_raw_size = 16 * header.num_gaps
         else:
-            new_times_index = times_before.size * times_before.itemsize
+            raise ValueError("Time type must be in [1, 2]")
 
         # Decode the headers from the encoded bytes
         start_bench = time.perf_counter()
         headers = self.decode_headers(encoded_bytes, byte_start_array)
+
         end_bench = time.perf_counter()
         logging.debug(f"decode headers {(end_bench - start_bench) * 1000} ms")
 
@@ -219,15 +226,15 @@ class Block:
 
         # Allocate memory for the decoded time and value data
         start_bench = time.perf_counter()
-        time_data = np.zeros(sum(h.t_raw_size for h in headers) + new_times_index, dtype=np.uint8)
-        value_data = np.zeros(sum(h.v_raw_size for h in headers) + new_values_index, dtype=np.uint8)
+        time_data = np.zeros(sum(h.t_raw_size for h in headers), dtype=np.uint8)
+        value_data = np.zeros(sum(h.v_raw_size for h in headers), dtype=np.uint8)
         end_bench = time.perf_counter()
         logging.debug(f"allocate data memory {(end_bench - start_bench) * 1000} ms")
 
         # Call the wrapped C library function to decode the blocks
         start_bench = time.perf_counter()
         self.wrapped_dll.decode_blocks_sdk(
-            time_data[new_times_index:], value_data[new_values_index:], encoded_bytes, len(byte_start_array),
+            time_data, value_data, encoded_bytes, len(byte_start_array),
             t_block_start, v_block_start, byte_start_array, t_byte_start)
         end_bench = time.perf_counter()
         logging.debug(f"C Decode {(end_bench - start_bench) * 1000} ms")
@@ -268,12 +275,12 @@ class Block:
             # Apply the scale factors to the value data
             if np.all(scale_m_array == scale_m_array[0]) and np.all(scale_b_array == scale_b_array[0]):
                 start_bench = time.perf_counter()
-                value_data[new_values_index:] *= scale_m_array[0]
+                value_data *= scale_m_array[0]
                 end_bench = time.perf_counter()
                 logging.debug(f"\tscale: apply slope {(end_bench - start_bench) * 1000} ms")
 
                 start_bench = time.perf_counter()
-                value_data[new_values_index:] += scale_b_array[0]
+                value_data += scale_b_array[0]
                 end_bench = time.perf_counter()
                 logging.debug(f"\tscale: apply y-int {(end_bench - start_bench) * 1000} ms")
 
@@ -284,12 +291,10 @@ class Block:
 
                 for i in range(scale_m_array.size):
                     if scale_m_array[i] != 0:
-                        value_data[new_values_index:][int(v_data_regions[i]):int(v_data_regions[i + 1])] *= \
-                            scale_m_array[i]
+                        value_data[int(v_data_regions[i]):int(v_data_regions[i + 1])] *= scale_m_array[i]
 
                     if scale_b_array[i] != 0:
-                        value_data[new_values_index:][int(v_data_regions[i]):int(v_data_regions[i + 1])] += \
-                            scale_b_array[i]
+                        value_data[int(v_data_regions[i]):int(v_data_regions[i + 1])] += scale_b_array[i]
 
         end_bench_scale = time.perf_counter()
         logging.debug(f"apply scale factors total {(end_bench_scale - start_bench_scale) * 1000} ms")

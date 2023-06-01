@@ -18,6 +18,7 @@
 import numpy as np
 from fastapi.testclient import TestClient
 
+from atriumdb.adb_functions import sort_data
 from atriumdb.atrium_sdk import AtriumSDK
 from tests.generate_wfdb import get_records
 
@@ -110,6 +111,8 @@ def mock_get_data_api(sdk, client: TestClient, measure_id, end_time, start_time,
     encoded_bytes = np.concatenate(
         [np.frombuffer(response.content, dtype=np.uint8) for response in block_requests], axis=None)
     num_bytes_list = [row['num_bytes'] for row in block_info_list]
-    headers, r_times, r_values = \
-        sdk.decode_block_arr(encoded_bytes, num_bytes_list, start_time, end_time, True, True)
+    r_times, r_values, headers = sdk.block.decode_blocks(encoded_bytes, num_bytes_list, analog=True,
+                                                         time_type=1)
+    r_times, r_values = sort_data(r_times, r_values, headers, start_time, end_time)
+
     return headers, r_times, r_values
