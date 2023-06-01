@@ -2506,7 +2506,7 @@ class AtriumSDK:
             'name': 'Heart rate in beats per minute',
             'freq_nhz': 1000000000,
             'code': 'HR',
-            'unit': 'bpm',
+            'unit': 'BPM',
             'unit_label': 'beats per minute',
             'unit_code': 264864,
             'source_id': 1
