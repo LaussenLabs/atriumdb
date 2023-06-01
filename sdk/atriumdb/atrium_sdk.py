@@ -2422,7 +2422,7 @@ class AtriumSDK:
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> measure_id = 3
         >>> device_id = 2
-        >>> start_time_nano = 1234567890123
+        >>> start_time_nano = 1234567890000000000
         >>> sdk.measure_device_start_time_exists(measure_id, device_id, start_time_nano)
         ... True
         """
@@ -2504,11 +2504,11 @@ class AtriumSDK:
             'id': 1,
             'tag': 'Heart Rate',
             'name': 'Heart rate in beats per minute',
-            'freq_nhz': 60,
+            'freq_nhz': 1000000000,
             'code': 'HR',
             'unit': 'bpm',
             'unit_label': 'beats per minute',
-            'unit_code': 'bpm',
+            'unit_code': 264864,
             'source_id': 1
         }
         """
