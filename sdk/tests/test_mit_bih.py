@@ -15,8 +15,10 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from atriumdb import AtriumSDK
+from atriumdb import AtriumSDK, T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
+    V_TYPE_DOUBLE
 import numpy as np
+import random
 
 from tests.generate_wfdb import get_records
 from tests.test_transfer_info import insert_random_patients
@@ -25,6 +27,7 @@ from tests.testing_framework import _test_for_both
 DB_NAME = 'atrium-mit-bih'
 
 MAX_RECORDS = 1
+SEED = 42
 
 
 def test_mit_bih():
@@ -35,22 +38,31 @@ def _test_mit_bih(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS)
-    assert_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS)
+    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
+    assert_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
 
 
 def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, deidentify=False, time_shift=None,
-                              use_patient_id=False):
+                              use_patient_id=False, seed=None):
+    if seed is not None:
+        np.random.seed(seed)
+        random.seed(seed)
     num_records = 0
     for record in get_records(dataset_name='mitdb'):
         if max_records and num_records >= max_records:
             return
         num_records += 1
         device_id = sdk.get_device_id(device_tag=record.record_name)
-        freq_nano = record.fs * 1_000_000_000
-        period_ns = int(10 ** 9 // record.fs)
+        # freq_nano = record.fs * 1_000_000_000
+        freq_nano = 500 * 1_000_000_000
+        # period_ns = int(10 ** 9 // record.fs)
+        period_ns = int(10 ** 18 // freq_nano)
 
         time_arr = np.arange(record.sig_len, dtype=np.int64) * period_ns
+        gap_data_2d = create_gaps(time_arr.size, period_ns)
+
+        for gap_index, gap_duration in gap_data_2d:
+            time_arr[gap_index:] += gap_duration
 
         if time_shift:
             time_arr -= time_shift
@@ -67,7 +79,9 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
                 headers, read_times, read_values = sdk.get_data(measure_id, time_arr[0], time_arr[-1] + period_ns,
                                                                 **query_args)
 
-                assert np.array_equal(record.p_signal.T[i], read_values) and np.array_equal(time_arr, read_times)
+                assert np.array_equal(record.p_signal.T[i], read_values), \
+                    f"{record.p_signal.T[i].shape} != {read_values.shape}"
+                assert np.array_equal(time_arr, read_times), f"{time_arr.shape} != {read_times.shape}"
 
         # if there is only one signal in the input file insert it
         else:
@@ -88,6 +102,10 @@ def assert_partial_mit_bih_to_dataset(sdk, measure_id_list=None, device_id_list=
         freq_nano = record.fs * 1_000_000_000
         period_ns = int(10 ** 9 // record.fs)
         time_arr = np.arange(record.sig_len, dtype=np.int64) * period_ns
+        # gap_data_2d = create_gaps(time_arr.size, period_ns)
+        #
+        # for gap_index, gap_duration in gap_data_2d:
+        #     time_arr[gap_index:] += gap_duration
 
         if max_records is not None and records_tested >= max_records:
             break
@@ -139,7 +157,11 @@ def assert_partial_mit_bih_to_dataset(sdk, measure_id_list=None, device_id_list=
             assert np.array_equal(read_data, expected_data)
 
 
-def write_mit_bih_to_dataset(sdk, max_records=None):
+def write_mit_bih_to_dataset(sdk, max_records=None, seed=None):
+    if seed is not None:
+        np.random.seed(seed)
+        random.seed(seed)
+
     num_records = 0
 
     device_patient_dict = {}
@@ -148,10 +170,17 @@ def write_mit_bih_to_dataset(sdk, max_records=None):
             return
         num_records += 1
         device_id = sdk.insert_device(device_tag=record.record_name)
-        freq_nano = record.fs * 1_000_000_000
-        period_nano = int(10 ** 9 // record.fs)
+        # freq_nano = record.fs * 1_000_000_000
+        freq_nano = 500 * 1_000_000_000
+        # period_nano = int(10 ** 9 // record.fs)
+        period_nano = int(10 ** 18 // freq_nano)
 
         time_arr = np.arange(record.sig_len, dtype=np.int64) * period_nano
+
+        gap_data_2d = create_gaps(time_arr.size, period_nano)
+
+        for gap_index, gap_duration in gap_data_2d:
+            time_arr[gap_index:] += gap_duration
 
         # Insert a random patient
         patient_id = insert_random_patients(sdk, 1)[0]
@@ -166,24 +195,47 @@ def write_mit_bih_to_dataset(sdk, max_records=None):
         # If there are multiple signals in one record, split them into two different dataset entries
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
-                measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano,
-                                                units=record.units[i])
-                # Write data
-                sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal.T[i],
-                                    freq_nano, scale_m=None, scale_b=None)
+                write_to_sdk(record.sig_name[i], freq_nano, record.units[i], device_id, gap_data_2d, time_arr,
+                             record.p_signal.T[i], start_time, sdk)
 
         # If there is only one signal in the input file, insert it
         else:
-            measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano,
-                                            units=record.units)
-
-            sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal,
-                                freq_nano, scale_m=None, scale_b=None)
+            write_to_sdk(record.sig_name, freq_nano, record.units, device_id, gap_data_2d, time_arr,
+                         record.p_signal, start_time, sdk)
 
     return device_patient_dict
 
 
-def create_gaps(size, period, gap_density=0.1):
+def write_to_sdk(measure_tag, freq_nano, units, device_id, gap_data_2d, time_arr, value_data, start_time, sdk):
+    measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq_nano,
+                                    units=units)
+    # Write data
+    if random.random() < 0.5:
+        # Time type 1
+        sdk.write_data_easy(measure_id, device_id, time_arr, value_data,
+                            freq_nano, scale_m=None, scale_b=None)
+    else:
+        raw_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
+
+        # Determine the encoded time type
+        encoded_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
+
+        # Determine the raw and encoded value types based on the dtype of value_data
+        if np.issubdtype(value_data.dtype, np.integer):
+            raw_v_t = V_TYPE_INT64
+            encoded_v_t = V_TYPE_DELTA_INT64
+        else:
+            raw_v_t = V_TYPE_DOUBLE
+            encoded_v_t = V_TYPE_DOUBLE
+
+        # Call the write_data method with the determined parameters
+        sdk.write_data(measure_id, device_id, gap_data_2d.flatten(), value_data, freq_nano, start_time,
+                       raw_time_type=raw_t_t,
+                       raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
+                       scale_m=None, scale_b=None)
+
+
+def create_gaps(size, period, gap_density=0.001):
     # Determine the total number of gaps based on the gap density
     num_gaps = int(size * gap_density)
 
