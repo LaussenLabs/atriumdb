@@ -1922,22 +1922,22 @@ class AtriumSDK:
         {1: {'id': 1,
              'mrn': 123456,
              'gender': 'M',
-             'dob': 946684800,
+             'dob': 946684800000000000,
              'first_name': 'John',
              'middle_name': 'A',
              'last_name': 'Doe',
-             'first_seen': 1609459200,
-             'last_updated': 1609545600,
+             'first_seen': 1609459200000000000,
+             'last_updated': 1609545600000000000,
              'source_id': 1},
          2: {'id': 2,
              'mrn': 654321,
              'gender': 'F',
-             'dob': 978307200,
+             'dob': 978307200000000000,
              'first_name': 'Jane',
              'middle_name': 'B',
              'last_name': 'Smith',
-             'first_seen': 1609642000,
-             'last_updated': 1609728400,
+             'first_seen': 1609642000000000000,
+             'last_updated': 1609728400000000000,
              'source_id': 1}}
 
         :return: A dictionary containing information about each patient, including their id, mrn, gender, dob,
@@ -2302,7 +2302,7 @@ class AtriumSDK:
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> measure_id = 3
         >>> device_id = 2
-        >>> start_time_nano = 1234567890123
+        >>> start_time_nano = 1234567890000000000
         >>> sdk.measure_device_start_time_exists(measure_id, device_id, start_time_nano)
         ... True
         """
@@ -2384,11 +2384,11 @@ class AtriumSDK:
             'id': 1,
             'tag': 'Heart Rate',
             'name': 'Heart rate in beats per minute',
-            'freq_nhz': 60,
+            'freq_nhz': 1000000000,
             'code': 'HR',
-            'unit': 'bpm',
+            'unit': 'BPM',
             'unit_label': 'beats per minute',
-            'unit_code': 'bpm',
+            'unit_code': 264864,
             'source_id': 1
         }
         """
