@@ -1167,7 +1167,7 @@ class AtriumSDK:
         # Make the request and return the response
         return requests.get(block_request_url, headers=headers)
 
-    def get_block_bytes_response_from_session(self, block_id, session: Session):
+    def get_block_bytes_response_from_session(self, block_id, session):
         """
         Retrieve the block bytes response for a given block ID using a session.
 
