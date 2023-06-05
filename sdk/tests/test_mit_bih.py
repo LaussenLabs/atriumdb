@@ -181,3 +181,29 @@ def write_mit_bih_to_dataset(sdk, max_records=None):
                                 freq_nano, scale_m=None, scale_b=None)
 
     return device_patient_dict
+
+
+def create_gaps(size, period, gap_density=0.1):
+    # Determine the total number of gaps based on the gap density
+    num_gaps = int(size * gap_density)
+
+    # Generate unique random gap indices
+    gap_indices = np.random.choice(size, size=num_gaps, replace=False)
+
+    # Generate multiples of the sample period for each gap
+    gap_periods = np.random.randint(1, 10, size=num_gaps) * period
+
+    # Create a 2D array with gap indices and gap periods
+    gap_data = np.array([gap_indices, gap_periods]).T.astype(np.int64)
+
+    # Sort the array by the gap indices
+    gap_data = gap_data[gap_data[:, 0].argsort()]
+
+    return gap_data
+
+
+def test_create_gaps():
+    gap_data = create_gaps(100, 2_000_000)
+    print(gap_data)
+    print(gap_data.shape, gap_data.dtype)
+    print(gap_data.flatten())
