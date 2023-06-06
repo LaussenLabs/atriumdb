@@ -228,6 +228,9 @@ def write_to_sdk(measure_tag, freq_nano, units, device_id, gap_data_2d, time_arr
             raw_v_t = V_TYPE_DOUBLE
             encoded_v_t = V_TYPE_DOUBLE
 
+        # Create random block_size
+        sdk.block.block_size = random.choice([2 ** exp for exp in range(4, 21)])
+
         # Call the write_data method with the determined parameters
         sdk.write_data(measure_id, device_id, gap_data_2d.flatten(), value_data, freq_nano, start_time,
                        raw_time_type=raw_t_t,
