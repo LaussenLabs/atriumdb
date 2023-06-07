@@ -44,6 +44,7 @@ def _test_mit_bih(db_type, dataset_location, connection_params):
 
 def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, deidentify=False, time_shift=None,
                               use_patient_id=False, seed=None):
+    print()
     if seed is not None:
         np.random.seed(seed)
         random.seed(seed)
@@ -76,12 +77,30 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
                 measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano,
                                                 units=record.units[i])
 
+                expected_values = record.p_signal.T[i].astype(np.float64)
+                expected_times = time_arr
+
                 headers, read_times, read_values = sdk.get_data(measure_id, time_arr[0], time_arr[-1] + period_ns,
                                                                 **query_args)
 
-                assert np.array_equal(record.p_signal.T[i], read_values), \
-                    f"{record.p_signal.T[i].shape} != {read_values.shape}"
-                assert np.array_equal(time_arr, read_times), f"{time_arr.shape} != {read_times.shape}"
+                if not np.allclose(expected_values, read_values):
+                    print("Wrong Values")
+                    print(f"Expected: {expected_values.shape, expected_values.dtype}")
+                    print(f"Actual: {read_values.shape, read_values.dtype}")
+
+                    print(expected_values)
+                    print(read_values)
+
+                if not np.array_equal(expected_times, read_times):
+                    print("Wrong Times")
+                    print(f"Expected: {expected_times.shape, expected_times.dtype}")
+                    print(f"Actual: {read_times.shape, read_times.dtype}")
+
+                    print(expected_times)
+                    print(read_times)
+
+                assert np.allclose(expected_values, read_values)
+                assert np.array_equal(expected_times, read_times)
 
         # if there is only one signal in the input file insert it
         else:
