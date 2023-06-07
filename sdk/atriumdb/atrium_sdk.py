@@ -1,3 +1,20 @@
+# AtriumDB is a timeseries database software designed to best handle the unique features and
+# challenges that arise from clinical waveform data.
+#     Copyright (C) 2023  The Hospital for Sick Children
+#
+#     This program is free software: you can redistribute it and/or modify
+#     it under the terms of the GNU General Public License as published by
+#     the Free Software Foundation, either version 3 of the License, or
+#     (at your option) any later version.
+#
+#     This program is distributed in the hope that it will be useful,
+#     but WITHOUT ANY WARRANTY; without even the implied warranty of
+#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#     GNU General Public License for more details.
+#
+#     You should have received a copy of the GNU General Public License
+#     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import numpy as np
 
 from atriumdb.adb_functions import get_block_and_interval_data, condense_byte_read_list, find_intervals, \
@@ -1416,26 +1433,22 @@ class AtriumSDK:
         >>> end_epoch_nano = end_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
         >>> _, r_times, r_values = sdk.get_data(measure_id=1,start_time_n=start_epoch_s,end_time_n=end_epoch_nano,device_id=4)
         >>> r_times
-        array([1669668855000000000, 1669668856000000000, 1669668857000000000, ...,
-        1669672452000000000, 1669672453000000000, 1669672454000000000],
-        dtype=int64)
+        ... array([1669668855000000000, 1669668856000000000, 1669668857000000000, ...,
+        ... 1669672452000000000, 1669672453000000000, 1669672454000000000],
+        ... dtype=int64)
         >>> r_values
-        array([ 0.32731968,  0.79003189,  0.99659552, ..., -0.59080797,
-        -0.93542358, -0.97675089])
+        ... array([ 0.32731968,  0.79003189,  0.99659552, ..., -0.59080797, -0.93542358, -0.97675089])
 
-        :param block_info:
-        :param int measure_id: The measure identifier corresponding to the measures table in the
-            linked relational database.
+        :param int measure_id: The measure identifier corresponding to the measures table in the linked relational database.
         :param int start_time_n: The start epoch in nanoseconds of the data you would like to query.
         :param int end_time_n: The end epoch in nanoseconds of the data you would like to query.
-        :param int device_id: The device identifier corresponding to the devices table in the
-            linked relational database.
-        :param int patient_id: The patient identifier corresponding to the encounter table in the
-            linked relational database.
+        :param int device_id: The device identifier corresponding to the devices table in the linked relational database.
+        :param int patient_id: The patient identifier corresponding to the encounter table in the linked relational database.
         :param int time_type: The time type returned to you. Time_type=1 is time stamps, which is what most people will
-        want. Time_type=2 is gap array and should only be used by advanced users. Note that sorting will not work for
-        time type 2 and you may receive more values than you asked for because of this.
+            want. Time_type=2 is gap array and should only be used by advanced users. Note that sorting will not work for
+            time type 2 and you may receive more values than you asked for because of this.
         :param bool analog: Automatically convert value return type to analog signal.
+        :param block_info: Parameter to pass in your own block_info list to skip the need to check the metadata table.
         :param sqlalchemy.engine.Connection connection: You can pass in an sqlalchemy connection object from the
             relational database if you already have one open.
         :param str time_units: If you would like the time array returned in units other than nanoseconds you can
@@ -1443,14 +1456,12 @@ class AtriumSDK:
         :param bool sort: Whether to sort the returned data by time. If false you may receive more data than just
             [start_time_n:end_time_n).
         :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
-        nothing if sort is false. Most data won't have duplicates and making this false will slow down data retreival
-         so only use if you absolutly can't have duplicate times.
-
+            nothing if sort is false. Most data won't have duplicates and making this false will slow down data retreival
+            so only use if you absolutly can't have duplicate times.
         :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
         :returns: A list of the block header python objects.\n
             A numpy 1D array representing the time data (usually an array of timestamps).\n
             A numpy 1D array representing the value data.
-
         """
 
         # check that a correct unit type was entered
@@ -1911,22 +1922,22 @@ class AtriumSDK:
         {1: {'id': 1,
              'mrn': 123456,
              'gender': 'M',
-             'dob': 946684800,
+             'dob': 946684800000000000,
              'first_name': 'John',
              'middle_name': 'A',
              'last_name': 'Doe',
-             'first_seen': 1609459200,
-             'last_updated': 1609545600,
+             'first_seen': 1609459200000000000,
+             'last_updated': 1609545600000000000,
              'source_id': 1},
          2: {'id': 2,
              'mrn': 654321,
              'gender': 'F',
-             'dob': 978307200,
+             'dob': 978307200000000000,
              'first_name': 'Jane',
              'middle_name': 'B',
              'last_name': 'Smith',
-             'first_seen': 1609642000,
-             'last_updated': 1609728400,
+             'first_seen': 1609642000000000000,
+             'last_updated': 1609728400000000000,
              'source_id': 1}}
 
         :return: A dictionary containing information about each patient, including their id, mrn, gender, dob,
@@ -2291,7 +2302,7 @@ class AtriumSDK:
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> measure_id = 3
         >>> device_id = 2
-        >>> start_time_nano = 1234567890123
+        >>> start_time_nano = 1234567890000000000
         >>> sdk.measure_device_start_time_exists(measure_id, device_id, start_time_nano)
         ... True
         """
@@ -2373,11 +2384,11 @@ class AtriumSDK:
             'id': 1,
             'tag': 'Heart Rate',
             'name': 'Heart rate in beats per minute',
-            'freq_nhz': 60,
+            'freq_nhz': 1000000000,
             'code': 'HR',
-            'unit': 'bpm',
+            'unit': 'BPM',
             'unit_label': 'beats per minute',
-            'unit_code': 'bpm',
+            'unit_code': 264864,
             'source_id': 1
         }
         """

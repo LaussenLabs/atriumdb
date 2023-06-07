@@ -108,7 +108,7 @@ To write and read data in AtriumDB, you will use the `write_data_easy` and `get_
 .. code-block:: python
 
     # Write Data
-    sdk.write_data_easy(new_measure_id, new_device_id, time_data, value_data, freq_nhz)
+    sdk.write_data_easy(new_measure_id, new_device_id, time_data, value_data, freq_hz, freq_units="Hz")
 
     # Read Data
     _, read_time_data, read_value_data = sdk.get_data(measure_id=new_measure_id, start_time_n=start_time_nano, end_time_n=end_time_nano, device_id=new_device_id)

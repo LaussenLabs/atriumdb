@@ -219,23 +219,7 @@ Here's the basic syntax for the ``export`` command:
 
     atriumdb export [OPTIONS]
 
-The available options for the ``export`` command are:
-
-- ``--format``: The format of the exported data. Supported formats are "adb", "csv", "parquet", "numpy", and "wfdb". Default is "adb".
-- ``--packaging-type``: The type of packaging for the exported data. Supported types are "files", "tar", and "gzip". Default is "files".
-- ``--cohort-file``: Path to a cohort file for automatically configuring export parameters.
-- ``--measure-ids``: List of measure IDs to export.
-- ``--measures``: List of measure tags to export.
-- ``--device-ids``: List of device IDs to export.
-- ``--devices``: List of device tags to export.
-- ``--patient-ids``: List of patient IDs to export.
-- ``--mrns``: List of MRNs to export.
-- ``--start-time``: Start time for exporting data.
-- ``--end-time``: End time for exporting data.
-- ``--dataset-location-out``: Path to the export directory.
-- ``--metadata-uri-out``: The URI of a metadata server.
-- ``--database-type-out``: The metadata database type.
-- ``--by-patient``: Whether or not to include patient mapping. Default is False.
+Please refer to the :ref:`Export Command <export_header>` section under "List of Commands and Options" for a complete list of options available for the ``export`` command.
 
 Here's an example of using the ``export`` command to export data in CSV format:
 
@@ -320,9 +304,7 @@ Login
 
 This command authenticates the user with the AtriumDB server using a QR code. It sends a request to the server to get the authentication configuration, generates a device code, displays a QR code for the user to scan, and then checks if the user has completed the authentication process. If successful, the API token is set in the user's environment variables.
 
-.. _usage-login:
-
-.. hidden::
+.. ::hidden::
 
     Usage
     ^^^^^^^
@@ -332,21 +314,21 @@ This command authenticates the user with the AtriumDB server using a QR code. It
    atriumdb login
 
 
-.. _options-login:
-
-.. hidden::
+.. ::hidden::
 
     Options
     ^^^^^^^^
 
 This command does not have any options.
 
+.. _export_header:
+
 Export
 --------------
 This command exports data from AtriumDB to the specified format and packaging type. Users can filter the data to be exported using various options such as measure ids, device ids, patient ids, and MRNs. The export command also supports specifying a cohort file to automatically configure export parameters.
 
 
-.. hidden::
+.. ::hidden::
 
     Usage
     ^^^^^^^^
@@ -355,7 +337,7 @@ This command exports data from AtriumDB to the specified format and packaging ty
 
    atriumdb export [options]
 
-.. hidden::
+.. ::hidden::
 
     Options
     ^^^^^^^^
@@ -399,7 +381,7 @@ Import
 
 This command imports data to AtriumDB from various formats.
 
-.. hidden::
+.. ::hidden::
 
     Usage
     ^^^^^^^^
@@ -408,7 +390,7 @@ This command imports data to AtriumDB from various formats.
 
    atriumdb import [options]
 
-.. hidden::
+.. ::hidden::
 
     Options
     ^^^^^^^^
@@ -448,7 +430,7 @@ Measure
 
 The measure command is a group command for managing measures in a relational database. It has a subcommand `ls` which lists measures based on the provided search criteria.
 
-.. hidden::
+.. ::hidden::
 
     Usage
     ^^^^^^^^
@@ -457,7 +439,7 @@ The measure command is a group command for managing measures in a relational dat
 
    atriumdb measure ls [options]
 
-.. hidden::
+.. ::hidden::
 
     Options
     ^^^^^^^^
@@ -485,7 +467,7 @@ Device
 
 The device command is a group command for managing devices in the linked relational database. It has a subcommand called `ls` which lists devices in the linked relational database that match the specified search criteria, such as tag, name, manufacturer, model, bed ID, and source ID.
 
-.. hidden::
+.. ::hidden::
 
     Usage
     ^^^^^^^^
@@ -494,7 +476,7 @@ The device command is a group command for managing devices in the linked relatio
 
    atriumdb device ls [options]
 
-.. hidden::
+.. ::hidden::
 
     Options
     ^^^^^^^^
@@ -522,7 +504,7 @@ This command group manages patient records in a healthcare database, it has a su
 The command retrieves information about all patients in the linked relational database, including their id, medical record number (MRN), gender,
 date of birth (DOB), first name, middle name, last name, first seen timestamp, last updated timestamp, and source identifier.
 
-.. hidden::
+.. ::hidden::
 
     Usage
     ^^^^^^^^
@@ -531,7 +513,7 @@ date of birth (DOB), first name, middle name, last name, first seen timestamp, l
 
    atriumdb patient ls [options]
 
-.. hidden::
+.. ::hidden::
 
     Options
     ^^^^^^^^
