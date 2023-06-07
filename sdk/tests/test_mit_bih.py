@@ -132,29 +132,17 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None):
         # If there are multiple signals in one record, split them into two different dataset entries
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
-                write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, None, None, None)
+                write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, record, d_record, i)
 
         # If there is only one signal in the input file, insert it
         else:
-            write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, None, None, None)
+            write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, record, d_record, None)
 
     return device_patient_dict
 
 
 def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p_record, d_record, signal_i):
-    measure_tag = p_record.sig_name[signal_i]
-    units = p_record.units[signal_i]
-
-    if random.random() < 0.5:
-        # Physical
-        value_data = p_record.p_signal.T[signal_i].astype(np.float64)
-        scale_m = None
-        scale_b = None
-    else:
-        # Digital
-        value_data = d_record.d_signal.T[signal_i].astype(np.int64)
-        scale_m = (1 / d_record.adc_gain[signal_i])
-        scale_b = (-d_record.adc_zero[signal_i] / d_record.adc_gain[signal_i])
+    measure_tag, scale_b, scale_m, units, value_data = get_record_data_for_ingest(d_record, p_record, signal_i)
 
     measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq_nano,
                                     units=units)
@@ -188,6 +176,39 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
                        raw_time_type=raw_t_t,
                        raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
                        scale_m=None, scale_b=None)
+
+
+def get_record_data_for_ingest(d_record, p_record, signal_i):
+    if signal_i is not None:
+        measure_tag = p_record.sig_name[signal_i]
+        units = p_record.units[signal_i]
+
+        if random.random() < 0.5:
+            # Physical
+            value_data = p_record.p_signal.T[signal_i].astype(np.float64)
+            scale_m = None
+            scale_b = None
+        else:
+            # Digital
+            value_data = d_record.d_signal.T[signal_i].astype(np.int64)
+            scale_m = (1 / d_record.adc_gain[signal_i])
+            scale_b = (-d_record.adc_zero[signal_i] / d_record.adc_gain[signal_i])
+
+    else:
+        measure_tag = p_record.sig_name
+        units = p_record.units
+
+        if random.random() < 0.5:
+            # Physical
+            value_data = p_record.p_signal.T.astype(np.float64)
+            scale_m = None
+            scale_b = None
+        else:
+            # Digital
+            value_data = d_record.d_signal.T.astype(np.int64)
+            scale_m = (1 / d_record.adc_gain)
+            scale_b = (-d_record.adc_zero / d_record.adc_gain)
+    return measure_tag, scale_b, scale_m, units, value_data
 
 
 def create_gaps(size, period, gap_density=0.001):
