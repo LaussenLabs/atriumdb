@@ -19,6 +19,7 @@ from atriumdb import AtriumSDK, T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TY
     V_TYPE_DOUBLE
 import numpy as np
 import random
+from matplotlib import pyplot as plt
 
 from tests.generate_wfdb import get_records
 from tests.test_mit_bih import create_gaps
@@ -85,6 +86,13 @@ def _test_small_block(db_type, dataset_location, connection_params):
                    scale_m=scale_m, scale_b=scale_b)
 
     _, times, values = sdk.get_data(measure_id, start_time, start_time + (10 ** 21), device_id=device_id, analog=False)
+
+    plt.plot(expected_times, label="Expected")
+    plt.plot(times, label="Actual")
+    plt.legend()
+    plt.xlabel("Time Index")
+    plt.ylabel("Timestamp (Nano)")
+    plt.show()
 
     assert compare_arrays(value_data, values)
     assert compare_arrays(expected_times, times)
