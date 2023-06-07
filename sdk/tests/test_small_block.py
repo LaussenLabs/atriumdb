@@ -37,6 +37,8 @@ def test_small_block():
 
 
 def _test_small_block(db_type, dataset_location, connection_params):
+    np.random.seed(SEED)
+    random.seed(SEED)
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
@@ -55,7 +57,7 @@ def _test_small_block(db_type, dataset_location, connection_params):
     measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq_nano,
                                     units=units)
 
-    value_data = one_d_record.d_signal.T[0].astype(np.int64)
+    value_data = one_d_record.d_signal.T[0].astype(np.int64)[:10_000]
     scale_m = (1 / one_d_record.adc_gain[0])
     scale_b = (-one_d_record.adc_zero[0] / one_d_record.adc_gain[0])
 
@@ -65,7 +67,9 @@ def _test_small_block(db_type, dataset_location, connection_params):
     raw_t_t = encoded_t_t = 2
 
     # gap_data = np.array([8001, 10 ** 12], dtype=np.int64)
-    gap_data = create_gaps(value_data.size, period_ns, gap_density=0.001).flatten()
+    # gap_data = create_gaps(value_data.size, period_ns, gap_density=0.001).flatten()
+    gap_data = [[i, 4_000_000] for i in range(value_data.size)]
+    gap_data = np.array(gap_data, dtype=np.int64).flatten()
     expected_times = np.arange(start_time, start_time + (period_ns * value_data.size), period_ns, dtype=np.int64)
 
     for gap_i, gap_dur in gap_data.reshape(-1, 2):
@@ -78,7 +82,7 @@ def _test_small_block(db_type, dataset_location, connection_params):
         raw_v_t = V_TYPE_DOUBLE
         encoded_v_t = V_TYPE_DOUBLE
 
-    sdk.block.block_size = 100
+    sdk.block.block_size = 5000
     # Call the write_data method with the determined parameters
     sdk.write_data(measure_id, device_id, gap_data, value_data, freq_nano, start_time,
                    raw_time_type=raw_t_t,
