@@ -30,6 +30,7 @@ maria_block_index_create_query = """CREATE TABLE IF NOT EXISTS block_index(
     start_time_n BIGINT NOT NULL,
     end_time_n BIGINT NOT NULL,
     num_values BIGINT NOT NULL,
+    optimized BOOLEAN DEFAULT FALSE,
     CONSTRAINT FOREIGN KEY (measure_id) REFERENCES measure (id),
     CONSTRAINT FOREIGN KEY (device_id) REFERENCES device (id),
     CONSTRAINT FOREIGN KEY (file_id) REFERENCES file_index (id)

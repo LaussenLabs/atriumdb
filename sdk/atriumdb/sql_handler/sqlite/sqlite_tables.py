@@ -34,6 +34,7 @@ sqlite_block_index_create_query = """CREATE TABLE IF NOT EXISTS block_index(
     start_time_n INTEGER NOT NULL,
     end_time_n INTEGER NOT NULL,
     num_values INTEGER NOT NULL,
+    optimized INTEGER DEFAULT 0,
     FOREIGN KEY (measure_id) REFERENCES measure(id),
     FOREIGN KEY (device_id) REFERENCES device(id),
     FOREIGN KEY (file_id) REFERENCES file_index(id)
