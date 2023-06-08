@@ -38,8 +38,8 @@ void gap_int64_ns_gap_array_decode(const int64_t * gap_array, int64_t * time_dat
     // Place the jumps.
     uint64_t i;
     for(i=0; i<num_gaps; i++){
-        // gap_array[2 * i] contains the index of the jump, and gap_array[(2 * i) + 1] contains the magnitude.
-        time_data[gap_array[2 * i]] = gap_array[(2 * i) + 1];
+        // gap_array[2 * i] contains the index of the jump, and gap_array[(2 * i) + 1] contains the duration.
+        time_data[gap_array[2 * i]] += gap_array[(2 * i) + 1];
     }
 
     // Place the continuous timestamps.
