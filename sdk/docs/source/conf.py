@@ -10,7 +10,7 @@ sys.path.append(os.path.abspath('../..'))
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'atriumdb'
+project = 'AtriumDB'
 copyright = '2023, LaussenLabs'
 author = 'LaussenLabs'
 release = '1.0.0'
