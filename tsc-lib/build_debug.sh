@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #change into project directory
-cd /minimal_sdk;
+cd /tsc-lib;
 
 #****windows binary****
 #remove old build files from build dir
@@ -14,7 +14,7 @@ cmake -Bcmake-build-debug -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_
 cmake --build cmake-build-debug --target Block;
 
 #copy binary to output directory
-cp /minimal_sdk/cmake-build-debug/src/Block/libTSC.dll /minimal_sdk/built_bin/libTSC_debug.dll;
+cp /tsc-lib/cmake-build-debug/src/Block/libTSC.dll /tsc-lib/built_bin/libTSC_debug.dll;
 
 #****linux binary****
 rm -rf cmake-build-debug/**;
@@ -24,6 +24,6 @@ cmake -Bcmake-build-debug -H. -DCMAKE_BUILD_TYPE='Debug';
 cmake --build cmake-build-debug --target Block;
 
 #copy binary to output directory
-cp /minimal_sdk/cmake-build-debug/src/Block/libTSC.so /minimal_sdk/built_bin/libTSC_debug.so;
+cp /tsc-lib/cmake-build-debug/src/Block/libTSC.so /tsc-lib/built_bin/libTSC_debug.so;
 
 

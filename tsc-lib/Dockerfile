@@ -1,5 +1,4 @@
 # dockerfile for making a build container
-
 FROM ubuntu:20.04
 
 ARG DEBIAN_FRONTEND=noninteractive
