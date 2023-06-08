@@ -50,7 +50,7 @@ You can also create a dataset with a different metadata database, such as MariaD
    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", database_type="mysql", connection_params=connection_params)
 
 Additionally, you can set the protection mode and overwrite behavior using the `protected_mode` and `overwrite` parameters.
-For example, to create a dataset with protection mode enabled and an overwrite behavior set to "error":
+For example, to create a dataset with protection mode enabled and an overwrite behavior set to "ignore":
 
 .. code-block:: python
 
