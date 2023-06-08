@@ -93,8 +93,8 @@ If you want to enable all the optional features of AtriumDB at once, you can ins
 
 This will install all the packages listed in the `mariadb`, `remote`, and `cli` optional dependencies.
 
-AtriumDB with MariaDB
-^^^^^^^^^^^^^^^^^^^^^^^
+MariaDB
+---------------
 
 If you are using AtriumDB with MariaDB on Linux you have to make sure you have MariaDB server version 10.11 installed
 on your computer. On windows this step is unnecessary and you can go straight to building the wheel file and pip
