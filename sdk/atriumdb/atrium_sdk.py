@@ -238,7 +238,7 @@ class AtriumSDK:
 
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None,
-                       protected_mode: str = None, overwrite: str = None, connection_params: dict = None):
+                       protected_mode: str = None, overwrite: str = None, connection_params: dict = None, no_pool=False):
         """
         .. _create_dataset_label:
 
@@ -307,7 +307,7 @@ class AtriumSDK:
             MariaDBHandler(host, user, password, database, port).create_schema()
 
         sdk_object = cls(dataset_location=dataset_location, metadata_connection_type=database_type,
-                         connection_params=connection_params)
+                         connection_params=connection_params, no_pool=no_pool)
 
         # Add settings
         sdk_object.sql_handler.insert_setting(PROTECTED_MODE_SETTING_NAME, str(protected_mode))
