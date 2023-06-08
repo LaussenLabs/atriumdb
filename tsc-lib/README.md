@@ -30,11 +30,11 @@ $ docker build -t c-build .
 ```
 Then to build the binaries for release from a windows host you use the command:
 ```shell
-$ docker run --name c-build -v "%cd%":/minimal_sdk -w /minimal_sdk --init  -it c-build ./build_release.sh
+$ docker run --name c-build-release -v "%cd%":/tsc-lib -w /tsc-lib --init  -it c-build ./build_release.sh
 ```
 If you want to build the binaries in debug mode use the command:
 ```shell
-$ docker run --name c-build -v "%cd%":/minimal_sdk -w /minimal_sdk --init  -it c-build ./build_debug.sh
+$ docker run --name c-build-debug -v "%cd%":/tsc-lib -w /tsc-lib --init  -it c-build ./build_debug.sh
 ```
 NOTES: 
 - If you are using a linux host replace "%cd%" with $(pwd). 
