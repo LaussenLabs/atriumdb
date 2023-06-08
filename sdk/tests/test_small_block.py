@@ -38,12 +38,6 @@ global_d_record = next(get_records(dataset_name='mitdb', physical=False))
 def test_small_block():
     global global_gap_index
     _test_for_both(DB_NAME, _test_small_block)
-    return
-    print()
-    for i in range(20):
-        # print(i)
-        global_gap_index = i
-        _test_for_both(DB_NAME, _test_small_block_experiment)
 
 
 def _test_small_block_experiment(db_type, dataset_location, connection_params):
@@ -135,7 +129,7 @@ def _test_small_block(db_type, dataset_location, connection_params):
     # gap_data = [[i, 4_000_000] for i in range(value_data.size)]
     # gap_data = np.array(gap_data, dtype=np.int64).flatten()
 
-    gap_data = np.array([2, 10_000_000], dtype=np.int64)
+    gap_data = np.array([10, 10_000_000], dtype=np.int64)
     expected_times = np.arange(start_time, start_time + (period_ns * value_data.size), period_ns, dtype=np.int64)
 
     for gap_i, gap_dur in gap_data.reshape(-1, 2):
@@ -148,7 +142,7 @@ def _test_small_block(db_type, dataset_location, connection_params):
         raw_v_t = V_TYPE_DOUBLE
         encoded_v_t = V_TYPE_DOUBLE
 
-    sdk.block.block_size = 4
+    sdk.block.block_size = 10
     # Call the write_data method with the determined parameters
     sdk.write_data(measure_id, device_id, gap_data, value_data, freq_nano, start_time,
                    raw_time_type=raw_t_t,
