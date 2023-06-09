@@ -11,7 +11,7 @@ sys.path.append(os.path.abspath('../..'))
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'AtriumDB'
-copyright = '2023, LaussenLabs'
+copyright = '2023, The Hospital for Sick Children'
 author = 'LaussenLabs'
 release = '1.0.0'
 
