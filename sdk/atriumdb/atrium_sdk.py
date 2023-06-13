@@ -322,46 +322,46 @@ class AtriumSDK:
         """
         .. _get_device_patient_data_label:
 
-            Retrieves device-patient mappings from the dataset's database based on the provided search criteria.
+        Retrieves device-patient mappings from the dataset's database based on the provided search criteria.
 
-            You can specify search criteria by providing values for one or more of the following parameters:
-            - device_id_list (List[int]): A list of device IDs to search for.
-            - patient_id_list (List[int]): A list of patient IDs to search for.
-            - mrn_list (List[int]): A list of MRN (medical record number) values to search for.
-            - start_time (int): The start time (in UNIX nano timestamp format) of the device-patient association to search for.
-            - end_time (int): The end time (in UNIX nano timestamp format) of the device-patient association to search for.
+        You can specify search criteria by providing values for one or more of the following parameters:
+        - device_id_list (List[int]): A list of device IDs to search for.
+        - patient_id_list (List[int]): A list of patient IDs to search for.
+        - mrn_list (List[int]): A list of MRN (medical record number) values to search for.
+        - start_time (int): The start time (in UNIX nano timestamp format) of the device-patient association to search for.
+        - end_time (int): The end time (in UNIX nano timestamp format) of the device-patient association to search for.
 
-            If you provide a value for the `mrn_list` parameter, the method will use the `get_mrn_to_patient_id_map` method to
-            retrieve a mapping of MRN values to patient IDs, and it will automatically include the corresponding patient IDs
-            in the search.
+        If you provide a value for the `mrn_list` parameter, the method will use the `get_mrn_to_patient_id_map` method to
+        retrieve a mapping of MRN values to patient IDs, and it will automatically include the corresponding patient IDs
+        in the search.
 
-            The method returns a list of tuples, where each tuple contains four integer values in the following order:
-            - device_id (int): The ID of the device associated with the patient.
-            - patient_id (int): The ID of the patient associated with the device.
-            - start_time (int): The start time (in UNIX timestamp format) of the association between the device and the patient.
-            - end_time (int): The end time (in UNIX timestamp format) of the association between the device and the patient.
+        The method returns a list of tuples, where each tuple contains four integer values in the following order:
+        - device_id (int): The ID of the device associated with the patient.
+        - patient_id (int): The ID of the patient associated with the device.
+        - start_time (int): The start time (in UNIX timestamp format) of the association between the device and the patient.
+        - end_time (int): The end time (in UNIX timestamp format) of the association between the device and the patient.
 
-            The `start_time` and `end_time` values represent the time range in which the device is associated with the patient.
+        The `start_time` and `end_time` values represent the time range in which the device is associated with the patient.
 
-            >>> # Retrieve device-patient mappings from the dataset's database.
-            >>> device_id_list = [1, 2]
-            >>> patient_id_list = [3, 4]
-            >>> start_time = 164708400_000_000_000
-            >>> end_time = 1647094800_000_000_000
-            >>> device_patient_data = sdk.get_device_patient_data(device_id_list=device_id_list,
-            >>>                                                    patient_id_list=patient_id_list,
-            >>>                                                    start_time=start_time,
-            >>>                                                    end_time=end_time)
+        >>> # Retrieve device-patient mappings from the dataset's database.
+        >>> device_id_list = [1, 2]
+        >>> patient_id_list = [3, 4]
+        >>> start_time = 164708400_000_000_000
+        >>> end_time = 1647094800_000_000_000
+        >>> device_patient_data = sdk.get_device_patient_data(device_id_list=device_id_list,
+        >>>                                                    patient_id_list=patient_id_list,
+        >>>                                                    start_time=start_time,
+        >>>                                                    end_time=end_time)
 
-            :param List[int] optional device_id_list: A list of device IDs to search for.
-            :param List[int] optional patient_id_list: A list of patient IDs to search for.
-            :param List[int] optional mrn_list: A list of MRN (medical record number) values to search for.
-            :param int optional start_time: The start time (in UNIX timestamp format) of the device-patient association to search for.
-            :param int optional end_time: The end time (in UNIX timestamp format) of the device-patient association to search for.
-            :return: A list of tuples containing device-patient mapping data, where each tuple contains four integer values in
-                the following order: device_id, patient_id, start_time, and end_time.
-            :rtype: List[Tuple[int, int, int, int]]
-            """
+        :param List[int] optional device_id_list: A list of device IDs to search for.
+        :param List[int] optional patient_id_list: A list of patient IDs to search for.
+        :param List[int] optional mrn_list: A list of MRN (medical record number) values to search for.
+        :param int optional start_time: The start time (in UNIX timestamp format) of the device-patient association to search for.
+        :param int optional end_time: The end time (in UNIX timestamp format) of the device-patient association to search for.
+        :return: A list of tuples containing device-patient mapping data, where each tuple contains four integer values in
+            the following order: device_id, patient_id, start_time, and end_time.
+        :rtype: List[Tuple[int, int, int, int]]
+        """
         if mrn_list is not None:
             patient_id_list = [] if patient_id_list is None else patient_id_list
             mrn_to_patient_id_map = self.get_mrn_to_patient_id_map(mrn_list)
