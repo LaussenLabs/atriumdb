@@ -985,7 +985,8 @@ class AtriumSDK:
 
         :param measure_id: The ID of the measure to retrieve data for.
         :param start_time_n: The start time (in nanoseconds) to retrieve data from.
-        :param end_time_n: The end time (in nanoseconds) to retrieve data until.
+        :param end_time_n: The end time (in nanoseconds) to retrieve data until. The end time is not
+            inclusive so if you want the end time to be included you have to add one sample period to it.
         :param device_id: (Optional) The ID of the device to retrieve data for.
         :param patient_id: (Optional) The ID of the patient to retrieve data for.
         :param mrn: (Optional) The medical record number (MRN) to retrieve data for.
@@ -1441,7 +1442,8 @@ class AtriumSDK:
 
         :param int measure_id: The measure identifier corresponding to the measures table in the linked relational database.
         :param int start_time_n: The start epoch in nanoseconds of the data you would like to query.
-        :param int end_time_n: The end epoch in nanoseconds of the data you would like to query.
+        :param int end_time_n: The end epoch in nanoseconds of the data you would like to query. The end time is not
+            inclusive so if you want the end time to be included you have to add one sample period to it.
         :param int device_id: The device identifier corresponding to the devices table in the linked relational database.
         :param int patient_id: The patient identifier corresponding to the encounter table in the linked relational database.
         :param int time_type: The time type returned to you. Time_type=1 is time stamps, which is what most people will
