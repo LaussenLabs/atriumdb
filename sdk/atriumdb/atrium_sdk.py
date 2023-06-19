@@ -44,6 +44,7 @@ from typing import Union, List, Tuple
 
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
+from atriumdb.windowing.window_config import WindowConfig
 
 try:
     import requests
@@ -1538,6 +1539,10 @@ class AtriumSDK:
                 r_times = r_times / time_unit_options[time_units]
 
             return headers, r_times, r_values
+
+    def get_windows(self, window_config: WindowConfig, start_time_inclusive, end_time_exclusive, device_id=None,
+                    patient_id=None, batch=None):
+        pass
 
     def get_data_from_blocks(self, block_list, filename_dict, measure_id, start_time_n, end_time_n, analog=True,
                              time_type=1, sort=True, allow_duplicates=True):
