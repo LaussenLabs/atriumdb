@@ -18,7 +18,8 @@
 import numpy as np
 
 from atriumdb.adb_functions import get_block_and_interval_data, condense_byte_read_list, find_intervals, \
-    merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz
+    merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz, \
+    time_unit_options
 from atriumdb.block import Block, convert_gap_array_to_intervals, \
     convert_intervals_to_gap_array
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
@@ -1541,8 +1542,30 @@ class AtriumSDK:
             return headers, r_times, r_values
 
     def get_windows(self, window_config: WindowConfig, start_time_inclusive, end_time_exclusive, device_id=None,
-                    patient_id=None, batch=None):
-        pass
+                    patient_id=None, batch_duration=None, time_units=None):
+
+        if time_units is not None and time_units != 'ns':
+            start_time_inclusive_ns = start_time_inclusive * time_unit_options[time_units]
+            end_time_exclusive_ns = end_time_exclusive * time_unit_options[time_units]
+            batch_duration_ns = None if batch_duration is None else batch_duration * time_unit_options[time_units]
+
+        else:
+            start_time_inclusive_ns = start_time_inclusive
+            end_time_exclusive_ns = end_time_exclusive
+            batch_duration_ns = None if batch_duration is None else batch_duration
+
+        batch_start_ns = start_time_inclusive_ns
+        batch_end_ns = end_time_exclusive_ns if batch_duration_ns is None else \
+            start_time_inclusive_ns + batch_duration_ns
+
+        # Do-While Loop - One Batch At A Time.
+        while True:
+            # Pull All Involved Measures
+            pass
+
+            # Do-While exit condition
+            if batch_end_ns >= end_time_exclusive_ns:
+                break
 
     def get_data_from_blocks(self, block_list, filename_dict, measure_id, start_time_n, end_time_n, analog=True,
                              time_type=1, sort=True, allow_duplicates=True):
