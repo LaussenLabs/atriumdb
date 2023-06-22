@@ -14,6 +14,7 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import math
 
 import numpy as np
 
@@ -45,6 +46,7 @@ from typing import Union, List, Tuple
 
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
+from atriumdb.windowing.window import CommonWindowFormat, Signal
 from atriumdb.windowing.window_config import WindowConfig
 
 try:
@@ -1541,31 +1543,188 @@ class AtriumSDK:
 
             return headers, r_times, r_values
 
-    def get_windows(self, window_config: WindowConfig, start_time_inclusive, end_time_exclusive, device_id=None,
-                    patient_id=None, batch_duration=None, time_units=None):
+    def get_windows(self, window_config: WindowConfig, start_time_inclusive, end_time_exclusive, device_tag=None,
+                    device_id=None, patient_id=None, batch_duration=None, time_units=None, freq_units=None):
 
+        # Convert time units to nanoseconds
         if time_units is not None and time_units != 'ns':
-            start_time_inclusive_ns = start_time_inclusive * time_unit_options[time_units]
-            end_time_exclusive_ns = end_time_exclusive * time_unit_options[time_units]
-            batch_duration_ns = None if batch_duration is None else batch_duration * time_unit_options[time_units]
+            start_time_inclusive_ns = int(start_time_inclusive * time_unit_options[time_units])
+            end_time_exclusive_ns = int(end_time_exclusive * time_unit_options[time_units])
+            batch_duration_ns = end_time_exclusive_ns - start_time_inclusive_ns if batch_duration is None else \
+                int(batch_duration * time_unit_options[time_units])
 
         else:
-            start_time_inclusive_ns = start_time_inclusive
-            end_time_exclusive_ns = end_time_exclusive
-            batch_duration_ns = None if batch_duration is None else batch_duration
+            start_time_inclusive_ns = int(start_time_inclusive)
+            end_time_exclusive_ns = int(end_time_exclusive)
+            batch_duration_ns = end_time_exclusive_ns - start_time_inclusive_ns if batch_duration is None else \
+                int(batch_duration)
 
+        # Prepare the first batch time window.
         batch_start_ns = start_time_inclusive_ns
         batch_end_ns = end_time_exclusive_ns if batch_duration_ns is None else \
             start_time_inclusive_ns + batch_duration_ns
 
+        # Prepare the first window boundary
+        window_start_ns = batch_start_ns
+        window_end_ns = window_start_ns + window_config.window_size_ns
+
+        # Create id dictionary for all requested measures.
+        measure_info_to_id_dictionary = self.get_measure_triplet_to_id_dictionary(
+            window_config.measure_ids, freq_units=freq_units)
+
+        # Calculate Expected Window Count
+        triplet_to_expected_count_period = self._get_measure_triplet_to_expected_count_period(
+            measure_info_to_id_dictionary, window_config)
+
+        if device_id is not None:
+            device_tag = self.get_device_info(device_id)['tag']
+
+        # Convert device tag to id:
+        if device_tag is not None:
+            device_id = self.get_device_id(device_tag)
+            if device_id is None:
+                raise ValueError(f"device tag: {device_tag} not found.")
+
+        if patient_id is not None:
+            # TODO: Handle Patient Mapping
+            raise NotImplementedError("patient_id queries not implemented yet")
+
         # Do-While Loop - One Batch At A Time.
         while True:
-            # Pull All Involved Measures
-            pass
+            # TODO: Handle Patient Mapping
 
-            # Do-While exit condition
+            # Pull All Involved Measures
+            raw_data_dict = self._get_triplet_device_data(
+                measure_info_to_id_dictionary, batch_start_ns, min(batch_end_ns, end_time_exclusive_ns), device_id)
+
+            # Prepare window for each available signal.
+            while window_end_ns <= batch_end_ns:
+                signals = dict()
+                for measure_triplet, (batch_times, batch_values) in raw_data_dict.items():
+                    left = np.searchsorted(batch_times, window_start_ns)
+                    right = np.searchsorted(batch_times, window_end_ns)
+                    if left == right:
+                        # No Data
+                        continue
+
+                    # Get Raw Data
+                    raw_data_times = batch_times[left:right]
+                    raw_data_values = batch_values[left:right]
+                    expected_count, sample_period_ns = triplet_to_expected_count_period[measure_triplet]
+
+                    # Create window times, values
+                    signal_times = np.arange(window_start_ns, window_start_ns + (expected_count * sample_period_ns), sample_period_ns, dtype=np.int64)
+                    signal_data = np.full(expected_count, fill_value=np.nan, dtype=float)
+
+                    for time, value in zip(raw_data_times, raw_data_values):
+                        closest_i = math.floor((time - window_start_ns) / sample_period_ns)
+                        signal_times[closest_i] = time
+                        signal_data[closest_i] = value
+
+                    signals[measure_triplet] = Signal(
+                        data=signal_data,
+                        times=signal_times,
+                        total_count=raw_data_values.size,
+                        expected_count=expected_count)
+
+                window = CommonWindowFormat(
+                    start_time=window_start_ns, device_id=device_tag, window_config=window_config, signals=signals)
+
+                yield window
+
+                # Increment for next iteration
+                window_start_ns += window_config.window_slide_ns
+                window_end_ns += window_config.window_slide_ns
+
+            # Do-While exit condition.
             if batch_end_ns >= end_time_exclusive_ns:
                 break
+
+            # Increment for next iteration.
+            batch_start_ns, batch_end_ns = batch_end_ns, batch_end_ns + batch_duration_ns
+
+    def _get_measure_triplet_to_expected_count_period(self, measure_info_to_id_dictionary, window_config):
+        triplet_to_expected_count_period = dict()
+        for measure_triplet, measure_id in measure_info_to_id_dictionary.items():
+            sample_freq_nhz = int(self.get_measure_info(measure_id)['freq_nhz'])
+            sample_period_ns = (10 ** 18) // sample_freq_nhz
+            expected_count = (window_config.window_size_ns * sample_freq_nhz) / (10 ** 18)
+
+            if expected_count % 1 != 0:  # Check if expected count is an int
+                _LOGGER.warning(
+                    f'Given window size of {window_config.window_size_sec} and signal frequency of '
+                    f'{sample_freq_nhz / (10 ** 9)}Hz do not match. '
+                    f'The data windows will contain a variable number of signals but have the same array shape.'
+                    f' Last element of the array will be NaN periodically. If this is not expected, consider'
+                    f'setting window_size parameter to {(sample_freq_nhz / (10 ** 9)) * int(expected_count)}')
+            expected_count = int(np.ceil(expected_count))
+            triplet_to_expected_count_period[measure_triplet] = (expected_count, sample_period_ns)
+
+        return triplet_to_expected_count_period
+
+    def _get_triplet_device_data(self, measure_info_dictionary, start_ns, end_ns, device_id):
+        raw_data_dict = dict()
+        for measure_triplet, measure_id in measure_info_dictionary.items():
+            _, times, values = self.get_data(measure_id, start_ns, end_ns, device_id=device_id)
+            raw_data_dict[measure_triplet] = (times, values)
+
+        return raw_data_dict
+
+    def get_measure_triplet_to_id_dictionary(self, measure_triplet_list, freq_units=None):
+        """
+        Returns a dictionary of measure_triplet: measure_id
+        :param measure_triplet_list:
+        :return:
+        """
+        if freq_units is not None and freq_units != "nHz":
+            nhz_triplet_list = []
+            for measure_triplet in measure_triplet_list:
+                new_triplet = \
+                    (measure_triplet[0], convert_to_nanohz(measure_triplet[1], freq_units), measure_triplet[2])
+                nhz_triplet_list.append(new_triplet)
+            measure_triplet_list = nhz_triplet_list
+
+        measure_triplet_dictionary = dict()
+        measure_tag_dict = self.get_measure_tag_dict()
+
+        for measure_triplet in measure_triplet_list:
+            if measure_triplet[0] not in measure_tag_dict:
+                raise ValueError(f"Measure Tag {measure_triplet[0]} not found in dataset.")
+
+            # If freq and unit aren't specified, accept only if there's only 1 match.
+            if measure_triplet[1] is None and measure_triplet[2] is None:
+                if len(measure_tag_dict[measure_triplet[0]]) == 1:
+                    measure_id = measure_tag_dict[measure_triplet[0]][0][0]
+                    measure_triplet_dictionary[measure_triplet] = measure_id
+                else:
+                    raise ValueError(f"Measure Freq or Units wasn't specified for Measure Tag: {measure_triplet[0]}, "
+                                     f"but multiple matches were found.")
+
+            else:
+                for measure_id, measure_freq, measure_unit in measure_tag_dict[measure_triplet[0]]:
+                    if measure_triplet[1] == measure_freq and measure_triplet[2] == measure_unit:
+                        measure_triplet_dictionary[measure_triplet] = measure_id
+                        break
+
+                if measure_triplet not in measure_triplet_dictionary:
+                    # No Matching was found.
+                    raise ValueError(f"No match was found for measure triplet: {measure_triplet}")
+
+        return measure_triplet_dictionary
+
+    def get_measure_tag_dict(self):
+        measure_tag_dict = dict()
+        for measure_id, measure_info in self.get_all_measures().items():
+            measure_tag = measure_info['tag']
+            measure_unit = measure_info['unit']
+            measure_freq_nhz = measure_info['freq_nhz']
+
+            if measure_tag not in measure_tag_dict:
+                measure_tag_dict[measure_tag] = []
+
+            measure_tag_dict[measure_tag].append([measure_id, measure_freq_nhz, measure_unit])
+
+        return measure_tag_dict
 
     def get_data_from_blocks(self, block_list, filename_dict, measure_id, start_time_n, end_time_n, analog=True,
                              time_type=1, sort=True, allow_duplicates=True):
