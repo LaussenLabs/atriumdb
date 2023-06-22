@@ -45,6 +45,7 @@ def _test_cwf(db_type, dataset_location, connection_params):
 
     _, expected_times, expected_values = sdk.get_data(measure_id, start_time_nano, end_time_nano, device_id=device_id)
 
+    # Add all the windows together
     collected_times = []
     collected_values = []
     for window in window_generator:
@@ -55,6 +56,7 @@ def _test_cwf(db_type, dataset_location, connection_params):
     collected_times = np.concatenate(collected_times)
     collected_values = np.concatenate(collected_values)
 
+    # Filter out the NaN values.
     not_nan_index = np.nonzero(~np.isnan(collected_values))
 
     collected_times = collected_times[not_nan_index]
