@@ -2433,7 +2433,9 @@ class AtriumSDK:
         return measure_info
 
     def _api_get_all_measures(self):
-        return self._request("GET", "measures/")
+        measure_dict = self._request("GET", "measures/")
+        measure_dict_with_ints = {int(measure_id): measure_info for measure_id, measure_info in measure_dict.items()}
+        return measure_dict_with_ints
 
     def _api_get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                                 start=None, end=None):
@@ -2509,7 +2511,9 @@ class AtriumSDK:
         return self._request("GET", "devices/", params=params)
 
     def _api_get_all_devices(self):
-        return self._request("GET", "devices/")
+        device_dict = self._request("GET", "devices/")
+        device_dict_with_ints = {int(device_id): device_info for device_id, device_info in device_dict.items()}
+        return device_dict_with_ints
 
     def _api_get_all_patients(self, skip=None, limit=None):
         skip = 0 if skip is None else skip
@@ -2522,7 +2526,8 @@ class AtriumSDK:
                     'skip': skip,
                     'limit': limit,
                 }
-                result_dict = self._request("GET", "patients/", params=params)
+                result_temp = self._request("GET", "patients/", params=params)
+                result_dict = {int(patient_id): patient_info for patient_id, patient_info in result_temp.items()}
 
                 if len(result_dict) == 0:
                     break
@@ -2534,7 +2539,8 @@ class AtriumSDK:
                 'skip': skip,
                 'limit': limit,
             }
-            patient_dict = self._request("GET", "patients/", params=params)
+            result_temp = self._request("GET", "patients/", params=params)
+            patient_dict = {int(patient_id): patient_info for patient_id, patient_info in result_temp.items()}
 
         return patient_dict
 
