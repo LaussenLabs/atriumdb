@@ -1546,6 +1546,10 @@ class AtriumSDK:
     def get_windows(self, window_config: WindowConfig, start_time_inclusive, end_time_exclusive, device_tag=None,
                     device_id=None, patient_id=None, batch_duration=None, time_units=None, freq_units=None):
 
+        if sum(1 for identifier in [device_tag, device_id, patient_id] if identifier is not None) != 1:
+            # If the number of identifiers isn't exactly 1.
+            raise ValueError("Only 1 of [device_tag, device_id, patient_id] should be specified.")
+
         # Convert time units to nanoseconds
         if time_units is not None and time_units != 'ns':
             start_time_inclusive_ns = int(start_time_inclusive * time_unit_options[time_units])
@@ -1558,15 +1562,6 @@ class AtriumSDK:
             end_time_exclusive_ns = int(end_time_exclusive)
             batch_duration_ns = end_time_exclusive_ns - start_time_inclusive_ns if batch_duration is None else \
                 int(batch_duration)
-
-        # Prepare the first batch time window.
-        batch_start_ns = start_time_inclusive_ns
-        batch_end_ns = end_time_exclusive_ns if batch_duration_ns is None else \
-            start_time_inclusive_ns + batch_duration_ns
-
-        # Prepare the first window boundary
-        window_start_ns = batch_start_ns
-        window_end_ns = window_start_ns + window_config.window_size_ns
 
         # Create id dictionary for all requested measures.
         measure_info_to_id_dictionary = self.get_measure_triplet_to_id_dictionary(
@@ -1586,13 +1581,39 @@ class AtriumSDK:
                 raise ValueError(f"device tag: {device_tag} not found.")
 
         if patient_id is not None:
-            # TODO: Handle Patient Mapping
-            raise NotImplementedError("patient_id queries not implemented yet")
+            # Query by Patient
+            device_patient_intervals = self.sql_handler.get_device_time_ranges_by_patient(
+                patient_id, end_time_exclusive_ns, start_time_inclusive_ns)
 
+            for device_id, device_start, device_end in device_patient_intervals:
+                device_tag = self.get_device_info(device_id)['tag']
+                device_start = max(device_start, start_time_inclusive_ns)
+                device_end = min(device_end, end_time_exclusive_ns)
+
+                yield from self._generate_device_windows(window_config, device_id, device_tag, batch_duration_ns,
+                                                         device_start, device_end,
+                                                         measure_info_to_id_dictionary,
+                                                         triplet_to_expected_count_period)
+
+        else:
+            # Query by Device.
+            yield from self._generate_device_windows(window_config, device_id, device_tag, batch_duration_ns,
+                                                     start_time_inclusive_ns, end_time_exclusive_ns,
+                                                     measure_info_to_id_dictionary, triplet_to_expected_count_period)
+
+    def _generate_device_windows(self, window_config, device_id, device_tag, batch_duration_ns, start_time_inclusive_ns,
+                                 end_time_exclusive_ns, measure_info_to_id_dictionary,
+                                 triplet_to_expected_count_period):
+        # Prepare the first batch time window.
+        batch_start_ns = start_time_inclusive_ns
+        batch_end_ns = end_time_exclusive_ns if batch_duration_ns is None else \
+            start_time_inclusive_ns + batch_duration_ns
+
+        # Prepare the first window boundary
+        window_start_ns = batch_start_ns
+        window_end_ns = window_start_ns + window_config.window_size_ns
         # Do-While Loop - One Batch At A Time.
         while True:
-            # TODO: Handle Patient Mapping
-
             # Pull All Involved Measures
             raw_data_dict = self._get_triplet_device_data(
                 measure_info_to_id_dictionary, batch_start_ns, min(batch_end_ns, end_time_exclusive_ns), device_id)
@@ -1613,7 +1634,8 @@ class AtriumSDK:
                     expected_count, sample_period_ns = triplet_to_expected_count_period[measure_triplet]
 
                     # Create window times, values
-                    signal_times = np.arange(window_start_ns, window_start_ns + (expected_count * sample_period_ns), sample_period_ns, dtype=np.int64)
+                    signal_times = np.arange(window_start_ns, window_start_ns + (expected_count * sample_period_ns),
+                                             sample_period_ns, dtype=np.int64)
                     signal_data = np.full(expected_count, fill_value=np.nan, dtype=float)
 
                     for time, value in zip(raw_data_times, raw_data_values):
