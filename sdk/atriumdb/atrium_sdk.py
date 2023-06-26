@@ -1650,7 +1650,9 @@ class AtriumSDK:
                         expected_count=expected_count)
 
                 window = CommonWindowFormat(
-                    start_time=window_start_ns, device_id=device_tag, window_config=window_config, signals=signals)
+                    start_time=window_start_ns, device_id=device_tag, window_config=window_config, signals=signals,
+                    end_time=window_start_ns + window_config.window_size_ns
+                )
 
                 yield window
 

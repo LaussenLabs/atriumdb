@@ -26,8 +26,8 @@ class Signal:
 @dataclass(slots=True)
 class CommonWindowFormat:
     start_time: int
+    end_time: int
     device_id: str
     window_config: WindowConfig
     # a signal will be stored for each measure ID (measure_name, freq, uom). freq and uom can be None, meaning any value
     signals: dict[Tuple[str, float | None, str | None], Signal] = field(default_factory=dict)
-    end_time: int = field(init=False)
