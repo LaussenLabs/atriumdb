@@ -1486,7 +1486,7 @@ class AtriumSDK:
         # If the data is from the api.
         if self.mode == "api":
             return self.get_data_api(measure_id, start_time_n, end_time_n, device_id=device_id, patient_id=patient_id,
-                                     time_type=time_type, analog=analog, sort=False, allow_duplicates=allow_duplicates)
+                                     time_type=time_type, analog=analog, sort=sort, allow_duplicates=allow_duplicates)
 
         # If the dataset is in a local directory.
         elif self.mode == "local":
