@@ -242,7 +242,7 @@ class AtriumSDK:
 
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None,
-                       protected_mode: str = None, overwrite: str = None, connection_params: dict = None):
+                       protected_mode: str = None, overwrite: str = None, connection_params: dict = None, no_pool=False):
         """
         .. _create_dataset_label:
 
@@ -311,7 +311,7 @@ class AtriumSDK:
             MariaDBHandler(host, user, password, database, port).create_schema()
 
         sdk_object = cls(dataset_location=dataset_location, metadata_connection_type=database_type,
-                         connection_params=connection_params)
+                         connection_params=connection_params, no_pool=no_pool)
 
         # Add settings
         sdk_object.sql_handler.insert_setting(PROTECTED_MODE_SETTING_NAME, str(protected_mode))
@@ -326,46 +326,46 @@ class AtriumSDK:
         """
         .. _get_device_patient_data_label:
 
-            Retrieves device-patient mappings from the dataset's database based on the provided search criteria.
+        Retrieves device-patient mappings from the dataset's database based on the provided search criteria.
 
-            You can specify search criteria by providing values for one or more of the following parameters:
-            - device_id_list (List[int]): A list of device IDs to search for.
-            - patient_id_list (List[int]): A list of patient IDs to search for.
-            - mrn_list (List[int]): A list of MRN (medical record number) values to search for.
-            - start_time (int): The start time (in UNIX nano timestamp format) of the device-patient association to search for.
-            - end_time (int): The end time (in UNIX nano timestamp format) of the device-patient association to search for.
+        You can specify search criteria by providing values for one or more of the following parameters:
+        - device_id_list (List[int]): A list of device IDs to search for.
+        - patient_id_list (List[int]): A list of patient IDs to search for.
+        - mrn_list (List[int]): A list of MRN (medical record number) values to search for.
+        - start_time (int): The start time (in UNIX nano timestamp format) of the device-patient association to search for.
+        - end_time (int): The end time (in UNIX nano timestamp format) of the device-patient association to search for.
 
-            If you provide a value for the `mrn_list` parameter, the method will use the `get_mrn_to_patient_id_map` method to
-            retrieve a mapping of MRN values to patient IDs, and it will automatically include the corresponding patient IDs
-            in the search.
+        If you provide a value for the `mrn_list` parameter, the method will use the `get_mrn_to_patient_id_map` method to
+        retrieve a mapping of MRN values to patient IDs, and it will automatically include the corresponding patient IDs
+        in the search.
 
-            The method returns a list of tuples, where each tuple contains four integer values in the following order:
-            - device_id (int): The ID of the device associated with the patient.
-            - patient_id (int): The ID of the patient associated with the device.
-            - start_time (int): The start time (in UNIX timestamp format) of the association between the device and the patient.
-            - end_time (int): The end time (in UNIX timestamp format) of the association between the device and the patient.
+        The method returns a list of tuples, where each tuple contains four integer values in the following order:
+        - device_id (int): The ID of the device associated with the patient.
+        - patient_id (int): The ID of the patient associated with the device.
+        - start_time (int): The start time (in UNIX timestamp format) of the association between the device and the patient.
+        - end_time (int): The end time (in UNIX timestamp format) of the association between the device and the patient.
 
-            The `start_time` and `end_time` values represent the time range in which the device is associated with the patient.
+        The `start_time` and `end_time` values represent the time range in which the device is associated with the patient.
 
-            >>> # Retrieve device-patient mappings from the dataset's database.
-            >>> device_id_list = [1, 2]
-            >>> patient_id_list = [3, 4]
-            >>> start_time = 164708400_000_000_000
-            >>> end_time = 1647094800_000_000_000
-            >>> device_patient_data = sdk.get_device_patient_data(device_id_list=device_id_list,
-            >>>                                                    patient_id_list=patient_id_list,
-            >>>                                                    start_time=start_time,
-            >>>                                                    end_time=end_time)
+        >>> # Retrieve device-patient mappings from the dataset's database.
+        >>> device_id_list = [1, 2]
+        >>> patient_id_list = [3, 4]
+        >>> start_time = 164708400_000_000_000
+        >>> end_time = 1647094800_000_000_000
+        >>> device_patient_data = sdk.get_device_patient_data(device_id_list=device_id_list,
+        >>>                                                    patient_id_list=patient_id_list,
+        >>>                                                    start_time=start_time,
+        >>>                                                    end_time=end_time)
 
-            :param List[int] optional device_id_list: A list of device IDs to search for.
-            :param List[int] optional patient_id_list: A list of patient IDs to search for.
-            :param List[int] optional mrn_list: A list of MRN (medical record number) values to search for.
-            :param int optional start_time: The start time (in UNIX timestamp format) of the device-patient association to search for.
-            :param int optional end_time: The end time (in UNIX timestamp format) of the device-patient association to search for.
-            :return: A list of tuples containing device-patient mapping data, where each tuple contains four integer values in
-                the following order: device_id, patient_id, start_time, and end_time.
-            :rtype: List[Tuple[int, int, int, int]]
-            """
+        :param List[int] optional device_id_list: A list of device IDs to search for.
+        :param List[int] optional patient_id_list: A list of patient IDs to search for.
+        :param List[int] optional mrn_list: A list of MRN (medical record number) values to search for.
+        :param int optional start_time: The start time (in UNIX timestamp format) of the device-patient association to search for.
+        :param int optional end_time: The end time (in UNIX timestamp format) of the device-patient association to search for.
+        :return: A list of tuples containing device-patient mapping data, where each tuple contains four integer values in
+            the following order: device_id, patient_id, start_time, and end_time.
+        :rtype: List[Tuple[int, int, int, int]]
+        """
         if mrn_list is not None:
             patient_id_list = [] if patient_id_list is None else patient_id_list
             mrn_to_patient_id_map = self.get_mrn_to_patient_id_map(mrn_list)
@@ -989,7 +989,8 @@ class AtriumSDK:
 
         :param measure_id: The ID of the measure to retrieve data for.
         :param start_time_n: The start time (in nanoseconds) to retrieve data from.
-        :param end_time_n: The end time (in nanoseconds) to retrieve data until.
+        :param end_time_n: The end time (in nanoseconds) to retrieve data until. The end time is not
+            inclusive so if you want the end time to be included you have to add one sample period to it.
         :param device_id: (Optional) The ID of the device to retrieve data for.
         :param patient_id: (Optional) The ID of the patient to retrieve data for.
         :param mrn: (Optional) The medical record number (MRN) to retrieve data for.
@@ -1445,7 +1446,8 @@ class AtriumSDK:
 
         :param int measure_id: The measure identifier corresponding to the measures table in the linked relational database.
         :param int start_time_n: The start epoch in nanoseconds of the data you would like to query.
-        :param int end_time_n: The end epoch in nanoseconds of the data you would like to query.
+        :param int end_time_n: The end epoch in nanoseconds of the data you would like to query. The end time is not
+            inclusive so if you want the end time to be included you have to add one sample period to it.
         :param int device_id: The device identifier corresponding to the devices table in the linked relational database.
         :param int patient_id: The patient identifier corresponding to the encounter table in the linked relational database.
         :param int time_type: The time type returned to you. Time_type=1 is time stamps, which is what most people will
@@ -1488,7 +1490,7 @@ class AtriumSDK:
         # If the data is from the api.
         if self.mode == "api":
             return self.get_data_api(measure_id, start_time_n, end_time_n, device_id=device_id, patient_id=patient_id,
-                                     time_type=time_type, analog=analog, sort=False, allow_duplicates=allow_duplicates)
+                                     time_type=time_type, analog=analog, sort=sort, allow_duplicates=allow_duplicates)
 
         # If the dataset is in a local directory.
         elif self.mode == "local":
@@ -2642,7 +2644,9 @@ class AtriumSDK:
         return measure_info
 
     def _api_get_all_measures(self):
-        return self._request("GET", "measures/")
+        measure_dict = self._request("GET", "measures/")
+        measure_dict_with_ints = {int(measure_id): measure_info for measure_id, measure_info in measure_dict.items()}
+        return measure_dict_with_ints
 
     def _api_get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                                 start=None, end=None):
@@ -2718,7 +2722,9 @@ class AtriumSDK:
         return self._request("GET", "devices/", params=params)
 
     def _api_get_all_devices(self):
-        return self._request("GET", "devices/")
+        device_dict = self._request("GET", "devices/")
+        device_dict_with_ints = {int(device_id): device_info for device_id, device_info in device_dict.items()}
+        return device_dict_with_ints
 
     def _api_get_all_patients(self, skip=None, limit=None):
         skip = 0 if skip is None else skip
@@ -2731,7 +2737,8 @@ class AtriumSDK:
                     'skip': skip,
                     'limit': limit,
                 }
-                result_dict = self._request("GET", "patients/", params=params)
+                result_temp = self._request("GET", "patients/", params=params)
+                result_dict = {int(patient_id): patient_info for patient_id, patient_info in result_temp.items()}
 
                 if len(result_dict) == 0:
                     break
@@ -2743,7 +2750,8 @@ class AtriumSDK:
                 'skip': skip,
                 'limit': limit,
             }
-            patient_dict = self._request("GET", "patients/", params=params)
+            result_temp = self._request("GET", "patients/", params=params)
+            patient_dict = {int(patient_id): patient_info for patient_id, patient_info in result_temp.items()}
 
         return patient_dict
 
