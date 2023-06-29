@@ -1,8 +1,8 @@
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 
 class WindowConfig:
-    def __init__(self, measures: List[str] | List[Tuple[str, float, str]], window_size_sec: float | int,
+    def __init__(self, measures: Union[List[str], List[Tuple[str, float, str]]], window_size_sec: Union[float, int],
                  window_slide_sec: float, allowed_lateness_sec: int, earliest_signal_time: int = None,
                  source_out_of_order: bool = True, offset: float = 0, filter_out_same_values: bool = True) -> None:
         """

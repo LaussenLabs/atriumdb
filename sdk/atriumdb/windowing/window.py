@@ -2,7 +2,7 @@ import numpy as np
 import logging
 
 from dataclasses import dataclass, field
-from typing import Tuple
+from typing import Tuple, Union
 
 from atriumdb.windowing.window_config import WindowConfig
 
@@ -30,4 +30,4 @@ class CommonWindowFormat:
     device_id: str
     window_config: WindowConfig
     # a signal will be stored for each measure ID (measure_name, freq, uom). freq and uom can be None, meaning any value
-    signals: dict[Tuple[str, float | None, str | None], Signal] = field(default_factory=dict)
+    signals: dict[Tuple[str, Union[float, None], Union[str, None]], Signal] = field(default_factory=dict)
