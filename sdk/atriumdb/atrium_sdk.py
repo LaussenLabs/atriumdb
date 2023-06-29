@@ -1624,16 +1624,27 @@ class AtriumSDK:
             while window_end_ns <= batch_end_ns:
                 signals = dict()
                 for measure_triplet, (batch_times, batch_values) in raw_data_dict.items():
+                    expected_count, sample_period_ns = triplet_to_expected_count_period[measure_triplet]
+                    freq_hz = (10 ** 9) / sample_period_ns
                     left = np.searchsorted(batch_times, window_start_ns)
                     right = np.searchsorted(batch_times, window_end_ns)
                     if left == right:
                         # No Data
+                        signals[measure_triplet[0]] = Signal(
+                            data=None,
+                            times=None,
+                            total_count=0,
+                            expected_count=expected_count,
+                            sample_rate=freq_hz,
+                            source_id=None,
+                            measurement_type=None,
+                            unit_of_measure=measure_triplet[2]
+                        )
                         continue
 
                     # Get Raw Data
                     raw_data_times = batch_times[left:right]
                     raw_data_values = batch_values[left:right]
-                    expected_count, sample_period_ns = triplet_to_expected_count_period[measure_triplet]
 
                     # Create window times, values
                     signal_times = np.arange(window_start_ns, window_start_ns + (expected_count * sample_period_ns),
@@ -1645,11 +1656,16 @@ class AtriumSDK:
                         signal_times[closest_i] = time
                         signal_data[closest_i] = value
 
-                    signals[measure_triplet] = Signal(
+                    signals[measure_triplet[0]] = Signal(
                         data=signal_data,
                         times=signal_times,
                         total_count=raw_data_values.size,
-                        expected_count=expected_count)
+                        expected_count=expected_count,
+                        sample_rate=freq_hz,
+                        source_id=None,
+                        measurement_type=None,
+                        unit_of_measure=measure_triplet[2]
+                    )
 
                 window = CommonWindowFormat(
                     start_time=window_start_ns, device_id=device_tag, window_config=window_config, signals=signals,
