@@ -1,6 +1,6 @@
 # Atriumdb SDK C Library
 
-This is the C library that supports the encoding and decoding functionatlity of the python atriumdb SDK.
+This is the C library that supports the encoding and decoding functionality of the python atriumdb SDK.
 
 ## How to Build
 ### Linux
@@ -10,7 +10,7 @@ The library is built using Cmake, supported to compile using Linux gcc or Window
 You can build a new release using the command:
 
 ```shell
-$ cd Minimal_SDK
+$ cd tsc-lib
 $ cmake -Bcmake-build-release -H.
 $ cmake --build cmake-build-release --target Block
 ```
@@ -38,8 +38,8 @@ $ docker run --name c-build-debug -v "%cd%":/tsc-lib -w /tsc-lib --init  -it c-b
 ```
 NOTES: 
 - If you are using a linux host replace "%cd%" with $(pwd). 
-- Also if you would prefer to run build commands yourself just remove ./build_release.sh from the docker run command 
-and it will give you a shell.
+- Also, if you would prefer to run build commands yourself just remove ./build_release.sh from the docker run command, 
+and it will give you a shell in the build container.
 
 ## How to Test
 
