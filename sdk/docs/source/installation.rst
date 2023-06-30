@@ -4,32 +4,13 @@ Installation
 .. toctree::
    :maxdepth: 2
 
-To install the development version of AtriumDB, you will need to clone or download the repository from GitHub.
-
-.. code-block:: bash
-
-    $ git clone https://github.com/LaussenLabs/atriumdb
-
-Once you have the repository, navigate to the base directory and run the following command:
-
-.. code-block:: bash
-
-    $ cd atriumdb/sdk
-    $ pip install .
-
-When atriumdb is hosted on `PyPI <https://pypi.org/>`_, you can use:
+AtriumDB can be installed by running:
 
 .. code-block:: bash
 
     $ pip install atriumdb
 
-Or with a wheel file:
-
-.. code-block:: bash
-
-    $ pip install atriumdb-0.1.0-py3-none-any.whl
-
-Which will install the base version of atriumdb, allowing the reading and writing to local datasets,
+This will install the base version of AtriumDB, allowing the reading and writing to local datasets,
 supported by sqlite3 only.
 
 Install Options
@@ -97,23 +78,14 @@ MariaDB
 ---------------
 
 If you are using AtriumDB with MariaDB on Linux you have to make sure you have MariaDB server version 10.11 installed
-on your computer. On windows this step is unnecessary and you can go straight to building the wheel file and pip
-installing AtriumDB.
+on your computer first. On windows this step is unnecessary and you can go straight pip installing AtriumDB.
 
 .. code-block:: bash
 
     $ curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | sudo bash -s -- --mariadb-server-version="mariadb-10.11"
     $ apt-get update && apt-get install -y libmariadb3 libmariadb-dev
 
-Then you have to pip install build and build a wheel file for AtriumDB before pip installing AtriumDB.
-
-.. code-block:: bash
-
-    $ git clone https://github.com/LaussenLabs/atriumdb
-    $ pip install build
-    $ cd atriumdb/sdk
-    $ python -m build
-    $ pip install dist/atriumdb-0.1.0-py3-none-any.whl[mariadb]
+Once you install that (if you Linux distribution doesn't have it) you can pip install AtriumDB normally.
 
 MariaDB Docker Setup
 ^^^^^^^^^^^^^^^^^^^^^
@@ -131,4 +103,4 @@ password, and port when instantiating an AtriumDB object later.
 
 .. code-block:: bash
 
-    $ docker run --name mariadb -d -p 127.0.0.1:3306:3306 -v /path/for/mariadb/data/on/host:/var/lib/mysql -e MARIADB_ROOT_PASSWORD='password' mariadb:latest
+    $ docker run --name mariadb -d -p 127.0.0.1:3306:3306 -v /host/path/to/mariadb/data:/var/lib/mysql -e MARIADB_ROOT_PASSWORD='password' mariadb:latest

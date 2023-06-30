@@ -1,5 +1,5 @@
 # AtriumDB
-For more detailed documentation click [here](https://atriumdb.sickkids.ca/docs/).
+For more detailed documentation click [here](https://docs.atriumdb.io/).
 
 ## Installation
 
@@ -23,7 +23,7 @@ However, it is recommended that you build the binaries using the provided Docker
 If you build using docker (recommended) it will cross compile both for Linux and Windows.
 First you build the docker image from the Dockerfile in the tsc-lib folder using the command:
 ```shell
-$ docker build -t c-build .
+$ docker build -t c-build /tsc-lib
 ```
 Then to build the docker container and the binaries for release you use the command:
 ```shell
@@ -33,8 +33,10 @@ If you want to build the binaries in debug mode use the command:
 ```shell
 $ docker run --name c-build-debug -v /path/to/repo:/adb-lib-sdk -w /adb-lib-sdk/tsc-lib --init  -it c-build ./build_debug.sh
 ```
-These commands will automatically place the built binaries in the proper folder in the SDK. 
-If you need to rebuild the binaries all you need to do is restart the container.
+NOTES:
+- These commands will automatically place the built binaries in the proper folder in the SDK
+- If you need to rebuild the binaries all you need to do is restart the container
+- If you would rather run the build commands yourself inside the container just remove the ./build_release.sh from the end of the docker run command and it will give you a shell for the container
 
 #### Python SDK
 Once you have the binaries built, make sure that you have python build installed and you are in the sdk folder of the repo.

@@ -26,15 +26,15 @@ If you build using docker it will cross compile both for Linux and Windows.
 
 First you build the docker image using the command:
 ```shell
-$ docker build -t c-build .
+$ docker build -t c-build /tsc-lib
 ```
 Then to build the binaries for release from a windows host you use the command:
 ```shell
-$ docker run --name c-build-release -v "%cd%":/tsc-lib -w /tsc-lib --init  -it c-build ./build_release.sh
+$ docker run --name c-build-release -v "%cd%":/adb-lib-sdk -w /adb-lib-sdk/tsc-lib --init  -it c-build ./build_release.sh
 ```
 If you want to build the binaries in debug mode use the command:
 ```shell
-$ docker run --name c-build-debug -v "%cd%":/tsc-lib -w /tsc-lib --init  -it c-build ./build_debug.sh
+$ docker run --name c-build-debug -v "%cd%":/adb-lib-sdk -w /adb-lib-sdk/tsc-lib --init  -it c-build ./build_debug.sh
 ```
 NOTES: 
 - If you are using a linux host replace "%cd%" with $(pwd). 
