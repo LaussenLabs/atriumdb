@@ -34,7 +34,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
     "Development Status :: 4 - Beta",
 ]
-keywords = ["timeseries", "database", "waveform", "medical data", "machine learning", "data", "data science"]
+keywords = ["atriumdb", "timeseries", "database", "waveform", "medical data", "machine learning", "data", "data science"]
 dependencies = [
     'tomli; python_version < "3.11"',
     "numpy >= 1.21.4, < 2",
