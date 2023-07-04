@@ -1651,10 +1651,17 @@ class AtriumSDK:
                                              sample_period_ns, dtype=np.int64)
                     signal_data = np.full(expected_count, fill_value=np.nan, dtype=float)
 
-                    for time, value in zip(raw_data_times, raw_data_values):
-                        closest_i = math.floor((time - window_start_ns) / sample_period_ns)
-                        signal_times[closest_i] = time
-                        signal_data[closest_i] = value
+                    # Old Method: Python For Loop
+                    # for time, value in zip(raw_data_times, raw_data_values):
+                    #     closest_i = math.floor((time - window_start_ns) / sample_period_ns)
+                    #     signal_times[closest_i] = time
+                    #     signal_data[closest_i] = value
+
+                    # New Method: Numpy Vectorization
+                    closest_i_array = np.floor((raw_data_times - window_start_ns) / sample_period_ns).astype(int)
+
+                    signal_times[closest_i_array] = raw_data_times
+                    signal_data[closest_i_array] = raw_data_values
 
                     signals[measure_triplet[0]] = Signal(
                         data=signal_data,
