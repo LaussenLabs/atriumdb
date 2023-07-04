@@ -1627,7 +1627,7 @@ class AtriumSDK:
                     expected_count, sample_period_ns = triplet_to_expected_count_period[measure_triplet]
                     freq_hz = (10 ** 9) / sample_period_ns
                     left = np.searchsorted(batch_times, window_start_ns)
-                    right = np.searchsorted(batch_times, window_end_ns)
+                    right = np.searchsorted(batch_times, window_end_ns - sample_period_ns, side='right')
                     if left == right:
                         # No Data
                         signals[measure_triplet[0]] = Signal(
