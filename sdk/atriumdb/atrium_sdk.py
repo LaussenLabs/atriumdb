@@ -1652,7 +1652,7 @@ class AtriumSDK:
                     signal_data = np.full(expected_count, fill_value=np.nan, dtype=float)
 
                     for time, value in zip(raw_data_times, raw_data_values):
-                        closest_i = math.floor((time - window_start_ns) / sample_period_ns)
+                        closest_i = max(0, math.floor((time - window_start_ns) / sample_period_ns))
                         signal_times[closest_i] = time
                         signal_data[closest_i] = value
 
