@@ -10,6 +10,9 @@ cmake -Bcmake-build-debug -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_
 #build binary
 cmake --build cmake-build-debug --target Block;
 
+#make the directory if it doesnt exist
+mkdir -p ../sdk/bin
+
 #copy windows binary to output directory
 cp cmake-build-debug/src/Block/libTSC.dll ../sdk/bin/libTSC_debug.dll;
 

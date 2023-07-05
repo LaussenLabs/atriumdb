@@ -10,6 +10,9 @@ cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAK
 #build binary
 cmake --build cmake-build-release --target Block;
 
+#make the directory if it doesnt exist
+mkdir -p ../sdk/bin
+
 #copy windows binary to output directory
 cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll;
 

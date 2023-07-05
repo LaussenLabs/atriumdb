@@ -23,7 +23,7 @@ However, it is recommended that you build the binaries using the provided Docker
 If you build using docker (recommended) it will cross compile both for Linux and Windows.
 First you build the docker image from the Dockerfile in the tsc-lib folder using the command:
 ```shell
-$ docker build -t c-build /tsc-lib
+$ docker build -t c-build tsc-lib
 ```
 Then to build the docker container and the binaries for release you use the command:
 ```shell
@@ -37,6 +37,7 @@ NOTES:
 - These commands will automatically place the built binaries in the proper folder in the SDK
 - If you need to rebuild the binaries all you need to do is restart the container
 - If you would rather run the build commands yourself inside the container just remove the ./build_release.sh from the end of the docker run command and it will give you a shell for the container
+- If you get this error "[FATAL tini (7)] exec ./build_release.sh failed: Permission denied" all you need to do is run "chmod 755 build_release.sh" from the host computer to fix it
 
 #### Python SDK
 Once you have the binaries built, make sure that you have python build installed and you are in the sdk folder of the repo.
