@@ -5,13 +5,13 @@ For more detailed documentation click [here](https://docs.atriumdb.io/).
 
 To install the base version of AtriumDB run:
 
-```console
+```shell
 $ pip install atriumdb
 ```
 
 ### Compile from source
-Clone the GitHub repository
-```console
+Clone the GitHub repository and change into its directory
+```shell
 $ git clone https://github.com/LaussenLabs/atriumdb
 ```
 #### Atriumdb SDK C Library
@@ -25,24 +25,24 @@ First you build the docker image from the Dockerfile in the tsc-lib folder using
 ```shell
 $ docker build -t c-build tsc-lib
 ```
-Then to build the docker container and the binaries for release you use the command:
+To build the docker container and the binaries for release you need edit the command below by changing "/path/to/atriumdb" to the path to the repository on your computer.
+Then run the command:
 ```shell
-$ docker run --name c-build-release -v /path/to/repo:/adb-lib-sdk -w /adb-lib-sdk/tsc-lib --init  -it c-build ./build_release.sh
+$ docker run --name c-build-release -v /path/to/atriumdb:/atriumdb --init -it c-build ./build_release.sh
 ```
 If you want to build the binaries in debug mode use the command:
 ```shell
-$ docker run --name c-build-debug -v /path/to/repo:/adb-lib-sdk -w /adb-lib-sdk/tsc-lib --init  -it c-build ./build_debug.sh
+$ docker run --name c-build-debug -v /path/to/atriumdb:/atriumdb --init -it c-build ./build_debug.sh
 ```
 NOTES:
 - These commands will automatically place the built binaries in the proper folder in the SDK
 - If you need to rebuild the binaries all you need to do is restart the container
 - If you would rather run the build commands yourself inside the container just remove the ./build_release.sh from the end of the docker run command and it will give you a shell for the container
-- If you get this error "[FATAL tini (7)] exec ./build_release.sh failed: Permission denied" all you need to do is run "chmod 755 build_release.sh" from the host computer to fix it
 
 #### Python SDK
 Once you have the binaries built, make sure that you have python build installed and you are in the sdk folder of the repo.
 Then run the below commands to build the python wheel file. Once built you can pip install it. 
-```console
+```shell
 $ pip install build
 $ cd sdk
 $ python -m build

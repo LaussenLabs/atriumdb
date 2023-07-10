@@ -1,5 +1,7 @@
 #!/bin/bash
 
+cd /atriumdb/tsc-lib
+
 #****windows binary****
 #remove old build files
 rm -rf cmake-build-release/**;
