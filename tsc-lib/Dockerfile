@@ -22,4 +22,7 @@ COPY "/build_debug.sh" .
 RUN sed -i -e 's/\r$//' /build_release.sh
 RUN sed -i -e 's/\r$//' /build_debug.sh
 
+RUN chmod 755 /build_release.sh
+RUN chmod 755 /build_debug.sh
+
 CMD ["/bin/bash"]

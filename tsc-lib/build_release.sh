@@ -1,7 +1,6 @@
 #!/bin/bash
 
-#change into project directory
-cd /tsc-lib;
+cd /atriumdb/tsc-lib
 
 #****windows binary****
 #remove old build files
@@ -13,8 +12,11 @@ cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAK
 #build binary
 cmake --build cmake-build-release --target Block;
 
-#copy binary to output directory
-cp /tsc-lib/cmake-build-release/src/Block/libTSC.dll /tsc-lib/built_bin/libTSC.dll;
+#make the directory if it doesnt exist
+mkdir -p ../sdk/bin
+
+#copy windows binary to output directory
+cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll;
 
 #****linux binary****
 rm -rf cmake-build-release/**;
@@ -23,7 +25,7 @@ rm -rf cmake-build-release/**;
 cmake -Bcmake-build-release -H. -DCMAKE_BUILD_TYPE='Release';
 cmake --build cmake-build-release --target Block;
 
-#copy binary to output directory
-cp /tsc-lib/cmake-build-release/src/Block/libTSC.so /tsc-lib/built_bin/libTSC.so;
+#copy linux binary to output directory
+cp cmake-build-release/src/Block/libTSC.so ../sdk/bin/libTSC.so;
 
 

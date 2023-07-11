@@ -6,7 +6,7 @@ This quick start guide will walk you through the process of creating a new datas
 Creating a new dataset
 #######################
 
-To create a new dataset, you can use the `create_dataset` method. This method allows you to specify the type of metadata database to use, the protection mode, and the behavior when new data overlaps with existing data.
+To create a new dataset, you can use the `create_dataset` method. This method allows you to specify the type of metadata database to use and where the data will be stored.
 
 .. code-block:: python
 
@@ -15,7 +15,7 @@ To create a new dataset, you can use the `create_dataset` method. This method al
     # Create a new local dataset using SQLite
     sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", database_type="sqlite")
 
-    # Create a new local dataset using MariaDB
+    # OR create a new local dataset using MariaDB
     connection_params = {
         'host': "localhost",
         'user': "user",
@@ -28,20 +28,21 @@ To create a new dataset, you can use the `create_dataset` method. This method al
 Connecting to an Existing Dataset
 #######################################
 
-To create a new dataset or continue working on a previous dataset, you will need to specify a local path where the dataset should be stored.
+To connect to an already created dataset, you will need to specify a local path where the dataset is stored if it's a sqlite database.
+If it's a MariaDB dataset you will also have to specify the connection parameters.
 
 .. code-block:: python
 
-    # Import AtriumSDK python object.
+    # Import AtriumSDK python object
     from atriumdb import AtriumSDK
 
-    # Define a directory path where the dataset will be stored.
+    # Define a directory path where the dataset is stored (always needed)
     dataset_location = "./example_dataset"
 
-    # Create AtriumSDK python object.
+    # Create AtriumSDK python object (sqlite)
     sdk = AtriumSDK(dataset_location=dataset_location)
 
-    # Connect to a dataset supported by mariadb
+    # OR Connect to a dataset supported by mariadb
     connection_params = {
         'host': "localhost",
         'user': "user",
