@@ -40,6 +40,10 @@ class WindowConfig:
                                           and isinstance(x[0], str)
                                           and isinstance(x[1], float)
                                           and isinstance(x[2], str))
+                   or (isinstance(x, tuple) and len(x) == 3
+                       and isinstance(x[0], str)
+                       and isinstance(x[1], int)
+                       and isinstance(x[2], str))
                    for x in measures):
             raise ValueError("All tuples in measure_names must contain 3 elements: (str, float, str)")
 
