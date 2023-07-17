@@ -552,7 +552,8 @@ class AtriumSDK:
 
     def write_data(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq_nhz: int,
                    time_0: int, raw_time_type: int = None, raw_value_type: int = None, encoded_time_type: int = None,
-                   encoded_value_type: int = None, scale_m: float = None, scale_b: float = None):
+                   encoded_value_type: int = None, scale_m: float = None, scale_b: float = None,
+                   interval_index: bool = True):
         """
         .. _write_data_label:
 
@@ -578,6 +579,9 @@ class AtriumSDK:
             is already analog). The slope (m) in y = mx + b
         :param float scale_b: Constant factor to offset digital data to transform it to analog (None if raw data
             is already analog). The y-intercept (b) in y = mx + b
+        :param bool interval_index: Enable writing the data to the interval index so that it can be retrieved using
+            the `AtriumSDK.get_interval_index` method. Optimized if the data is the most recent data for that
+            measure-device combination, otherwise can be very slow. Disable to improve performance.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.
@@ -597,12 +601,7 @@ class AtriumSDK:
             >>> time_zero_nano = 1234567890_000_000_000
             >>> gap_arr = np.array([42, 1_000_000_000, 99, 2_000_000_000])
             >>> value_data = np.sin(np.linspace(0, 4, num=200))
-            >>> sdk.write_data(
-            >>>     measure_id, device_id, gap_arr, value_data, freq_nhz, time_zero_nano,
-            >>>     raw_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
-            >>>     raw_value_type=V_TYPE_INT64,
-            >>>     encoded_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
-            >>>     encoded_value_type=V_TYPE_DELTA_INT64)
+            >>> sdk.write_data(measure_id,device_id,gap_arr,value_data,freq_nhz,time_zero_nano,raw_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,raw_value_type=V_TYPE_INT64,encoded_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,encoded_value_type=V_TYPE_DELTA_INT64)
         """
         # Ensure the current mode is "local"
         assert self.mode == "local"
@@ -692,7 +691,7 @@ class AtriumSDK:
             #     file_path.unlink(missing_ok=True)
         else:
             # Insert SQL rows
-            self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data)
+            self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, interval_index)
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
 
@@ -1625,7 +1624,7 @@ class AtriumSDK:
             measure_id, device_id, metadata, start_bytes, intervals)
 
         # Insert the block and interval data into the metadata table
-        self.sql_handler.insert_tsc_file_data(path, block_data, interval_data)
+        self.sql_handler.insert_tsc_file_data(path, block_data, interval_data, True)
 
     def get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                            start=None, end=None):
