@@ -6,6 +6,9 @@ trigger:
 pool:
   vmImage: ubuntu-20.04
 
+variables:
+  - name: 
+
 stages:
 - stage: Build
   jobs:
@@ -13,17 +16,12 @@ stages:
       displayName: Run build release C
 
       steps:
-      - task: Docker@2
-        inputs:
-          command: 'build'
-          Dockerfile: 'tsc-lib/Dockerfile'
-          tags: 'c-build'
+      - bash: |
+          sudo apt-get update && apt-get install -y tzdata cmake build-essential gdb libzstd-dev liblz4-dev python3.10 mingw-w64
+          sed -i -e 's/\r$//' tsc-lib/build_release.sh
+          chmod 755 tsc-lib/build_release.sh
+          ./build_release.sh
 
-      - task: Docker@2
-        inputs:
-          command: 'start'
-          arguments: '--volume $(pwd):/atriumdb --init -it ./build_release.sh'
-          container: 'c-build'
     - job: run_build_release_sdk
       displayName: Run build release sdk
 
