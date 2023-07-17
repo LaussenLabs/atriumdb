@@ -6,9 +6,6 @@ trigger:
 pool:
   vmImage: ubuntu-20.04
 
-variables:
-  - name: 
-
 stages:
 - stage: Build
   jobs:
