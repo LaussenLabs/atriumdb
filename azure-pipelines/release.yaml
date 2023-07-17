@@ -17,6 +17,7 @@ stages:
         inputs:
           command: 'build'
           Dockerfile: 'tsc-lib/Dockerfile'
+          tags: 'c-build'
 
       - task: Docker@2
         inputs:
