@@ -895,9 +895,9 @@ class AtriumSDK:
 
         return measure_id, device_id, filename, encode_headers, byte_start_array, intervals
 
-    def write_data_easy(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray,
-                        freq: int, scale_m: float = None, scale_b: float = None, time_units: str = None,
-                        freq_units: str = None):
+    def write_data_easy(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq: int,
+                        scale_m: float = None, scale_b: float = None, time_units: str = None, freq_units: str = None,
+                        interval_index=True):
         """
         .. _write_data_easy_label:
 
@@ -917,8 +917,9 @@ class AtriumSDK:
             >>> time_data = np.arange(1234567890, 1234567890 + 3600, dtype=np.int64)
             >>> # Create some value data of equal dimension.
             >>> value_data = np.sin(time_data)
-            >>> sdk.write_data_easy(measure_id=new_measure_id, device_id=new_device_id, time_data=time_data, value_data=value_data, freq=freq_hz, freq_units="Hz", time_units="s")
+            >>> sdk.write_data_easy(measure_id=new_measure_id,device_id=new_device_id,time_data=time_data,value_data=value_data,freq=freq_hz,time_units="s",freq_units="Hz")
 
+        :param interval_index:
         :param int measure_id: The measure identifier corresponding to the measures table in the linked
             relational database.
         :param int device_id: The device identifier corresponding to the devices table in the linked
@@ -937,6 +938,9 @@ class AtriumSDK:
         :param str freq_units: The unit used for the specified frequency. This value can be one of ["nHz", "uHz", "mHz",
             "Hz", "kHz", "MHz"]. If you use extremely large values for this, it will be converted to nanohertz
             in the backend, and you may overflow 64-bit integers.
+        :param bool interval_index: Enable writing the data to the interval index so that it can be retrieved using
+            the `AtriumSDK.get_interval_index` method. Optimized if the data is the most recent data for that
+            measure-device combination, otherwise can be very slow. Disable to improve performance.
 
         """
         # Set default time and frequency units if not provided
@@ -971,7 +975,7 @@ class AtriumSDK:
         # Call the write_data method with the determined parameters
         self.write_data(measure_id, device_id, time_data, value_data, freq, int(time_data[0]), raw_time_type=raw_t_t,
                         raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
-                        scale_m=scale_m, scale_b=scale_b)
+                        scale_m=scale_m, scale_b=scale_b, interval_index=interval_index)
 
     def get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int, device_id: int = None,
                      patient_id: int = None, mrn: int = None, time_type=1, analog=True, sort=True,

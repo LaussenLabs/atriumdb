@@ -171,9 +171,8 @@ def ingest_data(to_sdk, measure_id, device_id, headers, times, values):
                 h.scale_b == headers[0].scale_b and
                 h.freq_nhz == headers[0].freq_nhz for h in headers]):
             print("easy")
-            to_sdk.write_data_easy(measure_id, device_id, time_data=times, value_data=values,
-                                   freq=headers[0].freq_nhz, scale_m=headers[0].scale_m,
-                                   scale_b=headers[0].scale_b)
+            to_sdk.write_data_easy(measure_id, device_id, time_data=times, value_data=values, freq=headers[0].freq_nhz,
+                                   scale_m=headers[0].scale_m, scale_b=headers[0].scale_b)
         else:
             print("hard")
             val_index = 0

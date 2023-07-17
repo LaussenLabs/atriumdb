@@ -48,8 +48,7 @@ def _test_insert_data_with_patient_mapping(db_type, dataset_location, connection
     og_time_data = np.arange(num_values, dtype=np.int64) * period_ns
     og_value_data = np.sin(np.arange(num_values))
 
-    sdk.write_data_easy(
-        measure_id, device_id, og_time_data, og_value_data, freq_hz)
+    sdk.write_data_easy(measure_id, device_id, og_time_data, og_value_data, freq_hz)
 
     patient_id = insert_random_patients(sdk, 1)[0]
 
