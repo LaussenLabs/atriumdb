@@ -17,7 +17,7 @@ stages:
           sudo apt-get update && apt-get install -y tzdata cmake build-essential gdb libzstd-dev liblz4-dev python3.10 mingw-w64
           sed -i -e 's/\r$//' tsc-lib/build_release.sh
           chmod 755 tsc-lib/build_release.sh
-          ./build_release.sh
+          ./tsc-lib/build_release.sh
 
     - job: run_build_release_sdk
       displayName: Run build release sdk
