@@ -22,7 +22,7 @@ stages:
       - task: Docker@2
         inputs:
           command: 'start'
-          arguments: '-v $(pwd):/atriumdb --init -it ./build_release.sh'
+          arguments: '--volume $(pwd):/atriumdb --init -it ./build_release.sh'
           container: 'c-build'
     - job: run_build_release_sdk
       displayName: Run build release sdk
