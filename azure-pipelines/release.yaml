@@ -6,3 +6,31 @@ pr: none
 pool:
   vmImage: ubuntu-20.04
 
+
+stages:
+- stage: Build
+  jobs:
+    - job: run_build_release_c
+      displayName: Run build release C
+
+      steps:
+      - task: Docker@2
+        inputs:
+          command: 'build'
+          Dockerfile: 'tsc-lib/Dockerfile'
+          arguments: '--name c-build'
+      - task: Docker@2
+        inputs:
+          command: 'start'
+          arguments: '-v $(pwd):/atriumdb --init -it ./build_release.sh'
+          container: 'c-build'
+    - job: run_build_release_sdk
+      displayName: Run build release sdk
+
+      steps:
+      - bash: |
+          pip install build
+          pip install twine
+          cd sdk
+          python -m build
+
