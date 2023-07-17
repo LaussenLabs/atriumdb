@@ -227,7 +227,7 @@ class MariaDBHandler(SQLHandler):
             row = cursor.fetchone()
         return row
 
-    def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict]):
+    def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict], gap_tolerance: int):
         with self.maria_db_connection(begin=True) as (conn, cursor):
             # insert file_path into file_index and get id
             cursor.execute(maria_insert_file_index_query, (file_path,))
@@ -241,10 +241,10 @@ class MariaDBHandler(SQLHandler):
 
             # insert into interval_index
             [cursor.callproc("insert_interval", (interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                interval["end_time_n"])) for interval in interval_data]
+                                interval["end_time_n"], gap_tolerance)) for interval in interval_data]
 
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
-                             file_ids_to_delete: List[int]):
+                             file_ids_to_delete: List[int], gap_tolerance: int):
         with self.maria_db_connection(begin=True) as (conn, cursor):
             # insert/update file data
             for file_path, (block_data, interval_data) in file_data.items():
@@ -263,7 +263,7 @@ class MariaDBHandler(SQLHandler):
                 if len(interval_data) > 0:
                     [cursor.callproc("insert_interval",
                                      (interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                      interval["end_time_n"])) for interval in interval_data]
+                                      interval["end_time_n"], gap_tolerance)) for interval in interval_data]
 
             # delete old block data
             cursor.executemany(maria_delete_block_query, [(block_id,) for block_id in block_ids_to_delete])

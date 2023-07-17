@@ -192,9 +192,8 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
 
         # Call the write_data method with the determined parameters
         sdk.write_data(measure_id, device_id, gap_data_2d.flatten(), value_data, freq_nano, start_time,
-                       raw_time_type=raw_t_t,
-                       raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
-                       scale_m=None, scale_b=None)
+                       raw_time_type=raw_t_t, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t,
+                       encoded_value_type=encoded_v_t, scale_m=None, scale_b=None)
 
 
 def get_record_data_for_ingest(d_record, p_record, signal_i):

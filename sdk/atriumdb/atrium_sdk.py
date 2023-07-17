@@ -552,7 +552,7 @@ class AtriumSDK:
 
     def write_data(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq_nhz: int,
                    time_0: int, raw_time_type: int = None, raw_value_type: int = None, encoded_time_type: int = None,
-                   encoded_value_type: int = None, scale_m: float = None, scale_b: float = None):
+                   encoded_value_type: int = None, scale_m: float = None, scale_b: float = None, gap_tolerance: int = 0):
         """
         .. _write_data_label:
 
@@ -578,6 +578,8 @@ class AtriumSDK:
             is already analog). The slope (m) in y = mx + b
         :param float scale_b: Constant factor to offset digital data to transform it to analog (None if raw data
             is already analog). The y-intercept (b) in y = mx + b
+        :param int gap_tolerance: This represents the max allowable time gap between samples before a new interval is
+            created in the interval index, rather than just appending to an already existing one.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.
@@ -684,7 +686,7 @@ class AtriumSDK:
             _LOGGER.debug(
                 f"{measure_id}, {device_id}): overwrite_file_dict: {overwrite_file_dict}\n "
                 f"old_block_ids: {old_block_ids}\n old_file_ids: {old_file_ids}\n")
-            self.sql_handler.update_tsc_file_data(overwrite_file_dict, old_block_ids, old_file_ids)
+            self.sql_handler.update_tsc_file_data(overwrite_file_dict, old_block_ids, old_file_ids, gap_tolerance)
 
             # Delete old files
             # for file_id, filename in old_file_list:
@@ -692,12 +694,12 @@ class AtriumSDK:
             #     file_path.unlink(missing_ok=True)
         else:
             # Insert SQL rows
-            self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data)
+            self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, gap_tolerance)
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
 
     def _make_oversized_block(self, encoded_time_type, encoded_value_type, freq_nhz, num_full_blocks, raw_time_type,
-                             raw_value_type, scale_b, scale_m, time_0, time_data, value_data):
+                              raw_value_type, scale_b, scale_m, time_0, time_data, value_data):
         # remove 1 from num_full_blocks since one full block will be a part of the last oversized block
         num_full_blocks -= 1
         # save original optimal block size, so you can switch back later

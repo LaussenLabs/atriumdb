@@ -198,7 +198,7 @@ class SQLiteHandler(SQLHandler):
             row = cursor.fetchone()
         return row
 
-    def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict]):
+    def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict], gap_tolerance: int = 0):
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
             # insert file_path into file_index and get id
             cursor.execute(sqlite_insert_file_index_query, (file_path,))
@@ -216,7 +216,7 @@ class SQLiteHandler(SQLHandler):
             cursor.executemany(sqlite_insert_interval_index_query, interval_tuples)
 
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
-                             file_ids_to_delete: List[int]):
+                             file_ids_to_delete: List[int], gap_tolerance: int = 0):
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
             # insert/update file data
             for file_path, (block_data, interval_data) in file_data.items():
