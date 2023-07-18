@@ -13,6 +13,10 @@ stages:
       displayName: Run build release
 
       steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: '3.10'
+
       - bash: |
           sudo apt-get update && sudo apt-get install -y tzdata cmake build-essential gdb libzstd-dev liblz4-dev python3.10 mingw-w64
           pip install build
@@ -35,9 +39,13 @@ stages:
           cd sdk
           python -m build
         displayName: Build SDK package
+
       - task: TwineAuthenticate@1
         inputs:
           artifactFeed: 'Physiological Data System/atriumdb-py-internal'
 
-
+      - bash: |
+            python -m twine upload -r atriumdb-py-internal --config-file $(PYPIRC_PATH) dist/*.whl
+        displayName: Upload build artifacts
+      
 
