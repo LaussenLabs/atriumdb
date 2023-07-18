@@ -35,6 +35,9 @@ stages:
           cd sdk
           python -m build
         displayName: Build SDK package
+      - task: TwineAuthenticate@1
+        inputs:
+          artifactFeed: 'Physiological Data System/atriumdb-py-internal'
 
 
 
