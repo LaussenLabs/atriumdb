@@ -43,9 +43,13 @@ stages:
       - task: TwineAuthenticate@1
         inputs:
           artifactFeed: 'Physiological Data System/atriumdb-py-internal'
-
+        
       - bash: |
             python -m twine upload -r atriumdb-py-internal --config-file $(PYPIRC_PATH) dist/*.whl
+            python -m twine upload --verbose -p $(PYPI_API_TOKEN)  dist/*.whl
+        env:
+          PYPI_API_TOKEN: $(SecretOne)
         displayName: Upload build artifacts
+      
       
 
