@@ -6,6 +6,9 @@ trigger:
 pool:
   vmImage: ubuntu-20.04
 
+variables:
+- group: atriumdb-release
+
 stages:
 - stage: Build
   jobs:
@@ -46,9 +49,7 @@ stages:
         
       - bash: |
             python -m twine upload -r atriumdb-py-internal --config-file $(PYPIRC_PATH) dist/*.whl
-            python -m twine upload --verbose -repository-url https://test.pypi.org/legacy/ -p $(PYPI_API_TOKEN) -u __token__ dist/*.whl
-        env:
-          PYPI_API_TOKEN: $(SecretOne)
+            python -m twine upload --verbose -repository-url https://test.pypi.org/legacy/ -p $(test_pypi_token) -u __token__ dist/*.whl
         displayName: Upload build artifacts
       
       
