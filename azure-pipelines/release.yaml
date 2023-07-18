@@ -46,7 +46,7 @@ stages:
         
       - bash: |
             python -m twine upload -r atriumdb-py-internal --config-file $(PYPIRC_PATH) dist/*.whl
-            python -m twine upload --verbose -p $(PYPI_API_TOKEN)  dist/*.whl
+            python -m twine upload --verbose -repository-url https://test.pypi.org/legacy/ -p $(PYPI_API_TOKEN) -u __token__ dist/*.whl
         env:
           PYPI_API_TOKEN: $(SecretOne)
         displayName: Upload build artifacts
