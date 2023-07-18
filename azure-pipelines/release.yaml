@@ -48,8 +48,8 @@ stages:
           artifactFeed: 'Physiological Data System/atriumdb-py-internal'
         
       - bash: |
-            python -m twine upload -r atriumdb-py-internal --config-file $(PYPIRC_PATH) dist/*.whl
-            python -m twine upload --verbose -repository-url https://test.pypi.org/legacy/ -p $(test_pypi_token) -u __token__ dist/*.whl
+            python -m twine upload -r atriumdb-py-internal --config-file $(PYPIRC_PATH) sdk/dist/*.whl
+            python -m twine upload --verbose -repository-url https://test.pypi.org/legacy/ -p $(test_pypi_token) -u __token__ sdk/dist/*.whl
         displayName: Upload build artifacts
       
       
