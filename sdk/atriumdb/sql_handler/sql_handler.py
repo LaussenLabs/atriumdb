@@ -63,7 +63,7 @@ class SQLHandler(ABC):
 
     @abstractmethod
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
-                             enable_interval_index):
+                             interval_index_mode):
         # Insert a file path to file index.
         # Insert block_index rows with foreign key file_id.
         # Insert interval_index rows.

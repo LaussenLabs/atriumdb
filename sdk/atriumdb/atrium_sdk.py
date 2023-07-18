@@ -18,7 +18,8 @@
 import numpy as np
 
 from atriumdb.adb_functions import get_block_and_interval_data, condense_byte_read_list, find_intervals, \
-    merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz
+    merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz, \
+    default_interval_index_mode, allowed_interval_index_modes
 from atriumdb.block import Block, convert_gap_array_to_intervals, \
     convert_intervals_to_gap_array
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
@@ -553,7 +554,7 @@ class AtriumSDK:
     def write_data(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq_nhz: int,
                    time_0: int, raw_time_type: int = None, raw_value_type: int = None, encoded_time_type: int = None,
                    encoded_value_type: int = None, scale_m: float = None, scale_b: float = None,
-                   interval_index: bool = True):
+                   interval_index: str = None):
         """
         .. _write_data_label:
 
@@ -611,6 +612,11 @@ class AtriumSDK:
 
         # Ensure time data is of integer type
         assert np.issubdtype(time_data.dtype, np.integer), "Time information must be encoded as an integer."
+
+        # Set default interval index and ensure valid type.
+        interval_index = default_interval_index_mode if interval_index is None else interval_index
+        assert interval_index in allowed_interval_index_modes, \
+            f"interval_index must be one of {allowed_interval_index_modes}"
 
         # Calculate new intervals
         write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
@@ -897,7 +903,7 @@ class AtriumSDK:
 
     def write_data_easy(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq: int,
                         scale_m: float = None, scale_b: float = None, time_units: str = None, freq_units: str = None,
-                        interval_index=True):
+                        interval_index=None):
         """
         .. _write_data_easy_label:
 
@@ -1628,7 +1634,7 @@ class AtriumSDK:
             measure_id, device_id, metadata, start_bytes, intervals)
 
         # Insert the block and interval data into the metadata table
-        self.sql_handler.insert_tsc_file_data(path, block_data, interval_data, True)
+        self.sql_handler.insert_tsc_file_data(path, block_data, interval_data, None)
 
     def get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                            start=None, end=None):
