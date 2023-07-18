@@ -9,12 +9,17 @@ pool:
 stages:
 - stage: Build
   jobs:
-    - job: run_build_release_c
-      displayName: Run build release C
+    - job: run_build_release
+      displayName: Run build release
 
       steps:
       - bash: |
           sudo apt-get update && sudo apt-get install -y tzdata cmake build-essential gdb libzstd-dev liblz4-dev python3.10 mingw-w64
+          pip install build
+          pip install twine
+        displayName: Setup build environment
+
+      - bash: |
           cd tsc-lib
           cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_BUILD_TYPE='Release';
           cmake --build cmake-build-release --target Block;
@@ -24,14 +29,12 @@ stages:
           cmake --build cmake-build-release --target Block;
           cp cmake-build-release/src/Block/libTSC.so ../sdk/bin/libTSC.so;
           cd ..
+        displayName: Build C libraries
 
-    - job: run_build_release_sdk
-      displayName: Run build release sdk
-
-      steps:
       - bash: |
-          pip install build
-          pip install twine
           cd sdk
           python -m build
+        displayName: Build SDK package
+
+
 
