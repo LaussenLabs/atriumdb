@@ -58,12 +58,12 @@ stages:
           action: 'create'
           target: '$(Build.SourceVersion)'
           tagSource: 'gitTag'
+          tagPattern: '*'
           assets: |
             sdk/dist/*.whl
             sdk/dist/*.gz
             sdk/bin/*.dll
             sdk/bin/*.so
           addChangeLog: false
-      
       
 
