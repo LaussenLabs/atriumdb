@@ -7,6 +7,9 @@ trigger:
 pool:
   vmImage: ubuntu-latest
 
+variables:
+- group: atriumdb-release
+
 steps:
 - bash: |
     git push --prune https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb \
