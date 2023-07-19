@@ -51,6 +51,19 @@ stages:
             python -m twine upload -r atriumdb-py-internal --config-file $(PYPIRC_PATH) sdk/dist/*.whl
             python -m twine upload --skip-existing --verbose --repository-url https://test.pypi.org/legacy/ -p $(test_pypi_token) -u __token__ sdk/dist/*.whl
         displayName: Upload build artifacts
+      - task: GitHubRelease@1
+        inputs:
+          gitHubConnection: 'github.com_bgreer101'
+          repositoryName: 'LaussenLabs/atriumdb'
+          action: 'create'
+          target: '$(Build.SourceVersion)'
+          tagSource: 'gitTag'
+          assets: |
+            sdk/dist/*.whl
+            sdk/dist/*.gz
+            sdk/bin/*.dll
+            sdk/bin/*.so
+          addChangeLog: false
       
       
 
