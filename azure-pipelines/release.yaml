@@ -55,21 +55,21 @@ stages:
             python -m twine upload --skip-existing -r atriumdb --config-file $(PYPIRC_PATH) sdk/dist/*.whl
         displayName: Upload build artifacts
         
-      - task: GitHubRelease@1
-        inputs:
-          gitHubConnection: 'github.com_bgreer101'
-          repositoryName: 'LaussenLabs/atriumdb'
-          action: 'create'
-          target: '$(Build.SourceVersion)'
-          tagSource: 'userSpecifiedTag'
-          tag: 'v2.0.2'
-          releaseNotesSource: 'inline'
-          releaseNotesInline: 'Hello World'
-          assets: |
-            sdk/dist/*.whl
-            sdk/dist/*.gz
-            sdk/bin/*.dll
-            sdk/bin/*.so
-          addChangeLog: false
+      # - task: GitHubRelease@1
+      #   inputs:
+      #     gitHubConnection: 'github.com_bgreer101'
+      #     repositoryName: 'LaussenLabs/atriumdb'
+      #     action: 'create'
+      #     target: '$(Build.SourceVersion)'
+      #     tagSource: 'userSpecifiedTag'
+      #     tag: 'v2.0.2'
+      #     releaseNotesSource: 'inline'
+      #     releaseNotesInline: 'Hello World'
+      #     assets: |
+      #       sdk/dist/*.whl
+      #       sdk/dist/*.gz
+      #       sdk/bin/*.dll
+      #       sdk/bin/*.so
+      #     addChangeLog: false
       
 
