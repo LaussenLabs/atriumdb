@@ -57,8 +57,8 @@ stages:
           repositoryName: 'LaussenLabs/atriumdb'
           action: 'create'
           target: '$(Build.SourceVersion)'
-          tagSource: 'gitTag'
-          tagPattern: '*'
+          tagSource: 'userSpecifiedTag'
+          tag: '$(Build.BuildNumber)'
           assets: |
             sdk/dist/*.whl
             sdk/dist/*.gz
