@@ -60,7 +60,7 @@ stages:
           action: 'create'
           target: '$(Build.SourceVersion)'
           tagSource: 'userSpecifiedTag'
-          tag: '$(Build.BuildNumber)'
+          tag: 'v2.0.0'
           releaseNotesSource: 'inline'
           releaseNotesInline: 'Hello World'
           assets: |
