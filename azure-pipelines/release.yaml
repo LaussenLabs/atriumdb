@@ -28,9 +28,11 @@ stages:
 
       - bash: |
           cd tsc-lib
+          ls
           cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_BUILD_TYPE='Release';
           cmake --build cmake-build-release --target Block;
-          mkdir -p ../sdk/bin
+          ls
+          mkdir ../sdk/bin
           cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll;
           cmake -Bcmake-build-release -H. -DCMAKE_BUILD_TYPE='Release';
           cmake --build cmake-build-release --target Block;
