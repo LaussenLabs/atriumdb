@@ -52,8 +52,9 @@ stages:
         
       - bash: |
             python -m twine upload -r atriumdb-py-internal --config-file $(PYPIRC_PATH) sdk/dist/*.whl
-            python -m twine upload -r atriumdb-test-pypi --config-file $(PYPIRC_PATH) sdk/dist/*.whl
+            python -m twine upload -r atriumdb --config-file $(PYPIRC_PATH) sdk/dist/*.whl
         displayName: Upload build artifacts
+        
       - task: GitHubRelease@1
         inputs:
           gitHubConnection: 'github.com_bgreer101'
