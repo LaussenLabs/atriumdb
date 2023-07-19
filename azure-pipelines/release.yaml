@@ -9,6 +9,7 @@ pool:
 variables:
 - group: atriumdb-release
 
+
 stages:
 - stage: Build
   jobs:
@@ -28,10 +29,8 @@ stages:
 
       - bash: |
           cd tsc-lib
-          ls
           cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_BUILD_TYPE='Release';
           cmake --build cmake-build-release --target Block;
-          ls
           mkdir ../sdk/bin
           cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll;
           rm -rf cmake-build-release/**;
