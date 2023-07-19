@@ -17,12 +17,9 @@ variables:
 
 steps:
   - script: |
-
-      git clone https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb
-      cd atriumdb
-      git remote add azure https://SickkidsAIM@dev.azure.com/SickkidsAIM/Physiological%20Data%20System/_git/adb-lib-sdk
-      git pull azure $(Build.SourceBranch)
-      git push origin $(Build.SourceBranch)
+      git clone --mirror https://dev.azure.com/SickkidsAIM/Physiological%20Data%20System/_git/adb-lib-sdk
+      cd adb-lib-sdk
+      git push --mirror https://$(GITHUB_PAT)@github.com/LaussenLabs/adb-lib-sdk
     displayName: 'Copy changes to GitHub'
 
 # steps:
