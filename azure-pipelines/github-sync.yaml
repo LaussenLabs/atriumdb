@@ -4,6 +4,11 @@ trigger:
     include:
     - '*'
 
+pr:
+  branches:
+    include:
+      - '*'
+
 pool:
   vmImage: ubuntu-latest
 
@@ -11,8 +16,18 @@ variables:
 - group: atriumdb-release
 
 steps:
-- bash: |
-     git fetch --unshallow
-     git push --prune https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb +refs/remotes/origin/*:refs/heads/* +refs/tags/*:refs/tags/*
-  displayName: 'Copy to Github'
+  - script: |
+
+      git clone https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb
+      cd atriumdb
+      git remote add azure https://SickkidsAIM@dev.azure.com/SickkidsAIM/Physiological%20Data%20System/_git/adb-lib-sdk
+      git pull azure $(Build.SourceBranch)
+      git push origin $(Build.SourceBranch)
+    displayName: 'Copy changes to GitHub'
+
+# steps:
+# - bash: |
+#      git fetch --unshallow
+#      git push --prune https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb +refs/remotes/origin/*:refs/heads/* +refs/tags/*:refs/tags/*
+#   displayName: 'Copy to Github'
   # condition: eq(variables['Build.SourceBranch'], 'refs/heads/master')
