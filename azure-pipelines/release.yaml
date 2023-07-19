@@ -48,10 +48,11 @@ stages:
       - task: TwineAuthenticate@1
         inputs:
           artifactFeed: 'Physiological Data System/atriumdb-py-internal'
+          pythonUploadServiceConnection: 'atriumdb-test-pypi'
         
       - bash: |
             python -m twine upload -r atriumdb-py-internal --config-file $(PYPIRC_PATH) sdk/dist/*.whl
-            python -m twine upload --skip-existing --verbose --repository-url https://test.pypi.org/legacy/ -p $(test_pypi_token) -u __token__ sdk/dist/*.whl
+            python -m twine upload -r atriumdb-test-pypi --config-file $(PYPIRC_PATH) sdk/dist/*.whl
         displayName: Upload build artifacts
       - task: GitHubRelease@1
         inputs:
@@ -60,7 +61,7 @@ stages:
           action: 'create'
           target: '$(Build.SourceVersion)'
           tagSource: 'userSpecifiedTag'
-          tag: 'v2.0.0'
+          tag: 'v2.0.2'
           releaseNotesSource: 'inline'
           releaseNotesInline: 'Hello World'
           assets: |
