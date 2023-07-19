@@ -34,6 +34,7 @@ stages:
           ls
           mkdir ../sdk/bin
           cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll;
+          rm -rf cmake-build-release/**;
           cmake -Bcmake-build-release -H. -DCMAKE_BUILD_TYPE='Release';
           cmake --build cmake-build-release --target Block;
           cp cmake-build-release/src/Block/libTSC.so ../sdk/bin/libTSC.so;
@@ -61,6 +62,8 @@ stages:
           target: '$(Build.SourceVersion)'
           tagSource: 'userSpecifiedTag'
           tag: '$(Build.BuildNumber)'
+          releaseNotesSource: 'inline'
+          releaseNotesInline: 'Hello World'
           assets: |
             sdk/dist/*.whl
             sdk/dist/*.gz
