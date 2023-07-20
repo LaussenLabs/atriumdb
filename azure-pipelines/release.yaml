@@ -8,6 +8,10 @@ pool:
 variables:
 - group: atriumdb-release
 
+parameters:
+  - name: releaseVersion
+    displayName: Release Version
+    type: string
 
 stages:
 - stage: Build
@@ -61,7 +65,7 @@ stages:
           action: 'create'
           target: '$(Build.SourceVersion)'
           tagSource: 'userSpecifiedTag'
-          tag: '$(Build.BuildNumber)'
+          tag: '$(releaseVersion)'
           releaseNotesSource: 'inline'
           releaseNotesInline: ''
           assets: |
