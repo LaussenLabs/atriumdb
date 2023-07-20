@@ -25,12 +25,12 @@ jobs:
         persistCredentials: true
         displayName: run_commands
       - bash: | 
-          git branch master
-          git checkout master
+          git branch main
+          git checkout main
           
           git remote add repoGithub https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb
           git fetch repoGithub
-          git push -f repoGithub master:main
+          git push -f repoGithub main
 # steps:
 #   - script: |
 #       git clone --mirror https://dev.azure.com/SickkidsAIM/Physiological%20Data%20System/_git/adb-lib-sdk
