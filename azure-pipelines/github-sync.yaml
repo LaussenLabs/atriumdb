@@ -27,25 +27,8 @@ jobs:
         persistCredentials: true
         displayName: run_commands
       - bash: | 
-          # git fetch --unshallow
           git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
           git fetch origin
-          # git checkout main
-          
           git remote add repoGithub https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb.git
           git fetch repoGithub
-          # git push -f repoGithub main
           git push --prune repoGithub +refs/remotes/origin/*:refs/heads/* +refs/tags/*:refs/tags/*
-# steps:
-#   - script: |
-#       git clone --mirror https://dev.azure.com/SickkidsAIM/Physiological%20Data%20System/_git/adb-lib-sdk
-#       cd adb-lib-sdk
-#       git push --mirror https://$(GITHUB_PAT)@github.com/LaussenLabs/adb-lib-sdk
-#     displayName: 'Copy changes to GitHub'
-
-# steps:
-# - bash: |
-#      git fetch --unshallow
-#      git push --prune https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb +refs/remotes/origin/*:refs/heads/* +refs/tags/*:refs/tags/*
-#   displayName: 'Copy to Github'
-  # condition: eq(variables['Build.SourceBranch'], 'refs/heads/master')
