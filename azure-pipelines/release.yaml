@@ -62,7 +62,7 @@ stages:
           pythonUploadServiceConnection: ${{ parameters.pypiReleaseFeed }}
         
       - bash: |
-            python -m twine upload --skip-existing -r atriumdb-py-internal --config-file $(PYPIRC_PATH) sdk/dist/*.whl
+            python -m twine upload --skip-existing -r adb-py-internal --config-file $(PYPIRC_PATH) sdk/dist/*.whl
             python -m twine upload --skip-existing -r atriumdb --config-file $(PYPIRC_PATH) sdk/dist/*.whl
         displayName: Upload build artifacts
         
