@@ -25,7 +25,7 @@ jobs:
         persistCredentials: true
         displayName: run_commands
       - bash: | 
-          git branch master
+          # git fetch --unshallow 
           git checkout master
           
           git remote add repoGithub https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb.git
