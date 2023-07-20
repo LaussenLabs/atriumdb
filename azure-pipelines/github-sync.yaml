@@ -22,10 +22,11 @@ jobs:
     steps:
       - checkout: self
         clean: true
+        fetchDepth: 0
         persistCredentials: true
         displayName: run_commands
       - bash: | 
-          git fetch --unshallow
+          # git fetch --unshallow
           git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
           git fetch origin
           # git checkout main
