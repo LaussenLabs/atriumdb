@@ -58,7 +58,7 @@ stages:
 
       - task: TwineAuthenticate@1
         inputs:
-          artifactFeed: 'Physiological Data System/atriumdb-py-internal'
+          artifactFeed: 'Physiological Data System/adb-py-internal'
           pythonUploadServiceConnection: ${{ parameters.pypiReleaseFeed }}
         
       - bash: |
