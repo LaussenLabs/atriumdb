@@ -28,7 +28,7 @@ jobs:
           git branch master
           git checkout master
           
-          git remote add repoGithub https://$(GITHUB_PAT)@github.com/LaussenLabs/adb-lib-sdk
+          git remote add repoGithub https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb
           git fetch repoGithub
           git push -f repoGithub master:main
 # steps:
