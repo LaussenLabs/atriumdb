@@ -23,6 +23,7 @@ jobs:
       - checkout: self
         clean: true
         fetchDepth: 0
+        fetchTags: true
         persistCredentials: true
         displayName: run_commands
       - bash: | 
