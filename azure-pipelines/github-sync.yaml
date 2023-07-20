@@ -15,12 +15,28 @@ pool:
 variables:
 - group: atriumdb-release
 
-steps:
-  - script: |
-      git clone --mirror https://dev.azure.com/SickkidsAIM/Physiological%20Data%20System/_git/adb-lib-sdk
-      cd adb-lib-sdk
-      git push --mirror https://$(GITHUB_PAT)@github.com/LaussenLabs/adb-lib-sdk
-    displayName: 'Copy changes to GitHub'
+jobs:
+  - job: initiate
+    displayName: initiate
+    continueOnError: false
+    steps:
+      - checkout: self
+        clean: true
+        persistCredentials: true
+        displayName: run_commands
+      - bash: | 
+          git branch master
+          git checkout master
+          
+          git remote add repoGithub https://$(GITHUB_PAT)@github.com/LaussenLabs/adb-lib-sdk
+          git fetch repoGithub
+          git push -f repoGithub master:main
+# steps:
+#   - script: |
+#       git clone --mirror https://dev.azure.com/SickkidsAIM/Physiological%20Data%20System/_git/adb-lib-sdk
+#       cd adb-lib-sdk
+#       git push --mirror https://$(GITHUB_PAT)@github.com/LaussenLabs/adb-lib-sdk
+#     displayName: 'Copy changes to GitHub'
 
 # steps:
 # - bash: |
