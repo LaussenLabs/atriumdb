@@ -1,7 +1,6 @@
 name: atriumdb_SDK_Release_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.rr)
 
-trigger:
- - manual
+trigger: none
 
 pool:
   vmImage: ubuntu-20.04
