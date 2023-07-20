@@ -12,6 +12,14 @@ parameters:
   - name: releaseVersion
     displayName: Release Version
     type: string
+  - name: pypiReleaseFeed
+    displayName: PyPI Release Feed
+    default: atriumdb-test-pypi
+    values:
+      - atriumdb-test-pypi
+      - atriumdb-release-pypi
+    type: string
+    
 
 stages:
 - stage: Build
@@ -51,7 +59,7 @@ stages:
       - task: TwineAuthenticate@1
         inputs:
           artifactFeed: 'Physiological Data System/atriumdb-py-internal'
-          pythonUploadServiceConnection: 'atriumdb-test-pypi'
+          pythonUploadServiceConnection: ${{ parameters.pypiReleaseFeed }}
         
       - bash: |
             python -m twine upload --skip-existing -r atriumdb-py-internal --config-file $(PYPIRC_PATH) sdk/dist/*.whl
