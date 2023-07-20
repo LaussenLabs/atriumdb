@@ -28,7 +28,7 @@ jobs:
           git branch main
           git checkout main
           
-          git remote add repoGithub https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb
+          git remote add repoGithub https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb.git
           git fetch repoGithub
           git push -f repoGithub main
 # steps:
