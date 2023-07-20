@@ -26,11 +26,12 @@ jobs:
         displayName: run_commands
       - bash: | 
           git fetch --unshallow 
-          git checkout main
+          # git checkout main
           
           git remote add repoGithub https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb.git
           git fetch repoGithub
-          git push -f repoGithub main
+          # git push -f repoGithub main
+          git push --prune repoGithub +refs/remotes/origin/*:refs/heads/* +refs/tags/*:refs/tags/*
 # steps:
 #   - script: |
 #       git clone --mirror https://dev.azure.com/SickkidsAIM/Physiological%20Data%20System/_git/adb-lib-sdk
