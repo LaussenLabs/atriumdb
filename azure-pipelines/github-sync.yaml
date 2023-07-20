@@ -26,7 +26,8 @@ jobs:
         displayName: run_commands
       - bash: | 
           git fetch --unshallow
-          git reset --hard HEAD~1
+          git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
+          git fetch origin
           # git checkout main
           
           git remote add repoGithub https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb.git
