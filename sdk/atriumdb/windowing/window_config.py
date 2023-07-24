@@ -6,11 +6,24 @@ class WindowConfig:
                  window_slide_sec: float, allowed_lateness_sec: int, earliest_signal_time: int = None,
                  source_out_of_order: bool = True, offset: float = 0, filter_out_same_values: bool = True) -> None:
         """
-        earliest_signal_time: earliest timestamp (in sec) of signals that will be allowed into a window stream.
-                              Default None value will allow processing of all arriving messages with a given routing key
-        filter_out_same_values: controls whether to silently reject the windows completely consisting of a same value.
-                                Defaulting to True, as such windows are generally considered irrelevant.
-
+        :param measures: List of measures, either a list of strings or list of tuples (str, float, str).
+        :type measures: Union[List[str], List[Tuple[str, float, str]]]
+        :param window_size_sec: Window size in seconds.
+        :type window_size_sec: Union[float, int]
+        :param window_slide_sec: Window slide time in seconds.
+        :type window_slide_sec: float
+        :param allowed_lateness_sec: Lateness allowed for the window to emit its data, in seconds (Live Streaming Only).
+        :type allowed_lateness_sec: int
+        :param earliest_signal_time: Earliest timestamp (in sec) of signals that will be allowed into a window stream.
+                                     Default None value will allow processing of all arriving messages with a given routing key. (Live Streaming Only)
+        :type earliest_signal_time: int, optional
+        :param source_out_of_order: A flag to indicate if the source is out of order. (Live Streaming Only)
+        :type source_out_of_order: bool, default is True
+        :param offset: Offset in seconds. Default is 0. (Live Streaming Only)
+        :type offset: float, optional
+        :param filter_out_same_values: Controls whether to silently reject the windows completely consisting of a same value.
+                                       Defaulting to True, as such windows are generally considered irrelevant. (Live Streaming Only)
+        :type filter_out_same_values: bool, default is True
         """
         self.window_size_ns = int(window_size_sec * 10 ** 9)
         self.window_size_sec = float(window_size_sec)
