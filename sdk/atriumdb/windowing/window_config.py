@@ -16,14 +16,14 @@ class WindowConfig:
         :type allowed_lateness_sec: int
         :param earliest_signal_time: Earliest timestamp (in sec) of signals that will be allowed into a window stream.
                                      Default None value will allow processing of all arriving messages with a given routing key. (Live Streaming Only)
-        :type earliest_signal_time: int, optional
+        :type earliest_signal_time: int
         :param source_out_of_order: A flag to indicate if the source is out of order. (Live Streaming Only)
-        :type source_out_of_order: bool, default is True
+        :type source_out_of_order: bool
         :param offset: Offset in seconds. Default is 0. (Live Streaming Only)
-        :type offset: float, optional
+        :type offset: float
         :param filter_out_same_values: Controls whether to silently reject the windows completely consisting of a same value.
                                        Defaulting to True, as such windows are generally considered irrelevant. (Live Streaming Only)
-        :type filter_out_same_values: bool, default is True
+        :type filter_out_same_values: bool
         """
         self.window_size_ns = int(window_size_sec * 10 ** 9)
         self.window_size_sec = float(window_size_sec)
