@@ -580,9 +580,13 @@ class AtriumSDK:
             is already analog). The slope (m) in y = mx + b
         :param float scale_b: Constant factor to offset digital data to transform it to analog (None if raw data
             is already analog). The y-intercept (b) in y = mx + b
-        :param bool interval_index: Enable writing the data to the interval index so that it can be retrieved using
-            the `AtriumSDK.get_interval_index` method. Optimized if the data is the most recent data for that
-            measure-device combination, otherwise can be very slow. Disable to improve performance.
+        :param str interval_index: Determines the mode for writing data to the interval index. Modes include "disable",
+            "fast", and "merge". "disable" mode yields the fastest writing speed but loses lookup ability via the
+            `AtriumSDK.get_interval_array` method. "fast" mode writes to the interval index in a non-optimized form,
+            potentially creating multiple entries where one should exist, thereby increasing database size. "merge" mode
+            consolidates intervals into single entries, maintaining a smaller table size but incurs a significant speed
+            penalty, if the data inserted isn't the newest data for that device-measure combination.
+            For live data ingestion, "merge" is recommended, at minimal speed penalties.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.
@@ -604,6 +608,7 @@ class AtriumSDK:
             >>> value_data = np.sin(np.linspace(0, 4, num=200))
             >>> sdk.write_data(measure_id,device_id,gap_arr,value_data,freq_nhz,time_zero_nano,raw_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,raw_value_type=V_TYPE_INT64,encoded_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,encoded_value_type=V_TYPE_DELTA_INT64)
         """
+
         # Ensure the current mode is "local"
         assert self.mode == "local"
 
