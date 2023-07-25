@@ -5,3 +5,4 @@ shared_lib_filename_windows = "bin/libTSC.dll"
 [settings]
 protected_mode = "True"
 overwrite = "ignore"
+interval_index_mode = "fast"

@@ -19,14 +19,14 @@ import numpy as np
 
 from atriumdb.adb_functions import get_block_and_interval_data, condense_byte_read_list, find_intervals, \
     merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz, \
-    default_interval_index_mode, allowed_interval_index_modes
+    allowed_interval_index_modes
 from atriumdb.block import Block, convert_gap_array_to_intervals, \
     convert_intervals_to_gap_array
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
 from atriumdb.file_api import AtriumFileHandler
 from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_linux, protected_mode_default_setting, \
-    overwrite_default_setting
+    overwrite_default_setting, default_interval_index_mode
 from atriumdb.helpers.block_calculations import calc_time_by_freq, freq_nhz_to_period_ns
 from atriumdb.helpers.block_constants import TIME_TYPES
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME, \
