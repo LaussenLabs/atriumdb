@@ -949,9 +949,13 @@ class AtriumSDK:
         :param str freq_units: The unit used for the specified frequency. This value can be one of ["nHz", "uHz", "mHz",
             "Hz", "kHz", "MHz"]. If you use extremely large values for this, it will be converted to nanohertz
             in the backend, and you may overflow 64-bit integers.
-        :param bool interval_index: Enable writing the data to the interval index so that it can be retrieved using
-            the `AtriumSDK.get_interval_index` method. Optimized if the data is the most recent data for that
-            measure-device combination, otherwise can be very slow. Disable to improve performance.
+        :param str interval_index: Determines the mode for writing data to the interval index. Modes include "disable",
+            "fast", and "merge". "disable" mode yields the fastest writing speed but loses lookup ability via the
+            `AtriumSDK.get_interval_array` method. "fast" mode writes to the interval index in a non-optimized form,
+            potentially creating multiple entries where one should exist, thereby increasing database size. "merge" mode
+            consolidates intervals into single entries, maintaining a smaller table size but incurs a significant speed
+            penalty, if the data inserted isn't the newest data for that device-measure combination.
+            For live data ingestion, "merge" is recommended, at minimal speed penalties.
 
         """
         # Set default time and frequency units if not provided
