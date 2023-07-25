@@ -2333,6 +2333,9 @@ class AtriumSDK:
         >>> freq_units = "Hz"
         >>> sdk.get_measure_id(measure_tag, freq, units, freq_units)
         ... 7
+        >>> measure_tag = "Measure That Does Not Exist."
+        >>> sdk.get_measure_id(measure_tag, freq, units, freq_units)
+        ... None
         """
         # Set default values for units and freq_units if not provided
         units = "" if units is None else units
