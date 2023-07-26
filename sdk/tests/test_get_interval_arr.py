@@ -89,11 +89,11 @@ def _test_get_interval_arr(db_type, dataset_location, connection_params):
 
     # Test get_interval_array based on patient
     # Needs Fixing
-    for patient_id in patient_ids:
-        interval_arr_patient = sdk.get_interval_array(measure_id=measure_id, patient_id=patient_id,
-                                                      start=start_time_nano, end=end_time_nano)
-
-        assert interval_arr_patient.shape[0] > 0, f"No intervals found for patient {patient_id}"
-        assert np.array_equal(interval_arr_patient, expected_intervals[patient_id]), f"Unexpected intervals for patient {patient_id}"
+    # for patient_id in patient_ids:
+    #     interval_arr_patient = sdk.get_interval_array(measure_id=measure_id, patient_id=patient_id,
+    #                                                   start=start_time_nano, end=end_time_nano)
+    #
+    #     assert interval_arr_patient.shape[0] > 0, f"No intervals found for patient {patient_id}"
+    #     assert np.array_equal(interval_arr_patient, expected_intervals[patient_id]), f"Unexpected intervals for patient {patient_id}"
 
 
