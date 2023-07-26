@@ -62,6 +62,16 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
+    def insert_intervals_fast(self, interval_data: List[Dict]):
+        # Insert intervals fast
+        pass
+
+    @abstractmethod
+    def insert_intervals_merge(self, interval_data: List[Dict]):
+        # Insert intervals with merge
+        pass
+
+    @abstractmethod
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
                              interval_index_mode):
         # Insert a file path to file index.
