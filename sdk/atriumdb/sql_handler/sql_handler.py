@@ -62,12 +62,12 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def insert_intervals_fast(self, interval_data: List[Dict]):
+    def insert_intervals_fast(self, interval_data: List[Dict], conn=None, cursor=None, transactional=False):
         # Insert intervals fast
         pass
 
     @abstractmethod
-    def insert_intervals_merge(self, interval_data: List[Dict]):
+    def insert_intervals_merge(self, interval_data: List[Dict], conn=None, cursor=None, transactional=False):
         # Insert intervals with merge
         pass
 
