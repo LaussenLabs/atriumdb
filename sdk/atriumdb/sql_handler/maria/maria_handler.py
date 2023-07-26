@@ -228,17 +228,29 @@ class MariaDBHandler(SQLHandler):
             row = cursor.fetchone()
         return row
 
-    def insert_intervals_fast(self, interval_data: List[Dict]):
-        with self.maria_db_connection(begin=True) as (conn, cursor):
-            interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                interval["end_time_n"]) for interval in interval_data]
-            cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+    def insert_intervals_fast(self, interval_data: List[Dict], conn=None, cursor=None, transactional=False):
+        if conn is None or cursor is None:
+            with self.maria_db_connection(begin=transactional) as (conn, cursor):
+                self._insert_intervals_fast(conn, cursor, interval_data)
+        else:
+            self._insert_intervals_fast(conn, cursor, interval_data)
 
-    def insert_intervals_merge(self, interval_data: List[Dict]):
-        with self.maria_db_connection(begin=True) as (conn, cursor):
-            [cursor.callproc("insert_interval",
-                             (interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                              interval["end_time_n"])) for interval in interval_data]
+    def _insert_intervals_fast(self, conn, cursor, interval_data):
+        interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                            interval["end_time_n"]) for interval in interval_data]
+        cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+
+    def insert_intervals_merge(self, interval_data: List[Dict], conn=None, cursor=None, transactional=False):
+        if conn is None or cursor is None:
+            with self.maria_db_connection(begin=transactional) as (conn, cursor):
+                self._insert_intervals_merge(conn, cursor, interval_data)
+        else:
+            self._insert_intervals_merge(conn, cursor, interval_data)
+
+    def _insert_intervals_merge(self, conn, cursor, interval_data):
+        [cursor.callproc("insert_interval",
+                         (interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                          interval["end_time_n"])) for interval in interval_data]
 
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
                              interval_index_mode):
@@ -255,9 +267,9 @@ class MariaDBHandler(SQLHandler):
 
             # insert into interval_index
             if interval_index_mode == "fast":
-                self.insert_intervals_fast(interval_data)
+                self.insert_intervals_fast(interval_data, conn, cursor)
             elif interval_index_mode == "merge":
-                self.insert_intervals_merge(interval_data)
+                self.insert_intervals_merge(interval_data, conn, cursor)
             elif interval_index_mode == "disable":
                 # Do Nothing
                 pass
