@@ -228,6 +228,18 @@ class MariaDBHandler(SQLHandler):
             row = cursor.fetchone()
         return row
 
+    def insert_intervals_fast(self, interval_data: List[Dict]):
+        with self.maria_db_connection(begin=True) as (conn, cursor):
+            interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                interval["end_time_n"]) for interval in interval_data]
+            cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+
+    def insert_intervals_merge(self, interval_data: List[Dict]):
+        with self.maria_db_connection(begin=True) as (conn, cursor):
+            [cursor.callproc("insert_interval",
+                             (interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                              interval["end_time_n"])) for interval in interval_data]
+
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
                              interval_index_mode):
         with self.maria_db_connection(begin=True) as (conn, cursor):
@@ -243,13 +255,9 @@ class MariaDBHandler(SQLHandler):
 
             # insert into interval_index
             if interval_index_mode == "fast":
-                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"]) for interval in interval_data]
-                cursor.executemany(maria_insert_interval_index_query, interval_tuples)
-
+                self.insert_intervals_fast(interval_data)
             elif interval_index_mode == "merge":
-                [cursor.callproc("insert_interval", (interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"])) for interval in interval_data]
+                self.insert_intervals_merge(interval_data)
             elif interval_index_mode == "disable":
                 # Do Nothing
                 pass
