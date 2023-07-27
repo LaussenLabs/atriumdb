@@ -42,6 +42,7 @@ from multiprocessing import cpu_count
 import sys
 import os
 from typing import Union, List, Tuple
+from tqdm import tqdm
 
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
@@ -1745,6 +1746,27 @@ class AtriumSDK:
 
         # Convert the final intervals list to a numpy array with int64 data type
         return np.array(arr, dtype=np.int64)
+
+    def merge_all_intervals(self):
+        """
+        Iterates over every measure-device pair in the interval_index table and merges intervals that can be merged.
+        """
+        # Get all measures and devices
+        all_measures = self.get_all_measures()
+        all_devices = self.get_all_devices()
+
+        # For every combination of measure and device
+        for measure_id in all_measures.keys():
+            for device_id in all_devices.keys():
+                # Get tags for measure and device
+                measure_tag = all_measures[measure_id]['tag']
+                device_tag = all_devices[device_id]['tag']
+
+                # Print the tags being currently merged
+                with tqdm(total=1, desc=f"Merging intervals for measure {measure_tag} and device {device_tag}") as pbar:
+                    # Merge the intervals for the current measure-device pair
+                    self.sql_handler.merge_overlapping_intervals(measure_id, device_id)
+                    pbar.update()
 
     def get_combined_intervals(self, measure_id_list, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                                start=None, end=None):
