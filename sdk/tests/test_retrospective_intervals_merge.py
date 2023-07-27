@@ -53,7 +53,8 @@ def _test_merge_all_intervals(db_type, dataset_location, connection_params):
         device_id = sdk.insert_device(device_tag=device_tag)
 
         # Insert intervals using `insert_interval_array`
-        sdk.insert_interval_array(measure_id=measure_id, device_id=device_id, interval_array=intervals)
+        if intervals.size != 0:
+            sdk.insert_interval_array(measure_id=measure_id, device_id=device_id, interval_array=intervals)
 
     # Merge Intervals
     sdk.merge_all_intervals()
