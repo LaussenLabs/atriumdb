@@ -18,9 +18,10 @@ def _test_merge_all_intervals(db_type, dataset_location, connection_params):
 
     # Define different scenarios for measure and device pairs
     measure_device_pairs = [
-        ("ECG Lead I - 400 Hz", "Monitor A1"),  # measure-device pair with no intervals
-        ("ECG Lead II - 500 Hz", "Monitor A2"),  # measure-device pair with intervals, but none to merge
-        ("ECG Lead III - 600 Hz", "Monitor A3"),  # measure-device pair with intervals that need to be merged
+        ("ECG Lead I", "Monitor A1"),  # measure-device pair with no intervals
+        ("ECG Lead II", "Monitor A2"),  # measure-device pair with intervals, but none to merge
+        ("ECG Lead III", "Monitor A3"),  # measure-device pair with intervals that need to be merged
+        ("ECG Lead IV", "Monitor A4"),
     ]
 
     # Define the intervals for each scenario
