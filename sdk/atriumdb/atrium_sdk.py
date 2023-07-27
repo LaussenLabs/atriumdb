@@ -1662,8 +1662,8 @@ class AtriumSDK:
         # Construct the interval_data dictionary from the interval_array
         interval_data = [{"measure_id": measure_id,
                           "device_id": device_id,
-                          "start_time_n": interval[0],
-                          "end_time_n": interval[1]} for interval in interval_array]
+                          "start_time_n": int(interval[0]),
+                          "end_time_n": int(interval[1])} for interval in interval_array]
 
         if interval_index_mode == "fast":
             self.sql_handler.insert_intervals_fast(interval_data)
