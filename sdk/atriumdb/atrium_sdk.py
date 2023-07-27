@@ -1645,6 +1645,32 @@ class AtriumSDK:
         # Insert the block and interval data into the metadata table
         self.sql_handler.insert_tsc_file_data(path, block_data, interval_data, None)
 
+    def insert_interval_array(self, measure_id: int, device_id: int, interval_array: np.ndarray,
+                              interval_index_mode: str = "fast"):
+        """
+        Inserts intervals for a given measure-device, as a 2D numpy int64 array. Using either fast (default)
+        or merge mode
+
+        :param measure_id: The ID of the measure.
+        :param device_id: The ID of the device.
+        :param interval_array: 2D numpy array where each row represents an interval with start and end times.
+        :param interval_index_mode: Specifies how to insert intervals, either 'fast' or 'merge'.
+                                    Default is 'fast'.
+        """
+
+        # Construct the interval_data dictionary from the interval_array
+        interval_data = [{"measure_id": measure_id,
+                          "device_id": device_id,
+                          "start_time_n": interval[0],
+                          "end_time_n": interval[1]} for interval in interval_array]
+
+        if interval_index_mode == "fast":
+            self.sql_handler.insert_intervals_fast(interval_data)
+        elif interval_index_mode == "merge":
+            self.sql_handler.insert_intervals_merge(interval_data)
+        else:
+            raise ValueError(f"interval_index_mode must be 'fast' or 'merge', but got '{interval_index_mode}'")
+
     def get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                            start=None, end=None):
         """
