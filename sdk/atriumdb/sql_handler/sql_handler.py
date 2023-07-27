@@ -80,6 +80,16 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
+    def merge_overlapping_intervals(self, measure_id: int, device_id: int):
+        """
+        Merges overlapping intervals for a specific measure and device.
+
+        :param measure_id: The ID of the measure.
+        :param device_id: The ID of the device.
+        """
+        pass
+
+    @abstractmethod
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
                              file_ids_to_delete: List[int]):
         pass
