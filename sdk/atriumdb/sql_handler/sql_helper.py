@@ -22,3 +22,13 @@ def join_sql_and_bools(bool_list: List[str]):
     if not bool_list:
         return ""
     return " WHERE " + " AND ".join(bool_list)
+
+
+def merge_intervals(sorted_intervals):
+    merged = []
+    for start, end in sorted_intervals:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
