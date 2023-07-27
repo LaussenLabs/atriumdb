@@ -277,19 +277,20 @@ class MariaDBHandler(SQLHandler):
                 raise ValueError(f"interval_index_mode must be one of {allowed_interval_index_modes}")
 
     def merge_overlapping_intervals(self, measure_id: int, device_id: int):
-        with self.maria_db_connection() as (conn, cursor):
+        with self.maria_db_connection(begin=True) as (conn, cursor):
             cursor.execute("""SELECT start_time_n, end_time_n FROM interval_index 
                               WHERE measure_id = ? AND device_id = ? 
                               ORDER BY start_time_n, end_time_n""", (measure_id, device_id))
             intervals = cursor.fetchall()
             merged_intervals = merge_intervals(intervals)
 
-            cursor.execute("""DELETE FROM interval_index WHERE measure_id = ? AND device_id = ?""",
-                           (measure_id, device_id))
-            cursor.executemany("""INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n) 
-                                  VALUES (?, ?, ?, ?)""",
-                               [(measure_id, device_id, start, end) for start, end in merged_intervals])
-            conn.commit()
+            if len(merged_intervals) > 0:
+                cursor.execute("""DELETE FROM interval_index WHERE measure_id = ? AND device_id = ?""",
+                               (measure_id, device_id))
+                cursor.executemany("""INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n) 
+                                      VALUES (?, ?, ?, ?)""",
+                                   [(measure_id, device_id, start, end) for start, end in merged_intervals])
+                conn.commit()
 
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
                              file_ids_to_delete: List[int]):
