@@ -1756,16 +1756,21 @@ class AtriumSDK:
         all_devices = self.get_all_devices()
 
         # For every combination of measure and device
-        for measure_id in all_measures.keys():
-            for device_id in all_devices.keys():
-                # Get tags for measure and device
-                measure_tag = all_measures[measure_id]['tag']
-                device_tag = all_devices[device_id]['tag']
+        total_tasks = len(all_measures.keys()) * len(all_devices.keys())
+        with tqdm(total=total_tasks) as pbar:
+            for measure_id in all_measures.keys():
+                for device_id in all_devices.keys():
+                    # Get tags for measure and device
+                    measure_tag = all_measures[measure_id]['tag']
+                    device_tag = all_devices[device_id]['tag']
 
-                # Print the tags being currently merged
-                with tqdm(total=1, desc=f"Merging intervals for measure {measure_tag} and device {device_tag}") as pbar:
+                    # Set the description for the current task
+                    pbar.set_description(f"Merging intervals for measure {measure_tag} and device {device_tag}")
+
                     # Merge the intervals for the current measure-device pair
                     self.sql_handler.merge_overlapping_intervals(measure_id, device_id)
+
+                    # Update the progress bar
                     pbar.update()
 
     def get_combined_intervals(self, measure_id_list, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
