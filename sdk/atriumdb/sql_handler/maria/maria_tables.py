@@ -268,7 +268,7 @@ BEGIN
     DECLARE existing_end_time_n BIGINT;
     DECLARE max_end_time_n BIGINT;
 
-    SELECT MAX(end_time_n) INTO max_end_time_n from interval_index
+    SELECT MAX(end_time_n) INTO max_end_time_n FROM interval_index
                                                WHERE device_id = p_device_id AND measure_id = p_measure_id;
 
     -- If new start time is greater than the max end time there will be no overlapping interval match so don't check
@@ -284,7 +284,7 @@ BEGIN
         AND ((p_start_time_n BETWEEN (start_time_n - p_tolerance) AND (end_time_n + p_tolerance)) OR
              (p_end_time_n BETWEEN (start_time_n - p_tolerance) AND (end_time_n + p_tolerance)) OR
              (p_end_time_n > end_time_n AND p_start_time_n < start_time_n))
-        LIMIT 1;
+        LIMIT 1 ROWS EXAMINED 10000;
     
         IF overlapping_row_id IS NOT NULL THEN
             -- Make sure the new end time is greater than the old before updating
