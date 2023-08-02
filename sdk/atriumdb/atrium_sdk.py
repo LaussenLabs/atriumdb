@@ -907,8 +907,7 @@ class AtriumSDK:
         return measure_id, device_id, filename, encode_headers, byte_start_array, intervals
 
     def write_data_easy(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq: int,
-                        scale_m: float = None, scale_b: float = None, time_units: str = None, freq_units: str = None,
-                        interval_index_mode=None):
+                        scale_m: float = None, scale_b: float = None, time_units: str = None, freq_units: str = None):
         """
         .. _write_data_easy_label:
 
@@ -949,14 +948,6 @@ class AtriumSDK:
         :param str freq_units: The unit used for the specified frequency. This value can be one of ["nHz", "uHz", "mHz",
             "Hz", "kHz", "MHz"]. If you use extremely large values for this, it will be converted to nanohertz
             in the backend, and you may overflow 64-bit integers.
-        :param str interval_index_mode: Determines the mode for writing data to the interval index. Modes include "disable",
-            "fast", and "merge". "disable" mode yields the fastest writing speed but loses lookup ability via the
-            `AtriumSDK.get_interval_array` method. "fast" mode writes to the interval index in a non-optimized form,
-            potentially creating multiple entries where one should exist, thereby increasing database size. "merge" mode
-            consolidates intervals into single entries, maintaining a smaller table size but incurs a significant speed
-            penalty, if the data inserted isn't the newest data for that device-measure combination.
-            For live data ingestion, "merge" is recommended, at minimal speed penalties.
-
         """
         # Set default time and frequency units if not provided
         time_units = "ns" if time_units is None else time_units
@@ -990,7 +981,7 @@ class AtriumSDK:
         # Call the write_data method with the determined parameters
         self.write_data(measure_id, device_id, time_data, value_data, freq, int(time_data[0]), raw_time_type=raw_t_t,
                         raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
-                        scale_m=scale_m, scale_b=scale_b, interval_index_mode=interval_index_mode)
+                        scale_m=scale_m, scale_b=scale_b)
 
     def get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int, device_id: int = None,
                      patient_id: int = None, mrn: int = None, time_type=1, analog=True, sort=True,
