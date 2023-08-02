@@ -609,7 +609,12 @@ class AtriumSDK:
             >>> time_zero_nano = 1234567890_000_000_000
             >>> gap_arr = np.array([42, 1_000_000_000, 99, 2_000_000_000])
             >>> value_data = np.sin(np.linspace(0, 4, num=200))
-            >>> sdk.write_data(measure_id,device_id,gap_arr,value_data,freq_nhz,time_zero_nano,raw_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,raw_value_type=V_TYPE_INT64,encoded_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,encoded_value_type=V_TYPE_DELTA_INT64)
+            >>> sdk.write_data(
+            >>>     measure_id, device_id, gap_arr, value_data, freq_nhz, time_zero_nano,
+            >>>     raw_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
+            >>>     raw_value_type=V_TYPE_INT64,
+            >>>     encoded_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
+            >>>     encoded_value_type=V_TYPE_DELTA_INT64)
         """
 
         # Ensure the current mode is "local"
