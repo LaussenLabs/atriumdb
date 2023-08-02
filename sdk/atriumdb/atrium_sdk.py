@@ -27,7 +27,7 @@ from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
 from atriumdb.file_api import AtriumFileHandler
 from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_linux, protected_mode_default_setting, \
-    overwrite_default_setting, default_interval_index_mode
+    overwrite_default_setting
 from atriumdb.helpers.block_calculations import calc_time_by_freq, freq_nhz_to_period_ns
 from atriumdb.helpers.block_constants import TIME_TYPES
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME, \
@@ -627,7 +627,7 @@ class AtriumSDK:
         assert np.issubdtype(time_data.dtype, np.integer), "Time information must be encoded as an integer."
 
         # Set default interval index and ensure valid type.
-        interval_index_mode = default_interval_index_mode if interval_index_mode is None else interval_index_mode
+        interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
         assert interval_index_mode in allowed_interval_index_modes, \
             f"interval_index must be one of {allowed_interval_index_modes}"
 
