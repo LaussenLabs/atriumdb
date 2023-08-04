@@ -77,7 +77,7 @@ This will install all the packages listed in the `mariadb`, `remote`, and `cli` 
 MariaDB
 ---------------
 
-If you are using AtriumDB with MariaDB on Linux you have to make sure you have MariaDB server version 10.11 installed
+If you are using AtriumDB with MariaDB on Linux you have to make sure you have at least MariaDB server version 10.11 installed
 on your computer first. On windows this step is unnecessary and you can go straight pip installing AtriumDB.
 
 .. code-block:: bash
@@ -85,7 +85,7 @@ on your computer first. On windows this step is unnecessary and you can go strai
     $ curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | sudo bash -s -- --mariadb-server-version="mariadb-10.11"
     $ apt-get update && apt-get install -y libmariadb3 libmariadb-dev
 
-Once you install that (if you Linux distribution doesn't have it) you can pip install AtriumDB normally.
+Once you install that (**ONLY necessary if your Linux distribution doesn't have it**) you can pip install AtriumDB normally.
 
 MariaDB Docker Setup
 ^^^^^^^^^^^^^^^^^^^^^
@@ -99,7 +99,8 @@ MariaDB image from dockerhub.
 
 Then specify where you want MariaDB's data to sit on your host machine in the command below and it will start up a
 MariaDB container running on port 3306 with the root user with the password, "password". You will use this username,
-password, and port when instantiating an AtriumDB object later.
+password, and port when instantiating an AtriumDB object later. **Make sure you change "/host/path/to/mariadb/data" to the
+path you want mariadb's data to be stored at on your computer.**
 
 .. code-block:: bash
 

@@ -158,6 +158,18 @@ CREATE TABLE IF NOT EXISTS patient (
 );
 """
 
+sqlite_patient_history_create_query = """
+CREATE TABLE IF NOT EXISTS patient_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id INTEGER NOT NULL,
+    field TEXT NOT NULL,
+    value FLOAT UNSIGNED NOT NULL,
+    units TEXT NULL,
+    time INTEGER NOT NULL,
+    FOREIGN KEY (patient_id) REFERENCES patient (id)
+);
+"""
+
 sqlite_patient_index_query = """
 CREATE INDEX IF NOT EXISTS source_id ON patient (source_id);
 """
