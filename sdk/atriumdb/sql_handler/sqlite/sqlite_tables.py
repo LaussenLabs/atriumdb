@@ -147,6 +147,8 @@ CREATE TABLE IF NOT EXISTS patient (
   first_seen INTEGER NULL DEFAULT (STRFTIME('%s','NOW')),
   last_updated INTEGER NULL,
   source_id INTEGER DEFAULT 1 NULL,
+  weight REAL NULL,
+  height REAL NULL,
   FOREIGN KEY (source_id) REFERENCES source (id)
 );
 """
@@ -156,7 +158,7 @@ CREATE TABLE IF NOT EXISTS patient_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     patient_id INTEGER NOT NULL,
     field TEXT NOT NULL,
-    value FLOAT UNSIGNED NOT NULL,
+    value REAL NOT NULL,
     units TEXT NULL,
     time INTEGER NOT NULL,
     FOREIGN KEY (patient_id) REFERENCES patient (id) ON DELETE CASCADE 
