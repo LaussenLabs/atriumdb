@@ -114,7 +114,7 @@ class SQLHandler(ABC):
     @abstractmethod
     def insert_patient(self, patient_id=None, mrn: str = None, gender: str = None, dob: str = None,
                        first_name: str = None, middle_name: str = None, last_name: str = None, first_seen: int = None,
-                       last_updated: int = None, source_id: int = 1):
+                       last_updated: int = None, source_id: int = 1, weight=None, height=None):
         # Insert patient if it doesn't exist, return id.
         pass
 

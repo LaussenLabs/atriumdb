@@ -327,11 +327,11 @@ class SQLiteHandler(SQLHandler):
             return cursor.lastrowid
 
     def insert_patient(self, patient_id=None, mrn=None, gender=None, dob=None, first_name=None, middle_name=None,
-                       last_name=None, first_seen=None, last_updated=None, source_id=1):
+                       last_name=None, first_seen=None, last_updated=None, source_id=1, weight=None, height=None):
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
             cursor.execute(sqlite_insert_ignore_patient_query,
                            (patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated,
-                            source_id))
+                            source_id, weight, height))
             return cursor.lastrowid
 
     def insert_encounter(self, patient_id, bed_id, start_time, end_time=None, source_id=1, visit_number=None,

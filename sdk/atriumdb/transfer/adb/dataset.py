@@ -245,18 +245,18 @@ def transfer_patients(from_sdk, to_sdk, patient_id_list=None, mrn_list=None, dei
         if deidentify:
             to_patient_id = to_sdk.sql_handler.insert_patient()
         else:
-            to_patient_id = to_sdk.sql_handler.insert_patient(
-                patient_id=patient_info['id'],
-                mrn=patient_info['mrn'],
-                gender=patient_info['gender'],
-                dob=patient_info['dob'],
-                first_name=patient_info['first_name'],
-                middle_name=patient_info['middle_name'],
-                last_name=patient_info['last_name'],
-                first_seen=patient_info['first_seen'],
-                last_updated=patient_info['last_updated'],
-                source_id=patient_info['source_id']
-            )
+            to_patient_id = to_sdk.sql_handler.insert_patient(patient_id=patient_info['id'],
+                                                              mrn=patient_info['mrn'],
+                                                              gender=patient_info['gender'],
+                                                              dob=patient_info['dob'],
+                                                              first_name=patient_info['first_name'],
+                                                              middle_name=patient_info['middle_name'],
+                                                              last_name=patient_info['last_name'],
+                                                              first_seen=patient_info['first_seen'],
+                                                              last_updated=patient_info['last_updated'],
+                                                              source_id=patient_info['source_id'],
+                                                              weight=patient_info['weight'],
+                                                              height=patient_info['height'])
 
         from_to_patient_id_dict[from_patient_id] = to_patient_id
 
