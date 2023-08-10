@@ -197,7 +197,7 @@ sqlite_encounter_create_index_source_id_query = """
 CREATE INDEX IF NOT EXISTS source_id ON encounter (source_id);
 """
 
-maria_encounter_insert_trigger = """
+sqlite_encounter_insert_trigger = """
 CREATE TRIGGER IF NOT EXISTS encounter_insert
     after insert
     on encounter
@@ -213,7 +213,7 @@ FROM device WHERE type='static' and bed_id=NEW.bed_id;
 END;
 """
 
-maria_encounter_update_trigger = """
+sqlite_encounter_update_trigger = """
 CREATE TRIGGER IF NOT EXISTS encounter_update
     after update
     on encounter
@@ -224,7 +224,7 @@ UPDATE device_patient SET end_time=NEW.end_time WHERE patient_id=NEW.patient_id 
 END;
 """
 
-maria_encounter_delete_trigger="""
+sqlite_encounter_delete_trigger="""
 CREATE TRIGGER IF NOT EXISTS encounter_delete
     after delete
     on encounter

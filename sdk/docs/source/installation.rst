@@ -78,7 +78,7 @@ MariaDB
 ---------------
 
 If you are using AtriumDB with MariaDB on Linux you have to make sure you have at least MariaDB server version 10.11 installed
-on your computer first. On windows this step is unnecessary and you can go straight pip installing AtriumDB.
+on your computer first. If you don't run the commands below. On windows this step is unnecessary and you can go straight pip installing AtriumDB.
 
 .. code-block:: bash
 
@@ -104,4 +104,4 @@ path you want mariadb's data to be stored at on your computer.**
 
 .. code-block:: bash
 
-    $ docker run --name mariadb -d -p 127.0.0.1:3306:3306 -v /host/path/to/mariadb/data:/var/lib/mysql -e MARIADB_ROOT_PASSWORD='password' mariadb:latest
+    $ docker run --name mariadb -d -p 3306:3306 -v /host/path/to/mariadb/data:/var/lib/mysql -e MARIADB_ROOT_PASSWORD='password' mariadb:latest
