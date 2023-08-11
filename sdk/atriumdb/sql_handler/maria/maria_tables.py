@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS patient_history (
     value FLOAT UNSIGNED NOT NULL,
     units VARCHAR(64) NULL,
     time BIGINT NOT NULL,
-    CONSTRAINT FOREIGN KEY (patient_id) REFERENCES patient (id) ON DELETE CASCADE,
+    CONSTRAINT FOREIGN KEY (patient_id) REFERENCES patient (id) ON DELETE CASCADE
 );
 """
 
