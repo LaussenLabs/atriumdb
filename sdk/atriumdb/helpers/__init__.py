@@ -27,4 +27,3 @@ shared_lib_filename_windows = _cfg["resources"]["shared_lib_filename_windows"]
 
 protected_mode_default_setting = _cfg["settings"]["protected_mode"]
 overwrite_default_setting = _cfg["settings"]["overwrite"]
-default_interval_index_mode = _cfg["settings"]["interval_index_mode"]

@@ -1,0 +1,34 @@
+
+trigger:
+  branches:
+    include:
+    - '*'
+
+pr:
+  branches:
+    include:
+      - '*'
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+- group: atriumdb-release
+
+jobs:
+  - job: initiate
+    displayName: initiate
+    continueOnError: false
+    steps:
+      - checkout: self
+        clean: true
+        fetchDepth: 0
+        fetchTags: true
+        persistCredentials: true
+        displayName: run_commands
+      - bash: | 
+          git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
+          git fetch origin
+          git remote add repoGithub https://$(GITHUB_PAT)@github.com/LaussenLabs/atriumdb.git
+          git fetch repoGithub
+          git push --prune repoGithub +refs/remotes/origin/*:refs/heads/* +refs/tags/*:refs/tags/*

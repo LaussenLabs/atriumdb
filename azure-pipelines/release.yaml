@@ -1,0 +1,87 @@
+name: atriumdb_SDK_Release_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.rr)
+
+trigger: none
+
+pool:
+  vmImage: ubuntu-20.04
+
+variables:
+- group: atriumdb-release
+
+parameters:
+  - name: releaseVersion
+    displayName: Release Version
+    type: string
+  - name: pypiReleaseFeed
+    displayName: PyPI Release Feed
+    default: atriumdb-test-pypi
+    values:
+      - atriumdb-test-pypi
+      - atriumdb-release-pypi
+    type: string
+    
+
+stages:
+- stage: Build
+  jobs:
+    - job: run_build_release
+      displayName: Run build release
+
+      steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: '3.10'
+
+      - bash: |
+          sudo apt-get update && sudo apt-get install -y tzdata cmake build-essential gdb libzstd-dev liblz4-dev python3.10 mingw-w64
+          pip install build
+          pip install twine
+        displayName: Setup build environment
+
+      - bash: |
+          cd tsc-lib
+          cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_BUILD_TYPE='Release';
+          cmake --build cmake-build-release --target Block;
+          mkdir ../sdk/bin
+          cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll;
+          rm -rf cmake-build-release/**;
+          cmake -Bcmake-build-release -H. -DCMAKE_BUILD_TYPE='Release';
+          cmake --build cmake-build-release --target Block;
+          cp cmake-build-release/src/Block/libTSC.so ../sdk/bin/libTSC.so;
+          cd ..
+        displayName: Build C libraries
+
+      - bash: |
+          cd sdk
+          python -m build
+        displayName: Build SDK package
+
+      - task: TwineAuthenticate@1
+        inputs:
+          artifactFeed: 'Physiological Data System/adb-py-internal'
+          pythonUploadServiceConnection: ${{ parameters.pypiReleaseFeed }}
+        
+      - bash: |
+            python -m twine upload --skip-existing -r adb-py-internal --config-file $(PYPIRC_PATH) sdk/dist/*.whl
+            python -m twine upload --skip-existing -r atriumdb --config-file $(PYPIRC_PATH) sdk/dist/*.whl
+        displayName: Upload build artifacts
+        
+      - task: GitHubRelease@1
+        inputs:
+          gitHubConnection: 'github.com_bgreer101'
+          repositoryName: 'LaussenLabs/atriumdb'
+          action: 'create'
+          target: '$(Build.SourceVersion)'
+          tagSource: 'userSpecifiedTag'
+          tag: '${{ parameters.releaseVersion }}'
+          releaseNotesSource: 'inline'
+          releaseNotesInline: ''
+          assets: |
+            sdk/dist/*.whl
+            sdk/dist/*.gz
+            sdk/bin/*.dll
+            sdk/bin/*.so
+          changeLogCompareToRelease: 'lastFullRelease'
+          changeLogType: 'commitBased'
+      
+
