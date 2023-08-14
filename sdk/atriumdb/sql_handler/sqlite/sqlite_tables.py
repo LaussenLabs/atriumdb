@@ -275,6 +275,8 @@ previous_location TEXT DEFAULT NULL,
 admit_time INTEGER DEFAULT NULL,
 discharge_time INTEGER DEFAULT NULL,
 source_id INTEGER NOT NULL,
+weight REAL NULL,
+height REAL NULL,
 FOREIGN KEY (source_id) REFERENCES source(id)
 );"""
 
