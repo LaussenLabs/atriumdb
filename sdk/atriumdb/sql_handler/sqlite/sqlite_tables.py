@@ -53,19 +53,12 @@ sqlite_block_index_create_query = """CREATE TABLE IF NOT EXISTS block_index(
     num_values INTEGER NOT NULL,
     FOREIGN KEY (measure_id) REFERENCES measure(id),
     FOREIGN KEY (device_id) REFERENCES device(id),
-    FOREIGN KEY (file_id) REFERENCES file_index(id)
+    FOREIGN KEY (file_id) REFERENCES file_index(id) ON DELETE CASCADE 
 );"""
 
 sqlite_block_index_idx_query = \
     "CREATE INDEX IF NOT EXISTS block_idx ON block_index (measure_id, device_id, start_time_n, end_time_n);"
 
-sqlite_block_file_delete_cascade = """CREATE TRIGGER IF NOT EXISTS delete_block_index_on_file_index_delete
-AFTER DELETE ON file_index
-FOR EACH ROW
-BEGIN
-    DELETE FROM block_index WHERE file_id = OLD.id;
-END;
-"""
 
 sqlite_interval_index_create_query = """CREATE TABLE IF NOT EXISTS interval_index(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -154,7 +147,21 @@ CREATE TABLE IF NOT EXISTS patient (
   first_seen INTEGER NULL DEFAULT (STRFTIME('%s','NOW')),
   last_updated INTEGER NULL,
   source_id INTEGER DEFAULT 1 NULL,
+  weight REAL NULL,
+  height REAL NULL,
   FOREIGN KEY (source_id) REFERENCES source (id)
+);
+"""
+
+sqlite_patient_history_create_query = """
+CREATE TABLE IF NOT EXISTS patient_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id INTEGER NOT NULL,
+    field TEXT NOT NULL,
+    value REAL NOT NULL,
+    units TEXT NULL,
+    time INTEGER NOT NULL,
+    FOREIGN KEY (patient_id) REFERENCES patient (id) ON DELETE CASCADE 
 );
 """
 
@@ -188,6 +195,43 @@ CREATE INDEX IF NOT EXISTS patient_id ON encounter (patient_id);
 
 sqlite_encounter_create_index_source_id_query = """
 CREATE INDEX IF NOT EXISTS source_id ON encounter (source_id);
+"""
+
+sqlite_encounter_insert_trigger = """
+CREATE TRIGGER IF NOT EXISTS encounter_insert
+    after insert
+    on encounter
+    for each row
+BEGIN
+INSERT INTO device_encounter (device_id, encounter_id, start_time, end_time) 
+SELECT id, NEW.id, NEW.start_time, NEW.end_time 
+FROM device WHERE type='static' and bed_id=NEW.bed_id;
+
+INSERT INTO device_patient (device_id, patient_id, start_time, end_time, source_id) 
+SELECT id, NEW.patient_id, NEW.start_time, NEW.end_time, NEW.source_id 
+FROM device WHERE type='static' and bed_id=NEW.bed_id;
+END;
+"""
+
+sqlite_encounter_update_trigger = """
+CREATE TRIGGER IF NOT EXISTS encounter_update
+    after update
+    on encounter
+    for each row
+BEGIN
+UPDATE device_encounter SET end_time=NEW.end_time WHERE encounter_id=NEW.id and end_time IS NULL;
+UPDATE device_patient SET end_time=NEW.end_time WHERE patient_id=NEW.patient_id AND start_time=NEW.start_time AND end_time IS NULL;
+END;
+"""
+
+sqlite_encounter_delete_trigger="""
+CREATE TRIGGER IF NOT EXISTS encounter_delete
+    after delete
+    on encounter
+    for each row
+BEGIN
+DELETE FROM device_patient WHERE patient_id=OLD.patient_id AND start_time=OLD.start_time;
+END;
 """
 
 sqlite_device_create_query = """
@@ -231,6 +275,8 @@ previous_location TEXT DEFAULT NULL,
 admit_time INTEGER DEFAULT NULL,
 discharge_time INTEGER DEFAULT NULL,
 source_id INTEGER NOT NULL,
+weight REAL NULL,
+height REAL NULL,
 FOREIGN KEY (source_id) REFERENCES source(id)
 );"""
 

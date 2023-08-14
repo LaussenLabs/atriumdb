@@ -119,8 +119,22 @@ CREATE TABLE IF NOT EXISTS patient (
   first_seen bigint DEFAULT CURRENT_TIMESTAMP NULL,
   last_updated bigint NULL,
   source_id INT UNSIGNED DEFAULT 1 NULL,
+  weight FLOAT UNSIGNED NULL,
+  height FLOAT UNSIGNED NULL,
   CONSTRAINT mrn UNIQUE (mrn),
   CONSTRAINT FOREIGN KEY (source_id) REFERENCES source (id)
+);
+"""
+
+maria_patient_history_create_query = """
+CREATE TABLE IF NOT EXISTS patient_history (
+    id INT UNSIGNED auto_increment PRIMARY KEY,
+    patient_id INT UNSIGNED NOT NULL,
+    field VARCHAR(120) NOT NULL,
+    value FLOAT UNSIGNED NOT NULL,
+    units VARCHAR(64) NULL,
+    time BIGINT NOT NULL,
+    CONSTRAINT FOREIGN KEY (patient_id) REFERENCES patient (id) ON DELETE CASCADE
 );
 """
 
@@ -186,14 +200,16 @@ previous_location VARCHAR(255) DEFAULT NULL,
 admit_time BIGINT DEFAULT NULL,
 discharge_time BIGINT DEFAULT NULL,
 source_id INT UNSIGNED DEFAULT 1 NULL,
+weight FLOAT DEFAULT NULL,
+height FLOAT DEFAULT NULL,
 CONSTRAINT FOREIGN KEY (source_id) REFERENCES source (id)
 );"""
 
-mariadb_current_census_view = """CREATE OR REPLACE VIEW current_census AS select `e`.`start_time` AS 
-`admission_start`,`u`.`id` AS `unit_id`,`u`.`name` AS `unit_name`,`b`.`id` AS `bed_id`,`b`.`name` AS `bed_name`,
-`p`.`id` AS `patient_id`,`p`.`mrn` AS `mrn`,concat_ws(' ',`p`.`first_name`,`p`.`middle_name`,`p`.`last_name`) AS `name`,
-`p`.`gender` AS `gender`,`p`.`dob` AS `birth_date` from (((`encounter` `e` join `bed` `b` on(`e`.`bed_id` = `b`.`id`)) 
-join `unit` `u` on(`b`.`unit_id` = `u`.`id`)) join `patient` `p` on(`e`.`patient_id` = `p`.`id`)) 
+mariadb_current_census_view = """CREATE OR REPLACE VIEW current_census AS select `e`.`start_time` AS `admission_start`,
+`u`.`id` AS `unit_id`,`u`.`name` AS `unit_name`,`b`.`id` AS `bed_id`,`b`.`name` AS `bed_name`,`p`.`id` AS `patient_id`,
+`p`.`mrn` AS `mrn`,`p`.`first_name` AS `first_name`,`p`.`middle_name` AS `middle_name`,`p`.`last_name` AS `last_name`,`p`.`gender` AS `gender`,
+`p`.`dob` AS `birth_date`,`p`.`weight` AS `weight`,`p`.`height` AS `height` from (((`encounter` `e` join `bed` `b` 
+on(`e`.`bed_id` = `b`.`id`)) join `unit` `u` on(`b`.`unit_id` = `u`.`id`)) join `patient` `p` on(`e`.`patient_id` = `p`.`id`)) 
 where `e`.`end_time` is null
 """
 
@@ -204,14 +220,14 @@ patient_id INT UNSIGNED NOT NULL,
 start_time BIGINT NOT NULL,
 end_time BIGINT NULL,
 source_id INT UNSIGNED NOT NULL DEFAULT 1,
-FOREIGN KEY (device_id) REFERENCES device(id),
-FOREIGN KEY (patient_id) REFERENCES patient(id),
+FOREIGN KEY (device_id) REFERENCES device(id) ON DELETE CASCADE,
+FOREIGN KEY (patient_id) REFERENCES patient(id) ON DELETE CASCADE,
 FOREIGN KEY (source_id) REFERENCES source(id),
 INDEX (device_id, patient_id, start_time, end_time)
 );
 """
 
-maria_encounter_device_encounter_insert_trigger = """
+maria_encounter_insert_trigger = """
 CREATE TRIGGER IF NOT EXISTS encounter_insert
     after insert
     on encounter
@@ -220,39 +236,34 @@ BEGIN
 INSERT INTO device_encounter (device_id, encounter_id, start_time, end_time) 
 SELECT id, NEW.id, NEW.start_time, NEW.end_time 
 FROM device WHERE type='static' and bed_id=NEW.bed_id;
+
+INSERT INTO device_patient (device_id, patient_id, start_time, end_time, source_id) 
+SELECT id, NEW.patient_id, NEW.start_time, NEW.end_time, NEW.source_id 
+FROM device WHERE type='static' and bed_id=NEW.bed_id;
 END;
 """
 
-maria_encounter_device_encounter_update_trigger = """
+maria_encounter_update_trigger = """
 CREATE TRIGGER IF NOT EXISTS encounter_update
     after update
     on encounter
     for each row
 BEGIN
 UPDATE device_encounter SET end_time=NEW.end_time WHERE encounter_id=NEW.id and end_time IS NULL;
+UPDATE device_patient SET end_time=NEW.end_time WHERE patient_id=NEW.patient_id AND start_time=NEW.start_time AND end_time IS NULL;
 END;
 """
 
-maria_encounter_device_patient_insert_trigger = """
-CREATE TRIGGER IF NOT EXISTS encounter_patient_insert
-AFTER INSERT ON encounter
-FOR EACH ROW
+maria_encounter_delete_trigger="""
+CREATE TRIGGER IF NOT EXISTS encounter_delete
+    after delete
+    on encounter
+    for each row
 BEGIN
-    INSERT INTO device_patient (device_id, patient_id, start_time, end_time, source_id) 
-    SELECT id, NEW.patient_id, NEW.start_time, NEW.end_time, NEW.source_id 
-    FROM device WHERE type='static' and bed_id=NEW.bed_id;
+DELETE FROM device_patient WHERE patient_id=OLD.patient_id AND start_time=OLD.start_time;
 END;
 """
 
-maria_encounter_device_patient_update_trigger = """
-CREATE TRIGGER IF NOT EXISTS encounter_patient_update
-AFTER UPDATE ON encounter
-FOR EACH ROW
-BEGIN
-    UPDATE device_patient SET end_time=NEW.end_time 
-    WHERE patient_id=NEW.patient_id AND start_time=NEW.start_time AND end_time IS NULL;
-END;
-"""
 
 maria_insert_interval_stored_procedure = """
 CREATE PROCEDURE IF NOT EXISTS insert_interval(

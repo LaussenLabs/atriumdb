@@ -75,7 +75,9 @@ def _test_transfer_patients(db_type, dataset_location, connection_params):
             'last_name': None,
             'first_seen': None,
             'last_updated': None,
-            'source_id': 1
+            'source_id': 1,
+            'weight': None,
+            'height': None
         }
 
 
@@ -94,18 +96,21 @@ def insert_random_patients(sdk, n):
         end = 2524608000_000_000_000
         return random.randint(int(start), int(end))
 
+    def random_height_weight():
+        return random.uniform(0.5, 200.0)
+
     patient_id_list = []
     for _ in range(n):
-        patient_id = sdk.sql_handler.insert_patient(
-            mrn=random_mrn(),
-            gender=random_gender(),
-            dob=random_epoch(),
-            first_name=names.get_first_name(),
-            middle_name=random_string(1),
-            last_name=names.get_last_name(),
-            first_seen=random_epoch(),
-            last_updated=random_epoch()
-        )
+        patient_id = sdk.sql_handler.insert_patient(mrn=random_mrn(),
+                                                    gender=random_gender(),
+                                                    dob=random_epoch(),
+                                                    first_name=names.get_first_name(),
+                                                    middle_name=random_string(1),
+                                                    last_name=names.get_last_name(),
+                                                    first_seen=random_epoch(),
+                                                    last_updated=random_epoch(),
+                                                    weight=random_height_weight(),
+                                                    height=random_height_weight())
         patient_id_list.append(patient_id)
         
     return patient_id_list
