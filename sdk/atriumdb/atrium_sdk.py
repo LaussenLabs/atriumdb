@@ -2165,8 +2165,8 @@ class AtriumSDK:
              'first_seen': 1609459200000000000,
              'last_updated': 1609545600000000000,
              'source_id': 1,
-             'height': 50.0,
-             'weight': 10.1},
+             'weight': 10.1,
+             'height': 50.0},
          2: {'id': 2,
              'mrn': 654321,
              'gender': 'F',
@@ -2176,9 +2176,9 @@ class AtriumSDK:
              'last_name': 'Smith',
              'first_seen': 1609642000000000000,
              'last_updated': 1609728400000000000,
-             'source_id': 1
-             'height': 43.2,
-             'weight': 9.12}}
+             'source_id': 1,
+             'weight': 9.12,
+             'height': 43.2}}
 
         :return: A dictionary containing information about each patient, including their id, mrn, gender, dob,
             first_name, middle_name, last_name, first_seen, last_updated, source_id, height and weight.
@@ -2199,7 +2199,7 @@ class AtriumSDK:
         patient_dict = {}
 
         # Iterate over the patient records and populate the patient_dict
-        for patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, height, weight in \
+        for patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, weight, height in \
                 patient_tuple_list[skip:skip + limit]:
             patient_dict[patient_id] = {
                 'id': patient_id,
@@ -2212,8 +2212,8 @@ class AtriumSDK:
                 'first_seen': first_seen,
                 'last_updated': last_updated,
                 'source_id': source_id,
-                'height': height,
-                'weight': weight
+                'weight': weight,
+                'height': height
             }
 
         # Return the populated patient_dict
