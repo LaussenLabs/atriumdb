@@ -2177,7 +2177,9 @@ class AtriumSDK:
              'last_name': 'Doe',
              'first_seen': 1609459200000000000,
              'last_updated': 1609545600000000000,
-             'source_id': 1},
+             'source_id': 1,
+             'weight': 10.1,
+             'height': 50.0},
          2: {'id': 2,
              'mrn': 654321,
              'gender': 'F',
@@ -2187,10 +2189,12 @@ class AtriumSDK:
              'last_name': 'Smith',
              'first_seen': 1609642000000000000,
              'last_updated': 1609728400000000000,
-             'source_id': 1}}
+             'source_id': 1,
+             'weight': 9.12,
+             'height': 43.2}}
 
         :return: A dictionary containing information about each patient, including their id, mrn, gender, dob,
-            first_name, middle_name, last_name, first_seen, last_updated, and source_id.
+            first_name, middle_name, last_name, first_seen, last_updated, source_id, height and weight.
         :rtype: dict
         """
         # Check if the metadata connection type is API and call the appropriate method
@@ -2208,7 +2212,7 @@ class AtriumSDK:
         patient_dict = {}
 
         # Iterate over the patient records and populate the patient_dict
-        for patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id in \
+        for patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, weight, height in \
                 patient_tuple_list[skip:skip + limit]:
             patient_dict[patient_id] = {
                 'id': patient_id,
@@ -2221,6 +2225,8 @@ class AtriumSDK:
                 'first_seen': first_seen,
                 'last_updated': last_updated,
                 'source_id': source_id,
+                'weight': weight,
+                'height': height
             }
 
         # Return the populated patient_dict
@@ -2899,7 +2905,7 @@ class AtriumSDK:
         return device_info
 
     def insert_patient(self, patient_id=None, mrn=None, gender=None, dob=None, first_name=None, middle_name=None,
-                       last_name=None, first_seen=None, last_updated=None, source_id=1):
+                       last_name=None, first_seen=None, last_updated=None, source_id=1, weight=None, height=None):
         """
         .. _insert_patient_label:
 
@@ -2923,6 +2929,8 @@ class AtriumSDK:
         :param int first_seen: The date when the patient was first seen as a nanosecond epoch.
         :param int last_updated: The date when the patient record was last updated as a nanosecond epoch.
         :param int source_id: The unique identifier of the source from which the patient information was obtained.
+        :param float weight: The patients current weight.
+        :param float height: The patients current height
 
         :return: The unique identifier of the inserted patient record.
         :rtype: int
@@ -2931,7 +2939,7 @@ class AtriumSDK:
         # Call the SQL handler's insert_patient method with the provided patient details
         # and return the unique identifier of the inserted patient record.
         return self.sql_handler.insert_patient(patient_id, mrn, gender, dob, first_name, middle_name, last_name,
-                                               first_seen, last_updated, source_id)
+                                               first_seen, last_updated, source_id, weight, height)
 
     def get_mrn_to_patient_id_map(self, mrn_list=None):
         """

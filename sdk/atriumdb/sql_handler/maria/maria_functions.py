@@ -63,8 +63,8 @@ maria_insert_ignore_institution_query = "INSERT IGNORE INTO institution (name) V
 maria_insert_ignore_unit_query = "INSERT IGNORE INTO unit (institution_id, name, type) VALUES (?, ?, ?);"
 maria_insert_ignore_bed_query = "INSERT IGNORE INTO bed (unit_id, name) VALUES (?, ?);"
 
-maria_insert_ignore_patient_query = "INSERT IGNORE INTO patient (id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id) " \
-                                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+maria_insert_ignore_patient_query = "INSERT IGNORE INTO patient (id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, weight, height) " \
+                                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
 maria_insert_ignore_encounter_query = "INSERT IGNORE INTO encounter (patient_id, bed_id, start_time, end_time, source_id, visit_number, last_updated) " \
                                       "VALUES (?, ?, ?, ?, ?, ?, ?);"
 maria_insert_ignore_device_encounter_query = "INSERT IGNORE INTO device_encounter (device_id, encounter_id, start_time, end_time, source_id) " \

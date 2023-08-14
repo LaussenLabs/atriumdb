@@ -47,7 +47,8 @@ from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_quer
     sqlite_encounter_create_index_source_id_query, sqlite_encounter_create_query, sqlite_device_create_query, \
     sqlite_device_bed_id_create_index, sqlite_device_source_id_create_index, sqlite_insert_adb_source, \
     sqlite_measure_source_id_create_index, sqlite_log_hl7_adt_source_id_create_index, sqlite_log_hl7_adt_create_query, \
-    sqlite_device_patient_table, sqlite_patient_table_index_1, sqlite_block_file_delete_cascade
+    sqlite_device_patient_table, sqlite_patient_table_index_1, sqlite_patient_history_create_query, \
+    sqlite_encounter_insert_trigger, sqlite_encounter_update_trigger, sqlite_encounter_delete_trigger
 
 
 class SQLiteHandler(SQLHandler):
@@ -87,6 +88,7 @@ class SQLiteHandler(SQLHandler):
 
         cursor.execute(sqlite_bed_create_query)
         cursor.execute(sqlite_patient_create_query)
+        cursor.execute(sqlite_patient_history_create_query)
 
         cursor.execute(sqlite_encounter_create_query)
 
@@ -126,7 +128,9 @@ class SQLiteHandler(SQLHandler):
         cursor.execute(sqlite_patient_table_index_1)
 
         # Triggers
-        cursor.execute(sqlite_block_file_delete_cascade)
+        cursor.execute(sqlite_encounter_insert_trigger)
+        cursor.execute(sqlite_encounter_update_trigger)
+        cursor.execute(sqlite_encounter_delete_trigger)
 
         # Insert Default Values
         cursor.execute(sqlite_insert_adb_source)
@@ -327,11 +331,11 @@ class SQLiteHandler(SQLHandler):
             return cursor.lastrowid
 
     def insert_patient(self, patient_id=None, mrn=None, gender=None, dob=None, first_name=None, middle_name=None,
-                       last_name=None, first_seen=None, last_updated=None, source_id=1):
+                       last_name=None, first_seen=None, last_updated=None, source_id=1, weight=None, height=None):
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
             cursor.execute(sqlite_insert_ignore_patient_query,
                            (patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated,
-                            source_id))
+                            source_id, weight, height))
             return cursor.lastrowid
 
     def insert_encounter(self, patient_id, bed_id, start_time, end_time=None, source_id=1, visit_number=None,

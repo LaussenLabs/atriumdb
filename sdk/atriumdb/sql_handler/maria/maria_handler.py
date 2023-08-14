@@ -40,9 +40,8 @@ from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query
     maria_institution_create_query, maria_unit_create_query, maria_bed_create_query, maria_patient_create_query,\
     maria_encounter_create_query, mariadb_device_create_query, maria_insert_adb_source, \
     mariadb_log_hl7_adt_create_query, mariadb_current_census_view, mariadb_device_patient_table, \
-    maria_encounter_device_encounter_insert_trigger, maria_encounter_device_encounter_update_trigger, \
-    maria_encounter_device_patient_insert_trigger, maria_encounter_device_patient_update_trigger, \
-    maria_insert_interval_stored_procedure
+    maria_encounter_insert_trigger, maria_encounter_update_trigger, maria_encounter_delete_trigger, \
+    maria_insert_interval_stored_procedure, maria_patient_history_create_query
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
 from atriumdb.sql_handler.sql_helper import join_sql_and_bools
@@ -133,6 +132,7 @@ class MariaDBHandler(SQLHandler):
         cursor.execute(maria_bed_create_query)
 
         cursor.execute(maria_patient_create_query)
+        cursor.execute(maria_patient_history_create_query)
         cursor.execute(maria_encounter_create_query)
 
         cursor.execute(mariadb_measure_create_query)
@@ -153,10 +153,9 @@ class MariaDBHandler(SQLHandler):
         cursor.execute(maria_insert_adb_source)
 
         # Triggers
-        cursor.execute(maria_encounter_device_encounter_insert_trigger)
-        cursor.execute(maria_encounter_device_encounter_update_trigger)
-        cursor.execute(maria_encounter_device_patient_insert_trigger)
-        cursor.execute(maria_encounter_device_patient_update_trigger)
+        cursor.execute(maria_encounter_insert_trigger)
+        cursor.execute(maria_encounter_update_trigger)
+        cursor.execute(maria_encounter_delete_trigger)
 
         # Stored Procedures
         cursor.execute(maria_insert_interval_stored_procedure)
@@ -368,11 +367,11 @@ class MariaDBHandler(SQLHandler):
             return cursor.lastrowid
 
     def insert_patient(self, patient_id=None, mrn=None, gender=None, dob=None, first_name=None, middle_name=None,
-                       last_name=None, first_seen=None, last_updated=None, source_id=1):
+                       last_name=None, first_seen=None, last_updated=None, source_id=1, weight=None, height=None):
         with self.maria_db_connection(begin=False) as (conn, cursor):
             cursor.execute(maria_insert_ignore_patient_query,
                            (patient_id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated,
-                            source_id))
+                            source_id, weight, height))
             return cursor.lastrowid
 
     def insert_encounter(self, patient_id, bed_id, start_time, end_time=None, source_id=1, visit_number=None,
