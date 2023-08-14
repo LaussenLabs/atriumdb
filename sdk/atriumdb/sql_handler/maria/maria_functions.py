@@ -29,6 +29,9 @@ maria_insert_block_query = """INSERT INTO block_index
 VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
 
 maria_insert_file_index_query = """INSERT INTO file_index (path) VALUES (?);"""
+maria_insert_interval_index_query = """INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n)
+VALUES (?, ?, ?, ?);"""
+
 maria_delete_file_query = "DELETE FROM file_index WHERE id = ?;"
 
 maria_select_block_by_id = "SELECT * FROM block_index WHERE id = ?;"

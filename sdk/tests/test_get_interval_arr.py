@@ -76,7 +76,7 @@ def _test_get_interval_arr(db_type, dataset_location, connection_params):
 
     # Write data with gaps
     sdk.write_data_easy(measure_id=measure_id, device_id=device_id, time_data=time_data, value_data=value_data,
-                        freq=freq_hz, freq_units="Hz", time_units="s")
+                        freq=freq_hz, time_units="s", freq_units="Hz")
 
     # Test get_interval_array based on device
     start_time_nano = start_time_s * (10 ** 9)

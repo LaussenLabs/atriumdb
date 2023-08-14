@@ -18,9 +18,9 @@ import math
 
 import numpy as np
 
-from atriumdb.adb_functions import get_block_and_interval_data, condense_byte_read_list, find_intervals, \
-    merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz, \
-    time_unit_options
+from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
+    find_intervals, merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, \
+    convert_from_nanohz, time_unit_options
 from atriumdb.block import Block, convert_gap_array_to_intervals, \
     convert_intervals_to_gap_array
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
@@ -556,7 +556,8 @@ class AtriumSDK:
 
     def write_data(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq_nhz: int,
                    time_0: int, raw_time_type: int = None, raw_value_type: int = None, encoded_time_type: int = None,
-                   encoded_value_type: int = None, scale_m: float = None, scale_b: float = None):
+                   encoded_value_type: int = None, scale_m: float = None, scale_b: float = None,
+                   interval_index_mode: str = None):
         """
         .. _write_data_label:
 
@@ -582,6 +583,13 @@ class AtriumSDK:
             is already analog). The slope (m) in y = mx + b
         :param float scale_b: Constant factor to offset digital data to transform it to analog (None if raw data
             is already analog). The y-intercept (b) in y = mx + b
+        :param str interval_index_mode: Determines the mode for writing data to the interval index. Modes include "disable",
+            "fast", and "merge". "disable" mode yields the fastest writing speed but loses lookup ability via the
+            `AtriumSDK.get_interval_array` method. "fast" mode writes to the interval index in a non-optimized form,
+            potentially creating multiple entries where one should exist, thereby increasing database size. "merge" mode
+            consolidates intervals into single entries, maintaining a smaller table size but incurs a significant speed
+            penalty, if the data inserted isn't the newest data for that device-measure combination.
+            For live data ingestion, "merge" is recommended, at minimal speed penalties.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.
@@ -608,6 +616,7 @@ class AtriumSDK:
             >>>     encoded_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
             >>>     encoded_value_type=V_TYPE_DELTA_INT64)
         """
+
         # Ensure the current mode is "local"
         assert self.mode == "local"
 
@@ -616,6 +625,11 @@ class AtriumSDK:
 
         # Ensure time data is of integer type
         assert np.issubdtype(time_data.dtype, np.integer), "Time information must be encoded as an integer."
+
+        # Set default interval index and ensure valid type.
+        interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
+        assert interval_index_mode in allowed_interval_index_modes, \
+            f"interval_index must be one of {allowed_interval_index_modes}"
 
         # Calculate new intervals
         write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
@@ -696,7 +710,7 @@ class AtriumSDK:
             #     file_path.unlink(missing_ok=True)
         else:
             # Insert SQL rows
-            self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data)
+            self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, interval_index_mode)
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
 
@@ -900,9 +914,8 @@ class AtriumSDK:
 
         return measure_id, device_id, filename, encode_headers, byte_start_array, intervals
 
-    def write_data_easy(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray,
-                        freq: int, scale_m: float = None, scale_b: float = None, time_units: str = None,
-                        freq_units: str = None):
+    def write_data_easy(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq: int,
+                        scale_m: float = None, scale_b: float = None, time_units: str = None, freq_units: str = None):
         """
         .. _write_data_easy_label:
 
@@ -922,8 +935,9 @@ class AtriumSDK:
             >>> time_data = np.arange(1234567890, 1234567890 + 3600, dtype=np.int64)
             >>> # Create some value data of equal dimension.
             >>> value_data = np.sin(time_data)
-            >>> sdk.write_data_easy(measure_id=new_measure_id, device_id=new_device_id, time_data=time_data, value_data=value_data, freq=freq_hz, freq_units="Hz", time_units="s")
+            >>> sdk.write_data_easy(measure_id=new_measure_id,device_id=new_device_id,time_data=time_data,value_data=value_data,freq=freq_hz,time_units="s",freq_units="Hz")
 
+        :param interval_index_mode:
         :param int measure_id: The measure identifier corresponding to the measures table in the linked
             relational database.
         :param int device_id: The device identifier corresponding to the devices table in the linked
@@ -942,7 +956,6 @@ class AtriumSDK:
         :param str freq_units: The unit used for the specified frequency. This value can be one of ["nHz", "uHz", "mHz",
             "Hz", "kHz", "MHz"]. If you use extremely large values for this, it will be converted to nanohertz
             in the backend, and you may overflow 64-bit integers.
-
         """
         # Set default time and frequency units if not provided
         time_units = "ns" if time_units is None else time_units
@@ -1859,7 +1872,7 @@ class AtriumSDK:
             measure_id, device_id, metadata, start_bytes, intervals)
 
         # Insert the block and interval data into the metadata table
-        self.sql_handler.insert_tsc_file_data(path, block_data, interval_data)
+        self.sql_handler.insert_tsc_file_data(path, block_data, interval_data, None)
 
     def get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                            start=None, end=None):

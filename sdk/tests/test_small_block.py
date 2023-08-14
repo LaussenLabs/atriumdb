@@ -83,8 +83,7 @@ def _test_small_block_experiment(db_type, dataset_location, connection_params):
 
     sdk.block.block_size = 4
     # Call the write_data method with the determined parameters
-    sdk.write_data(measure_id, device_id, gap_data, value_data, freq_nano, start_time,
-                   raw_time_type=raw_t_t,
+    sdk.write_data(measure_id, device_id, gap_data, value_data, freq_nano, start_time, raw_time_type=raw_t_t,
                    raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
                    scale_m=scale_m, scale_b=scale_b)
 
@@ -144,8 +143,7 @@ def _test_small_block(db_type, dataset_location, connection_params):
 
     sdk.block.block_size = 10
     # Call the write_data method with the determined parameters
-    sdk.write_data(measure_id, device_id, gap_data, value_data, freq_nano, start_time,
-                   raw_time_type=raw_t_t,
+    sdk.write_data(measure_id, device_id, gap_data, value_data, freq_nano, start_time, raw_time_type=raw_t_t,
                    raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
                    scale_m=scale_m, scale_b=scale_b)
 

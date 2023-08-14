@@ -68,15 +68,14 @@ def _test_block_select(sql_handler):
     sql_handler.insert_tsc_file_data("/tmp/test.tsc",
                                      [{"measure_id": measure_id, "device_id": device_id, "start_byte": 0,
                                        "num_bytes": 100, "start_time_n": t_now, "end_time_n": t_now + 100,
-                                       "num_values": 100}],
-                                     [{"measure_id": measure_id, "device_id": device_id,
-                                       "start_time_n": t_now, "end_time_n": t_now + 100}])
+                                       "num_values": 100}], [{"measure_id": measure_id, "device_id": device_id,
+                                                              "start_time_n": t_now, "end_time_n": t_now + 100}], None)
     sql_handler.insert_tsc_file_data("/tmp/test2.tsc",
                                      [{"measure_id": measure_id, "device_id": device_id, "start_byte": 0,
                                        "num_bytes": 100, "start_time_n": t_now + 100,
                                        "end_time_n": t_now + 200, "num_values": 100}],
                                      [{"measure_id": measure_id, "device_id": device_id,
-                                       "start_time_n": t_now + 100, "end_time_n": t_now + 200}])
+                                       "start_time_n": t_now + 100, "end_time_n": t_now + 200}], None)
 
 
     # Get the blocks

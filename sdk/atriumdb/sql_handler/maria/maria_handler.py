@@ -22,6 +22,7 @@ from contextlib import contextmanager
 import mariadb
 import uuid
 
+from atriumdb.adb_functions import allowed_interval_index_modes
 from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from_triplet_query, \
     maria_select_measure_from_id, \
     maria_insert_ignore_measure_query, maria_insert_ignore_device_query, maria_select_device_from_tag_query, \
@@ -32,7 +33,7 @@ from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from
     maria_insert_ignore_device_encounter_query, maria_insert_ignore_encounter_query, maria_insert_ignore_patient_query, \
     maria_insert_ignore_bed_query, maria_insert_ignore_unit_query, maria_insert_ignore_institution_query, \
     maria_insert_ignore_source_query, maria_select_blocks_from_file, maria_delete_block_query, maria_delete_file_query, \
-    maria_interval_exists_query
+    maria_interval_exists_query, maria_insert_interval_index_query
 from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query, \
     maria_file_index_create_query, maria_block_index_create_query, maria_interval_index_create_query, \
     maria_settings_create_query, maria_device_encounter_create_query, maria_source_create_query, \
@@ -227,7 +228,8 @@ class MariaDBHandler(SQLHandler):
             row = cursor.fetchone()
         return row
 
-    def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict]):
+    def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
+                             interval_index_mode):
         with self.maria_db_connection(begin=True) as (conn, cursor):
             # insert file_path into file_index and get id
             cursor.execute(maria_insert_file_index_query, (file_path,))
@@ -240,8 +242,19 @@ class MariaDBHandler(SQLHandler):
             cursor.executemany(maria_insert_block_query, block_tuples)
 
             # insert into interval_index
-            [cursor.callproc("insert_interval", (interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                interval["end_time_n"])) for interval in interval_data]
+            if interval_index_mode == "fast":
+                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                    interval["end_time_n"]) for interval in interval_data]
+                cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+
+            elif interval_index_mode == "merge":
+                [cursor.callproc("insert_interval", (interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                    interval["end_time_n"])) for interval in interval_data]
+            elif interval_index_mode == "disable":
+                # Do Nothing
+                pass
+            else:
+                raise ValueError(f"interval_index_mode must be one of {allowed_interval_index_modes}")
 
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
                              file_ids_to_delete: List[int]):
