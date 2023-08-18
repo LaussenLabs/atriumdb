@@ -449,7 +449,7 @@ class SQLiteHandler(SQLHandler):
             cursor.execute(block_query, args)
             return cursor.fetchall()
 
-    def get_device_time_ranges_by_patient(self, patient_id, start_time_n, end_time_n):
+    def get_device_time_ranges_by_patient(self, patient_id, end_time_n, start_time_n):
         # patient_device_query = "SELECT device_id, start_time, end_time FROM device_patient WHERE patient_id = ? AND end_time IS NOT NULL"
         patient_device_query = "SELECT device_id, start_time, end_time FROM device_patient WHERE patient_id = ?"
         args = (patient_id,)
@@ -460,8 +460,8 @@ class SQLiteHandler(SQLHandler):
             patient_device_query += " AND start_time <= ? "
             args += (end_time_n,)
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            args = (patient_id,) + ((start_time_n,) if start_time_n is not None else ()) + (
-                (end_time_n,) if end_time_n is not None else ())
+            # args = (patient_id,) + ((start_time_n,) if start_time_n is not None else ()) + (
+            #     (end_time_n,) if end_time_n is not None else ())
             cursor.execute(patient_device_query, args)
             return cursor.fetchall()
 
