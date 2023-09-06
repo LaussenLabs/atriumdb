@@ -586,10 +586,10 @@ class AtriumSDK:
         :param str interval_index_mode: Determines the mode for writing data to the interval index. Modes include "disable",
             "fast", and "merge". "disable" mode yields the fastest writing speed but loses lookup ability via the
             `AtriumSDK.get_interval_array` method. "fast" mode writes to the interval index in a non-optimized form,
-            potentially creating multiple entries where one should exist, thereby increasing database size. "merge" mode
-            consolidates intervals into single entries, maintaining a smaller table size but incurs a significant speed
-            penalty, if the data inserted isn't the newest data for that device-measure combination.
-            For live data ingestion, "merge" is recommended, at minimal speed penalties.
+            potentially creating multiple entries where one should exist, significantly increasing database size. "merge" mode
+            consolidates intervals into single entries, maintaining a smaller table size but can incur a speed penalty,
+            if the data inserted has lots of gaps, is aperiodic or isn't the newest data for that device-measure combination.
+            For live data ingestion, "merge" is recommended.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.

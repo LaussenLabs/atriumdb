@@ -174,7 +174,7 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
     if random.random() < 0.5:
     # if True:
         # Time type 1
-    sdk.write_data_easy(measure_id, device_id, time_arr, value_data, freq_nano, scale_m=scale_m, scale_b=scale_b)
+        sdk.write_data_easy(measure_id, device_id, time_arr, value_data, freq_nano, scale_m=scale_m, scale_b=scale_b)
     else:
         raw_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
