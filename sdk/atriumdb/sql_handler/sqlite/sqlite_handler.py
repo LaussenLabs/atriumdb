@@ -147,19 +147,19 @@ class SQLiteHandler(SQLHandler):
 
     def select_all_devices(self):
         with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute("SELECT * FROM device")
+            cursor.execute("SELECT id, tag, name, manufacturer, model, type, bed_id, source_id FROM device")
             rows = cursor.fetchall()
         return rows
 
     def select_all_measures(self):
         with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute("SELECT * FROM measure")
+            cursor.execute("SELECT id, tag, name, freq_nhz, code, unit, unit_label, unit_code, source_id FROM measure")
             rows = cursor.fetchall()
         return rows
 
     def select_all_patients(self):
         with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute("SELECT * FROM patient")
+            cursor.execute("SELECT id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, weight, height FROM patient")
             rows = cursor.fetchall()
         return rows
 
@@ -204,6 +204,9 @@ class SQLiteHandler(SQLHandler):
 
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
                              interval_index_mode):
+        # default to merge
+        interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
+
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
             # insert file_path into file_index and get id
             cursor.execute(sqlite_insert_file_index_query, (file_path,))
@@ -259,7 +262,7 @@ class SQLiteHandler(SQLHandler):
 
     def select_files(self, file_id_list: List[int]):
         placeholders = ', '.join(['?'] * len(file_id_list))
-        sqlite_select_files_by_id_list = f"SELECT * FROM file_index WHERE id IN ({placeholders})"
+        sqlite_select_files_by_id_list = f"SELECT id, path FROM file_index WHERE id IN ({placeholders})"
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_select_files_by_id_list, file_id_list)
             rows = cursor.fetchall()
@@ -406,7 +409,6 @@ class SQLiteHandler(SQLHandler):
             return cursor.fetchall()
 
     def get_device_time_ranges_by_patient(self, patient_id, end_time_n, start_time_n):
-        # patient_device_query = "SELECT device_id, start_time, end_time FROM device_patient WHERE patient_id = ? AND end_time IS NOT NULL"
         patient_device_query = "SELECT device_id, start_time, end_time FROM device_patient WHERE patient_id = ?"
         args = (patient_id,)
         if start_time_n is not None:
@@ -530,7 +532,7 @@ class SQLiteHandler(SQLHandler):
 
     def select_all_measures_in_list(self, measure_id_list: List[int]):
         placeholders = ', '.join(['?'] * len(measure_id_list))
-        sqlite_select_measures_by_id_list = f"SELECT * FROM measure WHERE id IN ({placeholders})"
+        sqlite_select_measures_by_id_list = f"SELECT id, tag, name, freq_nhz, code, unit, unit_label, unit_code, source_id FROM measure WHERE id IN ({placeholders})"
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_select_measures_by_id_list, measure_id_list)
             rows = cursor.fetchall()
@@ -541,13 +543,13 @@ class SQLiteHandler(SQLHandler):
             "only one of patient_id_list and mrn_list can be specified."
         if patient_id_list is not None:
             placeholders = ', '.join(['?'] * len(patient_id_list))
-            sqlite_select_patients_by_id_list = f"SELECT * FROM patient WHERE id IN ({placeholders})"
+            sqlite_select_patients_by_id_list = f"SELECT id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, weight, height FROM patient WHERE id IN ({placeholders})"
         elif mrn_list is not None:
             patient_id_list = mrn_list
             placeholders = ', '.join(['?'] * len(patient_id_list))
-            sqlite_select_patients_by_id_list = f"SELECT * FROM patient WHERE mrn IN ({placeholders})"
+            sqlite_select_patients_by_id_list = f"SELECT id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, weight, height FROM patient WHERE mrn IN ({placeholders})"
         else:
-            sqlite_select_patients_by_id_list = "SELECT * FROM patient"
+            sqlite_select_patients_by_id_list = "SELECT id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, weight, height FROM patient"
             patient_id_list = tuple()
 
         with self.sqlite_db_connection() as (conn, cursor):
@@ -557,7 +559,7 @@ class SQLiteHandler(SQLHandler):
 
     def select_all_devices_in_list(self, device_id_list: List[int]):
         placeholders = ', '.join(['?'] * len(device_id_list))
-        sqlite_select_devices_by_id_list = f"SELECT * FROM device WHERE id IN ({placeholders})"
+        sqlite_select_devices_by_id_list = f"SELECT id, tag, name, manufacturer, model, type, bed_id, source_id FROM device WHERE id IN ({placeholders})"
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_select_devices_by_id_list, device_id_list)
             rows = cursor.fetchall()
@@ -565,7 +567,7 @@ class SQLiteHandler(SQLHandler):
 
     def select_all_beds_in_list(self, bed_id_list: List[int]):
         placeholders = ', '.join(['?'] * len(bed_id_list))
-        sqlite_select_beds_by_id_list = f"SELECT * FROM bed WHERE id IN ({placeholders})"
+        sqlite_select_beds_by_id_list = f"SELECT id, unit_id, name FROM bed WHERE id IN ({placeholders})"
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_select_beds_by_id_list, bed_id_list)
             rows = cursor.fetchall()
@@ -573,7 +575,7 @@ class SQLiteHandler(SQLHandler):
 
     def select_all_units_in_list(self, unit_id_list: List[int]):
         placeholders = ', '.join(['?'] * len(unit_id_list))
-        sqlite_select_units_by_id_list = f"SELECT * FROM unit WHERE id IN ({placeholders})"
+        sqlite_select_units_by_id_list = f"SELECT id, institution_id, name, type FROM unit WHERE id IN ({placeholders})"
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_select_units_by_id_list, unit_id_list)
             rows = cursor.fetchall()
@@ -581,7 +583,7 @@ class SQLiteHandler(SQLHandler):
 
     def select_all_institutions_in_list(self, institution_id_list: List[int]):
         placeholders = ', '.join(['?'] * len(institution_id_list))
-        sqlite_select_institutions_by_id_list = f"SELECT * FROM institution WHERE id IN ({placeholders})"
+        sqlite_select_institutions_by_id_list = f"SELECT id, name FROM institution WHERE id IN ({placeholders})"
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_select_institutions_by_id_list, institution_id_list)
             rows = cursor.fetchall()
@@ -589,7 +591,7 @@ class SQLiteHandler(SQLHandler):
 
     def select_all_device_encounters_by_encounter_list(self, encounter_id_list: List[int]):
         placeholders = ', '.join(['?'] * len(encounter_id_list))
-        sqlite_select_device_encounters_by_encounter_list = f"SELECT * FROM device_encounter WHERE encounter_id IN ({placeholders})"
+        sqlite_select_device_encounters_by_encounter_list = f"SELECT id, device_id, encounter_id, start_time, end_time, source_id FROM device_encounter WHERE encounter_id IN ({placeholders})"
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_select_device_encounters_by_encounter_list, encounter_id_list)
             rows = cursor.fetchall()
@@ -597,7 +599,7 @@ class SQLiteHandler(SQLHandler):
 
     def select_all_sources_in_list(self, source_id_list: List[int]):
         placeholders = ', '.join(['?'] * len(source_id_list))
-        sqlite_select_sources_by_id_list = f"SELECT * FROM source WHERE id IN ({placeholders})"
+        sqlite_select_sources_by_id_list = f"SELECT id, name, description FROM source WHERE id IN ({placeholders})"
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_select_sources_by_id_list, source_id_list)
             rows = cursor.fetchall()
