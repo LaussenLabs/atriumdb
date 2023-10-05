@@ -45,6 +45,7 @@ def _test_mit_bih(db_type, dataset_location, connection_params):
 def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, deidentify=False, time_shift=None,
                               use_patient_id=False, seed=None):
     print()
+    seed = SEED if seed is None else seed
     if seed is not None:
         np.random.seed(seed)
         random.seed(seed)
@@ -80,7 +81,7 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
                 expected_values = record.p_signal.T[i].astype(np.float64)
                 expected_times = time_arr
 
-                headers, read_times, read_values = sdk.get_data(measure_id, time_arr[0], time_arr[-1] + period_ns,
+                headers, read_times, read_values = sdk.get_data(measure_id, int(time_arr[0]), int(time_arr[-1]) + period_ns,
                                                                 **query_args)
 
                 if not np.allclose(expected_values, read_values):
@@ -107,13 +108,14 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
             measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano,
                                             units=record.units)
 
-            headers, read_times, read_values = sdk.get_data(measure_id, time_arr[0], time_arr[-1] + period_ns,
+            headers, read_times, read_values = sdk.get_data(measure_id, int(time_arr[0]), int(time_arr[-1]) + period_ns,
                                                             **query_args)
 
             assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
 
 
 def write_mit_bih_to_dataset(sdk, max_records=None, seed=None):
+    seed = SEED if seed is None else seed
     if seed is not None:
         np.random.seed(seed)
         random.seed(seed)
@@ -172,7 +174,6 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
 
     # Write data
     if random.random() < 0.5:
-    # if True:
         # Time type 1
         sdk.write_data_easy(measure_id, device_id, time_arr, value_data, freq_nano, scale_m=scale_m, scale_b=scale_b)
     else:

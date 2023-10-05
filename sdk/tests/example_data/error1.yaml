@@ -1,0 +1,6 @@
+patient_id:
+  12345:
+    - start: 1659344515
+      end: 1682739300000000000
+measures:
+  - tag_1

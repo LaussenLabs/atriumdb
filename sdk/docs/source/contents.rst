@@ -47,6 +47,23 @@ API Reference
    .. automethod:: write_data_easy
 
    .. automethod:: get_data
+   .. automethod:: get_iterator
+
+.. autoclass:: atriumdb.DatasetDefinition
+
+   .. automethod:: __init__
+   .. automethod:: add_measure
+   .. automethod:: add_region
+   .. automethod:: save
+
+.. autoclass:: atriumdb.DatasetIterator
+
+   .. automethod:: __len__
+   .. automethod:: __getitem__
+   .. automethod:: get_signal_window
+   .. automethod:: get_array_matrix
+
+
 
 Index
 --------------------
