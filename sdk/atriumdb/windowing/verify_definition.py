@@ -57,8 +57,9 @@ def _validate_measures(definition: DatasetDefinition, sdk):
                              if measure_info['tag'] == measure_spec}
 
             if len(search_result) == 0:
-                warnings.warn(f"Measure {measure_spec} not found in SDK, omitting from measures")
-                continue
+                raise ValueError(f"Measure {measure_spec} not found in SDK. Must use AtriumSDK.insert_measure if you "
+                                 f"want the iterator to output the measure")
+
             elif len(search_result) != 1:
                 raise ValueError(f"Measure Tag {measure_spec} has more than one matching measure.")
 
@@ -86,8 +87,8 @@ def _validate_measures(definition: DatasetDefinition, sdk):
                 )
 
             if measure_id is None:
-                warnings.warn(f"Measure {measure_spec['tag']} not found in SDK, omitting from measures")
-                continue
+                raise ValueError(f"Measure {measure_spec} not found in SDK. Must use AtriumSDK.insert_measure if you "
+                                 f"want the iterator to output the measure")
 
             measure_info = sdk.get_measure_info(measure_id)
             validated_measure_info = {
