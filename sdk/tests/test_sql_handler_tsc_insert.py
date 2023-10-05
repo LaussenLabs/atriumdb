@@ -64,7 +64,7 @@ def _test_insert_tsc_file_data(sql_handler):
 
     interval_data = [{"measure_id": 1, "device_id": 1, "start_time_n": 0, "end_time_n": 100},
                      {"measure_id": 2, "device_id": 2, "start_time_n": 100, "end_time_n": 300}]
-    sql_handler.insert_tsc_file_data(file_path, block_data, interval_data)
+    sql_handler.insert_tsc_file_data(file_path, block_data, interval_data, None)
 
     # Verify that file path has been inserted into file_index
     result = sql_handler.select_file(file_path=file_path)

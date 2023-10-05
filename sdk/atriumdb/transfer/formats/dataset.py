@@ -72,7 +72,7 @@ def export_dataset(sdk: AtriumSDK, directory: Union[str, PurePath], data_format=
         if mrn_list is not None:
             patient_id_list = [] if patient_id_list is None else patient_id_list
             mrn_patient_id_dict = sdk.get_mrn_to_patient_id_map(mrn_list=mrn_list)
-            patient_id_list.extend(list(mrn_patient_id_dict.values))
+            patient_id_list.extend(list(mrn_patient_id_dict.values()))
             patient_id_list = list(set(patient_id_list))
 
         for measure_id in measure_id_list or sdk.get_all_measures().keys():
@@ -101,14 +101,16 @@ def export_dataset(sdk: AtriumSDK, directory: Union[str, PurePath], data_format=
                 if interval_arr.size == 0:
                     _LOGGER.info(f"No data for measure id {measure_id}, device id {device_id}.")
                     continue
-                start = interval_arr[0][0] if start is None else max(start, interval_arr[0][0])
-                end = interval_arr[-1][-1] if end is None else min(end, interval_arr[-1][-1])
-                for file_start in range(start, end, csv_dur):
-                    file_end = file_start + csv_dur
+                start = int(interval_arr[0][0]) if start is None else max(start, int(interval_arr[0][0]))
+                end = int(interval_arr[-1][-1]) if end is None else min(end, int(interval_arr[-1][-1]))
+                file_start = start
+                while file_start < end:
+                    file_end = min(file_start + csv_dur, end)
                     metadata, _ = export_data_from_sdk(sdk, directory_path, measure_id, file_start, file_end,
                                                        device_id=device_id,
                                                        data_format=data_format,
                                                        include_scale_factors=include_scale_factors)
                     file_metadata.update(metadata)
+                    file_start += csv_dur
 
     export_json_metadata(directory, file_metadata)

@@ -1,0 +1,7 @@
+device_ids:
+    device_1:
+        start: 1682739300000000000
+        end: 1682746700000000000
+
+measures:
+    - tag_1

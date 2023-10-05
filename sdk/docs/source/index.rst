@@ -13,6 +13,7 @@ To learn more about AtriumDB, visit the `about page <about.html>`_.
    installation
    quickstart
    tutorial
+   dataset
    cli
    contents
    about

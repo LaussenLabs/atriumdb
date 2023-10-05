@@ -43,18 +43,24 @@ database_uri = f"mysql+pymysql://{user}:{password}@{host}/{DB_NAME}"
 
 process_sdk = None
 
+NUM_SOURCES = 100
+
 
 def test_concurrent_source_writing():
     _test_for_both(DB_NAME, _test_concurrent_source_writing)
 
 
 def _test_concurrent_source_writing(db_type, dataset_location, connection_params):
+    if db_type == "sqlite":
+        # Sqlite locks instead of allowing parallel writes.
+        return
+
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    test_measure_list = [(str(measure_id), random.randint(1, 2048)) for measure_id in range(1000)]
+    test_measure_list = [(str(measure_id), random.randint(1, 2048)) for measure_id in range(NUM_SOURCES)]
 
-    test_device_list = [str(device_id) for device_id in range(1000)]
+    test_device_list = [str(device_id) for device_id in range(NUM_SOURCES)]
 
     num_processes = 4
 

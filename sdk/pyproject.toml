@@ -38,6 +38,7 @@ keywords = ["atriumdb", "timeseries", "database", "waveform", "medical data", "m
 dependencies = [
     'tomli; python_version < "3.11"',
     "numpy >= 1.21.4, < 2",
+    "PyYAML >= 6.0",
 ]
 
 [project.optional-dependencies]

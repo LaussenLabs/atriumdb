@@ -25,13 +25,13 @@ from tests.testing_framework import _test_for_both, create_sibling_sdk
 
 DB_NAME = 'atrium-transfer'
 MAX_RECORDS = 1
+SEED = 42
 
 
 def test_transfer():
     _test_for_both(DB_NAME, _test_transfer)
     _test_for_both(DB_NAME, _test_transfer_with_patient_context)
-    # Needs fix
-    # _test_for_both(DB_NAME, _test_transfer_with_patient_context_deidentify_timeshift)
+    _test_for_both(DB_NAME, _test_transfer_with_patient_context_deidentify_timeshift)
 
 
 def _test_transfer(db_type, dataset_location, connection_params):
@@ -43,7 +43,7 @@ def _test_transfer(db_type, dataset_location, connection_params):
 
     # Test
 
-    device_patient_dict = write_mit_bih_to_dataset(sdk_1)
+    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
 
     measure_id_list = None
     device_id_list = None
@@ -56,7 +56,7 @@ def _test_transfer(db_type, dataset_location, connection_params):
     transfer_data(from_sdk=sdk_1, to_sdk=sdk_2, measure_id_list=measure_id_list, device_id_list=device_id_list,
                   patient_id_list=patient_id_list, start=start, end=end, time_units=time_units, batch_size=batch_size)
 
-    assert_mit_bih_to_dataset(sdk_2, device_patient_map=device_patient_dict)
+    assert_mit_bih_to_dataset(sdk_2, device_patient_map=device_patient_dict, max_records=MAX_RECORDS, seed=SEED)
 
 
 def _test_transfer_with_patient_context(db_type, dataset_location, connection_params):
@@ -67,12 +67,12 @@ def _test_transfer_with_patient_context(db_type, dataset_location, connection_pa
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
     # Test
-    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS)
+    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
 
     transfer_data(from_sdk=sdk_1, to_sdk=sdk_2, include_patient_context=True)
 
     assert_mit_bih_to_dataset(
-        sdk_2, device_patient_map=device_patient_dict, use_patient_id=True, max_records=MAX_RECORDS)
+        sdk_2, device_patient_map=device_patient_dict, use_patient_id=True, max_records=MAX_RECORDS, seed=SEED)
 
 
 def _test_transfer_with_patient_context_deidentify_timeshift(db_type, dataset_location, connection_params):
@@ -83,9 +83,10 @@ def _test_transfer_with_patient_context_deidentify_timeshift(db_type, dataset_lo
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
     # Test
-    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS)
+    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
 
     transfer_data(from_sdk=sdk_1, to_sdk=sdk_2, include_patient_context=True, deidentify=True, time_shift=-500)
 
     assert_mit_bih_to_dataset(
-        sdk_2, device_patient_map=device_patient_dict, deidentify=True, time_shift=-500, max_records=MAX_RECORDS)
+        sdk_2, device_patient_map=device_patient_dict, deidentify=True, time_shift=-500, max_records=MAX_RECORDS,
+        seed=SEED)

@@ -14,7 +14,6 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 from atriumdb.atrium_sdk import AtriumSDK
 from atriumdb.block import create_gap_arr, create_gap_arr_fast, convert_gap_array_to_intervals, \
     convert_intervals_to_gap_array
@@ -26,4 +25,6 @@ from atriumdb.block_wrapper import T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, T_TYPE_GAP
     V_TYPE_DELTA_INT64, V_TYPE_XOR_DOUBLE
 
 # Window Config
+from atriumdb.windowing.dataset_iterator import DatasetIterator
+from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.windowing.window_config import WindowConfig
