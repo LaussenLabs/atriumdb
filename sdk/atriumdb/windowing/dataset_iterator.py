@@ -377,8 +377,8 @@ class DatasetIterator:
 
             signal_dictionary[(measure_tag, measure_freq_nhz, measure_units)] = \
                 {
-                    'times': window_times,
-                    'values': window_values,
+                    'times': np.copy(window_times),
+                    'values': np.copy(window_values),
                     'expected_count': measure_expected_count,
                     'actual_count': np.sum(~np.isnan(window_values)),
                     'measure_id': measure_id,
