@@ -148,8 +148,8 @@ class DatasetDefinition:
             if not isinstance(measure, (str, dict)):
                 raise ValueError("Measure must be a string or a dictionary")
             if isinstance(measure, dict):
-                if 'tag' not in measure or 'freq_hz' not in measure or 'units' not in measure:
-                    raise ValueError("Measure dictionary must contain 'tag', 'freq_hz', and 'units' keys")
+                if 'tag' not in measure or ('freq_hz' not in measure and 'freq_nhz' not in measure) or 'units' not in measure:
+                    raise ValueError("Measure dictionary must contain 'tag', 'freq_hz' (or 'freq_nhz'), and 'units' keys")
 
         # Validate and convert patient_ids
         for patient_id, times in self.data_dict['patient_ids'].items():
