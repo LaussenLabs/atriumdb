@@ -25,6 +25,8 @@ from atriumdb.windowing.definition import DatasetDefinition
         ("./example_data/error10.yaml", ValueError, None, "MRN must be convertible to an integer"),
         ("./example_data/error11.yaml", ValueError, None, "Duplicate measure found: tag_1"),
         ("./example_data/correct1.yaml", None, None, None),
+        ("./example_data/correct2.yaml", None, None, None),
+        ("./example_data/correct3.yaml", None, None, None),
     ],
 )
 
