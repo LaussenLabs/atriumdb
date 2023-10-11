@@ -34,7 +34,7 @@ def _test_iterator(db_type, dataset_location, connection_params):
 
     write_mit_bih_to_dataset(sdk, max_records=2, seed=42)
     # Uncomment line below to recreate test files
-    create_test_definition_files(sdk)
+    # create_test_definition_files(sdk)
 
     test_parameters = [
         # definition, expected_device_id_type, expected_patient_id_type
