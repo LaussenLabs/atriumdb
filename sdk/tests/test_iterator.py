@@ -54,7 +54,6 @@ def _test_iterator(db_type, dataset_location, connection_params):
             assert isinstance(window.patient_id, expected_patient_id_type)
 
             for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
-                print(measure_tag, measure_freq_nhz, measure_units, signal_dict['measure_id'])
                 assert isinstance(signal_dict['times'], np.ndarray)
                 assert isinstance(signal_dict['values'], np.ndarray)
 
