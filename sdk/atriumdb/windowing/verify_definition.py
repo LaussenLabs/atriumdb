@@ -111,6 +111,8 @@ def _validate_sources(definition: DatasetDefinition, sdk, validated_measure_list
 
     validated_sources_dict = dict()
     for source_type, source_data in data_dict.items():
+        if len(source_data) == 0:
+            continue
         current_validated_source_dict = dict()
         if source_type == 'mrns':
             source_type = "patient_ids"

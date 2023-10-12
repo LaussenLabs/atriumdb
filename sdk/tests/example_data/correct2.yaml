@@ -1,0 +1,23 @@
+patient_ids: {}
+
+mrns: {}
+
+device_ids:
+  1:
+    - start: 1682739200000000000
+      end: 1682739300000000000
+    - time0: 1682739250000000000
+      pre: 500000000
+      post: 500000000
+  2: all
+  3:
+    - start: 1682739200000000000
+
+measures:
+  - heart_rate
+  - tag: ECG
+    freq_hz: 300
+    units: mV
+  - tag: temperature
+    freq_hz: 62.5
+    units: C
