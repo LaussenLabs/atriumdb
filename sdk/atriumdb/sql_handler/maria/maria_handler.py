@@ -675,3 +675,44 @@ class MariaDBHandler(SQLHandler):
             if result:
                 return result[0]
             return None
+
+    def insert_label(self, label_type_id, device_id, start_time_n, end_time_n):
+        query = """
+        INSERT INTO label (label_type_id, device_id, start_time_n, end_time_n) 
+        VALUES (?, ?, ?, ?)
+        """
+        with self.maria_db_connection(begin=True) as (conn, cursor):
+            cursor.execute(query, (label_type_id, device_id, start_time_n, end_time_n))
+            conn.commit()
+            return cursor.lastrowid
+
+    def insert_labels(self, labels):
+        query = """
+        INSERT INTO label (label_type_id, device_id, start_time_n, end_time_n) 
+        VALUES (?, ?, ?, ?)
+        """
+        with self.maria_db_connection(begin=True) as (conn, cursor):
+            cursor.executemany(query, labels)
+            conn.commit()
+            return cursor.lastrowid
+
+    def select_labels(self, label_type_id=None, device_id=None, start_time_n=None, end_time_n=None):
+        query = "SELECT * FROM label WHERE 1=1"
+        params = []
+
+        if label_type_id:
+            query += " AND label_type_id = ?"
+            params.append(label_type_id)
+        if device_id:
+            query += " AND device_id = ?"
+            params.append(device_id)
+        if end_time_n:
+            query += " AND start_time_n <= ?"
+            params.append(end_time_n)
+        if start_time_n:
+            query += " AND end_time_n >= ?"
+            params.append(start_time_n)
+
+        with self.maria_db_connection(begin=False) as (conn, cursor):
+            cursor.execute(query, params)
+            return cursor.fetchall()
