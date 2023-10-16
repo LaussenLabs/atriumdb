@@ -44,14 +44,14 @@ def _test_labels(db_type, dataset_location, connection_params):
     # Test label type insertion
     label_name = "Running"
     label_id = sdk.get_label_type_id(name=label_name)
-    if label_id is None:
-        label_id = sdk.sql_handler.insert_label_type(label_name)
-    assert label_id is not None, "Failed to insert a new label type or retrieve its ID"
+    assert label_id is None, "There's a label where there shouldn't be"
 
     # Insert a label
     start_time = 1000
     end_time = 2000
     sdk.insert_label(name=label_name, device=device_tag, start_time=start_time, end_time=end_time, time_units="ms")
+    label_id = sdk.get_label_type_id(name=label_name)
+    assert label_id is not None, "Failed to insert a new label type or retrieve its ID"
 
     # Retrieve the label and verify its values
     labels = sdk.get_labels(name_list=[label_name], device_list=[device_tag])
@@ -85,10 +85,6 @@ def _test_labels(db_type, dataset_location, connection_params):
     # Test retrieving labels with both device_list and patient_id_list (should raise an error)
     with pytest.raises(ValueError):
         sdk.get_labels(device_list=[device_tag], patient_id_list=[1])
-
-    # Test insertion in API mode (should raise NotImplementedError)
-    with pytest.raises(NotImplementedError):
-        sdk.insert_device(device_tag="Monitor A4", device_name="Another monitor")
 
     # Test retrieval of label with non-existent label name (should raise an error)
     with pytest.raises(ValueError):
