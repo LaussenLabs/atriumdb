@@ -3159,6 +3159,14 @@ class AtriumSDK:
         return response.json()
 
     def get_all_label_types(self) -> dict:
+        """
+        Retrieve all the available label types from the database.
+
+        :return: A dictionary where keys are label IDs and values are dictionaries containing 'id' and 'name' keys.
+        :rtype: dict
+
+        .. note:: This method currently only supports database connection mode and not API mode.
+        """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this method.")
 
@@ -3174,7 +3182,17 @@ class AtriumSDK:
 
         return label_dict
 
-    def get_label_id(self, name: str):
+    def get_label_type_id(self, name: str):
+        """
+        Retrieve the identifier of a label type based on its name.
+
+        :param str name: The name of the label type.
+
+        :return: The identifier of the label type.
+        :rtype: int
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this method.")
         # Check if the label name is already in the cached label type IDs dictionary
         if name in self._label_type_ids:
             return self._label_type_ids[name]
@@ -3192,8 +3210,18 @@ class AtriumSDK:
         return label_id
 
     def insert_label(self, name: str, device: Union[int, str], start_time: int, end_time: int, time_units: str = None):
+        """
+        Insert a label record into the database.
+
+        :param str name: Name of the label type.
+        :param Union[int, str] device: Device ID or device tag.
+        :param int start_time: Start time for the label.
+        :param int end_time: End time for the label.
+        :param str time_units: Units for the `start_time` and `end_time`. Valid options are 'ns', 's', 'ms', and 'us'.
+        """
+
         if self.metadata_connection_type == "api":
-            raise NotImplementedError("API mode is not yet supported for this method.")
+            raise NotImplementedError("API mode is not supported for insertion.")
 
         # Convert device tag to device ID if necessary
         if isinstance(device, str):
@@ -3219,6 +3247,18 @@ class AtriumSDK:
         self.sql_handler.insert_label(label_id, device, start_time, end_time)
 
     def insert_labels(self, labels: List[Tuple[str, Union[int, str], int, int]], time_units: str = None):
+        """
+        Insert multiple label records into the database.
+
+        :param List[Tuple[str, Union[int, str], int, int]] labels: A list of labels. Each label is a tuple containing:
+            - Name of the label type.
+            - Device ID or device tag.
+            - Start time for the label.
+            - End time for the label.
+        :param str time_units: Units for the `start_time` and `end_time` of each label. Valid options are 'ns', 's', 'ms', and 'us'.
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for insertion.")
         # Prepare the list to store formatted labels
         formatted_labels = []
 
@@ -3254,6 +3294,23 @@ class AtriumSDK:
 
     def get_labels(self, name_list=None, device_list=None, start_time=None, end_time=None, time_units: str = None,
                    patient_id_list=None):
+        """
+        Retrieve labels from the database based on specified criteria.
+
+        :param List[str] name_list: List of label names to filter by.
+        :param List[Union[int, str]] device_list: List of device IDs or device tags to filter by.
+        :param int start_time: Start time filter for the labels.
+        :param int end_time: End time filter for the labels.
+        :param str time_units: Units for the `start_time` and `end_time` filters. Valid options are 'ns', 's', 'ms', and 'us'.
+        :param List[int] patient_id_list: List of patient IDs to filter by.
+
+        :return: A list of matching labels from the database.
+        :rtype: List[Tuple]
+
+        .. note::
+            - This method currently only supports database connection mode and not API mode.
+            - Either `device_list` or `patient_id_list` should be provided, but not both.
+        """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this method.")
 
@@ -3274,7 +3331,7 @@ class AtriumSDK:
 
         # Convert label names to IDs
         if name_list:
-            label_id_list = [self.get_label_id(name) for name in name_list]
+            label_id_list = [self.get_label_type_id(name) for name in name_list]
             for label_name, label_id in zip(name_list, label_id_list):
                 if label_id is None:
                     raise ValueError(f"Label name '{label_name}' not found in the database.")

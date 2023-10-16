@@ -49,6 +49,12 @@ API Reference
    .. automethod:: get_data
    .. automethod:: get_iterator
 
+   .. automethod:: get_all_label_types
+   .. automethod:: get_label_type_id
+   .. automethod:: insert_label
+   .. automethod:: insert_labels
+   .. automethod:: get_labels
+
 .. autoclass:: atriumdb.DatasetDefinition
 
    .. automethod:: __init__
