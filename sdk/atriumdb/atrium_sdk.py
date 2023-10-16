@@ -3219,8 +3219,38 @@ class AtriumSDK:
         self.sql_handler.insert_label(label_id, device, start_time, end_time)
 
     def insert_labels(self, labels: List[Tuple[str, Union[int, str], int, int]], time_units: str = None):
+        # Prepare the list to store formatted labels
+        formatted_labels = []
+
+        # Convert times using the provided time units
+        time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+        if time_units not in time_unit_options.keys():
+            raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options.keys())
+
         for label in labels:
-            self.insert_label(*label, time_units=time_units)
+            name, device, start_time, end_time = label
+
+            # Convert device tag to device ID if necessary
+            if isinstance(device, str):
+                device = self.get_device_id(device)
+
+            # Adjust start and end times using time units
+            start_time *= time_unit_options[time_units]
+            end_time *= time_unit_options[time_units]
+
+            # Check if the label name already exists
+            if name not in self._label_type_ids:
+                label_id = self.sql_handler.insert_label_type(name)
+                self._label_types[label_id] = {'id': label_id, 'name': name}
+                self._label_type_ids[name] = label_id
+            else:
+                label_id = self._label_type_ids[name]
+
+            # Add to the formatted labels list
+            formatted_labels.append((label_id, device, start_time, end_time))
+
+        # Insert the labels into the database
+        self.sql_handler.insert_labels(formatted_labels)
 
     def get_labels(self, name_list=None, device_list=None, start_time=None, end_time=None, time_units: str = None):
         if self.metadata_connection_type == "api":
