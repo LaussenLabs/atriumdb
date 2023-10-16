@@ -651,3 +651,27 @@ class MariaDBHandler(SQLHandler):
             cursor.executemany(maria_insert_device_patient_query, device_patient_data)
             conn.commit()
 
+    def insert_label_type(self, name):
+        query = "INSERT INTO label_type (name) VALUES (?)"
+        with self.maria_db_connection(begin=True) as (conn, cursor):
+            try:
+                cursor.execute(query, (name,))
+                conn.commit()
+                return cursor.lastrowid
+            except mariadb.IntegrityError:
+                return self.select_label_type_id(name)
+
+    def select_label_types(self):
+        query = "SELECT * FROM label_type"
+        with self.maria_db_connection(begin=False) as (conn, cursor):
+            cursor.execute(query)
+            return cursor.fetchall()
+
+    def select_label_type_id(self, name):
+        query = "SELECT id FROM label_type WHERE name = ? LIMIT 1"
+        with self.maria_db_connection(begin=False) as (conn, cursor):
+            cursor.execute(query, (name,))
+            result = cursor.fetchone()
+            if result:
+                return result[0]
+            return None
