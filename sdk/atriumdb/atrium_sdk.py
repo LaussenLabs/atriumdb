@@ -3298,7 +3298,7 @@ class AtriumSDK:
         Retrieve labels from the database based on specified criteria.
 
         :param List[str] name_list: List of label names to filter by.
-        :param List[Union[int, str]] device_list: List of device IDs or device tags to filter by.
+        :param List[int | str] device_list: List of device IDs or device tags to filter by.
         :param int start_time: Start time filter for the labels.
         :param int end_time: End time filter for the labels.
         :param str time_units: Units for the `start_time` and `end_time` filters. Valid options are 'ns', 's', 'ms', and 'us'.
