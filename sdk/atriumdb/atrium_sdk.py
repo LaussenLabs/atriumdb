@@ -229,6 +229,7 @@ class AtriumSDK:
         if metadata_connection_type != "api":
             self._measures = self.get_all_measures()
             self._devices = self.get_all_devices()
+            self._label_types = self.get_all_label_types()
 
             # Create a dictionary to map measure information to measure IDs
             self._measure_ids = {}
@@ -239,6 +240,11 @@ class AtriumSDK:
             self._device_ids = {}
             for device_id, device_info in self._devices.items():
                 self._device_ids[device_info['tag']] = device_id
+
+            # Create a dictionary to map label type names to their IDs
+            self._label_type_ids = {}
+            for label_id, label_info in self._label_types.items():
+                self._label_type_ids[label_info['name']] = label_id
 
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None,
@@ -3152,3 +3158,103 @@ class AtriumSDK:
         # Return the JSON response
         return response.json()
 
+    def get_all_label_types(self) -> dict:
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this method.")
+
+        label_tuple_list = self.sql_handler.select_label_types()
+
+        label_dict = {}
+        for label_info in label_tuple_list:
+            label_id, label_name = label_info
+            label_dict[label_id] = {
+                'id': label_id,
+                'name': label_name
+            }
+
+        return label_dict
+
+    def get_label_id(self, name: str):
+        # Check if the label name is already in the cached label type IDs dictionary
+        if name in self._label_type_ids:
+            return self._label_type_ids[name]
+
+        # If the label name is not in the cache, query the database using the SQL handler
+        label_id = self.sql_handler.select_label_type_id(name)
+
+        # If the label name is not found in the database, return None
+        if label_id is None:
+            return None
+
+        # If the label name is found in the database, store the ID in the cache
+        self._label_type_ids[name] = label_id
+        self._label_types[label_id] = name  # also update the label types cache
+        return label_id
+
+    def insert_label(self, name: str, device: Union[int, str], start_time: int, end_time: int, time_units: str = None):
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this method.")
+
+        # Convert device tag to device ID if necessary
+        if isinstance(device, str):
+            device = self.get_device_id(device)
+
+        # Convert time using the provided time units
+        time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+        if time_units not in time_unit_options.keys():
+            raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
+
+        start_time *= time_unit_options[time_units]
+        end_time *= time_unit_options[time_units]
+
+        # Check if the label name already exists
+        if name not in self._label_type_ids:
+            label_id = self.sql_handler.insert_label_type(name)
+            self._label_types[label_id] = {'id': label_id, 'name': name}
+            self._label_type_ids[name] = label_id
+        else:
+            label_id = self._label_type_ids[name]
+
+        # Insert the label into the database
+        self.sql_handler.insert_label(label_id, device, start_time, end_time)
+
+    def insert_labels(self, labels: List[Tuple[str, Union[int, str], int, int]], time_units: str = None):
+        for label in labels:
+            self.insert_label(*label, time_units=time_units)
+
+    def get_labels(self, name_list=None, device_list=None, start_time=None, end_time=None, time_units: str = None):
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this method.")
+
+        # Convert time using the provided time units, if specified
+        if time_units:
+            time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+            if time_units not in time_unit_options.keys():
+                raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
+
+            if start_time:
+                start_time *= time_unit_options[time_units]
+            if end_time:
+                end_time *= time_unit_options[time_units]
+
+        # Convert label names to IDs
+        if name_list:
+            label_id_list = [self.get_label_id(name) for name in name_list]
+            for label_name, label_id in zip(name_list, label_id_list):
+                if label_id is None:
+                    raise ValueError(f"Label name '{label_name}' not found in the database.")
+
+            name_list = label_id_list
+
+        # Convert device tags to IDs
+        if device_list:
+            device_id_list = []
+            for device in device_list:
+                device_id = self.get_device_id(device) if isinstance(device, str) else device
+                if device_id is None:
+                    raise ValueError(f"Device Tag {device} not found in database")
+                device_id_list.append(device_id)
+            device_list = device_id_list
+
+        # Retrieve the labels from the database
+        return self.sql_handler.select_labels(name_list, device_list, start_time, end_time)
