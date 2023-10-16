@@ -688,16 +688,39 @@ class SQLiteHandler(SQLHandler):
             cursor.executemany(query, labels)
             conn.commit()
 
-    def select_labels(self, label_type_id=None, device_id=None, start_time_n=None, end_time_n=None):
+    def select_labels(self, label_type_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
+                      end_time_n=None):
+        # Query By Patient.
+        if patient_id_list is not None:
+            results = []
+
+            for patient_id in patient_id_list:
+                device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
+
+                for device_id, device_start_time, device_end_time in device_time_ranges:
+                    # Ensure start and end times are within the provided bounds, if they exist.
+                    final_start_time = max(start_time_n, device_start_time) if start_time_n else device_start_time
+                    final_end_time = min(end_time_n, device_end_time) if end_time_n else device_end_time
+
+                    # Recursively call select_labels for each device_id.
+                    results.extend(self.select_labels(label_type_id_list=label_type_id_list, device_id_list=[device_id],
+                                                      start_time_n=final_start_time, end_time_n=final_end_time))
+
+            return results
+
         query = "SELECT * FROM label WHERE 1=1"
         params = []
 
-        if label_type_id:
-            query += " AND label_type_id = ?"
-            params.append(label_type_id)
-        if device_id:
-            query += " AND device_id = ?"
-            params.append(device_id)
+        if label_type_id_list:
+            placeholders = ', '.join(['?'] * len(label_type_id_list))
+            query += f" AND label_type_id IN ({placeholders})"
+            params.extend(label_type_id_list)
+
+        if device_id_list:
+            placeholders = ', '.join(['?'] * len(device_id_list))
+            query += f" AND device_id IN ({placeholders})"
+            params.extend(device_id_list)
+
         if end_time_n:
             query += " AND start_time_n <= ?"
             params.append(end_time_n)

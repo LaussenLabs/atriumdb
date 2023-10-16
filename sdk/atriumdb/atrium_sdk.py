@@ -3252,9 +3252,14 @@ class AtriumSDK:
         # Insert the labels into the database
         self.sql_handler.insert_labels(formatted_labels)
 
-    def get_labels(self, name_list=None, device_list=None, start_time=None, end_time=None, time_units: str = None):
+    def get_labels(self, name_list=None, device_list=None, start_time=None, end_time=None, time_units: str = None,
+                   patient_id_list=None):
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this method.")
+
+        # Ensure either device list or patient id list is provided, but not both
+        if device_list and patient_id_list:
+            raise ValueError("Only one of device_list or patient_id_list should be provided.")
 
         # Convert time using the provided time units, if specified
         if time_units:
@@ -3273,7 +3278,6 @@ class AtriumSDK:
             for label_name, label_id in zip(name_list, label_id_list):
                 if label_id is None:
                     raise ValueError(f"Label name '{label_name}' not found in the database.")
-
             name_list = label_id_list
 
         # Convert device tags to IDs
@@ -3287,4 +3291,6 @@ class AtriumSDK:
             device_list = device_id_list
 
         # Retrieve the labels from the database
-        return self.sql_handler.select_labels(name_list, device_list, start_time, end_time)
+        return self.sql_handler.select_labels(
+            label_type_id_list=name_list, device_id_list=device_list, patient_id_list=patient_id_list,
+            start_time_n=start_time, end_time_n=end_time)

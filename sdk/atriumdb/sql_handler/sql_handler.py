@@ -250,6 +250,7 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def select_labels(self, label_type_id=None, device_id=None, start_time_n=None, end_time_n=None):
+    def select_labels(self, label_type_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
+                      end_time_n=None):
         # Retrieve labels based on provided criteria.
         pass
