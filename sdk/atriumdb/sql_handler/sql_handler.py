@@ -237,3 +237,19 @@ class SQLHandler(ABC):
     def select_label_type_id(self, name):
         # Retrieve ID of a label type by its name.
         pass
+
+    @abstractmethod
+    def insert_label(self, label_type_id, device_id, start_time_n, end_time_n):
+        # Insert a single label entry and return its ID.
+        pass
+
+    @abstractmethod
+    def insert_labels(self, labels):
+        # Insert multiple label entries and return their IDs.
+        # `labels` is a list of tuples (label_type_id, device_id, start_time_n, end_time_n)
+        pass
+
+    @abstractmethod
+    def select_labels(self, label_type_id=None, device_id=None, start_time_n=None, end_time_n=None):
+        # Retrieve labels based on provided criteria.
+        pass
