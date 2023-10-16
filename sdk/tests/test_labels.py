@@ -31,36 +31,36 @@ def _test_labels(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    # 1. Test insertion of a new device and get the ID
+    # Test insertion of a new device and get the ID
     device_tag = "Monitor A3"
     device_name = "Philips Monitor A3 in Room 2B"
     device_id = sdk.insert_device(device_tag=device_tag, device_name=device_name)
     assert device_id is not None, "Failed to insert a new device or retrieve its ID"
 
-    # 2. Test the insertion of the same device and see if the ID matches the earlier ID
+    # Test the insertion of the same device and see if the ID matches the earlier ID
     new_device_id = sdk.insert_device(device_tag=device_tag, device_name=device_name)
     assert new_device_id == device_id, "Device ID mismatch for the same device tag"
 
-    # 3. Test label type insertion
+    # Test label type insertion
     label_name = "Running"
     label_id = sdk.get_label_type_id(name=label_name)
     if label_id is None:
         label_id = sdk.sql_handler.insert_label_type(label_name)
     assert label_id is not None, "Failed to insert a new label type or retrieve its ID"
 
-    # 4. Insert a label
+    # Insert a label
     start_time = 1000
     end_time = 2000
     sdk.insert_label(name=label_name, device=device_tag, start_time=start_time, end_time=end_time, time_units="ms")
 
-    # 5. Retrieve the label and verify its values
+    # Retrieve the label and verify its values
     labels = sdk.get_labels(name_list=[label_name], device_list=[device_tag])
     assert len(labels) == 1, "Incorrect number of labels retrieved"
     retrieved_label = labels[0]
     assert retrieved_label[0] == label_id, "Label ID mismatch"
     assert retrieved_label[1] == device_id, "Device ID mismatch"
 
-    # 6. Insert multiple labels
+    # Insert multiple labels
     label_2_name = "Idle"
     label_2_start_time = 2000
     label_2_end_time = 3000
@@ -69,35 +69,35 @@ def _test_labels(db_type, dataset_location, connection_params):
     ]
     sdk.insert_labels(labels=labels_to_insert, time_units="ms")
 
-    # 7. Retrieve multiple labels and verify their values
+    # Retrieve multiple labels and verify their values
     retrieved_labels = sdk.get_labels(name_list=[label_name, label_2_name], device_list=[device_tag])
     assert len(retrieved_labels) == 2, "Incorrect number of labels retrieved"
 
-    # 8. Test insertion of a label with a non-existent device tag
+    # Test insertion of a label with a non-existent device tag
     with pytest.raises(ValueError):
         sdk.insert_label(name=label_name, device="NonExistentDevice", start_time=start_time, end_time=end_time)
 
-    # 9. Test insertion of a label with an invalid time unit
+    # Test insertion of a label with an invalid time unit
     with pytest.raises(ValueError):
         sdk.insert_label(name=label_name, device=device_tag, start_time=start_time, end_time=end_time,
                          time_units="minutes")
 
-    # 10. Test retrieving labels with both device_list and patient_id_list (should raise an error)
+    # Test retrieving labels with both device_list and patient_id_list (should raise an error)
     with pytest.raises(ValueError):
         sdk.get_labels(device_list=[device_tag], patient_id_list=[1])
 
-    # 11. Test insertion in API mode (should raise NotImplementedError)
+    # Test insertion in API mode (should raise NotImplementedError)
     with pytest.raises(NotImplementedError):
         sdk.insert_device(device_tag="Monitor A4", device_name="Another monitor")
 
-    # 12. Test retrieval of label with non-existent label name (should raise an error)
+    # Test retrieval of label with non-existent label name (should raise an error)
     with pytest.raises(ValueError):
         sdk.get_labels(name_list=["NonExistentLabel"], device_list=[device_tag])
 
-    # 13. Test retrieval of labels using invalid time units
+    # Test retrieval of labels using invalid time units
     with pytest.raises(ValueError):
         sdk.get_labels(name_list=[label_name], device_list=[device_tag], time_units="minutes")
 
-    # 14. Test retrieval of labels using non-existent device tag
+    # Test retrieval of labels using non-existent device tag
     with pytest.raises(ValueError):
         sdk.get_labels(name_list=[label_name], device_list=["NonExistentDevice"])
