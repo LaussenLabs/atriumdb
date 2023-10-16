@@ -222,3 +222,18 @@ class SQLHandler(ABC):
     def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
         # Insert device_patient rows.
         pass
+
+    @abstractmethod
+    def insert_label_type(self, name):
+        # Insert a new label type and return its ID.
+        pass
+
+    @abstractmethod
+    def select_label_types(self):
+        # Retrieve all label types.
+        pass
+
+    @abstractmethod
+    def select_label_type_id(self, name):
+        # Retrieve ID of a label type by its name.
+        pass
