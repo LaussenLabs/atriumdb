@@ -323,7 +323,7 @@ END;
 mariadb_label_type_create_query = """
 CREATE TABLE IF NOT EXISTS label_type (
 id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-name VARCHAR(128) NOT NULL
+name VARCHAR(128) NOT NULL UNIQUE
 );
 """
 

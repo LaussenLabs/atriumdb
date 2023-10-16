@@ -301,7 +301,7 @@ sqlite_patient_table_index_1 = "CREATE INDEX IF NOT EXISTS device_patient_index 
 sqlite_label_type_create_query = """
 CREATE TABLE IF NOT EXISTS label_type (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
-name TEXT NOT NULL
+name TEXT NOT NULL UNIQUE
 );
 """
 
