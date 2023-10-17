@@ -43,14 +43,14 @@ def _test_labels(db_type, dataset_location, connection_params):
 
     # Test label type insertion
     label_name = "Running"
-    label_id = sdk.get_label_type_id(name=label_name)
+    label_id = sdk.get_label_set_id(name=label_name)
     assert label_id is None, "There's a label where there shouldn't be"
 
     # Insert a label
     start_time = 1000
     end_time = 2000
     sdk.insert_label(name=label_name, device=device_tag, start_time=start_time, end_time=end_time, time_units="ms")
-    label_id = sdk.get_label_type_id(name=label_name)
+    label_id = sdk.get_label_set_id(name=label_name)
     assert label_id is not None, "Failed to insert a new label type or retrieve its ID"
 
     # Retrieve the label and verify its values

@@ -41,7 +41,7 @@ from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query
     maria_encounter_create_query, mariadb_device_create_query, maria_insert_adb_source, \
     mariadb_log_hl7_adt_create_query, mariadb_current_census_view, mariadb_device_patient_table, \
     maria_encounter_insert_trigger, maria_encounter_update_trigger, maria_encounter_delete_trigger, \
-    maria_insert_interval_stored_procedure, maria_patient_history_create_query, mariadb_label_type_create_query, \
+    maria_insert_interval_stored_procedure, maria_patient_history_create_query, mariadb_label_set_create_query, \
     mariadb_label_create_query
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
@@ -147,7 +147,7 @@ class MariaDBHandler(SQLHandler):
         cursor.execute(mariadb_log_hl7_adt_create_query)
         cursor.execute(mariadb_device_patient_table)
 
-        cursor.execute(mariadb_label_type_create_query)
+        cursor.execute(mariadb_label_set_create_query)
         cursor.execute(mariadb_label_create_query)
 
         # Create Views
@@ -651,9 +651,9 @@ class MariaDBHandler(SQLHandler):
             cursor.executemany(maria_insert_device_patient_query, device_patient_data)
             conn.commit()
 
-    def insert_label_type(self, name):
+    def insert_label_set(self, name):
         # Insert a new label type into the database and return its ID.
-        query = "INSERT INTO label_type (name) VALUES (?)"
+        query = "INSERT INTO label_set (name) VALUES (?)"
         with self.maria_db_connection(begin=True) as (conn, cursor):
             try:
                 cursor.execute(query, (name,))
@@ -662,18 +662,18 @@ class MariaDBHandler(SQLHandler):
                 return cursor.lastrowid
             except mariadb.IntegrityError:
                 # If there's an integrity error (e.g., a duplicate), select and return the existing ID.
-                return self.select_label_type_id(name)
+                return self.select_label_set_id(name)
 
-    def select_label_types(self):
+    def select_label_sets(self):
         # Retrieve all label types from the database.
-        query = "SELECT * FROM label_type"
+        query = "SELECT * FROM label_set"
         with self.maria_db_connection(begin=False) as (conn, cursor):
             cursor.execute(query)
             return cursor.fetchall()
 
-    def select_label_type_id(self, name):
+    def select_label_set_id(self, name):
         # Retrieve the ID of a label type by its name.
-        query = "SELECT id FROM label_type WHERE name = ? LIMIT 1"
+        query = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
         with self.maria_db_connection(begin=False) as (conn, cursor):
             cursor.execute(query, (name,))
             result = cursor.fetchone()
@@ -682,14 +682,14 @@ class MariaDBHandler(SQLHandler):
                 return result[0]
             return None
 
-    def insert_label(self, label_type_id, device_id, start_time_n, end_time_n):
+    def insert_label(self, label_set_id, device_id, start_time_n, end_time_n):
         # Insert a new label record into the database.
         query = """
-        INSERT INTO label (label_type_id, device_id, start_time_n, end_time_n) 
+        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n) 
         VALUES (?, ?, ?, ?)
         """
         with self.maria_db_connection(begin=True) as (conn, cursor):
-            cursor.execute(query, (label_type_id, device_id, start_time_n, end_time_n))
+            cursor.execute(query, (label_set_id, device_id, start_time_n, end_time_n))
             conn.commit()
             # Return the ID of the newly inserted label.
             return cursor.lastrowid
@@ -697,7 +697,7 @@ class MariaDBHandler(SQLHandler):
     def insert_labels(self, labels):
         # Insert multiple label records into the database.
         query = """
-        INSERT INTO label (label_type_id, device_id, start_time_n, end_time_n) 
+        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n) 
         VALUES (?, ?, ?, ?)
         """
         with self.maria_db_connection(begin=True) as (conn, cursor):
@@ -706,7 +706,7 @@ class MariaDBHandler(SQLHandler):
             # Return the ID of the last inserted label.
             return cursor.lastrowid
 
-    def select_labels(self, label_type_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
+    def select_labels(self, label_set_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
                       end_time_n=None):
         # Select labels based on the given criteria. This function supports recursive queries for patients.
 
@@ -723,7 +723,7 @@ class MariaDBHandler(SQLHandler):
                     final_end_time = min(end_time_n, device_end_time) if end_time_n else device_end_time
 
                     # Recursively fetch labels for each device and accumulate the results.
-                    results.extend(self.select_labels(label_type_id_list=label_type_id_list, device_id_list=[device_id],
+                    results.extend(self.select_labels(label_set_id_list=label_set_id_list, device_id_list=[device_id],
                                                       start_time_n=final_start_time, end_time_n=final_end_time))
             return results
 
@@ -732,10 +732,10 @@ class MariaDBHandler(SQLHandler):
         params = []
 
         # Add conditions for label type IDs, if provided.
-        if label_type_id_list:
-            placeholders = ', '.join(['?'] * len(label_type_id_list))
-            query += f" AND label_type_id IN ({placeholders})"
-            params.extend(label_type_id_list)
+        if label_set_id_list:
+            placeholders = ', '.join(['?'] * len(label_set_id_list))
+            query += f" AND label_set_id IN ({placeholders})"
+            params.extend(label_set_id_list)
 
         # Add conditions for device IDs, if provided.
         if device_id_list:

@@ -229,7 +229,7 @@ class AtriumSDK:
         if metadata_connection_type != "api":
             self._measures = self.get_all_measures()
             self._devices = self.get_all_devices()
-            self._label_types = self.get_all_label_types()
+            self._label_sets = self.get_all_label_sets()
 
             # Create a dictionary to map measure information to measure IDs
             self._measure_ids = {}
@@ -242,9 +242,9 @@ class AtriumSDK:
                 self._device_ids[device_info['tag']] = device_id
 
             # Create a dictionary to map label type names to their IDs
-            self._label_type_ids = {}
-            for label_id, label_info in self._label_types.items():
-                self._label_type_ids[label_info['name']] = label_id
+            self._label_set_ids = {}
+            for label_id, label_info in self._label_sets.items():
+                self._label_set_ids[label_info['name']] = label_id
 
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None,
@@ -3158,7 +3158,7 @@ class AtriumSDK:
         # Return the JSON response
         return response.json()
 
-    def get_all_label_types(self) -> dict:
+    def get_all_label_sets(self) -> dict:
         """
         Retrieve all the available label types from the database.
 
@@ -3170,7 +3170,7 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this method.")
 
-        label_tuple_list = self.sql_handler.select_label_types()
+        label_tuple_list = self.sql_handler.select_label_sets()
 
         label_dict = {}
         for label_info in label_tuple_list:
@@ -3182,7 +3182,7 @@ class AtriumSDK:
 
         return label_dict
 
-    def get_label_type_id(self, name: str):
+    def get_label_set_id(self, name: str):
         """
         Retrieve the identifier of a label type based on its name.
 
@@ -3194,19 +3194,19 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this method.")
         # Check if the label name is already in the cached label type IDs dictionary
-        if name in self._label_type_ids:
-            return self._label_type_ids[name]
+        if name in self._label_set_ids:
+            return self._label_set_ids[name]
 
         # If the label name is not in the cache, query the database using the SQL handler
-        label_id = self.sql_handler.select_label_type_id(name)
+        label_id = self.sql_handler.select_label_set_id(name)
 
         # If the label name is not found in the database, return None
         if label_id is None:
             return None
 
         # If the label name is found in the database, store the ID in the cache
-        self._label_type_ids[name] = label_id
-        self._label_types[label_id] = name  # also update the label types cache
+        self._label_set_ids[name] = label_id
+        self._label_sets[label_id] = name  # also update the label types cache
         return label_id
 
     def insert_label(self, name: str, device: Union[int, str], start_time: int, end_time: int, time_units: str = None):
@@ -3236,12 +3236,12 @@ class AtriumSDK:
         end_time *= time_unit_options[time_units]
 
         # Check if the label name already exists
-        if name not in self._label_type_ids:
-            label_id = self.sql_handler.insert_label_type(name)
-            self._label_types[label_id] = {'id': label_id, 'name': name}
-            self._label_type_ids[name] = label_id
+        if name not in self._label_set_ids:
+            label_id = self.sql_handler.insert_label_set(name)
+            self._label_sets[label_id] = {'id': label_id, 'name': name}
+            self._label_set_ids[name] = label_id
         else:
-            label_id = self._label_type_ids[name]
+            label_id = self._label_set_ids[name]
 
         # Insert the label into the database
         self.sql_handler.insert_label(label_id, device, start_time, end_time)
@@ -3279,12 +3279,12 @@ class AtriumSDK:
             end_time *= time_unit_options[time_units]
 
             # Check if the label name already exists
-            if name not in self._label_type_ids:
-                label_id = self.sql_handler.insert_label_type(name)
-                self._label_types[label_id] = {'id': label_id, 'name': name}
-                self._label_type_ids[name] = label_id
+            if name not in self._label_set_ids:
+                label_id = self.sql_handler.insert_label_set(name)
+                self._label_sets[label_id] = {'id': label_id, 'name': name}
+                self._label_set_ids[name] = label_id
             else:
-                label_id = self._label_type_ids[name]
+                label_id = self._label_set_ids[name]
 
             # Add to the formatted labels list
             formatted_labels.append((label_id, device, start_time, end_time))
@@ -3331,7 +3331,7 @@ class AtriumSDK:
 
         # Convert label names to IDs
         if name_list:
-            label_id_list = [self.get_label_type_id(name) for name in name_list]
+            label_id_list = [self.get_label_set_id(name) for name in name_list]
             for label_name, label_id in zip(name_list, label_id_list):
                 if label_id is None:
                     raise ValueError(f"Label name '{label_name}' not found in the database.")
@@ -3349,5 +3349,5 @@ class AtriumSDK:
 
         # Retrieve the labels from the database
         return self.sql_handler.select_labels(
-            label_type_id_list=name_list, device_id_list=device_list, patient_id_list=patient_id_list,
+            label_set_id_list=name_list, device_id_list=device_list, patient_id_list=patient_id_list,
             start_time_n=start_time, end_time_n=end_time)

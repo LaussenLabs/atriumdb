@@ -49,7 +49,7 @@ from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_quer
     sqlite_measure_source_id_create_index, sqlite_log_hl7_adt_source_id_create_index, sqlite_log_hl7_adt_create_query, \
     sqlite_device_patient_table, sqlite_patient_table_index_1, sqlite_patient_history_create_query, \
     sqlite_encounter_insert_trigger, sqlite_encounter_update_trigger, sqlite_encounter_delete_trigger, \
-    sqlite_label_type_create_query, sqlite_label_create_query
+    sqlite_label_set_create_query, sqlite_label_create_query
 
 
 class SQLiteHandler(SQLHandler):
@@ -104,7 +104,7 @@ class SQLiteHandler(SQLHandler):
         cursor.execute(sqlite_log_hl7_adt_create_query)
         cursor.execute(sqlite_device_patient_table)
 
-        cursor.execute(sqlite_label_type_create_query)
+        cursor.execute(sqlite_label_set_create_query)
         cursor.execute(sqlite_label_create_query)
 
         # Create Indices
@@ -644,24 +644,24 @@ class SQLiteHandler(SQLHandler):
             cursor.executemany(sqlite_insert_device_patient_query, device_patient_data)
             conn.commit()
 
-    def insert_label_type(self, name):
-        query = "INSERT INTO label_type (name) VALUES (?)"
+    def insert_label_set(self, name):
+        query = "INSERT INTO label_set (name) VALUES (?)"
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
             try:
                 cursor.execute(query, (name,))
                 conn.commit()
                 return cursor.lastrowid
             except sqlite3.IntegrityError:
-                return self.select_label_type_id(name)
+                return self.select_label_set_id(name)
 
-    def select_label_types(self):
-        query = "SELECT * FROM label_type"
+    def select_label_sets(self):
+        query = "SELECT * FROM label_set"
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
             cursor.execute(query)
             return cursor.fetchall()
 
-    def select_label_type_id(self, name):
-        query = "SELECT id FROM label_type WHERE name = ? LIMIT 1"
+    def select_label_set_id(self, name):
+        query = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
             cursor.execute(query, (name,))
             result = cursor.fetchone()
@@ -669,26 +669,26 @@ class SQLiteHandler(SQLHandler):
                 return result[0]
             return None
 
-    def insert_label(self, label_type_id, device_id, start_time_n, end_time_n):
+    def insert_label(self, label_set_id, device_id, start_time_n, end_time_n):
         query = """
-        INSERT INTO label (label_type_id, device_id, start_time_n, end_time_n) 
+        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n) 
         VALUES (?, ?, ?, ?)
         """
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
-            cursor.execute(query, (label_type_id, device_id, start_time_n, end_time_n))
+            cursor.execute(query, (label_set_id, device_id, start_time_n, end_time_n))
             conn.commit()
             return cursor.lastrowid
 
     def insert_labels(self, labels):
         query = """
-        INSERT INTO label (label_type_id, device_id, start_time_n, end_time_n) 
+        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n) 
         VALUES (?, ?, ?, ?)
         """
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
             cursor.executemany(query, labels)
             conn.commit()
 
-    def select_labels(self, label_type_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
+    def select_labels(self, label_set_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
                       end_time_n=None):
         # Query By Patient.
         if patient_id_list is not None:
@@ -703,7 +703,7 @@ class SQLiteHandler(SQLHandler):
                     final_end_time = min(end_time_n, device_end_time) if end_time_n else device_end_time
 
                     # Recursively call select_labels for each device_id.
-                    results.extend(self.select_labels(label_type_id_list=label_type_id_list, device_id_list=[device_id],
+                    results.extend(self.select_labels(label_set_id_list=label_set_id_list, device_id_list=[device_id],
                                                       start_time_n=final_start_time, end_time_n=final_end_time))
 
             return results
@@ -711,10 +711,10 @@ class SQLiteHandler(SQLHandler):
         query = "SELECT * FROM label WHERE 1=1"
         params = []
 
-        if label_type_id_list:
-            placeholders = ', '.join(['?'] * len(label_type_id_list))
-            query += f" AND label_type_id IN ({placeholders})"
-            params.extend(label_type_id_list)
+        if label_set_id_list:
+            placeholders = ', '.join(['?'] * len(label_set_id_list))
+            query += f" AND label_set_id IN ({placeholders})"
+            params.extend(label_set_id_list)
 
         if device_id_list:
             placeholders = ', '.join(['?'] * len(device_id_list))
