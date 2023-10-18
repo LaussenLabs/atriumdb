@@ -1,0 +1,16 @@
+device_ids: {}
+device_tags:
+  '100': all
+  '101': all
+measures:
+- freq_nhz: 500000000000
+  tag: MLII
+  units: mV
+- freq_nhz: 500000000000
+  tag: V5
+  units: mV
+- freq_nhz: 500000000000
+  tag: V1
+  units: mV
+mrns: {}
+patient_ids: {}
