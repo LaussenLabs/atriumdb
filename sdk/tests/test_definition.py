@@ -27,10 +27,12 @@ from atriumdb.windowing.definition import DatasetDefinition
         ("./example_data/correct1.yaml", None, None, None),
         ("./example_data/correct2.yaml", None, None, None),
         ("./example_data/correct3.yaml", None, None, None),
+        ("./example_data/mitbih_seed_42_all_devices.yaml", None, None, None),
+        ("./example_data/mitbih_seed_42_all_patients.yaml", None, None, None),
+        ("./example_data/mitbih_seed_42_all_mrns.yaml", None, None, None),
+        ("./example_data/mitbih_seed_42_all_tags.yaml", None, None, None),
     ],
 )
-
-
 def test_definition_file_validation(filename, expected_exception, expected_warning, expected_message):
     if expected_exception is None and expected_warning is None:
         try:
