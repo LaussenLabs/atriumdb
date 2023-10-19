@@ -106,6 +106,29 @@ def _validate_measures(definition: DatasetDefinition, sdk):
     return validated_measure_list
 
 
+def _validate_label_sets(definition: DatasetDefinition, sdk):
+    # If there aren't any labels, there's nothing to do.
+    if "labels" not in definition.data_dict:
+        return []
+
+    labels = definition.data_dict["labels"]
+
+    all_sdk_label_sets = sdk.get_all_label_sets()
+    all_sdk_label_set_name_to_id_dict = {
+        label_info['name']: label_info['id'] for label_info in all_sdk_label_sets.values()}
+
+    validated_label_set_list = []
+
+    for label in labels:
+        if label not in all_sdk_label_set_name_to_id_dict:
+            raise ValueError(f"Label set {label} not found in SDK. Must use AtriumSDK.insert_label with a valid label if you "
+                             f"want the iterator to output the label set {label}. If you don't have any valid labels, but still want"
+                             f"to include the label set use: AtriumSDK.sql_handler.insert_label_set(name) to introduce a new label set.")
+        validated_label_set_list.append(all_sdk_label_set_name_to_id_dict[label])
+
+    return validated_label_set_list
+
+
 def _validate_sources(definition: DatasetDefinition, sdk, validated_measure_list, gap_tolerance=None):
     data_dict = definition.data_dict
 
