@@ -36,6 +36,9 @@ def verify_definition(definition, sdk, gap_tolerance=None):
     # Validate measures
     validated_measure_list = _validate_measures(definition, sdk)
 
+    # Validate label sets
+    validated_label_set_list = _validate_label_sets(definition, sdk)
+
     # Validate sources
     validated_sources = _validate_sources(definition, sdk, validated_measure_list, gap_tolerance=gap_tolerance)
 
