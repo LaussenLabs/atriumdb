@@ -107,13 +107,14 @@ class DatasetDefinition:
     """
 
     def __init__(self, filename=None, measures=None, patient_ids=None, mrns=None, device_ids=None,
-                 device_tags=None):
+                 device_tags=None, labels=None):
         self.data_dict = {
             'measures': measures if measures is not None else [],
             'patient_ids': patient_ids if patient_ids is not None else {},
             'mrns': mrns if mrns is not None else {},
             'device_ids': device_ids if device_ids is not None else {},
-            'device_tags': device_tags if device_tags is not None else {}
+            'device_tags': device_tags if device_tags is not None else {},
+            'labels': labels if labels is not None else [],
         }
 
         if filename:
@@ -150,6 +151,13 @@ class DatasetDefinition:
             if isinstance(measure, dict):
                 if 'tag' not in measure or ('freq_hz' not in measure and 'freq_nhz' not in measure) or 'units' not in measure:
                     raise ValueError("Measure dictionary must contain 'tag', 'freq_hz' (or 'freq_nhz'), and 'units' keys")
+
+        # Validate labels
+        if not isinstance(self.data_dict['labels'], list):
+            raise ValueError("labels must be a list or None.")
+        for label_name in self.data_dict['labels']:
+            if not isinstance(self.data_dict['labels'], list):
+                raise ValueError("labels must be a list or None.")
 
         # Validate and convert patient_ids
         for patient_id, times in self.data_dict['patient_ids'].items():
@@ -233,6 +241,29 @@ class DatasetDefinition:
             self.data_dict['measures'].append({'tag': measure_tag, 'freq_hz': freq, 'units': units})
         else:
             self.data_dict['measures'].append(measure_tag)
+
+    def add_label(self, label_name):
+        """
+        Adds a new label to the definition.
+
+        A label can be considered as a categorization or classification applied to a data point
+        or a set of data points in the dataset. It might represent some meaningful information
+        like 'abnormal', 'healthy', 'artifact', etc. for data sections or points.
+
+        :param label_name: Name of the label to be added.
+        :type label_name: str
+
+        **Examples**:
+
+        >>> dataset_definition.add_label(label_name="abnormal")
+        >>> dataset_definition.add_label(label_name="artifact")
+
+        :raises ValueError: If the label is already present in the definition.
+        """
+        if label_name in self.data_dict['labels']:
+            raise ValueError(f"The label '{label_name}' is already present in the definition.")
+        else:
+            self.data_dict['labels'].append(label_name)
 
     def add_region(self, patient_id=None, mrn=None, device_id=None, device_tag=None, start=None, end=None, time0=None,
                    pre=None, post=None):
