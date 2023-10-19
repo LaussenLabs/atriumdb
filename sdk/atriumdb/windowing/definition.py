@@ -246,6 +246,9 @@ class DatasetDefinition:
         """
         Adds a new label to the definition.
 
+        In the context of creating an iterator, labels specified will be included in the Window
+        information if present.
+
         A label can be considered as a categorization or classification applied to a data point
         or a set of data points in the dataset. It might represent some meaningful information
         like 'abnormal', 'healthy', 'artifact', etc. for data sections or points.
