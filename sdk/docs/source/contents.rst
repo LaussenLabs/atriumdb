@@ -59,6 +59,7 @@ API Reference
 
    .. automethod:: __init__
    .. automethod:: add_measure
+   .. automethod:: add_label
    .. automethod:: add_region
    .. automethod:: save
 
