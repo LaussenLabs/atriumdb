@@ -214,6 +214,7 @@ class DatasetDefinition:
         :param units: Units for the measure.
                       Only required if freq is provided.
         :type units: str, optional
+        :raises ValueError: Raised when the measure tag is already present or when only one of freq and units is provided.
 
         **Examples**:
 

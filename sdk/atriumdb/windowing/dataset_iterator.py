@@ -151,7 +151,9 @@ class DatasetIterator:
             for source_id, time_ranges in sources.items():
 
                 # For all time ranges in that source
-                for cur_window_start_time, range_end_time in time_ranges:
+                for range_start_time, range_end_time in time_ranges:
+                    cur_window_start_time = range_start_time
+                    true_range_end_time = range_end_time
 
                     # Adjust the range_end_time to ensure it's aligned to the window_slide_ns
                     total_range_duration = max(range_end_time - cur_window_start_time, self.window_duration_ns)
@@ -169,10 +171,14 @@ class DatasetIterator:
                         # If the batch reaches its maximum size, finalize this batch and start a new one
                         if self.max_batch_size and (current_index - batch_index_start) >= self.max_batch_size:
                             batch_info.append(
-                                [source_type,
-                                 source_id,
-                                 batch_start_time,
-                                 cur_window_start_time + self.window_duration_ns])
+                                [
+                                    source_type,
+                                    source_id,
+                                    batch_start_time,
+                                    cur_window_start_time + self.window_duration_ns,
+                                    range_start_time,
+                                    true_range_end_time,
+                                ])
 
                             batch_first_index.append(batch_index_start)
 
@@ -189,10 +195,14 @@ class DatasetIterator:
                     # create a batch for them.
                     if (current_index - batch_index_start) > 0:
                         batch_info.append(
-                            [source_type,
-                             source_id,
-                             batch_start_time,
-                             cur_window_start_time + self.window_duration_ns])
+                            [
+                                source_type,
+                                source_id,
+                                batch_start_time,
+                                cur_window_start_time + self.window_duration_ns,
+                                range_start_time,
+                                true_range_end_time,
+                            ])
                         batch_first_index.append(batch_index_start)
 
         # Append the final window count to the batch_first_index list for future batch size math.
@@ -213,7 +223,8 @@ class DatasetIterator:
         batch_size = self.row_size + (batch_num_windows - 1) * self.slide_size
 
         # Get the matrix
-        source_type, source_id, batch_start_time, batch_end_time = self.batch_info[batch_index]
+        source_type, source_id, batch_start_time, batch_end_time, range_start_time, range_end_time = \
+            self.batch_info[batch_index]
 
         batch_matrix = np.full((len(self.measures), batch_size), np.nan)
 
@@ -230,6 +241,10 @@ class DatasetIterator:
             patient_id = source_id
             self.current_patient_id = source_id
             self.current_device_id = None
+        elif source_type == "device_patient_tuples":
+            device_id, patient_id = source_id
+            self.current_patient_id = patient_id
+            self.current_device_id = device_id
         else:
             raise ValueError(f"Source type must be either device_ids or patient_ids, not {source_type}")
 
@@ -249,8 +264,10 @@ class DatasetIterator:
             measure_filled_value_array = np.full(measure_filled_time_array.shape, np.nan)
 
             # Fetch data for this measure and window from the SDK
+            data_start_time = max(range_start_time, batch_start_time)
+            data_end_time = min(range_end_time, batch_end_time)
             _, measure_sdk_times, measure_sdk_values = self.sdk.get_data(
-                measure_id, batch_start_time, batch_end_time, device_id=device_id, patient_id=patient_id)
+                measure_id, data_start_time, data_end_time, device_id=device_id, patient_id=patient_id)
 
             # Batch Matrix
             # Convert times to indices on the matrix using vectorized operations

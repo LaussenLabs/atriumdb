@@ -16,11 +16,14 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import warnings
+from typing import List, Tuple, Dict
+
 import yaml
 import numpy as np
 
 from atriumdb.intervals.union import intervals_union_list
 from atriumdb.windowing.definition import DatasetDefinition
+from atriumdb.windowing.map_definition_sources import map_validated_sources
 
 
 def verify_definition(definition, sdk, gap_tolerance=None):
@@ -39,7 +42,9 @@ def verify_definition(definition, sdk, gap_tolerance=None):
     # Validate sources
     validated_sources = _validate_sources(definition, sdk, validated_measure_list, gap_tolerance=gap_tolerance)
 
-    return validated_measure_list, validated_sources
+    mapped_sources = map_validated_sources(validated_sources, sdk)
+
+    return validated_measure_list, mapped_sources
 
 
 def _validate_measures(definition: DatasetDefinition, sdk):

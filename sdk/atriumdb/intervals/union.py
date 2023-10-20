@@ -38,7 +38,7 @@ def intervals_union(a, b):
 
 
 def intervals_union_list(interval_list):
-    interval_list = [interval for interval in interval_list if interval.size > 0]
+    interval_list = [interval for interval in interval_list if len(interval) > 0]
     if len(interval_list) == 0:
         return np.array([], dtype=np.int64)
 
