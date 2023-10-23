@@ -51,8 +51,8 @@ class DatasetIterator:
     :type time_units: str
     """
 
-    def __init__(self, sdk, validated_measure_list, validated_sources, window_duration_ns: int, window_slide_ns: int,
-                 num_windows_prefetch: int = None, time_units=None):
+    def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
+                 window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None, time_units=None):
         # AtriumSDK object
         self.sdk = sdk
 
@@ -61,6 +61,9 @@ class DatasetIterator:
 
         # List of validated measures. Each item is a "measure_info" from sdk data.
         self.measures = validated_measure_list
+
+        # List of validated label sets. Each item is a label_set id from the label_set table.
+        self.label_sets = validated_label_set_list
 
         # Dictionary containing sources. Each source type contains identifiers (device_id/patient_id)
         # and have associated time ranges (or "all").

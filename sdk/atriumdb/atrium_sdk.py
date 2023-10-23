@@ -1699,9 +1699,11 @@ class AtriumSDK:
         if gap_tolerance is not None:
             gap_tolerance = int(gap_tolerance * time_unit_options[time_units])
 
-        validated_measure_list, validated_sources = verify_definition(definition, self, gap_tolerance=gap_tolerance)
+        validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
+            definition, self, gap_tolerance=gap_tolerance)
+
         return DatasetIterator(
-            self, validated_measure_list, validated_sources, window_duration, window_slide,
+            self, validated_measure_list, validated_label_set_list, validated_sources, window_duration, window_slide,
             num_windows_prefetch=num_windows_prefetch, time_units=time_units)
 
     def _generate_device_windows(self, window_config, device_id, device_tag, batch_duration_ns, start_time_inclusive_ns,

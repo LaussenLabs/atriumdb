@@ -47,7 +47,7 @@ def verify_definition(definition, sdk, gap_tolerance=None):
 
     mapped_sources = map_validated_sources(validated_sources, sdk)
 
-    return validated_measure_list, mapped_sources
+    return validated_measure_list, validated_label_set_list, mapped_sources
 
 
 def _validate_measures(definition: DatasetDefinition, sdk):
