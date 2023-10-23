@@ -32,16 +32,56 @@ def _test_iterator(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
+    # Check for the case of partial windows
+    partial_freq_nano = 1_000_000_000
+    partial_period_nano = (10 ** 18) // partial_freq_nano
+    partial_device_id = sdk.insert_device(device_tag="partial_device")
+    partial_measure_id = sdk.insert_measure(measure_tag="partial_measure", freq=partial_freq_nano, units="mV")
+
+    start_time = 1_000_000_000
+    num_values = 100
+    end_time = start_time + (num_values * partial_period_nano)
+    times = np.arange(start_time, end_time, partial_period_nano)
+    values = (np.sin(times) * 1000).astype(np.int64)
+    scale_m = 1 / 1000
+    scale_b = 0
+
+    sdk.write_data_easy(
+        partial_measure_id, partial_device_id, times, values, partial_freq_nano, scale_m=scale_m, scale_b=scale_b)
+
+    # Add a patient
+    patient_id = sdk.sql_handler.insert_patient()
+
+    # Only map half the data
+    half_time = int(times[(num_values // 2) + 1])
+    sdk.insert_device_patient_data([(partial_device_id, patient_id, start_time, half_time)])
+
+    # get definition
+    definition = DatasetDefinition(measures=["partial_measure"], device_ids={partial_device_id: "all"})
+
+    window_size_nano = partial_period_nano * 25
+    iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None)
+
+    for window_i, window in enumerate(iterator):
+        for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
+            first_nan_idx = get_index_of_first_nan(signal_dict['values'])
+            first_nan_time = int(signal_dict['times'][first_nan_idx])
+            if first_nan_time - partial_period_nano < half_time:
+                assert window.patient_id == patient_id
+            else:
+                assert window.patient_id is None
+
+    # larger test
     write_mit_bih_to_dataset(sdk, max_records=2, seed=42)
     # Uncomment line below to recreate test files
     # create_test_definition_files(sdk)
 
     test_parameters = [
         # definition, expected_device_id_type, expected_patient_id_type
-        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_devices.yaml"), int, type(None)),
-        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_patients.yaml"), type(None), int),
-        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_mrns.yaml"), type(None), int),
-        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_tags.yaml"), int, type(None)),
+        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_devices.yaml"), int, int),
+        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_patients.yaml"), int, int),
+        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_mrns.yaml"), int, int),
+        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_tags.yaml"), int, int),
     ]
 
     window_size_nano = 1_024 * 1_000_000_000
@@ -94,3 +134,10 @@ def create_test_definition_files(sdk):
     definition = DatasetDefinition(measures=measures, device_tags=device_tags)
 
     definition.save("./example_data/mitbih_seed_42_all_tags.yaml", force=True)
+
+
+def get_index_of_first_nan(arr):
+    nan_index = np.argmax(np.isnan(arr))
+    if nan_index == 0 and not np.isnan(arr[0]):
+        return len(arr) - 1
+    return nan_index
