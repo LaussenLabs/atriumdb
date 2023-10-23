@@ -63,8 +63,8 @@ def _test_labels(db_type, dataset_location, connection_params):
     labels = sdk.get_labels(name_list=[label_name], device_list=[device_tag])
     assert len(labels) == 1, "Incorrect number of labels retrieved"
     retrieved_label = labels[0]
-    assert retrieved_label[0] == label_id, "Label ID mismatch"
-    assert retrieved_label[1] == device_id, "Device ID mismatch"
+    assert retrieved_label['label_set_id'] == label_id, "Label ID mismatch"
+    assert retrieved_label['device_id'] == device_id, "Device ID mismatch"
 
     # Insert multiple labels
     label_2_name = "Idle"
