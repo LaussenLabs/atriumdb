@@ -3294,12 +3294,13 @@ class AtriumSDK:
         # Insert the labels into the database
         self.sql_handler.insert_labels(formatted_labels)
 
-    def get_labels(self, name_list=None, device_list=None, start_time=None, end_time=None, time_units: str = None,
+    def get_labels(self, label_set_id_list=None, name_list=None, device_list=None, start_time=None, end_time=None, time_units: str = None,
                    patient_id_list=None):
         """
         Retrieve labels from the database based on specified criteria.
 
-        :param List[str] name_list: List of label names to filter by.
+        :param List[int] label_set_id_list: List of label set IDs to filter by.
+        :param List[str] name_list: List of label names to filter by. Mutually exclusive with `label_set_id_list`.
         :param List[int | str] device_list: List of device IDs or device tags to filter by.
         :param int start_time: Start time filter for the labels.
         :param int end_time: End time filter for the labels.
@@ -3312,9 +3313,15 @@ class AtriumSDK:
         .. note::
             - This method currently only supports database connection mode and not API mode.
             - Either `device_list` or `patient_id_list` should be provided, but not both.
+            - Either `label_set_id_list` or `name_list` should be provided, but not both.
+
         """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this method.")
+
+        # Ensure either label_set_id_list or name_list is provided, but not both
+        if label_set_id_list and name_list:
+            raise ValueError("Only one of label_set_id_list or name_list should be provided.")
 
         # Ensure either device list or patient id list is provided, but not both
         if device_list and patient_id_list:
@@ -3331,13 +3338,13 @@ class AtriumSDK:
             if end_time:
                 end_time *= time_unit_options[time_units]
 
-        # Convert label names to IDs
+        # Convert label names to IDs if name_list is used
         if name_list:
-            label_id_list = [self.get_label_set_id(name) for name in name_list]
-            for label_name, label_id in zip(name_list, label_id_list):
+            name_id_list = [self.get_label_set_id(name) for name in name_list]
+            for label_name, label_id in zip(name_list, name_id_list):
                 if label_id is None:
                     raise ValueError(f"Label name '{label_name}' not found in the database.")
-            name_list = label_id_list
+            label_set_id_list = name_id_list
 
         # Convert device tags to IDs
         if device_list:
@@ -3351,5 +3358,6 @@ class AtriumSDK:
 
         # Retrieve the labels from the database
         return self.sql_handler.select_labels(
-            label_set_id_list=name_list, device_id_list=device_list, patient_id_list=patient_id_list,
+            label_set_id_list=label_set_id_list,
+            device_id_list=device_list, patient_id_list=patient_id_list,
             start_time_n=start_time, end_time_n=end_time)
