@@ -53,6 +53,12 @@ def _test_labels(db_type, dataset_location, connection_params):
     label_id = sdk.get_label_set_id(name=label_name)
     assert label_id is not None, "Failed to insert a new label type or retrieve its ID"
 
+    # Test the get_label_set_info method
+    label_set_info = sdk.get_label_set_info(label_set_id=label_id)
+    assert label_set_info is not None, "Failed to retrieve label set info"
+    assert label_set_info["id"] == label_id, "Mismatch in label set ID"
+    assert label_set_info["name"] == label_name, "Mismatch in label set name"
+
     # Retrieve the label and verify its values
     labels = sdk.get_labels(name_list=[label_name], device_list=[device_tag])
     assert len(labels) == 1, "Incorrect number of labels retrieved"
