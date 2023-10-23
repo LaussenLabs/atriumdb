@@ -3354,15 +3354,22 @@ class AtriumSDK:
         :param str time_units: Units for the `start_time` and `end_time` filters. Valid options are 'ns', 's', 'ms', and 'us'.
         :param List[int] patient_id_list: List of patient IDs to filter by.
 
-        :return: A list of matching labels from the database. Each label is represented as a tuple containing:
-                 (id, label_set_id, device_id, start_time_n, end_time_n)
-        :rtype: List[Tuple]
+        :return: A list of matching labels from the database. Each label is represented as a dictionary containing:
+                 label_entry_id, label_set_id, label_set_name, device_id, device_tag, start_time_n, end_time_n
+        :rtype: List[Dict]
 
         Example:
             Given an input filtering by a particular device ID, the output could look like:
             [
-                (1, 10, 1001, 1625000000000000000, 1625100000000000000),
-                (2, 11, 1001, 1625100000000000000, 1625200000000000000),
+                {
+                    'label_entry_id': 1,
+                    'label_set_id': 10,
+                    'label_set_name': 'example_name_1',
+                    'device_id': 1001,
+                    'device_tag': 'tag_1',
+                    'start_time_n': 1625000000000000000,
+                    'end_time_n': 1625100000000000000
+                },
                 ...
             ]
 
@@ -3413,7 +3420,32 @@ class AtriumSDK:
             device_list = device_id_list
 
         # Retrieve the labels from the database
-        return self.sql_handler.select_labels(
+        labels = self.sql_handler.select_labels(
             label_set_id_list=label_set_id_list,
             device_id_list=device_list, patient_id_list=patient_id_list,
             start_time_n=start_time, end_time_n=end_time)
+
+        # Extract unique label_set_ids and device_ids
+        unique_label_set_ids = {label[1] for label in labels}
+        unique_device_ids = {label[2] for label in labels}
+
+        # Create dictionaries for label set and device info for optimized lookup
+        label_set_id_to_info = {label_set_id: self.get_label_set_info(label_set_id) for label_set_id in unique_label_set_ids}
+        device_id_to_info = {device_id: self.get_device_info(device_id) for device_id in unique_device_ids}
+
+        result = []
+        for label in labels:
+            label_entry_id, label_set_id, device_id, start_time_n, end_time_n = label
+
+            formatted_label = {
+                'label_entry_id': label_entry_id,
+                'label_set_id': label_set_id,
+                'label_set_name': label_set_id_to_info[label_set_id]['name'],
+                'device_id': device_id,
+                'device_tag': device_id_to_info[device_id]['tag'],
+                'start_time_n': start_time_n,
+                'end_time_n': end_time_n
+            }
+            result.append(formatted_label)
+
+        return result
