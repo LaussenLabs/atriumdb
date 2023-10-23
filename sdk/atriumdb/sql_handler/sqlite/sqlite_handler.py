@@ -708,7 +708,7 @@ class SQLiteHandler(SQLHandler):
 
             return results
 
-        query = "SELECT * FROM label WHERE 1=1"
+        query = "SELECT id, label_set_id, device_id, start_time_n, end_time_n FROM label WHERE 1=1"
         params = []
 
         if label_set_id_list:

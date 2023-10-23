@@ -728,7 +728,7 @@ class MariaDBHandler(SQLHandler):
             return results
 
         # Construct the query for selecting labels based on the provided criteria.
-        query = "SELECT * FROM label WHERE 1=1"
+        query = "SELECT id, label_set_id, device_id, start_time_n, end_time_n FROM label WHERE 1=1"
         params = []
 
         # Add conditions for label type IDs, if provided.
