@@ -3307,8 +3307,17 @@ class AtriumSDK:
         :param str time_units: Units for the `start_time` and `end_time` filters. Valid options are 'ns', 's', 'ms', and 'us'.
         :param List[int] patient_id_list: List of patient IDs to filter by.
 
-        :return: A list of matching labels from the database.
+        :return: A list of matching labels from the database. Each label is represented as a tuple containing:
+                 (id, label_set_id, device_id, start_time_n, end_time_n)
         :rtype: List[Tuple]
+
+        Example:
+            Given an input filtering by a particular device ID, the output could look like:
+            [
+                (1, 10, 1001, 1625000000000000000, 1625100000000000000),
+                (2, 11, 1001, 1625100000000000000, 1625200000000000000),
+                ...
+            ]
 
         .. note::
             - This method currently only supports database connection mode and not API mode.
