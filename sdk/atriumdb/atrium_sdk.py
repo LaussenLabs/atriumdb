@@ -3211,6 +3211,53 @@ class AtriumSDK:
         self._label_sets[label_id] = name  # also update the label types cache
         return label_id
 
+    def get_label_set_info(self, label_set_id: int):
+        """
+        Retrieve information about a specific label set.
+
+        :param int label_set_id: The identifier of the label set to retrieve information for.
+
+        :return: A dictionary containing information about the label set, including its id and name.
+        :rtype: dict
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> label_set_id = 1
+        >>> label_set_info = sdk.get_label_set_info(label_set_id)
+        >>> print(label_set_info)
+        {'id': 1,
+         'name': 'Label Set A1'}
+
+        """
+        # Check if metadata is fetched using API and call the appropriate method
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this method.")
+
+        # If label set info is already cached, return it
+        if label_set_id in self._label_sets:
+            return self._label_sets[label_set_id]
+
+        # Fetch label set info from the SQL database
+        row = self.sql_handler.select_label_set(label_set_id=label_set_id)
+
+        # If label set not found in the database, return None
+        if row is None:
+            return None
+
+        # Unpack the fetched row into individual variables
+        label_set_id, label_set_name = row
+
+        # Create a dictionary with the label set information
+        label_set_info = {
+            'id': label_set_id,
+            'name': label_set_name
+        }
+
+        # Cache the label set information for future use
+        self._label_sets[label_set_id] = label_set_info
+
+        # Return the label set information dictionary
+        return label_set_info
+
     def insert_label(self, name: str, device: Union[int, str], start_time: int, end_time: int, time_units: str = None):
         """
         Insert a label record into the database.

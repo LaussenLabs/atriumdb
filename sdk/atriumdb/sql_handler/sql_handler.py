@@ -234,6 +234,11 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
+    def select_label_set(self, label_set_id: int):
+        # Retrieve information about a specific label set.
+        pass
+
+    @abstractmethod
     def select_label_set_id(self, name):
         # Retrieve ID of a label type by its name.
         pass

@@ -671,6 +671,13 @@ class MariaDBHandler(SQLHandler):
             cursor.execute(query)
             return cursor.fetchall()
 
+    def select_label_set(self, label_set_id: int):
+        query = "SELECT id, name FROM label_set WHERE id = ? LIMIT 1"
+        with self.maria_db_connection() as (conn, cursor):
+            cursor.execute(query, (label_set_id,))
+            row = cursor.fetchone()
+        return row
+
     def select_label_set_id(self, name):
         # Retrieve the ID of a label type by its name.
         query = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
