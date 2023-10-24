@@ -735,6 +735,10 @@ class SQLiteHandler(SQLHandler):
             query += " AND end_time_n >= ?"
             params.append(start_time_n)
 
+        # Sort by start_time_n
+        # Used in iterator logic, alter with caution.
+        query += " ORDER BY start_time_n ASC"
+
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
             cursor.execute(query, params)
             return cursor.fetchall()
