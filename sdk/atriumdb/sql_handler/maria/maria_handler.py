@@ -760,7 +760,7 @@ class MariaDBHandler(SQLHandler):
 
         # Sort by start_time_n
         # Used in iterator logic, alter with caution.
-        query += " ORDER BY start_time_n ASC"
+        query += " ORDER BY start_time_n ASC, end_time_n ASC"
 
         # Execute the query and return the results.
         with self.maria_db_connection(begin=False) as (conn, cursor):

@@ -737,7 +737,7 @@ class SQLiteHandler(SQLHandler):
 
         # Sort by start_time_n
         # Used in iterator logic, alter with caution.
-        query += " ORDER BY start_time_n ASC"
+        query += " ORDER BY start_time_n ASC, end_time_n ASC"
 
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
             cursor.execute(query, params)
