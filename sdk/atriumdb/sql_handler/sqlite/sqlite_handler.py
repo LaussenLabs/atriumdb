@@ -713,6 +713,8 @@ class SQLiteHandler(SQLHandler):
                     results.extend(self.select_labels(label_set_id_list=label_set_id_list, device_id_list=[device_id],
                                                       start_time_n=final_start_time, end_time_n=final_end_time))
 
+            # Sort the results by start_time_n primarily and then by end_time_n secondarily
+            results.sort(key=lambda x: (x[3], x[4]))
             return results
 
         query = "SELECT id, label_set_id, device_id, start_time_n, end_time_n FROM label WHERE 1=1"
