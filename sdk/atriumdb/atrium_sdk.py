@@ -3449,3 +3449,105 @@ class AtriumSDK:
             result.append(formatted_label)
 
         return result
+
+    def get_label_time_series(self, label_set_name=None, label_set_id=None, device_tag=None, device_id=None,
+                              patient_id=None, start_time=None, end_time=None, timestamp_array=None,
+                              sample_period=None, time_units: str = None):
+        """
+        Retrieve a time series representation for labels from the database based on specified criteria.
+
+        :param str label_set_name: Name of the label set to filter by. Mutually exclusive with `label_set_id`.
+        :param int label_set_id: ID of the label set to filter by. Mutually exclusive with `label_set_name`.
+        :param str device_tag: Tag of the device to filter by. Mutually exclusive with `device_id`.
+        :param int device_id: ID of the device to filter by. Mutually exclusive with `device_tag`.
+        :param int patient_id: ID of the patient to filter by.
+        :param int start_time: Start time filter for the labels.
+        :param int end_time: End time filter for the labels.
+        :param np.ndarray timestamp_array: Array of timestamps. If not provided, it's generated using `start_time`, `end_time`, and `sample_period`.
+        :param int sample_period: Time period between consecutive timestamps. Required if `timestamp_array` is not provided.
+        :param str time_units: Units for the `start_time`, `end_time`, and `sample_period` filters. Valid options are 'ns', 's', 'ms', and 'us'.
+
+        :return: An array representing the presence of a label for each timestamp. If a label is present at a given timestamp, the value is 1, otherwise 0.
+        :rtype: np.ndarray
+
+        Example:
+            Given a label set name, device tag, start and end times, and a sample period, the output could look like:
+            [0, 1, 1, 1, 0, 0, ...]
+
+        .. note::
+            - This method currently only supports database connection mode and not API mode.
+            - Only one of `label_set_name` or `label_set_id` should be provided.
+            - Only one of `device_tag` or `device_id` should be provided.
+            - Either `device_id`/`device_tag` or `patient_id` should be provided, but not combinations of both.
+
+        Raises:
+            ValueError: For various reasons including but not limited to the presence of mutually exclusive arguments,
+                        absence of required arguments, or invalid time units.
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this method.")
+
+        # Check for the XOR condition for label_set_name and label_set_id
+        if (label_set_name is not None) == (label_set_id is not None):
+            raise ValueError("Either label_set_name or label_set_id should be provided, but not both.")
+
+        # Check for the XOR condition for device_tag and device_id
+        if (device_tag is not None) == (device_id is not None):
+            raise ValueError("Either device_tag or device_id should be provided, but not both.")
+
+        # Check for device_id/device_tag or patient_id
+        if device_id is None and device_tag is None and patient_id is None:
+            raise ValueError("Either device_id, device_tag, or patient_id should be provided.")
+
+        if device_id and patient_id:
+            raise ValueError("Only one of device_id or patient_id should be provided.")
+
+        if device_tag and patient_id:
+            raise ValueError("Only one of device_tag or patient_id should be provided.")
+
+        # Convert label_set_name to label_set_id if it's used
+        if label_set_name:
+            label_set_id = self.get_label_set_id(label_set_name)
+            if label_set_id is None:
+                raise ValueError(f"Label set name '{label_set_name}' not found in the database.")
+
+        # Convert device_tag to device_id if it's used
+        if device_tag:
+            device_id = self.get_device_id(device_tag)
+            if device_id is None:
+                raise ValueError(f"Device Tag {device_tag} not found in database")
+
+        # Handle time units and conversion to nanoseconds
+        if time_units:
+            time_unit_options = {"ns": 1, "s": 10**9, "ms": 10**6, "us": 10**3}
+            if time_units not in time_unit_options.keys():
+                raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
+
+            if start_time:
+                start_time *= time_unit_options[time_units]
+            if end_time:
+                end_time *= time_unit_options[time_units]
+            if sample_period:
+                sample_period *= time_unit_options[time_units]
+
+        # If timestamp_array is None, create it using start_time, end_time and sample_period
+        if timestamp_array is None:
+            if not all([start_time, end_time, sample_period]):
+                raise ValueError("If timestamp_array is not provided, start_time, end_time, and sample_period must be "
+                                 "set in order to generate a timestamp_array using "
+                                 "np.arange(start_time, end_time, sample_period)")
+            timestamp_array = np.arange(start_time, end_time, sample_period)
+
+        # Retrieve labels from the database
+        labels = self.get_labels(label_set_id_list=[label_set_id],
+                                 device_list=[device_id] if device_id else None,
+                                 patient_id_list=[patient_id] if patient_id else None)
+
+        # Create a binary array to indicate presence of a label for each timestamp
+        result_array = np.zeros(timestamp_array.shape, dtype=np.int8)
+        for label in labels:
+            start_idx = np.searchsorted(timestamp_array, label['start_time_n'], side='left')
+            end_idx = np.searchsorted(timestamp_array, label['end_time_n'], side='right')
+            result_array[start_idx:end_idx] = 1
+
+        return result_array
