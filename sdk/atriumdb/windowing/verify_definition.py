@@ -202,7 +202,7 @@ def _validate_sources(definition: DatasetDefinition, sdk, validated_measure_list
                 else:
                     warnings.warn(f"Device ID {device_id} not found in database, omitting from cohort data")
 
-        elif source_type == 'measures':
+        elif source_type in ['measures', 'labels']:
             # Not a source type
             continue
         else:
