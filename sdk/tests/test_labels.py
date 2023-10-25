@@ -16,6 +16,7 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import pytest
+import numpy as np
 
 from atriumdb import AtriumSDK
 from tests.testing_framework import _test_for_both
@@ -37,36 +38,30 @@ def _test_labels(db_type, dataset_location, connection_params):
     device_id = sdk.insert_device(device_tag=device_tag, device_name=device_name)
     assert device_id is not None, "Failed to insert a new device or retrieve its ID"
 
-    # Test the insertion of the same device and see if the ID matches the earlier ID
     new_device_id = sdk.insert_device(device_tag=device_tag, device_name=device_name)
     assert new_device_id == device_id, "Device ID mismatch for the same device tag"
 
-    # Test label type insertion
     label_name = "Running"
     label_id = sdk.get_label_set_id(name=label_name)
     assert label_id is None, "There's a label where there shouldn't be"
 
-    # Insert a label
     start_time = 1000
     end_time = 2000
     sdk.insert_label(name=label_name, device=device_tag, start_time=start_time, end_time=end_time, time_units="ms")
     label_id = sdk.get_label_set_id(name=label_name)
     assert label_id is not None, "Failed to insert a new label type or retrieve its ID"
 
-    # Test the get_label_set_info method
     label_set_info = sdk.get_label_set_info(label_set_id=label_id)
     assert label_set_info is not None, "Failed to retrieve label set info"
     assert label_set_info["id"] == label_id, "Mismatch in label set ID"
     assert label_set_info["name"] == label_name, "Mismatch in label set name"
 
-    # Retrieve the label and verify its values
     labels = sdk.get_labels(name_list=[label_name], device_list=[device_tag])
     assert len(labels) == 1, "Incorrect number of labels retrieved"
     retrieved_label = labels[0]
     assert retrieved_label['label_set_id'] == label_id, "Label ID mismatch"
     assert retrieved_label['device_id'] == device_id, "Device ID mismatch"
 
-    # Insert multiple labels
     label_2_name = "Idle"
     label_2_start_time = 2000
     label_2_end_time = 3000
@@ -103,3 +98,36 @@ def _test_labels(db_type, dataset_location, connection_params):
     # Test retrieval of labels using non-existent device tag
     with pytest.raises(ValueError):
         sdk.get_labels(name_list=[label_name], device_list=["NonExistentDevice"])
+
+    # Testing get_label_time_series
+    expected_series_1 = np.array([1, 1, 0])
+    label_series = sdk.get_label_time_series(label_set_name=label_name, device_tag=device_tag,
+                                             start_time=start_time, end_time=end_time + 500, sample_period=500,
+                                             time_units="ms")
+    assert np.array_equal(label_series, expected_series_1), "Mismatch in expected time series data"
+
+    with pytest.raises(ValueError):
+        sdk.get_label_time_series(label_set_name=label_name, label_set_id=label_id, device_tag=device_tag,
+                                  start_time=start_time, end_time=end_time, sample_period=500, time_units="ms")
+
+    with pytest.raises(ValueError):
+        sdk.get_label_time_series(label_set_name=label_name, device_id=device_id, device_tag=device_tag,
+                                  start_time=start_time, end_time=end_time, sample_period=500, time_units="ms")
+
+    with pytest.raises(ValueError):
+        sdk.get_label_time_series(label_set_name=label_name, device_tag=device_tag,
+                                  start_time=start_time, end_time=end_time, sample_period=500, time_units="minutes")
+
+    timestamp_array = np.array([1000, 1500, 2000, 2500, 3000], dtype=np.int64)
+    label_series_2 = sdk.get_label_time_series(label_set_name=label_name, device_tag=device_tag,
+                                               timestamp_array=timestamp_array, time_units="ms")
+
+    expected_series_2 = np.array([1, 1, 0, 0, 0])
+    assert np.array_equal(label_series_2, expected_series_2), "Mismatch in expected time series data using timestamp array"
+
+    with pytest.raises(ValueError):
+        sdk.get_label_time_series(label_set_name=label_name, device_tag=device_tag, start_time=start_time,
+                                  sample_period=500, time_units="ms")
+
+    with pytest.raises(ValueError):
+        sdk.get_label_time_series(label_set_name=label_name, device_tag=device_tag, time_units="ms")
