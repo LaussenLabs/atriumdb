@@ -3530,6 +3530,9 @@ class AtriumSDK:
             if sample_period:
                 sample_period *= time_unit_options[time_units]
 
+            if timestamp_array:
+                timestamp_array = convert_to_nanoseconds(timestamp_array, time_units)
+
         # If timestamp_array is None, create it using start_time, end_time and sample_period
         if timestamp_array is None:
             if not all([start_time, end_time, sample_period]):
