@@ -3452,7 +3452,7 @@ class AtriumSDK:
 
     def get_label_time_series(self, label_set_name=None, label_set_id=None, device_tag=None, device_id=None,
                               patient_id=None, start_time=None, end_time=None, timestamp_array=None,
-                              sample_period=None, time_units: str = None):
+                              sample_period=None, time_units: str = None, out: np.ndarray = None):
         """
         Retrieve a time series representation for labels from the database based on specified criteria.
 
@@ -3466,6 +3466,10 @@ class AtriumSDK:
         :param np.ndarray timestamp_array: Array of timestamps. If not provided, it's generated using `start_time`, `end_time`, and `sample_period`.
         :param int sample_period: Time period between consecutive timestamps. Required if `timestamp_array` is not provided.
         :param str time_units: Units for the `start_time`, `end_time`, and `sample_period` filters. Valid options are 'ns', 's', 'ms', and 'us'.
+        :param np.ndarray out: An optional pre-allocated numpy array to hold the result. The shape must match the expected result shape,
+            which is the same as `timestamp_array`. Allowed dtypes are integer types or boolean. If provided,
+            the results are written into this array in-place. It should be initialized with zeros.
+            Otherwise, a new array is allocated.
 
         :return: An array representing the presence of a label for each timestamp. If a label is present at a given timestamp, the value is 1, otherwise 0.
         :rtype: np.ndarray
@@ -3479,6 +3483,7 @@ class AtriumSDK:
             - Only one of `label_set_name` or `label_set_id` should be provided.
             - Only one of `device_tag` or `device_id` should be provided.
             - Either `device_id`/`device_tag` or `patient_id` should be provided, but not combinations of both.
+            - If using the `out` parameter, ensure its shape matches the expected result shape, and that it is initialized with zeros.
 
         Raises:
             ValueError: For various reasons including but not limited to the presence of mutually exclusive arguments,
@@ -3549,8 +3554,25 @@ class AtriumSDK:
                                  end_time=end_time,
                                  )
 
-        # Create a binary array to indicate presence of a label for each timestamp
-        result_array = np.zeros(timestamp_array.shape, dtype=np.int8)
+        # Create a binary array to indicate presence of a label for each timestamp, if not provided.
+        if out is not None:
+            allowed_dtypes = (np.bool_,) + np.sctypes['int']  # Allowed dtypes: boolean and all integer types
+
+            if out.shape != timestamp_array.shape:
+                raise ValueError(
+                    f"The 'out' array shape {out.shape} doesn't match expected shape {timestamp_array.shape}.")
+
+            if out.dtype not in allowed_dtypes:
+                valid_dtypes_str = ", ".join([dtype.__name__ for dtype in allowed_dtypes])
+                raise ValueError(f"The 'out' array dtype is {out.dtype}, but expected one of: {valid_dtypes_str}.")
+
+            if not np.all(out == 0):  # Ensure that the out array starts with all zeros
+                raise ValueError("The 'out' array should be initialized with zeros. It contains non-zero values.")
+
+            result_array = out
+        else:
+            result_array = np.zeros(timestamp_array.shape, dtype=np.int8)
+
         for label in labels:
             start_idx = np.searchsorted(timestamp_array, label['start_time_n'], side='left')
             end_idx = np.searchsorted(timestamp_array, label['end_time_n'], side='left')
