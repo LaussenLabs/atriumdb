@@ -3530,7 +3530,7 @@ class AtriumSDK:
             if sample_period:
                 sample_period *= time_unit_options[time_units]
 
-            if timestamp_array:
+            if timestamp_array is not None:
                 timestamp_array = convert_to_nanoseconds(timestamp_array, time_units)
 
         # If timestamp_array is None, create it using start_time, end_time and sample_period
@@ -3550,7 +3550,7 @@ class AtriumSDK:
         result_array = np.zeros(timestamp_array.shape, dtype=np.int8)
         for label in labels:
             start_idx = np.searchsorted(timestamp_array, label['start_time_n'], side='left')
-            end_idx = np.searchsorted(timestamp_array, label['end_time_n'], side='right')
+            end_idx = np.searchsorted(timestamp_array, label['end_time_n'], side='left')
             result_array[start_idx:end_idx] = 1
 
         return result_array
