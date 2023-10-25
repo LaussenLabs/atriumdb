@@ -666,7 +666,7 @@ class MariaDBHandler(SQLHandler):
 
     def select_label_sets(self):
         # Retrieve all label types from the database.
-        query = "SELECT id, name FROM label_set"
+        query = "SELECT id, name FROM label_set ORDER BY id ASC"
         with self.maria_db_connection(begin=False) as (conn, cursor):
             cursor.execute(query)
             return cursor.fetchall()

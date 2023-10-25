@@ -655,7 +655,7 @@ class SQLiteHandler(SQLHandler):
                 return self.select_label_set_id(name)
 
     def select_label_sets(self):
-        query = "SELECT id, name FROM label_set"
+        query = "SELECT id, name FROM label_set ORDER BY id ASC"
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
             cursor.execute(query)
             return cursor.fetchall()
