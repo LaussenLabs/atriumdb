@@ -494,7 +494,7 @@ class DatasetIterator:
             device_id=self.current_device_id,
             patient_id=self.current_patient_id,
             label_time_series=label_time_series,
-            window_classification=window_classification,
+            label=window_classification,
         )
 
         return result_window

@@ -64,7 +64,7 @@ def _test_iterator(db_type, dataset_location, connection_params):
 
             # Labels
             assert isinstance(window.label_time_series, np.ndarray)
-            assert isinstance(window.window_classification, np.ndarray)
+            assert isinstance(window.label, np.ndarray)
 
     # Check for the case of partial windows
     partial_freq_nano = 1_000_000_000
@@ -106,7 +106,7 @@ def _test_iterator(db_type, dataset_location, connection_params):
                 assert window.patient_id is None
 
         assert window.label_time_series is None
-        assert window.window_classification is None
+        assert window.label is None
 
 
 def create_test_definition_files(sdk):
