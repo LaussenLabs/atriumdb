@@ -3544,7 +3544,10 @@ class AtriumSDK:
         # Retrieve labels from the database
         labels = self.get_labels(label_set_id_list=[label_set_id],
                                  device_list=[device_id] if device_id else None,
-                                 patient_id_list=[patient_id] if patient_id else None)
+                                 patient_id_list=[patient_id] if patient_id else None,
+                                 start_time=start_time,
+                                 end_time=end_time,
+                                 )
 
         # Create a binary array to indicate presence of a label for each timestamp
         result_array = np.zeros(timestamp_array.shape, dtype=np.int8)
