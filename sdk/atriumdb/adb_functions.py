@@ -32,7 +32,7 @@ freq_unit_options = {"nHz": 1, "uHz": 10 ** 3, "mHz": 10 ** 6, "Hz": 10 ** 9, "k
 allowed_interval_index_modes = ["fast", "merge", "disable"]
 
 
-def get_block_and_interval_data(measure_id, device_id, metadata, start_bytes, intervals):
+def get_block_and_interval_data(measure_id, device_id, metadata, start_bytes, intervals, interval_gap_tolerance=0):
     block_data = []
     for header_i, header in enumerate(metadata):
         block_data.append({
@@ -44,14 +44,19 @@ def get_block_and_interval_data(measure_id, device_id, metadata, start_bytes, in
             "end_time_n": header.end_n,
             "num_values": header.num_vals,
         })
+
     interval_data = []
+    intervals = sorted(intervals)
     for interval in intervals:
-        interval_data.append({
-            "measure_id": measure_id,
-            "device_id": device_id,
-            "start_time_n": int(interval[0]),
-            "end_time_n": int(interval[1]),
-        })
+        if len(interval_data) > 0 and int(interval[0]) - interval_data[-1]["end_time_n"] <= interval_gap_tolerance:
+            interval_data[-1]["end_time_n"] = int(interval[1])
+        else:
+            interval_data.append({
+                "measure_id": measure_id,
+                "device_id": device_id,
+                "start_time_n": int(interval[0]),
+                "end_time_n": int(interval[1]),
+            })
     return block_data, interval_data
 
 
