@@ -3312,6 +3312,7 @@ class AtriumSDK:
         formatted_labels = []
 
         # Convert times using the provided time units
+        time_units = "ns" if time_units is None else time_units
         time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
         if time_units not in time_unit_options.keys():
             raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options.keys())
