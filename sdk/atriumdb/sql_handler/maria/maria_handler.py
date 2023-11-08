@@ -22,6 +22,8 @@ from contextlib import contextmanager
 import mariadb
 import uuid
 
+from mariadb import ProgrammingError
+
 from atriumdb.adb_functions import allowed_interval_index_modes
 from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from_triplet_query, \
     maria_select_measure_from_id, \
@@ -667,9 +669,16 @@ class MariaDBHandler(SQLHandler):
     def select_label_sets(self):
         # Retrieve all label types from the database.
         query = "SELECT id, name FROM label_set ORDER BY id ASC"
-        with self.maria_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(query)
-            return cursor.fetchall()
+        try:
+            with self.maria_db_connection(begin=False) as (conn, cursor):
+                cursor.execute(query)
+                return cursor.fetchall()
+        except ProgrammingError as e:
+            if 'Table' in str(e) and 'doesn\'t exist' in str(e):
+                return []  # Table doesn't exist, return an empty list
+            else:
+                # An error occurred for a different reason, re-raise the exception
+                raise
 
     def select_label_set(self, label_set_id: int):
         query = "SELECT id, name FROM label_set WHERE id = ? LIMIT 1"

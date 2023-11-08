@@ -656,9 +656,16 @@ class SQLiteHandler(SQLHandler):
 
     def select_label_sets(self):
         query = "SELECT id, name FROM label_set ORDER BY id ASC"
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(query)
-            return cursor.fetchall()
+        try:
+            with self.sqlite_db_connection(begin=False) as (conn, cursor):
+                cursor.execute(query)
+                return cursor.fetchall()
+        except sqlite3.OperationalError as e:
+            if 'no such table' in str(e):
+                return []  # Table doesn't exist, return an empty list
+            else:
+                # An error occurred for a different reason, re-raise the exception
+                raise
 
     def select_label_set(self, label_set_id: int):
         query = "SELECT id, name FROM label_set WHERE id = ? LIMIT 1"
