@@ -12,7 +12,7 @@ mypkg = ["*.so", "*.dll"]
 
 [project]
 name = "atriumdb"
-version = "2.0.0"
+version = "2.1.0"
 description = "Timeseries Database"
 readme = "README.md"
 authors = [{name = "Robert Greer, William Dixon, Spencer Vecile"}, { name = "Robert Greer", email = "robert.greer@sickkids.ca"}, { name = "William Dixon", email = "will.dixon@sickkids.ca" }, { name = "Spencer Vecile", email = "spencer.vecile@sickkids.ca"}]
