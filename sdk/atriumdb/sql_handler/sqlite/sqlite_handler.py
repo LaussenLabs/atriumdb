@@ -49,7 +49,7 @@ from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_quer
     sqlite_measure_source_id_create_index, sqlite_log_hl7_adt_source_id_create_index, sqlite_log_hl7_adt_create_query, \
     sqlite_device_patient_table, sqlite_patient_table_index_1, sqlite_patient_history_create_query, \
     sqlite_encounter_insert_trigger, sqlite_encounter_update_trigger, sqlite_encounter_delete_trigger, \
-    sqlite_label_set_create_query, sqlite_label_create_query
+    sqlite_label_set_create_query, sqlite_label_create_query, sqlite_label_source_create_query
 
 
 class SQLiteHandler(SQLHandler):
@@ -106,6 +106,7 @@ class SQLiteHandler(SQLHandler):
 
         cursor.execute(sqlite_label_set_create_query)
         cursor.execute(sqlite_label_create_query)
+        cursor.execute(sqlite_label_source_create_query)
 
         # Create Indices
         cursor.execute(sqlite_block_index_idx_query)
@@ -683,10 +684,10 @@ class SQLiteHandler(SQLHandler):
                 return result[0]
             return None
 
-    def insert_label(self, label_set_id, device_id, start_time_n, end_time_n):
+    def insert_label(self, label_set_id, device_id, start_time_n, end_time_n, label_source_id=None):
         query = """
-        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n) 
-        VALUES (?, ?, ?, ?)
+        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n, label_source_id) 
+        VALUES (?, ?, ?, ?, ?)
         """
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
             cursor.execute(query, (label_set_id, device_id, start_time_n, end_time_n))
@@ -695,15 +696,15 @@ class SQLiteHandler(SQLHandler):
 
     def insert_labels(self, labels):
         query = """
-        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n) 
-        VALUES (?, ?, ?, ?)
+        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n, label_source_id) 
+        VALUES (?, ?, ?, ?, ?)
         """
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
             cursor.executemany(query, labels)
             conn.commit()
 
     def select_labels(self, label_set_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
-                      end_time_n=None):
+                      end_time_n=None, label_source_id_list=None):
         # Query By Patient.
         if patient_id_list is not None:
             results = []
@@ -718,13 +719,14 @@ class SQLiteHandler(SQLHandler):
 
                     # Recursively call select_labels for each device_id.
                     results.extend(self.select_labels(label_set_id_list=label_set_id_list, device_id_list=[device_id],
-                                                      start_time_n=final_start_time, end_time_n=final_end_time))
+                                                      start_time_n=final_start_time, end_time_n=final_end_time,
+                                                      label_source_id_list=label_source_id_list))
 
             # Sort the results by start_time_n primarily and then by end_time_n secondarily
             results.sort(key=lambda x: (x[3], x[4]))
             return results
 
-        query = "SELECT id, label_set_id, device_id, start_time_n, end_time_n FROM label WHERE 1=1"
+        query = "SELECT id, label_set_id, device_id, start_time_n, end_time_n, label_source_id FROM label WHERE 1=1"
         params = []
 
         if label_set_id_list:
@@ -736,6 +738,12 @@ class SQLiteHandler(SQLHandler):
             placeholders = ', '.join(['?'] * len(device_id_list))
             query += f" AND device_id IN ({placeholders})"
             params.extend(device_id_list)
+
+        # Add conditions for label source IDs, if provided.
+        if label_source_id_list:
+            placeholders = ', '.join(['?'] * len(label_source_id_list))
+            query += f" AND label_source_id IN ({placeholders})"
+            params.extend(label_source_id_list)
 
         if end_time_n:
             query += " AND start_time_n <= ?"
@@ -751,3 +759,24 @@ class SQLiteHandler(SQLHandler):
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
             cursor.execute(query, params)
             return cursor.fetchall()
+
+    def insert_label_source(self, name, description=None):
+        query = "INSERT INTO label_source (name, description) VALUES (?, ?)"
+        with self.sqlite_db_connection(begin=True) as (conn, cursor):
+            cursor.execute(query, (name, description))
+            conn.commit()
+            return cursor.lastrowid
+
+    def select_label_source_id_by_name(self, name):
+        query = "SELECT id FROM label_source WHERE name = ? LIMIT 1"
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(query, (name,))
+            result = cursor.fetchone()
+            return result[0] if result else None
+
+    def select_label_source_info_by_id(self, label_source_id):
+        query = "SELECT id, name, description FROM label_source WHERE id = ? LIMIT 1"
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(query, (label_source_id,))
+            result = cursor.fetchone()
+            return {'id': result[0], 'name': result[1], 'description': result[2]} if result else None

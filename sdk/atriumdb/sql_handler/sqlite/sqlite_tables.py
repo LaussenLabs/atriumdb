@@ -305,14 +305,24 @@ name TEXT NOT NULL UNIQUE
 );
 """
 
+sqlite_label_source_create_query = """
+CREATE TABLE IF NOT EXISTS label_source (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT
+);
+"""
+
 sqlite_label_create_query = """
 CREATE TABLE IF NOT EXISTS label (
-id INTEGER PRIMARY KEY AUTOINCREMENT,
-label_set_id INTEGER NOT NULL,
-device_id INTEGER NOT NULL,
-start_time_n INTEGER NOT NULL,
-end_time_n INTEGER NOT NULL,
-FOREIGN KEY (label_set_id) REFERENCES label_set (id),
-FOREIGN KEY (device_id) REFERENCES device (id)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label_set_id INTEGER NOT NULL,
+    device_id INTEGER NOT NULL,
+    label_source_id INTEGER,
+    start_time_n INTEGER NOT NULL,
+    end_time_n INTEGER NOT NULL,
+    FOREIGN KEY (label_set_id) REFERENCES label_set (id),
+    FOREIGN KEY (device_id) REFERENCES device (id),
+    FOREIGN KEY (label_source_id) REFERENCES label_source (id)
 );
 """

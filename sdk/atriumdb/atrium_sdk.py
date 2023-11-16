@@ -38,7 +38,7 @@ from pathlib import Path, PurePath
 from multiprocessing import cpu_count
 import sys
 import os
-from typing import Union, List, Tuple
+from typing import Union, List, Tuple, Optional
 
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
@@ -3289,7 +3289,33 @@ class AtriumSDK:
         # Return the label set ID
         return label_set_id
 
-    def insert_label(self, name: str, device: Union[int, str], start_time: int, end_time: int, time_units: str = None):
+    def insert_label_source(self, name: str, description: str = None) -> int:
+        """
+        Insert a label source into the database if it doesn't already exist and return its ID.
+        :param name: The unique name identifier for the label source.
+        :param description: A textual description of the label source.
+        :return: The ID of the label source.
+        """
+        return self.sql_handler.insert_label_source(name, description)
+
+    def get_label_source_id(self, name: str) -> Optional[int]:
+        """
+        Gets the label source ID from the name of the label source.
+        :param name: The name of the label source to look up.
+        :return: The label source ID or None if not found.
+        """
+        return self.sql_handler.select_label_source_id_by_name(name)
+
+    def get_label_source_info(self, label_source_id: int) -> Optional[dict]:
+        """
+        Retrieve information about a specific label source by its ID.
+        :param label_source_id: The identifier for the label source.
+        :return: A dictionary containing information about the label source, or None if not found.
+        """
+        return self.sql_handler.select_label_source_info_by_id(label_source_id)
+
+    def insert_label(self, name: str, device: Union[int, str], start_time: int, end_time: int,
+                     time_units: str = None, label_source: Union[str, int] = None):
         """
         Insert a label record into the database.
 
@@ -3298,6 +3324,8 @@ class AtriumSDK:
         :param int start_time: Start time for the label.
         :param int end_time: End time for the label.
         :param str time_units: Units for the `start_time` and `end_time`. Valid options are 'ns', 's', 'ms', and 'us'.
+        :param Union[str, int] label_source: Name or ID of the label source.
+        :raises ValueError: If the provided label_source is not found in the database.
         """
 
         if self.metadata_connection_type == "api":
@@ -3316,7 +3344,16 @@ class AtriumSDK:
         start_time *= time_unit_options[time_units]
         end_time *= time_unit_options[time_units]
 
-        # Check if the label name already exists
+        # Determine label source ID
+        if isinstance(label_source, str):
+            label_source_id = self.get_label_source_id(label_source)
+            if label_source_id is None:
+                raise ValueError(f"Label source name '{label_source}' not found in the database.")
+        elif isinstance(label_source, int):
+            label_source_id = label_source
+        else:
+            label_source_id = None
+
         if name not in self._label_set_ids:
             label_id = self.sql_handler.insert_label_set(name)
             self._label_sets[label_id] = {'id': label_id, 'name': name}
@@ -3325,32 +3362,29 @@ class AtriumSDK:
             label_id = self._label_set_ids[name]
 
         # Insert the label into the database
-        self.sql_handler.insert_label(label_id, device, start_time, end_time)
+        self.sql_handler.insert_label(label_id, device, start_time, end_time, label_source_id=label_source_id)
 
-    def insert_labels(self, labels: List[Tuple[str, Union[int, str], int, int]], time_units: str = None):
+    def insert_labels(self, labels: List[Tuple[str, Union[int, str], int, int, Union[str, int]]],
+                      time_units: str = None):
         """
         Insert multiple label records into the database.
 
-        :param List[Tuple[str, Union[int, str], int, int]] labels: A list of labels. Each label is a tuple containing:
+        :param List[Tuple[str, Union[int, str], int, int, Union[str, int]]] labels: A list of labels. Each label is a tuple containing:
             - Name of the label type.
             - Device ID or device tag.
             - Start time for the label.
             - End time for the label.
+            - Name or ID of the label source.
         :param str time_units: Units for the `start_time` and `end_time` of each label. Valid options are 'ns', 's', 'ms', and 'us'.
+        :raises ValueError: If the provided label_source is not found in the database.
         """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
         # Prepare the list to store formatted labels
         formatted_labels = []
 
-        # Convert times using the provided time units
-        time_units = "ns" if time_units is None else time_units
-        time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
-        if time_units not in time_unit_options.keys():
-            raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options.keys())
-
         for label in labels:
-            name, device, start_time, end_time = label
+            name, device, start_time, end_time, label_source = label
 
             # Convert device tag to device ID if necessary
             if isinstance(device, str):
@@ -3360,7 +3394,16 @@ class AtriumSDK:
             start_time *= time_unit_options[time_units]
             end_time *= time_unit_options[time_units]
 
-            # Check if the label name already exists
+            # Determine label source ID
+            if isinstance(label_source, str):
+                label_source_id = self.get_label_source_id(label_source)
+                if label_source_id is None:
+                    raise ValueError(f"Label source name '{label_source}' not found in the database.")
+            elif isinstance(label_source, int):
+                label_source_id = label_source
+            else:
+                label_source_id = None
+
             if name not in self._label_set_ids:
                 label_id = self.sql_handler.insert_label_set(name)
                 self._label_sets[label_id] = {'id': label_id, 'name': name}
@@ -3369,26 +3412,28 @@ class AtriumSDK:
                 label_id = self._label_set_ids[name]
 
             # Add to the formatted labels list
-            formatted_labels.append((label_id, device, start_time, end_time))
+            formatted_labels.append((label_id, device, start_time, end_time, label_source_id))
 
         # Insert the labels into the database
         self.sql_handler.insert_labels(formatted_labels)
 
-    def get_labels(self, label_set_id_list=None, name_list=None, device_list=None, start_time=None, end_time=None, time_units: str = None,
-                   patient_id_list=None):
+    def get_labels(self, label_set_id_list=None, name_list=None, device_list=None,
+                   start_time=None, end_time=None, time_units: str = None,
+                   patient_id_list=None, label_source_list: Optional[List[Union[str, int]]] = None):
         """
         Retrieve labels from the database based on specified criteria.
 
         :param List[int] label_set_id_list: List of label set IDs to filter by.
         :param List[str] name_list: List of label names to filter by. Mutually exclusive with `label_set_id_list`.
-        :param List[int | str] device_list: List of device IDs or device tags to filter by.
+        :param List[Union[int, str]] device_list: List of device IDs or device tags to filter by.
         :param int start_time: Start time filter for the labels.
         :param int end_time: End time filter for the labels.
         :param str time_units: Units for the `start_time` and `end_time` filters. Valid options are 'ns', 's', 'ms', and 'us'.
         :param List[int] patient_id_list: List of patient IDs to filter by.
-
+        :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter by.
         :return: A list of matching labels from the database. Each label is represented as a dictionary containing:
-                 label_entry_id, label_set_id, label_set_name, device_id, device_tag, start_time_n, end_time_n
+                 label_entry_id, label_set_id, label_set_name, device_id, device_tag, start_time_n, end_time_n,
+                 label_source_id, label_source_name
         :rtype: List[Dict]
 
         Example:
@@ -3401,7 +3446,9 @@ class AtriumSDK:
                     'device_id': 1001,
                     'device_tag': 'tag_1',
                     'start_time_n': 1625000000000000000,
-                    'end_time_n': 1625100000000000000
+                    'end_time_n': 1625100000000000000,
+                    'label_source_id': 4,
+                    'label_source_name': "LabelStudio_Project_1",
                 },
                 ...
             ]
@@ -3452,11 +3499,27 @@ class AtriumSDK:
                 device_id_list.append(device_id)
             device_list = device_id_list
 
-        # Retrieve the labels from the database
+        label_source_id_list = []
+        if label_source_list:
+            for source in label_source_list:
+                if isinstance(source, str):
+                    label_source_id = self.get_label_source_id(source)
+                    if label_source_id is None:
+                        raise ValueError(f"Label source name '{source}' not found in the database.")
+                    label_source_id_list.append(label_source_id)
+                elif isinstance(source, int):
+                    label_source_id_list.append(source)
+                else:
+                    raise ValueError("Label source list items must be either string (name) or integer (ID).")
+
         labels = self.sql_handler.select_labels(
             label_set_id_list=label_set_id_list,
-            device_id_list=device_list, patient_id_list=patient_id_list,
-            start_time_n=start_time, end_time_n=end_time)
+            device_id_list=device_list,
+            patient_id_list=patient_id_list,
+            start_time_n=start_time,
+            end_time_n=end_time,
+            label_source_id_list=label_source_id_list if label_source_id_list else None
+        )
 
         # Extract unique label_set_ids and device_ids
         unique_label_set_ids = {label[1] for label in labels}
@@ -3468,7 +3531,11 @@ class AtriumSDK:
 
         result = []
         for label in labels:
-            label_entry_id, label_set_id, device_id, start_time_n, end_time_n = label
+            label_entry_id, label_set_id, device_id, start_time_n, end_time_n, label_source_id = label  # Updated to include label_source_id
+
+            # Get label_source_name
+            label_source_info = self.get_label_source_info(label_source_id) if label_source_id else None
+            label_source_name = label_source_info['name'] if label_source_info else None
 
             formatted_label = {
                 'label_entry_id': label_entry_id,
@@ -3477,15 +3544,18 @@ class AtriumSDK:
                 'device_id': device_id,
                 'device_tag': device_id_to_info[device_id]['tag'],
                 'start_time_n': start_time_n,
-                'end_time_n': end_time_n
+                'end_time_n': end_time_n,
+                'label_source_id': label_source_id,
+                'label_source_name': label_source_name
             }
             result.append(formatted_label)
 
         return result
 
-    def get_label_time_series(self, label_set_name=None, label_set_id=None, device_tag=None, device_id=None,
-                              patient_id=None, start_time=None, end_time=None, timestamp_array=None,
-                              sample_period=None, time_units: str = None, out: np.ndarray = None):
+    def get_label_time_series(self, label_set_name=None, label_set_id=None, device_tag=None,
+                              device_id=None, patient_id=None, start_time=None, end_time=None,
+                              timestamp_array=None, sample_period=None, time_units: str = None,
+                              out: np.ndarray = None, label_source_list: Optional[List[Union[str, int]]] = None):
         """
         Retrieve a time series representation for labels from the database based on specified criteria.
 
@@ -3503,6 +3573,7 @@ class AtriumSDK:
             which is the same as `timestamp_array`. Allowed dtypes are integer types or boolean. If provided,
             the results are written into this array in-place. It should be initialized with zeros.
             Otherwise, a new array is allocated.
+        :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter by.
 
         :return: An array representing the presence of a label for each timestamp. If a label is present at a given timestamp, the value is 1, otherwise 0.
         :rtype: np.ndarray
@@ -3579,12 +3650,12 @@ class AtriumSDK:
                                  "np.arange(start_time, end_time, sample_period)")
             timestamp_array = np.arange(start_time, end_time, sample_period)
 
-        # Retrieve labels from the database
-        labels = self.get_labels(label_set_id_list=[label_set_id],
-                                 device_list=[device_id] if device_id else None,
-                                 patient_id_list=[patient_id] if patient_id else None,
+        labels = self.get_labels(label_set_id_list=[label_set_id] if label_set_id is not None else None,
+                                 device_list=[device_id] if device_id is not None else None,
+                                 patient_id_list=[patient_id] if patient_id is not None else None,
                                  start_time=start_time,
                                  end_time=end_time,
+                                 label_source_list=label_source_list,
                                  )
 
         # Create a binary array to indicate presence of a label for each timestamp, if not provided.
