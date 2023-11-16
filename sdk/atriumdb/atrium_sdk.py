@@ -3258,6 +3258,37 @@ class AtriumSDK:
         # Return the label set information dictionary
         return label_set_info
 
+    def insert_label_set(self, name: str) -> int:
+        """
+        Insert a label set into the database if it doesn't already exist and return the ID.
+
+        :param str name: The name of the label set to insert.
+        :return: The ID of the label set.
+        :rtype: int
+
+        :raises ValueError: If the label set name is empty.
+
+        :example:
+        >>> sdk = AtriumSDK()
+        >>> label_set_id = sdk.insert_label_set("Example Label Set")
+        >>> print(label_set_id)
+        1
+        """
+        if not name:
+            raise ValueError("The label set name cannot be empty.")
+
+        # Check if the label set name is already cached
+        label_set_id = self._label_set_ids.get(name)
+
+        # If not cached, insert it into the database and update the cache
+        if label_set_id is None:
+            label_set_id = self.sql_handler.insert_label_set(name)
+            self._label_sets[label_set_id] = {'id': label_set_id, 'name': name}
+            self._label_set_ids[name] = label_set_id
+
+        # Return the label set ID
+        return label_set_id
+
     def insert_label(self, name: str, device: Union[int, str], start_time: int, end_time: int, time_units: str = None):
         """
         Insert a label record into the database.
