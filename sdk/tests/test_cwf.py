@@ -17,8 +17,6 @@ def test_cwf():
 
 
 def _test_cwf(db_type, dataset_location, connection_params):
-
-
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
@@ -50,6 +48,8 @@ def _test_cwf(db_type, dataset_location, connection_params):
     collected_values = []
     for window in window_generator:
         for measure_triplet, signal in window.signals.items():
+            if signal.times is None:
+                continue
             collected_times.append(signal.times)
             collected_values.append(signal.data)
 

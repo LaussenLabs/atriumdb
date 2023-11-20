@@ -16,7 +16,7 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from atriumdb import AtriumSDK, T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
-    V_TYPE_DOUBLE
+    V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
 import numpy as np
 import random
 
@@ -172,28 +172,36 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
     sdk.block.block_size = random.choice([2 ** exp for exp in range(11, 21)])
     # sdk.block.block_size = 2 ** 11
 
+    # gap tolerance
+    gap_tolerance = 10_000_000_000  # 10 seconds
+
+    # Determine the raw and encoded value types based on the dtype of value_data
+    if np.issubdtype(value_data.dtype, np.integer):
+        raw_v_t = V_TYPE_INT64
+        encoded_v_t = V_TYPE_DELTA_INT64
+    else:
+        raw_v_t = V_TYPE_DOUBLE
+        encoded_v_t = V_TYPE_DOUBLE
+
     # Write data
     if random.random() < 0.5:
         # Time type 1
-        sdk.write_data_easy(measure_id, device_id, time_arr, value_data, freq_nano, scale_m=scale_m, scale_b=scale_b)
-    else:
-        raw_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
-
-        # Determine the encoded time type
+        raw_t_t = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
         encoded_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
-        # Determine the raw and encoded value types based on the dtype of value_data
-        if np.issubdtype(value_data.dtype, np.integer):
-            raw_v_t = V_TYPE_INT64
-            encoded_v_t = V_TYPE_DELTA_INT64
-        else:
-            raw_v_t = V_TYPE_DOUBLE
-            encoded_v_t = V_TYPE_DOUBLE
+        # Call the write_data method with the determined parameters
+        sdk.write_data(measure_id, device_id, time_arr, value_data, freq_nano, start_time,
+                       raw_time_type=raw_t_t, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t,
+                       encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b, gap_tolerance=gap_tolerance)
+    else:
+        # Time type 2
+        raw_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
+        encoded_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
         # Call the write_data method with the determined parameters
         sdk.write_data(measure_id, device_id, gap_data_2d.flatten(), value_data, freq_nano, start_time,
                        raw_time_type=raw_t_t, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t,
-                       encoded_value_type=encoded_v_t, scale_m=None, scale_b=None)
+                       encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b, gap_tolerance=gap_tolerance)
 
 
 def get_record_data_for_ingest(d_record, p_record, signal_i):
@@ -237,7 +245,7 @@ def create_gaps(size, period, gap_density=0.001):
     gap_indices = np.random.choice(size, size=num_gaps, replace=False)
 
     # Generate multiples of the sample period for each gap
-    gap_periods = np.random.randint(1, 10, size=num_gaps) * period
+    gap_periods = np.random.randint(1, 10_000, size=num_gaps, dtype=np.int64) * period
 
     # Create a 2D array with gap indices and gap periods
     gap_data = np.array([gap_indices, gap_periods]).T.astype(np.int64)
