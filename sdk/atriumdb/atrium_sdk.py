@@ -566,7 +566,7 @@ class AtriumSDK:
     def write_data(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq_nhz: int,
                    time_0: int, raw_time_type: int = None, raw_value_type: int = None, encoded_time_type: int = None,
                    encoded_value_type: int = None, scale_m: float = None, scale_b: float = None,
-                   interval_index_mode: str = None):
+                   interval_index_mode: str = None, gap_tolerance: int = 0):
         """
         .. _write_data_label:
 
@@ -599,6 +599,8 @@ class AtriumSDK:
             consolidates intervals into single entries, maintaining a smaller table size but can incur a speed penalty,
             if the data inserted has lots of gaps, is aperiodic or isn't the newest data for that device-measure combination.
             For live data ingestion, "merge" is recommended.
+        :param int gap_tolerance: The maximum number of nanoseconds that can occur between two consecutive values before
+            it is treated as a break in continuity or gap.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.
@@ -699,7 +701,8 @@ class AtriumSDK:
 
         # Use the header data to create rows to be inserted into the block_index and interval_index SQL tables
         block_data, interval_data = get_block_and_interval_data(
-            measure_id, device_id, encoded_headers, byte_start_array, write_intervals)
+            measure_id, device_id, encoded_headers, byte_start_array, write_intervals,
+            interval_gap_tolerance=gap_tolerance)
 
         # If data was overwritten
         if overwrite_file_dict is not None:
