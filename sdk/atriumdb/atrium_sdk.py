@@ -1629,7 +1629,7 @@ class AtriumSDK:
                                                      measure_info_to_id_dictionary, triplet_to_expected_count_period)
 
     def get_iterator(self, definition: Union[DatasetDefinition, str], window_duration, window_slide, gap_tolerance=None,
-                     num_windows_prefetch=None, time_units: str = None) -> DatasetIterator:
+                     num_windows_prefetch=None, time_units: str = None, label_threshold=0.5) -> DatasetIterator:
         """
         Constructs and returns a `DatasetIterator` object that allows iteration over the dataset according to
         the specified definition.
@@ -1655,6 +1655,9 @@ class AtriumSDK:
         :param time_units: If you would like the window_duration and window_slide to be specified in units other than
                             nanoseconds you can choose from one of ["s", "ms", "us", "ns"].
         :type time_units: str
+        :param label_threshold: The percentage of the window that must contain a label before the entire window is
+            marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
+        :type label_threshold: float
 
         :return: DatasetIterator object to easily iterate over the specified data.
         :rtype: DatasetIterator
@@ -1707,7 +1710,7 @@ class AtriumSDK:
 
         return DatasetIterator(
             self, validated_measure_list, validated_label_set_list, validated_sources, window_duration, window_slide,
-            num_windows_prefetch=num_windows_prefetch, time_units=time_units)
+            num_windows_prefetch=num_windows_prefetch, time_units=time_units, label_threshold=label_threshold)
 
     def _generate_device_windows(self, window_config, device_id, device_tag, batch_duration_ns, start_time_inclusive_ns,
                                  end_time_exclusive_ns, measure_info_to_id_dictionary,
