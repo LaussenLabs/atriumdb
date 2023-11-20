@@ -788,9 +788,19 @@ class MariaDBHandler(SQLHandler):
             return cursor.fetchall()
 
     def insert_label_source(self, name, description=None):
-        query = "INSERT INTO label_source (name, description) VALUES (?, ?)"
+        # First, check if the label_source with the given name already exists
+        select_query = "SELECT id FROM label_source WHERE name = ?"
+        with self.maria_db_connection(begin=False) as (conn, cursor):
+            cursor.execute(select_query, (name,))
+            result = cursor.fetchone()
+            if result:
+                # A label_source with the given name already exists, return its id
+                return result[0]
+
+        # If not found, insert the new label_source
+        insert_query = "INSERT INTO label_source (name, description) VALUES (?, ?)"
         with self.maria_db_connection(begin=True) as (conn, cursor):
-            cursor.execute(query, (name, description))
+            cursor.execute(insert_query, (name, description))
             conn.commit()
             return cursor.lastrowid
 
