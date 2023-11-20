@@ -3383,6 +3383,9 @@ class AtriumSDK:
         """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
+
+        time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+
         # Prepare the list to store formatted labels
         formatted_labels = []
 
@@ -3394,8 +3397,11 @@ class AtriumSDK:
                 device = self.get_device_id(device)
 
             # Adjust start and end times using time units
-            start_time *= time_unit_options[time_units]
-            end_time *= time_unit_options[time_units]
+            if time_units:
+                if time_units not in time_unit_options.keys():
+                    raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
+                start_time *= time_unit_options[time_units]
+                end_time *= time_unit_options[time_units]
 
             # Determine label source ID
             if isinstance(label_source, str):
