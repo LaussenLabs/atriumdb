@@ -2598,7 +2598,7 @@ class AtriumSDK:
         # Insert the new measure into the database
         return self.sql_handler.insert_measure(measure_tag, freq, units, measure_name)
 
-    def insert_device(self, device_tag: str, device_name: str = None):
+    def insert_device(self, device_tag: str, device_name: str = None, device_id: int = None):
         """
         .. _insert_device_label:
 
@@ -2622,6 +2622,7 @@ class AtriumSDK:
 
         :param str device_tag: A unique string identifying the device (required).
         :param str device_name: A long form description of the device (optional).
+        :param int device_id: desired device_id (optional).
 
         :return: The device_id of the inserted or existing device.
         :rtype: int
@@ -2633,7 +2634,7 @@ class AtriumSDK:
             return self._device_ids[device_tag]
 
         # If the device_tag does not exist, insert the new device using the sql_handler
-        return self.sql_handler.insert_device(device_tag, device_name)
+        return self.sql_handler.insert_device(device_tag, device_name, device_id=device_id)
 
     def measure_device_start_time_exists(self, measure_id, device_id, start_time_nano):
         """

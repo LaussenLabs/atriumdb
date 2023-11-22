@@ -52,7 +52,7 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def insert_device(self, device_tag: str, device_name: str = None):
+    def insert_device(self, device_tag: str, device_name: str = None, device_id=None):
         # Insert device if it doesn't exist, return id.
         pass
 

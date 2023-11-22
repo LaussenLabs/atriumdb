@@ -190,9 +190,13 @@ class SQLiteHandler(SQLHandler):
             row = cursor.fetchone()
         return row
 
-    def insert_device(self, device_tag: str, device_name: str = None):
+    def insert_device(self, device_tag: str, device_name: str = None, device_id=None):
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(sqlite_insert_ignore_device_query, (device_tag, device_name))
+            if device_id is not None:
+                cursor.execute("INSERT OR IGNORE INTO device (id, tag, name) VALUES (?, ?, ?);", (device_id, device_tag, device_name))
+            else:
+                cursor.execute("INSERT OR IGNORE INTO device (tag, name) VALUES (?, ?);", (device_tag, device_name))
+
             conn.commit()
             cursor.execute(sqlite_select_device_from_tag_query, (device_tag,))
             device_id = cursor.fetchone()[0]

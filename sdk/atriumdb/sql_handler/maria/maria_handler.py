@@ -217,9 +217,12 @@ class MariaDBHandler(SQLHandler):
 
         return row
 
-    def insert_device(self, device_tag: str, device_name: str = None):
+    def insert_device(self, device_tag: str, device_name: str = None, device_id=None):
         with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_insert_ignore_device_query, (device_tag, device_name))
+            if device_id is not None:
+                cursor.execute("INSERT IGNORE INTO device (id, tag, name) VALUES (?, ?, ?);", (device_id, device_tag, device_name))
+            else:
+                cursor.execute("INSERT IGNORE INTO device (tag, name) VALUES (?, ?);", (device_tag, device_name))
             conn.commit()
             cursor.execute(maria_select_device_from_tag_query, (device_tag,))
             device_id = cursor.fetchone()[0]
