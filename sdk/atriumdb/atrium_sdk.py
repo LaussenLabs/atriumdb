@@ -3193,6 +3193,25 @@ class AtriumSDK:
         return {row[0]: row[1] for row in patient_list}
 
     def get_mrn(self, patient_id):
+        """
+        Retrieve the medical record number (MRN) associated with a given patient ID.
+
+        This method searches for a patient's MRN using their patient ID. If the MRN is not found in the initial search,
+        it triggers a refresh of all patient data and searches again.
+
+        :param patient_id: The numeric identifier for the patient.
+        :return: The MRN as an integer if the patient is found; otherwise, None.
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> mrn = sdk.get_mrn(patient_id=1)
+        >>> print(mrn)
+        123456
+        """
+        # Check if we are in API mode
+        if self.metadata_connection_type == "api":
+            patient_info = self._api_get_patient_info(patient_id=patient_id)
+            return patient_info['mrn']
+
         if patient_id in self._patient_id_to_mrn:
             return self._patient_id_to_mrn[patient_id]
 
@@ -3204,6 +3223,25 @@ class AtriumSDK:
         return None
 
     def get_patient_id(self, mrn):
+        """
+        Retrieve the patient ID associated with a given medical record number (MRN).
+
+        This method looks for a patient's ID using their MRN. If the patient ID is not found in the initial search,
+        it triggers a refresh of all patient data and searches again.
+
+        :param mrn: The medical record number for the patient, as an integer.
+        :return: The patient ID as an integer if the patient is found; otherwise, None.
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> patient_id = sdk.get_patient_id(mrn=123456)
+        >>> print(patient_id)
+        1
+        """
+        # Check if we are in API mode
+        if self.metadata_connection_type == "api":
+            patient_info = self._api_get_patient_info(mrn=mrn)
+            return patient_info['id']
+
         if mrn in self._mrn_to_patient_id:
             return self._mrn_to_patient_id[mrn]
 
