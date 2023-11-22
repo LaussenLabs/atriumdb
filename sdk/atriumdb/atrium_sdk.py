@@ -231,6 +231,9 @@ class AtriumSDK:
             self._devices = self.get_all_devices()
             self._label_sets = self.get_all_label_sets()
 
+            # Lazy caching, cache only built if patient info requested later
+            self._patients = {}
+
             # Create a dictionary to map measure information to measure IDs
             self._measure_ids = {}
             for measure_id, measure_info in self._measures.items():
@@ -245,6 +248,10 @@ class AtriumSDK:
             self._label_set_ids = {}
             for label_id, label_info in self._label_sets.items():
                 self._label_set_ids[label_info['name']] = label_id
+
+            # Dictionaries to map MRN to patient ID and patient ID to MRN for quick lookups.
+            self._mrn_to_patient_id = {}
+            self._patient_id_to_mrn = {}
 
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None,
@@ -2325,6 +2332,17 @@ class AtriumSDK:
                 'height': height
             }
 
+        # Cache the results
+        self._patients = patient_dict
+
+        # Create a dictionary to map MRN to patient ID and patient ID to MRN for quick lookups.
+        self._mrn_to_patient_id = {}
+        self._patient_id_to_mrn = {}
+        for patient_id, patient_info in self._patients.items():
+            mrn = patient_info['mrn']
+            self._mrn_to_patient_id[mrn] = patient_id
+            self._patient_id_to_mrn[patient_id] = mrn
+
         # Return the populated patient_dict
         return patient_dict
 
@@ -2791,6 +2809,89 @@ class AtriumSDK:
         measure_dict_with_ints = {int(measure_id): measure_info for measure_id, measure_info in measure_dict.items()}
         return measure_dict_with_ints
 
+    def get_patient_info(self, patient_id=None, mrn=None):
+        """
+        Retrieve information about a specific patient using either their numeric patient id or medical record number (MRN).
+
+        :param patient_id: (Optional) The numeric identifier for the patient.
+        :param mrn: (Optional) The medical record number for the patient.
+        :return: A dictionary containing the patient's information, including id, MRN, gender, date of birth (dob),
+                 first name, middle name, last name, date first seen, last updated datetime, source identifier, height, and weight.
+                 Returns None if patient not found.
+
+        :raises ValueError: If both patient_id and mrn are not provided.
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> patient_info = sdk.get_patient_info(patient_id=1)
+        >>> print(patient_info)
+        {
+            'id': 1,
+            'mrn': 123456,
+            'gender': 'M',
+            'dob': 946684800000000000,  # Nanoseconds since epoch
+            'first_name': 'John',
+            'middle_name': 'A',
+            'last_name': 'Doe',
+            'first_seen': 1609459200000000000,  # Nanoseconds since epoch
+            'last_updated': 1609545600000000000,  # Nanoseconds since epoch
+            'source_id': 1,
+            'weight': 10.1,
+            'height': 50.0
+        }
+        """
+        # Check if we are in API mode
+        if self.metadata_connection_type == "api":
+            return self._api_get_patient_info(patient_id=patient_id, mrn=mrn)
+
+        # Check if we have either patient ID or MRN
+        if patient_id is None and mrn is None:
+            raise ValueError("Either patient_id or mrn must be provided.")
+
+        # Try getting the patient by ID from the cache
+        if patient_id is not None and patient_id in self._patients:
+            return self._patients[patient_id]
+
+        # Try getting the patient by MRN from the cache
+        if mrn is not None and mrn in self._mrn_to_patient_id:
+            return self._patients[self._mrn_to_patient_id[mrn]]
+
+        # If we did not find the patient, refresh the patient cache
+        self.get_all_patients()
+
+        # Try finding the patient in the updated cache
+        if patient_id is not None and patient_id in self._patients:
+            return self._patients[patient_id]
+        if mrn is not None and mrn in self._mrn_to_patient_id:
+            return self._patients[self._mrn_to_patient_id[mrn]]
+
+        # If the patient is still not found, return None
+        return None
+
+    def _api_get_patient_info(self, patient_id=None, mrn=None):
+        """
+        Retrieve information about a specific patient through API when in API mode.
+
+        :param patient_id: The numeric identifier for the patient.
+        :param mrn: The medical record number for the patient.
+        :return: A dictionary with patient information obtained from the API.
+
+        :raises HTTPException: If the API response indicates an error (e.g., patient not found).
+
+        >>> sdk = AtriumSDK(api_url="http://example.com/api/v1", token="your_api_token", metadata_connection_type="api")
+        >>> patient_info = sdk.get_patient_info(mrn='1234567')
+        >>> print(patient_info)  # Expected output: dictionary with patient info as returned by the API
+        """
+        # Check which identifier is used and create the proper endpoint
+        if patient_id is not None:
+            endpoint = f"patients/id|{patient_id}"
+        elif mrn is not None:
+            endpoint = f"patients/mrn|{mrn}"
+        else:
+            raise ValueError("Either patient_id or mrn must be provided.")
+
+        # Make the API call
+        return self._request("GET", endpoint)
+
     def _api_get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                                 start=None, end=None):
         params = {
@@ -3064,11 +3165,14 @@ class AtriumSDK:
             if not mrn_list:
                 return {}
             return self._api_get_mrn_to_patient_id_map(mrn_list)
-        # Query the SQL database for all patients with MRNs in the given list
-        patient_list = self.sql_handler.select_all_patients_in_list(mrn_list=mrn_list)
 
-        # Return a dictionary with MRNs as keys and patient IDs as values
-        return {row[1]: row[0] for row in patient_list}
+        # If all mrns are in the cache
+        if all(mrn in self._mrn_to_patient_id for mrn in mrn_list):
+            return {mrn: self._mrn_to_patient_id[mrn] for mrn in mrn_list}
+
+        # Refresh the cache and return all available mrns.
+        self.get_all_patients()
+        return {mrn: self._mrn_to_patient_id[mrn] for mrn in mrn_list if mrn in self._mrn_to_patient_id}
 
     def get_patient_id_to_mrn_map(self, patient_id_list=None):
         """
