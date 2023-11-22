@@ -3192,6 +3192,28 @@ class AtriumSDK:
         # Return a dictionary with patient IDs as keys and MRNs as values
         return {row[0]: row[1] for row in patient_list}
 
+    def get_mrn(self, patient_id):
+        if patient_id in self._patient_id_to_mrn:
+            return self._patient_id_to_mrn[patient_id]
+
+        self.get_all_patients()
+
+        if patient_id in self._patient_id_to_mrn:
+            return self._patient_id_to_mrn[patient_id]
+
+        return None
+
+    def get_patient_id(self, mrn):
+        if mrn in self._mrn_to_patient_id:
+            return self._mrn_to_patient_id[mrn]
+
+        self.get_all_patients()
+
+        if mrn in self._mrn_to_patient_id:
+            return self._mrn_to_patient_id[mrn]
+
+        return None
+
     def _request(self, method: str, endpoint: str, **kwargs):
         """
         Send an API request using the specified method and endpoint.
