@@ -3322,15 +3322,18 @@ class AtriumSDK:
         """
         return self.sql_handler.select_label_source_info_by_id(label_source_id)
 
-    def insert_label(self, name: str, device: Union[int, str], start_time: int, end_time: int,
+    def insert_label(self, name: str, start_time: int, end_time: int,
+                     device: Union[int, str] = None, patient_id: int = None, mrn: int = None,
                      time_units: str = None, label_source: Union[str, int] = None):
         """
         Insert a label record into the database.
 
         :param str name: Name of the label type.
-        :param Union[int, str] device: Device ID or device tag.
         :param int start_time: Start time for the label.
         :param int end_time: End time for the label.
+        :param Union[int, str] device: Device ID or device tag (exclusive with device and patient_id).
+        :param int patient_id: Patient ID for the label to be inserted (exclusive with device and mrn).
+        :param int mrn: MRN for the label to be inserted (exclusive with device and patient_id).
         :param str time_units: Units for the `start_time` and `end_time`. Valid options are 'ns', 's', 'ms', and 'us'.
         :param Union[str, int] label_source: Name or ID of the label source.
         :raises ValueError: If the provided label_source is not found in the database.
@@ -3338,6 +3341,17 @@ class AtriumSDK:
 
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
+
+        # Ensure exclusivity of device, patient_id, and mrn
+        provided_params = [device is not None, patient_id is not None, mrn is not None]
+        if sum(provided_params) > 1:
+            raise ValueError("Only one of device, patient_id, or mrn can be provided.")
+
+        # Convert patient_id or mrn to device ID if necessary
+        # if patient_id is not None:
+        #     device = self.convert_patient_to_device(start_time, end_time, patient_id=patient_id)
+        # elif mrn is not None:
+        #     device = self.convert_patient_to_device(start_time, end_time, mrn=mrn)
 
         # Convert device tag to device ID if necessary
         if isinstance(device, str):
