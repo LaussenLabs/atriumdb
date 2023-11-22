@@ -3252,6 +3252,104 @@ class AtriumSDK:
 
         return None
 
+    def convert_patient_to_device_id(self, start_time: int, end_time: int, patient_id: int = None, mrn: int = None):
+        """
+        Converts a patient ID or MRN to a device ID based on the specified time range.
+
+        :param int start_time: Start time for the association.
+        :param int end_time: End time for the association.
+        :param int patient_id: Patient ID to be converted.
+        :param int mrn: MRN to be converted.
+        :return: Device ID if a single device fully encapsulates the time range, otherwise None.
+        :rtype: int or None
+        """
+
+        # Retrieve device-patient mapping data
+        if patient_id is not None:
+            device_patient_data = self.get_device_patient_data(patient_id_list=[patient_id], start_time=start_time,
+                                                               end_time=end_time)
+        elif mrn is not None:
+            device_patient_data = self.get_device_patient_data(mrn_list=[mrn], start_time=start_time, end_time=end_time)
+        else:
+            raise ValueError("You must specify either patient_id or mrn.")
+
+        # Group data by device_id
+        device_intervals = {}
+        for device_id, _, device_start, device_end in device_patient_data:
+            if device_id not in device_intervals:
+                device_intervals[device_id] = []
+            device_intervals[device_id].append([device_start, device_end])
+
+        # Merge overlapping intervals for each device
+        for device_id in device_intervals:
+            intervals = sorted(device_intervals[device_id], key=lambda x: x[0])
+            merged_intervals = [intervals[0]]
+            for current in intervals[1:]:
+                last = merged_intervals[-1]
+                if last[1] >= current[0]:  # Overlapping intervals
+                    last[1] = max(last[1], current[1])
+                else:
+                    merged_intervals.append(current)
+            device_intervals[device_id] = merged_intervals
+
+        # Check for a device whose interval encapsulates the provided time range
+        for device_id, intervals in device_intervals.items():
+            for interval in intervals:
+                if interval[0] <= start_time and interval[1] >= end_time:
+                    return device_id
+
+        return None
+
+    def convert_device_to_patient_id(self, start_time: int, end_time: int, device):
+        """
+        Converts a device ID or tag to a patient ID based on the specified time range.
+
+        :param int start_time: Start time for the association.
+        :param int end_time: End time for the association.
+        :param device: Device ID (int) or tag (str) to be converted.
+        :return: Patient ID if a single patient's interval encapsulates the time range, otherwise None.
+        :rtype: int or None
+        """
+
+        # Convert device tag to device ID if necessary
+        if isinstance(device, str):
+            device_id = self.get_device_id(device)
+        elif isinstance(device, int):
+            device_id = device
+        else:
+            raise ValueError(f"device must be either int or str (id or tag), not type{type(device)}")
+
+        # Retrieve device-patient mapping data
+        device_patient_data = self.get_device_patient_data(device_id_list=[device_id], start_time=start_time,
+                                                           end_time=end_time)
+
+        # Group data by patient_id
+        patient_intervals = {}
+        for _, patient_id, patient_start, patient_end in device_patient_data:
+            if patient_id not in patient_intervals:
+                patient_intervals[patient_id] = []
+            patient_intervals[patient_id].append([patient_start, patient_end])
+
+        # Merge overlapping intervals for each patient
+        for patient_id in patient_intervals:
+            intervals = sorted(patient_intervals[patient_id], key=lambda x: x[0])
+            merged_intervals = [intervals[0]]
+            for current in intervals[1:]:
+                last = merged_intervals[-1]
+                if last[1] >= current[0]:  # Overlapping intervals
+                    last[1] = max(last[1], current[1])
+                else:
+                    merged_intervals.append(current)
+            patient_intervals[patient_id] = merged_intervals
+
+        # Check for a patient whose interval encapsulates the provided time range
+        for patient_id, intervals in patient_intervals.items():
+            for interval in intervals:
+                if interval[0] <= start_time and interval[1] >= end_time:
+                    return patient_id
+
+        return None
+
     def _request(self, method: str, endpoint: str, **kwargs):
         """
         Send an API request using the specified method and endpoint.
@@ -3512,10 +3610,10 @@ class AtriumSDK:
             raise ValueError("Only one of device, patient_id, or mrn can be provided.")
 
         # Convert patient_id or mrn to device ID if necessary
-        # if patient_id is not None:
-        #     device = self.convert_patient_to_device(start_time, end_time, patient_id=patient_id)
-        # elif mrn is not None:
-        #     device = self.convert_patient_to_device(start_time, end_time, mrn=mrn)
+        if patient_id is not None:
+            device = self.convert_patient_to_device_id(start_time, end_time, patient_id=patient_id)
+        elif mrn is not None:
+            device = self.convert_patient_to_device_id(start_time, end_time, mrn=mrn)
 
         # Convert device tag to device ID if necessary
         if isinstance(device, str):
