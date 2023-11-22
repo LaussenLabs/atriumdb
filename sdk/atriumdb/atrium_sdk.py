@@ -2549,7 +2549,7 @@ class AtriumSDK:
                         encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b)
 
     def insert_measure(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None,
-                       measure_name: str = None):
+                       measure_name: str = None, measure_id: int = None):
         """
         .. _insert_measure_label:
 
@@ -2576,6 +2576,7 @@ class AtriumSDK:
         :param str optional measure_tag: A unique string identifying the signal.
         :param str optional measure_name: A long form description of the signal.
         :param str optional units: The units of the signal.
+        :param int optional measure_id: The desired measure_id.
 
         """
 
@@ -2596,7 +2597,7 @@ class AtriumSDK:
             return self._measure_ids[(measure_tag, freq, units)]
 
         # Insert the new measure into the database
-        return self.sql_handler.insert_measure(measure_tag, freq, units, measure_name)
+        return self.sql_handler.insert_measure(measure_tag, freq, units, measure_name, measure_id=measure_id)
 
     def insert_device(self, device_tag: str, device_name: str = None, device_id: int = None):
         """

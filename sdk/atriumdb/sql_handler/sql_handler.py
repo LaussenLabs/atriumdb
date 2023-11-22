@@ -42,7 +42,7 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None):
+    def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None, measure_id=None):
         # Insert measure if it doesn't exist, return id.
         pass
 

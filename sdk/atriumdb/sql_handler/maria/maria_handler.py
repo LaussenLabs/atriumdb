@@ -195,11 +195,14 @@ class MariaDBHandler(SQLHandler):
             rows = cursor.fetchall()
         return rows
 
-    def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None):
+    def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None, measure_id=None):
         units = DEFAULT_UNITS if units is None else units
 
         with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_insert_ignore_measure_query, (measure_tag, freq_nhz, units, measure_name))
+            if measure_id is None:
+                cursor.execute("INSERT IGNORE INTO measure (tag, freq_nhz, unit, name) VALUES (?, ?, ?, ?);", (measure_tag, freq_nhz, units, measure_name))
+            else:
+                cursor.execute("INSERT IGNORE INTO measure (id, tag, freq_nhz, unit, name) VALUES (?, ?, ?, ?, ?);", (measure_id, measure_tag, freq_nhz, units, measure_name))
             conn.commit()
             cursor.execute(maria_select_measure_from_triplet_query, (measure_tag, freq_nhz, units))
             measure_id = cursor.fetchone()[0]

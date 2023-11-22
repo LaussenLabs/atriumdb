@@ -189,7 +189,7 @@ def transfer_measures(from_sdk, to_sdk, measure_id_list=None):
             units = measure_info['unit']
             measure_name = measure_info['name']
             to_measure_id = to_sdk.insert_measure(
-                measure_tag=measure_tag, freq=freq, units=units, measure_name=measure_name)
+                measure_tag=measure_tag, freq=freq, units=units, measure_name=measure_name, measure_id=from_measure_id)
 
             measure_map[from_measure_id] = to_measure_id
 
