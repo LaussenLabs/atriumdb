@@ -697,7 +697,7 @@ class SQLiteHandler(SQLHandler):
         VALUES (?, ?, ?, ?, ?)
         """
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
-            cursor.execute(query, (label_set_id, device_id, start_time_n, end_time_n))
+            cursor.execute(query, (label_set_id, device_id, start_time_n, end_time_n, label_source_id))
             conn.commit()
             return cursor.lastrowid
 
