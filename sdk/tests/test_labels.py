@@ -66,7 +66,7 @@ def _test_labels(db_type, dataset_location, connection_params):
     label_2_start_time = 2000
     label_2_end_time = 3000
     labels_to_insert = [
-        (label_2_name, device_tag, label_2_start_time, label_2_end_time)
+        (label_2_name, device_tag, label_2_start_time, label_2_end_time, None)
     ]
     sdk.insert_labels(labels=labels_to_insert, time_units="ms")
 

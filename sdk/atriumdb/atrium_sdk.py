@@ -3624,14 +3624,20 @@ class AtriumSDK:
             raise ValueError("Only one of device, patient_id, or mrn can be provided.")
 
         # Convert patient_id or mrn to device ID if necessary
+        converted_device_id = None
         if patient_id is not None:
-            device = self.convert_patient_to_device_id(start_time, end_time, patient_id=patient_id)
+            converted_device_id = self.convert_patient_to_device_id(start_time, end_time, patient_id=patient_id)
         elif mrn is not None:
-            device = self.convert_patient_to_device_id(start_time, end_time, mrn=mrn)
+            converted_device_id = self.convert_patient_to_device_id(start_time, end_time, mrn=mrn)
 
         # Convert device tag to device ID if necessary
         if isinstance(device, str):
-            device = self.get_device_id(device)
+            converted_device_id = self.get_device_id(device)
+        elif isinstance(device, int):
+            converted_device_id = device
+
+        if converted_device_id is None or (isinstance(device, int) and self.get_device_info(device) is None):
+            raise ValueError(f"device not found for device {device} patient_id {patient_id} mrn {mrn}")
 
         # Convert time using the provided time units
         time_units = "ns" if time_units is None else time_units
@@ -3660,7 +3666,7 @@ class AtriumSDK:
             label_id = self._label_set_ids[name]
 
         # Insert the label into the database
-        self.sql_handler.insert_label(label_id, device, start_time, end_time, label_source_id=label_source_id)
+        self.sql_handler.insert_label(label_id, converted_device_id, start_time, end_time, label_source_id=label_source_id)
 
     def insert_labels(self, labels: List[Tuple[str, Union[int, str], int, int, Union[str, int]]],
                       time_units: str = None):
