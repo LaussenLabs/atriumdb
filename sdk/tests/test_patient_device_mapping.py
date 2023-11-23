@@ -29,19 +29,113 @@ def _test_device_patient_mapping(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    # Pre-test setup: create patients, devices, and device-patient mappings
-    patient_id_case1 = sdk.insert_patient(patient_id=123, mrn='123456')
-    device_id_case1 = sdk.insert_device(device_tag='monitor001')
+    # Time boundaries for testing
+    t1 = 1647084000_000_000_000
+    t2 = 1647104800_000_000_000
 
-    start_time_case1 = 1647084000_000_000_000
-    end_time_case1 = 1647094800_000_000_000
-    sdk.insert_device_patient_data([(device_id_case1, patient_id_case1, start_time_case1, end_time_case1)])
+    # Test case 1: Single Mapping Match
+    patient_id1 = sdk.insert_patient(mrn='123456789')
+    device_id1 = sdk.insert_device(device_tag='monitor001')
+    sdk.insert_device_patient_data([(device_id1, patient_id1, t1, t2)])
 
-    # Test different scenarios
-    # 1. Test for valid mapping (should return the correct device ID)
-    test_start_time = start_time_case1
-    test_end_time = end_time_case1
-    actual_device_id = sdk.convert_patient_to_device_id(test_start_time, test_end_time, patient_id_case1)
-    assert actual_device_id == device_id_case1, f"Expected device_id: {device_id_case1}, Got: {actual_device_id}"
+    assert sdk.convert_patient_to_device_id(t1, t2, patient_id1) == device_id1
+    assert sdk.convert_device_to_patient_id(t1, t2, device_id1) == patient_id1
 
-    # 2. Test for an out-of-range time span (should return None)
+    # Test case 2: Single Mapping Overlap
+    patient_id2 = sdk.insert_patient(mrn='123456780')
+    device_id2 = sdk.insert_device(device_tag='monitor002')
+    sdk.insert_device_patient_data([(device_id2, patient_id2, t1 - 3600_000_000_000, t2 + 3600_000_000_000)])
+
+    assert sdk.convert_patient_to_device_id(t1, t2, patient_id2) == device_id2
+    assert sdk.convert_device_to_patient_id(t1, t2, device_id2) == patient_id2
+
+    # Test case 3: Out-of-Range Before
+    patient_id3 = sdk.insert_patient(mrn='123456781')
+    device_id3 = sdk.insert_device(device_tag='monitor003')
+    sdk.insert_device_patient_data([(device_id3, patient_id3, t1 + 7200_000_000_000, t2 + 7200_000_000_000)])
+
+    assert sdk.convert_patient_to_device_id(t1 - 7200_000_000_000, t1 - 3600_000_000_000, patient_id3) is None
+    assert sdk.convert_device_to_patient_id(t1 - 7200_000_000_000, t1 - 3600_000_000_000, device_id3) is None
+
+    # Test case 4: Out-of-Range After
+    patient_id4 = sdk.insert_patient(mrn='123456782')
+    device_id4 = sdk.insert_device(device_tag='monitor004')
+    sdk.insert_device_patient_data([(device_id4, patient_id4, t1, t2)])
+
+    assert sdk.convert_patient_to_device_id(t2 + 3600_000_000_000, t2 + 7200_000_000_000, patient_id4) is None
+    assert sdk.convert_device_to_patient_id(t2 + 3600_000_000_000, t2 + 7200_000_000_000, device_id4) is None
+
+    # Test case 5: Matching Edge To Edge
+    patient_id5 = sdk.insert_patient(mrn='123456783')
+    device_id5 = sdk.insert_device(device_tag='monitor005')
+    sdk.insert_device_patient_data([
+        (device_id5, patient_id5, t1, t1 + 3600_000_000_000),
+        (device_id5, patient_id5, t1 + 3600_000_000_000, t2)
+    ])
+
+    assert sdk.convert_patient_to_device_id(t1, t2, patient_id5) == device_id5
+    assert sdk.convert_device_to_patient_id(t1, t2, device_id5) == patient_id5
+
+    # Test case 6: Multiple Overlapping
+    patient_id6 = sdk.insert_patient(mrn='123456784')
+    device_id6 = sdk.insert_device(device_tag='monitor006')
+    sdk.insert_device_patient_data([
+        (device_id6, patient_id6, t1, t1 + 7200_000_000_000),
+        (device_id6, patient_id6, t1 + 3600_000_000_000, t2)
+    ])
+
+    assert sdk.convert_patient_to_device_id(t1, t2, patient_id6) == device_id6
+    assert sdk.convert_device_to_patient_id(t1, t2, device_id6) == patient_id6
+
+    # Test case 7: Disjoint Mappings
+    patient_id7 = sdk.insert_patient(mrn='123456785')
+    device_id7 = sdk.insert_device(device_tag='monitor007')
+    sdk.insert_device_patient_data([
+        (device_id7, patient_id7, t1, t1 + 1800_000_000_000),
+        (device_id7, patient_id7, t2 - 1800_000_000_000, t2)
+    ])
+
+    assert sdk.convert_patient_to_device_id(t1, t2, patient_id7) is None
+    assert sdk.convert_device_to_patient_id(t1, t2, device_id7) is None
+
+    # Test case 8: Multiple Patients
+    patient_id8a = sdk.insert_patient(mrn='123456786')
+    patient_id8b = sdk.insert_patient(mrn='123456787')
+    device_id8 = sdk.insert_device(device_tag='monitor008')
+    sdk.insert_device_patient_data([
+        (device_id8, patient_id8a, t1, t1 + 7200_000_000_000),
+        (device_id8, patient_id8b, t1 + 7200_000_000_000, t2)
+    ])
+
+    assert sdk.convert_patient_to_device_id(t1 + 3600_000_000_000, t2 - 3600_000_000_000) is None
+    assert sdk.convert_device_to_patient_id(t1 + 3600_000_000_000, t2 - 3600_000_000_000, device_id8) is None
+
+    # Test case 9: Multiple Devices
+    patient_id9 = sdk.insert_patient(mrn='123456788')
+    device_id9a = sdk.insert_device(device_tag='monitor009a')
+    device_id9b = sdk.insert_device(device_tag='monitor009b')
+    sdk.insert_device_patient_data([
+        (device_id9a, patient_id9, t1, t1 + 3600_000_000_000),
+        (device_id9b, patient_id9, t2 - 3600_000_000_000, t2)
+    ])
+
+    assert sdk.convert_patient_to_device_id(t1, t2, patient_id9) is None
+    assert sdk.convert_device_to_patient_id(t1, t2, 'monitor009a') is None
+
+    # Test case 10: Invalid Input
+    try:
+        sdk.convert_patient_to_device_id('invalid', 'input', patient_id=patient_id1)
+    except ValueError as e:
+        assert str(e) == "start_time and end_time must be integers."
+
+    try:
+        sdk.convert_device_to_patient_id('invalid', 'input', device_id1)
+    except ValueError as e:
+        assert str(e) == "start_time and end_time must be integers."
+
+    # Test case 11: No Mappings
+    patient_id11 = sdk.insert_patient(mrn='1234567890')
+    device_id11 = sdk.insert_device(device_tag='monitor011')
+
+    assert sdk.convert_patient_to_device_id(t1, t2, patient_id11) is None
+    assert sdk.convert_device_to_patient_id(t1, t2, device_id11) is None
