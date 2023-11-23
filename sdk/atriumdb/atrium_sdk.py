@@ -3293,12 +3293,19 @@ class AtriumSDK:
             device_intervals[device_id] = merged_intervals
 
         # Check for a device whose interval encapsulates the provided time range
+        matching_devices = []
         for device_id, intervals in device_intervals.items():
             for interval in intervals:
                 if interval[0] <= start_time and interval[1] >= end_time:
-                    return device_id
+                    matching_devices.append(device_id)
 
-        return None
+        # Raise error if more than one match is found
+        if len(matching_devices) > 1:
+            raise ValueError(f"Multiple devices ({matching_devices}) found for the same time range with parameters: "
+                             f"start_time={start_time}, end_time={end_time}, patient_id={patient_id}, mrn={mrn}. "
+                             "Please check and fix the device_patient table.")
+
+        return matching_devices[0] if matching_devices else None
 
     def convert_device_to_patient_id(self, start_time: int, end_time: int, device):
         """
@@ -3343,12 +3350,19 @@ class AtriumSDK:
             patient_intervals[patient_id] = merged_intervals
 
         # Check for a patient whose interval encapsulates the provided time range
+        matching_patients = []
         for patient_id, intervals in patient_intervals.items():
             for interval in intervals:
                 if interval[0] <= start_time and interval[1] >= end_time:
-                    return patient_id
+                    matching_patients.append(patient_id)
 
-        return None
+        # Raise error if more than one match is found
+        if len(matching_patients) > 1:
+            raise ValueError(f"Multiple patients ({matching_patients}) found for the same time range with parameters: "
+                             f"start_time={start_time}, end_time={end_time}, device={device}. "
+                             "Please check and fix the device_patient table.")
+
+        return matching_patients[0] if matching_patients else None
 
     def _request(self, method: str, endpoint: str, **kwargs):
         """

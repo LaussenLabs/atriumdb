@@ -18,6 +18,8 @@
 from atriumdb import AtriumSDK
 from tests.testing_framework import _test_for_both
 
+import pytest
+
 DB_NAME = 'test_device_patient_mapping'
 
 
@@ -103,12 +105,13 @@ def _test_device_patient_mapping(db_type, dataset_location, connection_params):
     patient_id8b = sdk.insert_patient(mrn='123456787')
     device_id8 = sdk.insert_device(device_tag='monitor008')
     sdk.insert_device_patient_data([
-        (device_id8, patient_id8a, t1, t1 + 7200_000_000_000),
-        (device_id8, patient_id8b, t1 + 7200_000_000_000, t2)
+        (device_id8, patient_id8a, t1, t2),
+        (device_id8, patient_id8b, t1, t2)
     ])
 
-    assert sdk.convert_patient_to_device_id(t1 + 3600_000_000_000, t2 - 3600_000_000_000) is None
-    assert sdk.convert_device_to_patient_id(t1 + 3600_000_000_000, t2 - 3600_000_000_000, device_id8) is None
+    assert sdk.convert_patient_to_device_id(t1, t2, patient_id8a) == device_id8
+    with pytest.raises(ValueError):
+        sdk.convert_device_to_patient_id(t1, t2, device_id8)
 
     # Test case 9: Multiple Devices
     patient_id9 = sdk.insert_patient(mrn='123456788')
