@@ -343,8 +343,8 @@ CREATE TABLE IF NOT EXISTS label (
     label_source_id INT UNSIGNED,
     start_time_n BIGINT NOT NULL,
     end_time_n BIGINT NOT NULL,
-    CONSTRAINT FOREIGN KEY (label_set_id) REFERENCES label_set (id),
-    CONSTRAINT FOREIGN KEY (device_id) REFERENCES device (id),
-    CONSTRAINT FOREIGN KEY (label_source_id) REFERENCES label_source (id)
+    CONSTRAINT FOREIGN KEY (label_set_id) REFERENCES label_set(id),
+    CONSTRAINT FOREIGN KEY (device_id) REFERENCES device(id),
+    CONSTRAINT FOREIGN KEY (label_source_id) REFERENCES label_source(id)
 );
 """

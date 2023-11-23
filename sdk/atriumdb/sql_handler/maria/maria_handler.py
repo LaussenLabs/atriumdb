@@ -150,8 +150,8 @@ class MariaDBHandler(SQLHandler):
         cursor.execute(mariadb_device_patient_table)
 
         cursor.execute(mariadb_label_set_create_query)
-        cursor.execute(mariadb_label_create_query)
         cursor.execute(mariadb_label_source_create_query)
+        cursor.execute(mariadb_label_create_query)
 
         # Create Views
         cursor.execute(mariadb_current_census_view)
