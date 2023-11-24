@@ -255,6 +255,11 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
+    def delete_labels(self, label_ids):
+        # Delete multiple label records from the database based on their IDs.
+        pass
+
+    @abstractmethod
     def select_labels(self, label_set_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
                       end_time_n=None, label_source_id_list=None):
         # Retrieve labels based on provided criteria.

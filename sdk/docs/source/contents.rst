@@ -54,6 +54,7 @@ API Reference
    .. automethod:: get_label_set_id
    .. automethod:: insert_label
    .. automethod:: insert_labels
+   .. automethod:: delete_labels
    .. automethod:: get_labels
 
 .. autoclass:: atriumdb.DatasetDefinition

@@ -729,6 +729,15 @@ class MariaDBHandler(SQLHandler):
             # Return the ID of the last inserted label.
             return cursor.lastrowid
 
+    def delete_labels(self, label_ids):
+        # Delete multiple label records from the database based on their IDs.
+        query = "DELETE FROM label WHERE id = ?"
+        with self.maria_db_connection() as (conn, cursor):
+            # Execute the delete query for each ID in the list.
+            for label_id in label_ids:
+                cursor.execute(query, (label_id,))
+            conn.commit()
+
     def select_labels(self, label_set_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
                       end_time_n=None, label_source_id_list=None):
         # Select labels based on the given criteria. This function supports recursive queries for patients.

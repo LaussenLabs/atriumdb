@@ -255,7 +255,8 @@ class AtriumSDK:
 
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None,
-                       protected_mode: str = None, overwrite: str = None, connection_params: dict = None, no_pool=False):
+                       protected_mode: str = None, overwrite: str = None, connection_params: dict = None,
+                       no_pool=False):
         """
         .. _create_dataset_label:
 
@@ -689,7 +690,8 @@ class AtriumSDK:
         num_full_blocks = value_data.size // self.block.block_size
         if num_full_blocks > 0 and value_data.size % self.block.block_size != 0:
             byte_start_array, encoded_bytes, encoded_headers = self._make_oversized_block(
-                encoded_time_type, encoded_value_type, freq_nhz,num_full_blocks, raw_time_type, raw_value_type, scale_b,
+                encoded_time_type, encoded_value_type, freq_nhz, num_full_blocks, raw_time_type, raw_value_type,
+                scale_b,
                 scale_m, time_0, time_data, value_data)
         # if all blocks are perfectly sized or there is less than one optimal block worth of data
         else:
@@ -734,7 +736,7 @@ class AtriumSDK:
         return encoded_bytes, encoded_headers, byte_start_array, filename
 
     def _make_oversized_block(self, encoded_time_type, encoded_value_type, freq_nhz, num_full_blocks, raw_time_type,
-                             raw_value_type, scale_b, scale_m, time_0, time_data, value_data):
+                              raw_value_type, scale_b, scale_m, time_0, time_data, value_data):
         # remove 1 from num_full_blocks since one full block will be a part of the last oversized block
         num_full_blocks -= 1
         # save original optimal block size, so you can switch back later
@@ -3666,7 +3668,8 @@ class AtriumSDK:
             label_id = self._label_set_ids[name]
 
         # Insert the label into the database
-        self.sql_handler.insert_label(label_id, converted_device_id, start_time, end_time, label_source_id=label_source_id)
+        self.sql_handler.insert_label(label_id, converted_device_id, start_time, end_time,
+                                      label_source_id=label_source_id)
 
     def insert_labels(self, labels: List[Tuple[str, Union[int, str], int, int, Union[str, int]]],
                       time_units: str = None, source_type: str = None):
@@ -3742,6 +3745,63 @@ class AtriumSDK:
 
         # Insert the labels into the database
         self.sql_handler.insert_labels(formatted_labels)
+
+    def delete_labels(self, label_id_list=None, label_set_id_list=None, name_list=None, device_list=None,
+                      start_time=None, end_time=None, time_units: str = None,
+                      patient_id_list=None, label_source_list: Optional[List[Union[str, int]]] = None):
+        """
+        Delete labels from the database based on specified criteria. If no parameters are passed, the method raises an error for safety.
+
+        :param List[int] label_id_list: List of label IDs to delete. Use '*' to delete all labels.
+        :param List[int] label_set_id_list: List of label set IDs to filter labels for deletion.
+        :param List[str] name_list: List of label names to filter labels for deletion.
+        :param List[Union[int, str]] device_list: List of device IDs or device tags to filter labels for deletion.
+        :param int start_time: Start time filter for the labels to delete.
+        :param int end_time: End time filter for the labels to delete.
+        :param str time_units: Units for the `start_time` and `end_time` filters.
+        :param List[int] patient_id_list: List of patient IDs to filter labels for deletion.
+        :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter labels for deletion.
+        :raises ValueError: If no parameters are provided, or if invalid parameters are provided.
+        :return: None
+
+        Example usage:
+            To delete labels for a specific device ID:
+                delete_labels(device_list=[1001])
+
+            To delete all labels:
+                delete_labels(label_id_list="*")
+        """
+
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this method.")
+
+        if "protected_mode" not in self.settings_dict:
+            raise ValueError(
+                "protected_mode is not found in settings table. protected_mode must be set and equal to False")
+        if self.settings_dict["protected_mode"] != "False":
+            raise ValueError(
+                "Cannot perform delete, protected_mode not set to `False`, change in sql table to allow deletion.")
+
+        if all(param is None for param in
+               [label_id_list, label_set_id_list, name_list, device_list, start_time, end_time, patient_id_list,
+                label_source_list]):
+            raise ValueError(
+                "No parameters were provided. For safety, you need to specify at least one parameter. Use label_id_list='*' to delete all labels.")
+
+        if label_id_list == "*":
+            all_labels = self.get_labels()
+            all_label_ids = [label_info['label_id'] for label_info in all_labels]
+            return self.sql_handler.delete_labels(all_label_ids)
+
+        elif label_id_list is not None:
+            return self.sql_handler.delete_labels(label_id_list)
+
+        filtered_labels = self.get_labels(label_set_id_list=label_set_id_list, name_list=name_list,
+                                          device_list=device_list,
+                                          start_time=start_time, end_time=end_time, time_units=time_units,
+                                          patient_id_list=patient_id_list, label_source_list=label_source_list)
+        filtered_label_ids = [label_info['label_id'] for label_info in filtered_labels]
+        return self.sql_handler.delete_labels(filtered_label_ids)
 
     def get_labels(self, label_set_id_list=None, name_list=None, device_list=None,
                    start_time=None, end_time=None, time_units: str = None,
@@ -3852,7 +3912,8 @@ class AtriumSDK:
         unique_device_ids = {label[2] for label in labels}
 
         # Create dictionaries for label set and device info for optimized lookup
-        label_set_id_to_info = {label_set_id: self.get_label_set_info(label_set_id) for label_set_id in unique_label_set_ids}
+        label_set_id_to_info = {label_set_id: self.get_label_set_info(label_set_id) for label_set_id in
+                                unique_label_set_ids}
         device_id_to_info = {device_id: self.get_device_info(device_id) for device_id in unique_device_ids}
 
         result = []
@@ -3954,7 +4015,7 @@ class AtriumSDK:
 
         # Handle time units and conversion to nanoseconds
         if time_units:
-            time_unit_options = {"ns": 1, "s": 10**9, "ms": 10**6, "us": 10**3}
+            time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
             if time_units not in time_unit_options.keys():
                 raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
 
