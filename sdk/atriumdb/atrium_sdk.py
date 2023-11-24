@@ -3669,29 +3669,45 @@ class AtriumSDK:
         self.sql_handler.insert_label(label_id, converted_device_id, start_time, end_time, label_source_id=label_source_id)
 
     def insert_labels(self, labels: List[Tuple[str, Union[int, str], int, int, Union[str, int]]],
-                      time_units: str = None):
+                      time_units: str = None, source_type: str = None):
         """
         Insert multiple label records into the database.
 
         :param List[Tuple[str, Union[int, str], int, int, Union[str, int]]] labels: A list of labels. Each label is a tuple containing:
             - Name of the label type.
-            - Device ID or device tag.
+            - Source ID based on the source_type parameter (device ID, device tag, patient ID, or MRN).
             - Start time for the label.
             - End time for the label.
-            - Name or ID of the label source.
+            - Name or ID of the label source. (Can be None, for no specified source)
         :param str time_units: Units for the `start_time` and `end_time` of each label. Valid options are 'ns', 's', 'ms', and 'us'.
-        :raises ValueError: If the provided label_source is not found in the database.
+        :param str source_type: The type of source ID provided in the labels. Valid options are 'device_id', 'device_tag', 'patient_id', and 'mrn'.
+        :raises ValueError: If the provided label_source or source_type is not found in the database.
         """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
 
-        time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+        valid_source_types = ["device_id", "device_tag", "patient_id", "mrn"]
+        source_type = "device_id" if source_type is None else source_type
+        if source_type not in valid_source_types:
+            raise ValueError(f"Invalid source type. Expected one of: {', '.join(valid_source_types)}")
 
-        # Prepare the list to store formatted labels
+        time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
         formatted_labels = []
 
         for label in labels:
-            name, device, start_time, end_time, label_source = label
+            name, source_id, start_time, end_time, label_source = label
+
+            # Convert source_id based on the source_type parameter
+            if source_type == "device_tag":
+                device = self.get_device_id(source_id)
+            elif source_type == "patient_id":
+                device = self.convert_patient_to_device_id(start_time, end_time, patient_id=source_id)
+            elif source_type == "mrn":
+                device = self.convert_patient_to_device_id(start_time, end_time, mrn=source_id)
+            elif source_type == "device_id":
+                device = source_id
+            else:
+                raise ValueError(f"Invalid source type. Expected one of: {', '.join(valid_source_types)}")
 
             # Convert device tag to device ID if necessary
             if isinstance(device, str):
