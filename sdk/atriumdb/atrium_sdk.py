@@ -3766,15 +3766,15 @@ class AtriumSDK:
             Given an input filtering by a particular device ID, the output could look like:
             [
                 {
-                    'label_entry_id': 1,
-                    'label_set_id': 10,
-                    'label_set_name': 'example_name_1',
+                    'label_id': 1,
+                    'label_name_id': 10,
+                    'label_name': 'example_name_1',
                     'device_id': 1001,
                     'device_tag': 'tag_1',
                     'start_time_n': 1625000000000000000,
                     'end_time_n': 1625100000000000000,
                     'label_source_id': 4,
-                    'label_source_name': "LabelStudio_Project_1",
+                    'label_source': "LabelStudio_Project_1",
                 },
                 ...
             ]
@@ -3864,15 +3864,15 @@ class AtriumSDK:
             label_source_name = label_source_info['name'] if label_source_info else None
 
             formatted_label = {
-                'label_entry_id': label_entry_id,
-                'label_set_id': label_set_id,
-                'label_set_name': label_set_id_to_info[label_set_id]['name'],
+                'label_id': label_entry_id,
+                'label_name_id': label_set_id,
+                'label_name': label_set_id_to_info[label_set_id]['name'],
                 'device_id': device_id,
                 'device_tag': device_id_to_info[device_id]['tag'],
                 'start_time_n': start_time_n,
                 'end_time_n': end_time_n,
                 'label_source_id': label_source_id,
-                'label_source_name': label_source_name
+                'label_source': label_source_name
             }
             result.append(formatted_label)
 
