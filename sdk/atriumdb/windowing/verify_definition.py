@@ -21,6 +21,7 @@ from typing import List, Tuple, Dict
 import yaml
 import numpy as np
 
+from atriumdb.adb_functions import get_measure_id_from_generic_measure
 from atriumdb.intervals.union import intervals_union_list
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.windowing.map_definition_sources import map_validated_sources
@@ -58,57 +59,19 @@ def _validate_measures(definition: DatasetDefinition, sdk):
     validated_measure_list = []
 
     for measure_spec in measures:
-        if isinstance(measure_spec, str):
-            # Assume measure_spec is a measure_tag
-            search_result = sdk.search_measures(tag_match=measure_spec)
-            search_result = {measure_id: measure_info for measure_id, measure_info in search_result.items()
-                             if measure_info['tag'] == measure_spec}
+        measure_id = get_measure_id_from_generic_measure(sdk, measure_spec)
 
-            if len(search_result) == 0:
-                raise ValueError(f"Measure {measure_spec} not found in SDK. Must use AtriumSDK.insert_measure if you "
-                                 f"want the iterator to output the measure")
+        if measure_id is None:
+            raise ValueError(f"Measure {measure_spec} not found in SDK. Must use AtriumSDK.insert_measure if you "
+                             f"want the iterator to output the measure")
 
-            elif len(search_result) != 1:
-                raise ValueError(f"Measure Tag {measure_spec} has more than one matching measure.")
-
-            measure_info = list(search_result.values())[0]
-            validated_measure_info = {
-                'id': int(measure_info.get('id')),
-                'tag': measure_info['tag'],
-                'freq_nhz': measure_info.get('freq_nhz'),
-                'units': measure_info.get('unit')
-            }
-
-        elif isinstance(measure_spec, dict):
-            if "freq_nhz" in measure_spec:
-                measure_id = sdk.get_measure_id(
-                    measure_spec['tag'],
-                    measure_spec.get('freq_nhz'),
-                    measure_spec.get('units'),
-                )
-            else:
-                measure_id = sdk.get_measure_id(
-                    measure_spec['tag'],
-                    measure_spec.get('freq_hz'),
-                    measure_spec.get('units'),
-                    freq_units="Hz"
-                )
-
-            if measure_id is None:
-                raise ValueError(f"Measure {measure_spec} not found in SDK. Must use AtriumSDK.insert_measure if you "
-                                 f"want the iterator to output the measure")
-
-            measure_info = sdk.get_measure_info(measure_id)
-            validated_measure_info = {
-                'id': measure_id,
-                'tag': measure_info['tag'],
-                'freq_nhz': measure_info.get('freq_nhz'),
-                'units': measure_info.get('unit')
-            }
-        else:
-            raise ValueError(f"measure_spec {measure_spec} of invalid type: "
-                             f"{type(measure_spec)}, must be string or dict")
-
+        measure_info = sdk.get_measure_info(measure_id)
+        validated_measure_info = {
+            'id': measure_id,
+            'tag': measure_info['tag'],
+            'freq_nhz': measure_info.get('freq_nhz'),
+            'units': measure_info.get('unit')
+        }
         validated_measure_list.append(validated_measure_info)
 
     return validated_measure_list
