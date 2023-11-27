@@ -2342,6 +2342,8 @@ class AtriumSDK:
         self._patient_id_to_mrn = {}
         for patient_id, patient_info in self._patients.items():
             mrn = patient_info['mrn']
+            if mrn is None:
+                continue
             self._mrn_to_patient_id[mrn] = patient_id
             self._patient_id_to_mrn[patient_id] = mrn
 
@@ -3924,12 +3926,18 @@ class AtriumSDK:
             label_source_info = self.get_label_source_info(label_source_id) if label_source_id else None
             label_source_name = label_source_info['name'] if label_source_info else None
 
+            patient_id = self.convert_device_to_patient_id(
+                start_time=start_time_n, end_time=end_time_n, device=device_id)
+            mrn = None if patient_id is None else self.get_mrn(patient_id)
+
             formatted_label = {
                 'label_id': label_entry_id,
                 'label_name_id': label_set_id,
                 'label_name': label_set_id_to_info[label_set_id]['name'],
                 'device_id': device_id,
                 'device_tag': device_id_to_info[device_id]['tag'],
+                'patient_id': patient_id,
+                'mrn': mrn,
                 'start_time_n': start_time_n,
                 'end_time_n': end_time_n,
                 'label_source_id': label_source_id,
