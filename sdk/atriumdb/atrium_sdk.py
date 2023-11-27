@@ -3833,6 +3833,8 @@ class AtriumSDK:
                     'label_name': 'example_name_1',
                     'device_id': 1001,
                     'device_tag': 'tag_1',
+                    'patient_id': 12345,
+                    'mrn': 7654321,
                     'start_time_n': 1625000000000000000,
                     'end_time_n': 1625100000000000000,
                     'label_source_id': 4,
