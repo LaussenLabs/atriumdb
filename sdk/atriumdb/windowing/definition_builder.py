@@ -6,7 +6,8 @@ from atriumdb.intervals.intersection import list_intersection
 
 
 def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None, mrn_list=None,
-                           device_id_list=None, device_tag_list=None, start_time=None, end_time=None):
+                           device_id_list=None, device_tag_list=None, start_time=None, end_time=None,
+                           gap_tolerance=None):
     # Check that exactly one source identifier list is provided
     source_lists = [patient_id_list, mrn_list, device_id_list, device_tag_list]
     if sum([source_list is not None for source_list in source_lists]) != 1:
@@ -47,12 +48,14 @@ def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None
             for measure in measures:
                 measure_id = get_measure_id_from_generic_measure(sdk, measure)
                 interval_list.append(sdk.get_interval_array(
-                    measure_id, device_id=device_id, patient_id=patient_id, start=start_time, end=end_time))
+                    measure_id, device_id=device_id, patient_id=patient_id, start=start_time, end=end_time,
+                    gap_tolerance_nano=gap_tolerance))
 
         elif labels is not None:
             for label in labels:
                 interval_list.append(get_label_intervals(
-                    sdk, label, device_id=device_id, patient_id=patient_id, start=start_time, end=end_time))
+                    sdk, label, device_id=device_id, patient_id=patient_id, start=start_time, end=end_time,
+                    gap_tolerance=gap_tolerance))
 
         else:
             raise ValueError("Either measures or labels must be provided.")
@@ -68,7 +71,7 @@ def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None
 
         if merged_interval_array.size > 0:
             # Convert to list of dictionaries with "start" and "end" keys
-            intervals = [{'start': start, 'end': end} for start, end in merged_interval_array.reshape(-1, 2)]
+            intervals = [{'start': int(start), 'end': int(end)} for start, end in merged_interval_array.reshape(-1, 2)]
             # Add these intervals to the correct element in the source_intervals dictionary
             if patient_id is not None:
                 source_intervals['patient_ids'][patient_id] = intervals
@@ -78,7 +81,8 @@ def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None
     return source_intervals
 
 
-def get_label_intervals(sdk, label_name: str, device_id=None, patient_id=None, start=None, end=None):
+def get_label_intervals(sdk, label_name: str, device_id=None, patient_id=None, start=None, end=None,
+                        gap_tolerance=None):
     """
     Retrieves intervals of a specific label from an AtriumSDK object.
 
@@ -88,6 +92,9 @@ def get_label_intervals(sdk, label_name: str, device_id=None, patient_id=None, s
     :param int patient_id: (Optional) Patient ID to filter labels.
     :param int start: (Optional) The start time in nanoseconds.
     :param int end: (Optional) The end time in nanoseconds.
+    :param int gap_tolerance: (Optional) The maximum allowable gap size in the data such that the output considers a
+            region continuous. Put another way, the minimum gap size, such that the output of this method will add
+            a new row.
     :return: A 2D numpy array of intervals, each row containing the start and end time.
     :rtype: numpy.ndarray
     """
@@ -101,11 +108,14 @@ def get_label_intervals(sdk, label_name: str, device_id=None, patient_id=None, s
         end_time=end
     )
 
+    sorted_labels = sorted(labels, key=lambda x: x['start_time_n'])
+
     # Process labels to create intervals
     intervals = []
-    for label in labels:
-        intervals.append([label['start_time_n'], label['end_time_n']])
+    for label in sorted_labels:
+        if len(intervals) > 0 and label['start_time_n'] - intervals[-1][1] <= gap_tolerance:
+            intervals[-1][1] = label['end_time_n']
+        else:
+            intervals.append([label['start_time_n'], label['end_time_n']])
 
-    # Sort intervals by start time and convert to numpy array
-    sorted_intervals = sorted(intervals, key=lambda x: x[0])
-    return np.array(sorted_intervals, dtype=np.int64)
+    return np.array(intervals, dtype=np.int64)

@@ -127,7 +127,8 @@ class DatasetDefinition:
 
     @classmethod
     def build_from_intervals(cls, sdk, build_from_signal_type, measures=None, labels=None, patient_id_list=None,
-                             mrn_list=None, device_id_list=None, device_tag_list=None, start_time=None, end_time=None):
+                             mrn_list=None, device_id_list=None, device_tag_list=None, start_time=None, end_time=None,
+                             gap_tolerance=None):
         """
         Class method that builds a DatasetDefinition object using signal-based intervals.
 
@@ -141,6 +142,9 @@ class DatasetDefinition:
         :param device_tag_list: List of device tags
         :param start_time: Start timestamp for filtering
         :param end_time: End timestamp for filtering
+        :param int gap_tolerance: The maximum allowable gap size in the data such that the output considers a
+            region continuous. Put another way, the minimum gap size, such that the output of this method will add
+            a new row.
         :return: DatasetDefinition object
         """
         # Validate build_from_signal_type
@@ -152,7 +156,7 @@ class DatasetDefinition:
                                                   patient_id_list=patient_id_list,
                                                   mrn_list=mrn_list, device_id_list=device_id_list,
                                                   device_tag_list=device_tag_list, start_time=start_time,
-                                                  end_time=end_time)
+                                                  end_time=end_time, gap_tolerance=gap_tolerance)
 
         # Create a DatasetDefinition instance
         kwargs = {
