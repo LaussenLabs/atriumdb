@@ -1,4 +1,3 @@
-from atriumdb import AtriumSDK
 import numpy as np
 
 from atriumdb.adb_functions import get_measure_id_from_generic_measure
@@ -6,11 +5,7 @@ from atriumdb.intervals.compact import reverse_compact_list
 from atriumdb.intervals.intersection import list_intersection
 
 
-def build_definition_from_labels(sdk: AtriumSDK, label_set_list):
-    pass
-
-
-def build_source_intervals(sdk: AtriumSDK, measures=None, labels=None, patient_id_list=None, mrn_list=None,
+def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None, mrn_list=None,
                            device_id_list=None, device_tag_list=None, start_time=None, end_time=None):
     # Check that exactly one source identifier list is provided
     source_lists = [patient_id_list, mrn_list, device_id_list, device_tag_list]
@@ -44,6 +39,7 @@ def build_source_intervals(sdk: AtriumSDK, measures=None, labels=None, patient_i
 
     source_list = next(filter(None, source_lists))  # Get the non-None source list
     source_key = ['patient_ids', 'mrns', 'device_ids', 'device_tags'][source_lists.index(source_list)]
+    source_intervals = {'patient_ids': {}, 'mrns': {}, 'device_ids': {}, 'device_tags': {}}
 
     for device_id, patient_id in device_patient_list:
         interval_list = []
@@ -70,14 +66,19 @@ def build_source_intervals(sdk: AtriumSDK, measures=None, labels=None, patient_i
 
             merged_interval_array = np.array(reverse_compact_list(merged_interval_list), dtype=np.int64)
 
-        pass
+        if merged_interval_array.size > 0:
+            # Convert to list of dictionaries with "start" and "end" keys
+            intervals = [{'start': start, 'end': end} for start, end in merged_interval_array.reshape(-1, 2)]
+            # Add these intervals to the correct element in the source_intervals dictionary
+            if patient_id is not None:
+                source_intervals['patient_ids'][patient_id] = intervals
+            elif device_id is not None:
+                source_intervals['device_ids'][device_id] = intervals
+
+    return source_intervals
 
 
-    print(source_list)
-    print(source_key)
-
-
-def get_label_intervals(sdk: AtriumSDK, label_name: str, device_id=None, patient_id=None, start=None, end=None):
+def get_label_intervals(sdk, label_name: str, device_id=None, patient_id=None, start=None, end=None):
     """
     Retrieves intervals of a specific label from an AtriumSDK object.
 
@@ -108,6 +109,3 @@ def get_label_intervals(sdk: AtriumSDK, label_name: str, device_id=None, patient
     # Sort intervals by start time and convert to numpy array
     sorted_intervals = sorted(intervals, key=lambda x: x[0])
     return np.array(sorted_intervals, dtype=np.int64)
-
-
-build_source_intervals(None, measures=["hi"], mrn_list=[234])

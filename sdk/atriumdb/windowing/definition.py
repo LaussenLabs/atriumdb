@@ -20,6 +20,8 @@ import os
 import warnings
 import json
 
+from atriumdb.windowing.definition_builder import build_source_intervals
+
 
 class DatasetDefinition:
     """
@@ -122,6 +124,47 @@ class DatasetDefinition:
 
         # Validate and convert the data
         self._validate_and_convert_data()
+
+    @classmethod
+    def build_from_intervals(cls, sdk, build_from_signal_type, measures=None, labels=None, patient_id_list=None,
+                             mrn_list=None, device_id_list=None, device_tag_list=None, start_time=None, end_time=None):
+        """
+        Class method that builds a DatasetDefinition object using signal-based intervals.
+
+        :param sdk: Data SDK used to interact with the database or data service
+        :param build_from_signal_type: Signal type to build from, either "measures" or "labels"
+        :param measures: List of measures to build from, if applicable
+        :param labels: List of labels to build from, if applicable
+        :param patient_id_list: List of patient IDs
+        :param mrn_list: List of medical record numbers
+        :param device_id_list: List of device IDs
+        :param device_tag_list: List of device tags
+        :param start_time: Start timestamp for filtering
+        :param end_time: End timestamp for filtering
+        :return: DatasetDefinition object
+        """
+        # Validate build_from_signal_type
+        if build_from_signal_type not in ["measures", "labels"]:
+            raise ValueError("build_from_signal_type must be either 'measures' or 'labels'")
+
+        # Build the source intervals using the build_source_intervals function
+        source_intervals = build_source_intervals(sdk, measures=measures, labels=labels,
+                                                  patient_id_list=patient_id_list,
+                                                  mrn_list=mrn_list, device_id_list=device_id_list,
+                                                  device_tag_list=device_tag_list, start_time=start_time,
+                                                  end_time=end_time)
+
+        # Create a DatasetDefinition instance
+        kwargs = {
+            'measures': measures,
+            'labels': labels,
+            'patient_ids': source_intervals.get('patient_ids'),
+            'mrns': source_intervals.get('mrns'),
+            'device_ids': source_intervals.get('device_ids'),
+            'device_tags': source_intervals.get('device_tags'),
+        }
+        dataset_def = cls(**kwargs)
+        return dataset_def
 
     def read_yaml(self, filename):
         try:
