@@ -2858,8 +2858,11 @@ class AtriumSDK:
             return self._patients[patient_id]
 
         # Try getting the patient by MRN from the cache
-        if mrn is not None and mrn in self._mrn_to_patient_id:
-            return self._patients[self._mrn_to_patient_id[mrn]]
+        if mrn is not None:
+            # Convert mrn to int for proper sql lookup
+            mrn = int(mrn)
+            if mrn in self._mrn_to_patient_id:
+                return self._patients[self._mrn_to_patient_id[mrn]]
 
         # If we did not find the patient, refresh the patient cache
         self.get_all_patients()
@@ -3174,12 +3177,12 @@ class AtriumSDK:
             return self._api_get_mrn_to_patient_id_map(mrn_list)
 
         # If all mrns are in the cache
-        if all(mrn in self._mrn_to_patient_id for mrn in mrn_list):
-            return {mrn: self._mrn_to_patient_id[mrn] for mrn in mrn_list}
+        if all(int(mrn) in self._mrn_to_patient_id for mrn in mrn_list):
+            return {int(mrn): self._mrn_to_patient_id[int(mrn)] for mrn in mrn_list}
 
         # Refresh the cache and return all available mrns.
         self.get_all_patients()
-        return {mrn: self._mrn_to_patient_id[mrn] for mrn in mrn_list if mrn in self._mrn_to_patient_id}
+        return {int(mrn): self._mrn_to_patient_id[int(mrn)] for mrn in mrn_list if int(mrn) in self._mrn_to_patient_id}
 
     def get_patient_id_to_mrn_map(self, patient_id_list=None):
         """
@@ -3244,6 +3247,10 @@ class AtriumSDK:
         >>> print(patient_id)
         1
         """
+
+        # Convert mrn to int for sql lookup
+        mrn = int(mrn)
+
         # Check if we are in API mode
         if self.metadata_connection_type == "api":
             patient_info = self._api_get_patient_info(mrn=mrn)
