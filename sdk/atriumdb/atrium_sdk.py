@@ -3716,6 +3716,25 @@ class AtriumSDK:
         :param str time_units: Units for the `start_time` and `end_time` of each label. Valid options are 'ns', 's', 'ms', and 'us'.
         :param str source_type: The type of source ID provided in the labels. Valid options are 'device_id', 'device_tag', 'patient_id', and 'mrn'.
         :raises ValueError: If the provided label_source or source_type is not found in the database.
+
+        Example usage:
+
+        .. code-block:: python
+
+            # Using device ID as the source type
+            labels_data = [
+                ('Sleep Stage', 42, 1609459200_000_000_000, 1609462800_000_000_000, None),
+                ('Medication', 56, 1609459200_000_000_000, 1609462800_000_000_000, 'Medication DB')
+            ]
+            insert_labels(labels=labels_data, time_units='s', source_type='device_id')
+
+            # Using MRN as the source type
+            labels_data = [
+                ('Heart Rate', 1234567, 1609459200_000, 1609462800_000, None),
+                ('Blood Pressure', 1234568, 1609459200_000, 1609462800_000, 'Automatic Device')
+            ]
+            insert_labels(labels=labels_data, time_units='ms', source_type='mrn')
+
         """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
