@@ -3713,7 +3713,7 @@ class AtriumSDK:
             - Start time for the label.
             - End time for the label.
             - Name or ID of the label source. (Can be None, for no specified source)
-        :param str time_units: Units for the `start_time` and `end_time` of each label. Valid options are 'ns', 's', 'ms', and 'us'.
+        :param str time_units: Units for the `start_time` and `end_time` of each label. Valid options are 'ns', 's', 'ms', and 'us'. (default ns)
         :param str source_type: The type of source ID provided in the labels. Valid options are 'device_id', 'device_tag', 'patient_id', and 'mrn'.
         :raises ValueError: If the provided label_source or source_type is not found in the database.
 
