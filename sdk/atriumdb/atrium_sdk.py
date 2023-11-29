@@ -3627,6 +3627,23 @@ class AtriumSDK:
         :param str time_units: Units for the `start_time` and `end_time`. Valid options are 'ns', 's', 'ms', and 'us'.
         :param Union[str, int] label_source: Name or ID of the label source.
         :raises ValueError: If the provided label_source is not found in the database.
+
+        Example usage:
+
+        .. code-block:: python
+
+            # Insert a label for a device with ID 42
+            insert_label(name='Sleep Stage', start_time=1609459200_000_000_000, end_time=1609462800_000_000_000, device=42)
+
+            # Insert a label for a patient with patient_id 12345
+            insert_label(name='Medication', start_time=1609459200_000, end_time=1609462800_000, patient_id=12345, time_units='ms')
+
+            # Using a device tag instead of device ID
+            insert_label(name='Arrhythmia', start_time=1609459200_000_000_000, end_time=1609462800_000_000_000, device='device-tag-xyz')
+
+            # Specifying time units and label source by name
+            insert_label(name='Exercise', start_time=1609459200, end_time=1609462800, device=42, time_units='s', label_source='Manual Entry')
+
         """
 
         if self.metadata_connection_type == "api":
@@ -3745,7 +3762,8 @@ class AtriumSDK:
             if isinstance(label_source, str):
                 label_source_id = self.get_label_source_id(label_source)
                 if label_source_id is None:
-                    raise ValueError(f"Label source name '{label_source}' not found in the database.")
+                    warnings.warn(f"Label source {label_source} was not found in the database, inserting it now.")
+                    label_source_id = self.insert_label_source(name=label_source)
             elif isinstance(label_source, int):
                 label_source_id = label_source
             else:
