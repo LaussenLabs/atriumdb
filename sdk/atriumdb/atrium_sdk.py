@@ -14,6 +14,8 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import warnings
+
 import numpy as np
 
 from atriumdb.windowing.definition import DatasetDefinition
@@ -3656,7 +3658,9 @@ class AtriumSDK:
         if isinstance(label_source, str):
             label_source_id = self.get_label_source_id(label_source)
             if label_source_id is None:
-                raise ValueError(f"Label source name '{label_source}' not found in the database.")
+                warnings.warn(f"Label source {label_source} was not found in the database, inserting it now.")
+                label_source_id = self.insert_label_source(name=label_source)
+
         elif isinstance(label_source, int):
             label_source_id = label_source
         else:
