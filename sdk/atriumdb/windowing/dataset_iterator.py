@@ -308,8 +308,8 @@ class DatasetIterator:
             measure_filled_time_array[closest_i_array_signals] = measure_sdk_times[mask]
 
             # convert time data from nanoseconds to unit of choice
-            if self.time_units != 'ns':
-                measure_filled_time_array = measure_filled_time_array / self.time_unit_options[self.time_units]
+            # if self.time_units != 'ns':
+            #     measure_filled_time_array = measure_filled_time_array / self.time_unit_options[self.time_units]
 
             # Create Windows
             windowed_measure_times = sliding_window_view(measure_filled_time_array, measure_window_size)
