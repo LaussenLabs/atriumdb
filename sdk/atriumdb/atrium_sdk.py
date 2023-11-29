@@ -3018,11 +3018,12 @@ class AtriumSDK:
         """
         .. _get_device_id_label:
 
-        Retrieve the identifier of a device in the linked relational database based on its tag.
+        Retrieve the identifier of a device in the linked relational database based on its tag. Or None if device
+        not found.
 
         :param str device_tag: The tag of the device to retrieve the identifier for.
 
-        :return: The identifier of the device.
+        :return: The identifier of the device. Or None if device not found.
         :rtype: int
 
         >>> # Connect to example_dataset
@@ -3059,12 +3060,12 @@ class AtriumSDK:
         """
         .. _get_device_info_label:
 
-        Retrieve information about a specific device in the linked relational database.
+        Retrieve information about a specific device in the linked relational database. Or None if device not found.
 
         :param int device_id: The identifier of the device to retrieve information for.
 
         :return: A dictionary containing information about the device, including its id, tag, name, manufacturer, model,
-                 type, bed_id, and source_id.
+                 type, bed_id, and source_id. Or None if Device not found.
         :rtype: dict
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
@@ -3709,18 +3710,22 @@ class AtriumSDK:
             # Convert source_id based on the source_type parameter
             if source_type == "device_tag":
                 device = self.get_device_id(source_id)
+                if device is None:
+                    raise ValueError(f"device tag {source_id} not found in database")
             elif source_type == "patient_id":
                 device = self.convert_patient_to_device_id(start_time, end_time, patient_id=source_id)
+                if device is None:
+                    raise ValueError(f"patient id {source_id} not found in database")
             elif source_type == "mrn":
                 device = self.convert_patient_to_device_id(start_time, end_time, mrn=source_id)
+                if device is None:
+                    raise ValueError(f"mrn {source_id} not found in database")
             elif source_type == "device_id":
                 device = source_id
+                if self.get_device_info(source_id) is None:
+                    raise ValueError(f"device id {source_id} not found in database")
             else:
                 raise ValueError(f"Invalid source type. Expected one of: {', '.join(valid_source_types)}")
-
-            # Convert device tag to device ID if necessary
-            if isinstance(device, str):
-                device = self.get_device_id(device)
 
             # Adjust start and end times using time units
             if time_units:
