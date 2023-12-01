@@ -8,6 +8,7 @@ from atriumdb.intervals.intersection import list_intersection
 def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None, mrn_list=None,
                            device_id_list=None, device_tag_list=None, start_time=None, end_time=None,
                            gap_tolerance=None):
+    gap_tolerance = 0 if gap_tolerance is None else gap_tolerance
     # Check that exactly one source identifier list is provided
     source_lists = [patient_id_list, mrn_list, device_id_list, device_tag_list]
     if sum([source_list is not None for source_list in source_lists]) != 1:
@@ -20,18 +21,28 @@ def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None
         raise ValueError("Only one of measures or labels should be provided.")
 
     if mrn_list is not None:
+        if mrn_list == "all":
+            all_patients = sdk.get_all_patients()
+            mrn_list = [patient_info["mrn"] for patient_info in all_patients.values() if patient_info["mrn"] is not None]
         device_patient_list = \
             [(None, sdk.get_patient_id(mrn)) for mrn in mrn_list
              if sdk.get_patient_id(mrn) is not None]
     elif patient_id_list is not None:
+        if patient_id_list == "all":
+            patient_id_list = list(sdk.get_all_patients().keys())
         device_patient_list = \
             [(None, patient_id) for patient_id in patient_id_list
              if sdk.get_patient_info(patient_id) is not None]
     elif device_tag_list is not None:
+        if device_tag_list == "all":
+            all_devices = sdk.get_all_devices()
+            device_tag_list = [device_info['tag'] for device_info in all_devices.values()]
         device_patient_list = \
             [(sdk.get_device_id(device_tag), None) for device_tag in device_tag_list
              if sdk.get_device_id(device_tag) is not None]
     elif device_id_list is not None:
+        if device_id_list == "all":
+            device_id_list = list(sdk.get_all_devices().keys())
         device_patient_list = \
             [(device_id, None) for device_id in device_id_list
              if sdk.get_device_info(device_id) is not None]
