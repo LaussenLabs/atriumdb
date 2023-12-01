@@ -365,6 +365,196 @@ class DatasetIterator:
 
         self.current_batch_start_time = batch_start_time
 
+    def new_load_batch_matrix(self, idx: int):
+        batch_index, batch_start_index, batch_end_index, batch_num_windows, batch_size = \
+            self._calculate_batch_size(idx)
+
+        total_sliced_labels = []
+        total_threshold_labels = []
+
+        total_sliced_views = []
+        total_sliced_times = []
+
+        batch_patient_ids = []
+        batch_device_ids = []
+
+        batch_start_times = []
+        total_batch_data_dictionary = []
+
+        batch_data = [self.batch_info[batch_index]]
+
+        for source_index, (source_type, source_identifier, source_batch_start_time, source_batch_end_time, range_start_time, range_end_time) in enumerate(batch_data):
+
+            source_num_windows = batch_num_windows
+            source_size = batch_size
+            # Pre load source matrix and associated times
+            source_matrix = np.full((len(self.measures), source_size), np.nan)
+
+            quantized_end_time = source_batch_start_time + (source_size * self.row_period_ns)
+            source_time_array = np.arange(source_batch_start_time, quantized_end_time, self.row_period_ns)
+
+            device_id, patient_id, query_patient_id = self.unpack_source_info(source_identifier, source_type)
+
+            source_batch_data_dictionary = self._query_source_data(device_id, query_patient_id, source_batch_start_time,
+                                                                   source_batch_end_time, range_start_time, range_end_time,
+                                                                   source_num_windows, source_size, source_matrix)
+
+            windowed_views = sliding_window_view(
+                source_matrix, (len(self.measures), self.row_size), axis=None)
+
+            windowed_times = sliding_window_view(source_time_array, self.row_size)
+
+            sliced_views = windowed_views[0][::self.slide_size]
+            sliced_times = windowed_times[::self.slide_size]
+
+            sliced_labels, threshold_labels = self._get_source_label_data(
+                device_id, query_patient_id, source_batch_start_time, source_batch_end_time, source_time_array)
+
+            total_sliced_labels.append(sliced_labels)
+            total_threshold_labels.append(threshold_labels)
+
+            total_sliced_views.append(sliced_views)
+            total_sliced_times.append(sliced_times)
+
+            batch_patient_ids.append(patient_id)
+            batch_device_ids.append(device_id)
+
+            batch_start_times.append(source_batch_start_time)
+            total_batch_data_dictionary.append(source_batch_data_dictionary)
+
+        self.batch_label_time_series = sliced_labels
+        self.batch_label_thresholds = threshold_labels
+
+        self.current_batch_start_index = batch_start_index
+        self.current_batch_end_index = batch_end_index
+        self.batch_matrix = sliced_views
+        self.batch_times = sliced_times
+
+        self.current_batch_start_time = source_batch_start_time
+
+        # Save the source id info for the batch
+        self.current_patient_id = patient_id
+        self.current_device_id = device_id
+
+        self.batch_data_dictionary = source_batch_data_dictionary
+
+    def unpack_source_info(self, source_id, source_type):
+        if source_type == "device_ids":
+            device_id = source_id
+            patient_id = None
+        elif source_type == "patient_ids":
+            device_id = None
+            patient_id = source_id
+        elif source_type == "device_patient_tuples":
+            device_id, patient_id = source_id
+
+        else:
+            raise ValueError(f"Source type must be either device_ids or patient_ids, not {source_type}")
+        # only query by patient if device_id isn't available.
+        query_patient_id = patient_id if device_id is None else None
+        return device_id, patient_id, query_patient_id
+
+    def _get_source_label_data(self, device_id, query_patient_id, batch_start_time, batch_end_time, batch_time_array):
+        sliced_labels, threshold_labels = None, None
+        # If labels exist, calculate them
+        if len(self.label_sets) > 0:
+            # Preallocate label matrix
+            label_matrix = np.zeros((len(self.label_sets), len(batch_time_array)), dtype=np.int8)
+
+            # Populate label matrix
+            for idx, label_set_id in enumerate(self.label_sets):
+                self.sdk.get_label_time_series(
+                    label_set_id=label_set_id,
+                    device_id=device_id if device_id else None,
+                    patient_id=query_patient_id if query_patient_id else None,
+                    start_time=batch_start_time,
+                    end_time=batch_end_time,
+                    timestamp_array=batch_time_array,
+                    out=label_matrix[idx]
+                )
+
+            # Create label windows
+            windowed_label_views = sliding_window_view(
+                label_matrix, (len(self.label_sets), self.row_size), axis=None)
+            sliced_labels = windowed_label_views[0][::self.slide_size]
+
+            threshold_labels = get_threshold_labels(sliced_labels, label_threshold=self.label_threshold)
+        return sliced_labels, threshold_labels
+
+    def _query_source_data(self, device_id, query_patient_id, batch_start_time, batch_end_time, range_start_time,
+                           range_end_time, batch_num_windows, batch_size, batch_matrix):
+        # Reset and populate the batch data signal dictionary
+        source_batch_data_dictionary = {}
+        for i, measure in enumerate(self.measures):
+            freq_nhz = measure['freq_nhz']
+            period_ns = int(1e18 // freq_nhz)
+            measure_id = measure['id']
+
+            # Create a time array for this specific measure
+            measure_window_size = int((freq_nhz * self.window_duration_ns) // 1e18)
+            measure_slide_size = int((freq_nhz * self.window_slide_ns) // 1e18)
+            measure_batch_size = measure_window_size + (batch_num_windows - 1) * measure_slide_size
+            measure_quantized_end_time = batch_start_time + (measure_batch_size * period_ns)
+            measure_filled_time_array = np.arange(batch_start_time, measure_quantized_end_time, period_ns)
+            measure_filled_value_array = np.full(measure_filled_time_array.shape, np.nan)
+
+            # Fetch data for this measure and window from the SDK
+            data_start_time = max(range_start_time, batch_start_time)
+            data_end_time = min(range_end_time, batch_end_time)
+
+            _, measure_sdk_times, measure_sdk_values = self.sdk.get_data(
+                measure_id, data_start_time, data_end_time, device_id=device_id, patient_id=query_patient_id)
+
+            # Batch Matrix
+            # Convert times to indices on the matrix using vectorized operations
+            closest_i_array_matrix = np.floor((measure_sdk_times - batch_start_time) / self.row_period_ns).astype(int)
+
+            # Make sure indices are within bounds
+            mask = (closest_i_array_matrix >= 0) & (closest_i_array_matrix < batch_size)
+            closest_i_array_matrix = closest_i_array_matrix[mask]
+
+            # Populate the matrix using vectorized operations
+            batch_matrix[i, closest_i_array_matrix] = measure_sdk_values[mask]
+
+            # Batch Signals
+            # Convert times to indices on the matrix using vectorized operations
+            closest_i_array_signals = np.floor((measure_sdk_times - batch_start_time) / period_ns).astype(int)
+
+            # Make sure indices are within bounds
+            mask = (closest_i_array_signals >= 0) & (closest_i_array_signals < measure_batch_size)
+            closest_i_array_signals = closest_i_array_signals[mask]
+
+            # Populate the arrays using vectorized operations
+            measure_filled_value_array[closest_i_array_signals] = measure_sdk_values[mask]
+            measure_filled_time_array[closest_i_array_signals] = measure_sdk_times[mask]
+
+            # convert time data from nanoseconds to unit of choice
+            # if self.time_units != 'ns':
+            #     measure_filled_time_array = measure_filled_time_array / self.time_unit_options[self.time_units]
+
+            # Create Windows
+            windowed_measure_times = sliding_window_view(measure_filled_time_array, measure_window_size)
+            windowed_measure_values = sliding_window_view(measure_filled_value_array, measure_window_size)
+
+            # Slide the windows
+            sliced_windowed_measure_times = windowed_measure_times[::measure_slide_size]
+            sliced_windowed_measure_values = windowed_measure_values[::measure_slide_size]
+
+            # Store the measure's time and value arrays in the batch data dictionary
+            source_batch_data_dictionary[measure_id] = \
+                (sliced_windowed_measure_times, sliced_windowed_measure_values, measure_window_size)
+        return source_batch_data_dictionary
+
+    def _calculate_batch_size(self, idx):
+        batch_index = bisect_right(self.batch_first_index, idx) - 1
+        if batch_index < 0 or len(self.batch_info) <= batch_index:
+            raise ValueError(f"index {idx} outside of batched data.")
+        batch_start_index = self.batch_first_index[batch_index]
+        batch_end_index = self.batch_first_index[batch_index + 1]
+        batch_num_windows = batch_end_index - batch_start_index
+        batch_size = self.row_size + (batch_num_windows - 1) * self.slide_size
+        return batch_index, batch_start_index, batch_end_index, batch_num_windows, batch_size
+
     def get_current_window_start(self):
         return self.current_batch_start_time + \
                ((self.current_index - self.current_batch_start_index) * self.window_slide_ns)
@@ -397,7 +587,7 @@ class DatasetIterator:
             raise IndexError(f"Index {idx} out of bounds for iterator of length {self._length}")
 
         if idx < self.current_batch_start_index or self.current_batch_end_index <= idx:
-            self._load_batch_matrix(idx)
+            self.new_load_batch_matrix(idx)
 
         self.current_index = idx
 
@@ -420,7 +610,7 @@ class DatasetIterator:
             raise IndexError(f"Index {idx} out of bounds for iterator of length {self._length}")
 
         if idx < self.current_batch_start_index or self.current_batch_end_index <= idx:
-            self._load_batch_matrix(idx)
+            self.new_load_batch_matrix(idx)
 
         self.current_index = idx
         signal_dictionary = {}
