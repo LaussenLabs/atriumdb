@@ -114,7 +114,7 @@ class AtriumSDK:
     >>> sdk = AtriumSDK(dataset_location="./example_dataset", metadata_connection_type=metadata_connection_type, connection_params=connection_params)
 
     >>> # Remote API Mode
-    >>> api_url = "http://example.com/api/v1"
+    >>> api_url = "http://example.com/v1"
     >>> token = "4e78a93749ead7893"
     >>> metadata_connection_type = "api"
     >>> sdk = AtriumSDK(api_url=api_url, token=token, metadata_connection_type=metadata_connection_type)
