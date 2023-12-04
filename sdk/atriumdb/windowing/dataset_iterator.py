@@ -148,6 +148,10 @@ class DatasetIterator:
         self.batch_label_time_series = None
         self.batch_label_thresholds = None
 
+        # Window Cache
+        self.window_cache = None
+        self.matrix_cache = None
+
     def _extract_batch_info(self):
         # Initialize empty lists to store batch details and starting window indices
         batch_info = []
@@ -386,9 +390,9 @@ class DatasetIterator:
 
             device_id, patient_id, query_patient_id = self.unpack_source_info(source_identifier, source_type)
 
-            source_batch_data_dictionary = self._query_source_data(device_id, query_patient_id, source_batch_start_time,
-                                                                   source_batch_end_time, range_start_time, range_end_time,
-                                                                   source_num_windows, source_size, source_matrix)
+            source_batch_data_dictionary = self._query_source_data(
+                device_id, query_patient_id, source_batch_start_time, source_batch_end_time, range_start_time,
+                range_end_time, source_num_windows, source_size, source_matrix)
 
             windowed_views = sliding_window_view(
                 source_matrix, (len(self.measures), self.row_size), axis=None)
@@ -423,21 +427,29 @@ class DatasetIterator:
                             'measure_id': measure_id,
                         }
 
-        self.batch_label_time_series = sliced_labels
-        self.batch_label_thresholds = threshold_labels
+                label_time_series = np.copy(sliced_labels[window_i]) if \
+                    sliced_labels is not None else None
+
+                window_classification = threshold_labels[window_i] if \
+                    threshold_labels is not None else None
+
+                result_window = Window(
+                    signals=signal_dictionary,
+                    start_time=int(sliced_times[window_i][0]),
+                    device_id=device_id,
+                    patient_id=patient_id,
+                    label_time_series=label_time_series,
+                    label=window_classification,
+                )
+
+                window_cache.append(result_window)
+                matrix_cache.append(np.copy(sliced_views[window_i]))
+
+        self.window_cache = window_cache
+        self.matrix_cache = matrix_cache
 
         self.current_batch_start_index = batch_start_index
         self.current_batch_end_index = batch_end_index
-        self.batch_matrix = sliced_views
-        self.batch_times = sliced_times
-
-        self.current_batch_start_time = source_batch_start_time
-
-        # Save the source id info for the batch
-        self.current_patient_id = patient_id
-        self.current_device_id = device_id
-
-        self.batch_data_dictionary = source_batch_data_dictionary
 
     def unpack_source_info(self, source_id, source_type):
         if source_type == "device_ids":
@@ -569,7 +581,7 @@ class DatasetIterator:
         """
         return self._length
 
-    def get_array_matrix(self, idx: int) -> np.ndarray:
+    def old_get_array_matrix(self, idx: int) -> np.ndarray:
         """
         Fetch the window data (numpy matrix) for a given index. By nature of being a matrix, the returned array will
         have equal numbers of values for each row (signal), and therefore gaps are filled with numpy.nan values in
@@ -593,6 +605,31 @@ class DatasetIterator:
         self.current_index = idx
 
         return np.copy(self.batch_matrix[idx - self.current_batch_start_index])
+
+    def get_array_matrix(self, idx: int) -> np.ndarray:
+        """
+        Fetch the window data (numpy matrix) for a given index. By nature of being a matrix, the returned array will
+        have equal numbers of values for each row (signal), and therefore gaps are filled with numpy.nan values in
+        rows with lower sample frequencies.
+
+        :param idx: Index of the desired window
+        :type idx: int
+        :return: Array of data corresponding to the given index
+        :rtype: np.ndarray
+        :raises IndexError: If the index is out of bounds
+        """
+        if idx < 0:
+            idx = self._length - idx
+
+        if idx < 0 or self._length <= idx:
+            raise IndexError(f"Index {idx} out of bounds for iterator of length {self._length}")
+
+        if idx < self.current_batch_start_index or self.current_batch_end_index <= idx:
+            self.new_load_batch_matrix(idx)
+
+        self.current_index = idx
+
+        return self.matrix_cache[idx - self.current_batch_start_index]
 
     def get_signal_window(self, idx: int) -> dict:
         """
@@ -637,7 +674,7 @@ class DatasetIterator:
 
         return signal_dictionary
 
-    def __getitem__(self, idx: int) -> Window:
+    def old__getitem__(self, idx: int) -> Window:
         """
         Fetches a Window object corresponding to the given index, encapsulating multiple signals of varying
         frequencies along with their associated metadata. The Window object returned will have its `signals` attribute
@@ -689,6 +726,53 @@ class DatasetIterator:
         )
 
         return result_window
+
+    def __getitem__(self, idx: int) -> Window:
+        """
+        Fetches a Window object corresponding to the given index, encapsulating multiple signals of varying
+        frequencies along with their associated metadata. The Window object returned will have its `signals` attribute
+        populated with a dictionary, where each key is a tuple describing the measure tag, the frequency of the
+        measure in Hz, and the units of the measure. The value corresponding to each key is another dictionary
+        containing the actual data points, expected count, actual count of non-NaN data points, measure ID, and
+        the timestamps associated with each data point of the signal.
+
+        :param idx: The index of the desired window. This index must be within the bounds of the available data
+            windows. Negative indexing is supported, `-idx = len(iterator) - idx`.
+        :type idx: int
+        :return: A Window object encapsulating the signals and associated metadata for the specified index. The
+            structure of the Window object and the included signals dictionary is described in the Window Format section
+            of the documentation.
+        :rtype: Window
+        :raises IndexError: Raised if the index is out of bounds.
+
+        :Example:
+
+        .. code-block:: python
+
+            window_obj = dataset_iterator[5]
+            signals_dict = window_obj.signals
+
+            for measure_info, signal_data in signals_dict.items():
+                print(f"Measure Info: {measure_info}")
+                print(f"Times: {signal_data['times']}")
+                print(f"Values: {signal_data['values']}")
+                print(f"Expected Count: {signal_data['expected_count']}")
+                print(f"Actual Count: {signal_data['actual_count']}")
+                print(f"Measure ID: {signal_data['measure_id']}")
+
+        """
+        if idx < 0:
+            idx = self._length - idx
+
+        if idx < 0 or self._length <= idx:
+            raise IndexError(f"Index {idx} out of bounds for iterator of length {self._length}")
+
+        if idx < self.current_batch_start_index or self.current_batch_end_index <= idx:
+            self.new_load_batch_matrix(idx)
+
+        self.current_index = idx
+
+        return self.window_cache[idx - self.current_batch_start_index]
 
     def __next__(self) -> Window:
         """
