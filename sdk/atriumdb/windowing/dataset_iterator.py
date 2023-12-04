@@ -152,7 +152,7 @@ class DatasetIterator:
         self.window_cache = None
         self.matrix_cache = None
 
-    def _extract_batch_info(self):
+    def old_extract_batch_info(self):
         # Initialize empty lists to store batch details and starting window indices
         batch_info = []
         batch_first_index = []
