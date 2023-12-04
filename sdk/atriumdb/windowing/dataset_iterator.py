@@ -369,17 +369,8 @@ class DatasetIterator:
         batch_index, batch_start_index, batch_end_index, batch_num_windows, batch_size = \
             self._calculate_batch_size(idx)
 
-        total_sliced_labels = []
-        total_threshold_labels = []
-
-        total_sliced_views = []
-        total_sliced_times = []
-
-        batch_patient_ids = []
-        batch_device_ids = []
-
-        batch_start_times = []
-        total_batch_data_dictionary = []
+        window_cache = []
+        matrix_cache = []
 
         batch_data = [self.batch_info[batch_index]]
 
@@ -410,17 +401,27 @@ class DatasetIterator:
             sliced_labels, threshold_labels = self._get_source_label_data(
                 device_id, query_patient_id, source_batch_start_time, source_batch_end_time, source_time_array)
 
-            total_sliced_labels.append(sliced_labels)
-            total_threshold_labels.append(threshold_labels)
+            for window_i in range(len(sliced_views)):
+                signal_dictionary = {}
+                for measure in self.measures:
+                    measure_id = measure['id']
+                    measure_tag = measure['tag']
+                    measure_freq_nhz = measure['freq_nhz']
+                    measure_units = measure['units']
 
-            total_sliced_views.append(sliced_views)
-            total_sliced_times.append(sliced_times)
+                    window_times = source_batch_data_dictionary[measure_id][0][window_i]
 
-            batch_patient_ids.append(patient_id)
-            batch_device_ids.append(device_id)
+                    window_values = source_batch_data_dictionary[measure_id][1][window_i]
+                    measure_expected_count = source_batch_data_dictionary[measure_id][2]
 
-            batch_start_times.append(source_batch_start_time)
-            total_batch_data_dictionary.append(source_batch_data_dictionary)
+                    signal_dictionary[(measure_tag, measure_freq_nhz, measure_units)] = \
+                        {
+                            'times': np.copy(window_times),
+                            'values': np.copy(window_values),
+                            'expected_count': measure_expected_count,
+                            'actual_count': np.sum(~np.isnan(window_values)),
+                            'measure_id': measure_id,
+                        }
 
         self.batch_label_time_series = sliced_labels
         self.batch_label_thresholds = threshold_labels
