@@ -59,9 +59,6 @@ def _test_iterator(db_type, dataset_location, connection_params):
                 assert isinstance(signal_dict['times'], np.ndarray)
                 assert isinstance(signal_dict['values'], np.ndarray)
 
-            # Old matrix
-            assert isinstance(iterator.get_array_matrix(window_i), np.ndarray)
-
             # Labels
             assert isinstance(window.label_time_series, np.ndarray)
             assert isinstance(window.label, np.ndarray)
