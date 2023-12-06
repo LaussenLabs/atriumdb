@@ -18,6 +18,7 @@
 
 from bisect import bisect_right
 import warnings
+import random
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
@@ -50,13 +51,22 @@ class DatasetIterator:
     :param time_units: If you would like the window_duration and window_slide to be specified in units other than
                             nanoseconds you can choose from one of ["s", "ms", "us", "ns"].
     :type time_units: str
+    :param shuffle: If True, shuffle the order of windows before iterating. If an integer, it will initialize
+                    a seeded random number generator for reproducible shuffling. If False or None, no shuffling occurs.
+    :type shuffle: Union[bool, None, int]
+    :param max_cache_duration: If specified, no single cache will have a time range larger than this duration.
+                               The time range will be split accordingly. The duration must be larger than window_duration_ns.
+    :type max_cache_duration: int, optional
     """
 
     def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
-                 label_threshold=0.5, time_units=None):
+                 label_threshold=0.5, time_units=None, shuffle=False, max_cache_duration=None):
         # AtriumSDK object
         self.sdk = sdk
+
+        # Initialize random number generator if shuffle is specified with a seed
+        self.random_gen = random.Random(shuffle) if isinstance(shuffle, int) else random.Random() if shuffle else None
 
         # Store the label_threshold
         self.label_threshold = label_threshold
@@ -73,6 +83,13 @@ class DatasetIterator:
         # Dictionary containing sources. Each source type contains identifiers (device_id/patient_id)
         # and have associated time ranges (or "all").
         self.sources = validated_sources
+        self.max_cache_duration = max_cache_duration
+        if max_cache_duration is not None:
+            assert max_cache_duration >= window_duration_ns, \
+                "max_cache_duration must be greater than window_duration_ns"
+            self._split_time_ranges(max_cache_duration)
+
+        self.shuffle = shuffle
 
         # Duration of each window in nanoseconds. Represents the time span of each data segment.
         self.window_duration_ns = int(window_duration_ns)
@@ -154,69 +171,56 @@ class DatasetIterator:
         self.matrix_cache = []
         self.cache_window_i = 0
 
+    def _split_time_ranges(self, max_duration):
+        for source_type, sources in self.sources.items():
+            for source_id, time_ranges in sources.items():
+                new_time_ranges = []
+                for start, end in time_ranges:
+                    while start + max_duration < end:
+                        new_time_ranges.append([start, start + max_duration])
+                        start += max_duration
+                    new_time_ranges.append([start, end])
+                self.sources[source_type][source_id] = new_time_ranges
+
     def _extract_cache_info(self):
+        # Flattening the nested dictionary/list structure
+        flattened_sources = []
+        for source_type, sources in self.sources.items():
+            for source_id, time_ranges in sources.items():
+                for range_start_time, range_end_time in time_ranges:
+                    flattened_sources.append([source_type, source_id, range_start_time, range_end_time])
+
+        # Shuffling if random_gen is not None
+        if self.random_gen is not None:
+            self.random_gen.shuffle(flattened_sources)
+
         cache_info = []  # List to hold all batches
         starting_window_index_per_batch = [0]  # Starts with 0 to indicate the first window starts at index 0
         total_number_of_windows = 0  # A counter for the total number of windows across all batches
 
         current_batch = []
         current_batch_num_windows = 0
-        # For each source type
-        for source_type, sources in self.sources.items():
 
-            # For each source identifier of that type
-            for source_id, time_ranges in sources.items():
+        for source in flattened_sources:
+            source_type, source_id, range_start_time, range_end_time = source
+            num_time_range_windows = 0
+            time_range_info_start = cur_window_start = range_start_time
+            time_range_info_end = cur_window_end = cur_window_start + self.window_duration_ns
 
-                # For all time ranges in that source
-                # nanosecond epoch (int), nanosecond epoch (int)
-                for range_start_time, range_end_time in time_ranges:
-                    num_time_range_windows = 0
-                    time_range_info_start = cur_window_start = range_start_time
-                    time_range_info_end = cur_window_end = cur_window_start + self.window_duration_ns
+            # While the next window is valid
+            while cur_window_start < range_end_time:
 
-                    # While the next window is valid
-                    while cur_window_start < range_end_time:
+                # Increment Window Counters
+                num_time_range_windows += 1
+                current_batch_num_windows += 1
+                total_number_of_windows += 1
 
-                        # Increment Window Counters
-                        num_time_range_windows += 1
-                        current_batch_num_windows += 1
-                        total_number_of_windows += 1
+                # Update the valid end_time
+                time_range_info_end = cur_window_end
 
-                        # Update the valid end_time
-                        time_range_info_end = cur_window_end
-
-                        # Check if we've gone over.
-                        if current_batch_num_windows >= self.max_batch_size:
-                            # Add current time_range_info to the batch
-                            if num_time_range_windows > 0:
-                                time_range_info = [
-                                    source_type,
-                                    source_id,
-                                    time_range_info_start,
-                                    time_range_info_end,
-                                    time_range_info_start,
-                                    min(range_end_time, time_range_info_end),
-                                    num_time_range_windows,
-                                ]
-                                current_batch.append(time_range_info)
-
-                            # Add batch to cache list
-                            cache_info.append(current_batch)
-
-                            # Reset Batch
-                            current_batch = []
-                            current_batch_num_windows = 0
-                            starting_window_index_per_batch.append(total_number_of_windows)
-
-                            # Separate Time Range
-                            time_range_info_start = cur_window_start + self.window_slide_ns
-                            num_time_range_windows = 0
-
-                        # Locate next possible window
-                        cur_window_start += self.window_slide_ns
-                        cur_window_end += self.window_slide_ns
-
-                    # Once all the windows have been accounted for, add them to the batch
+                # Check if we've gone over.
+                if current_batch_num_windows >= self.max_batch_size:
+                    # Add current time_range_info to the batch
                     if num_time_range_windows > 0:
                         time_range_info = [
                             source_type,
@@ -228,6 +232,35 @@ class DatasetIterator:
                             num_time_range_windows,
                         ]
                         current_batch.append(time_range_info)
+
+                    # Add batch to cache list
+                    cache_info.append(current_batch)
+
+                    # Reset Batch
+                    current_batch = []
+                    current_batch_num_windows = 0
+                    starting_window_index_per_batch.append(total_number_of_windows)
+
+                    # Separate Time Range
+                    time_range_info_start = cur_window_start + self.window_slide_ns
+                    num_time_range_windows = 0
+
+                # Locate next possible window
+                cur_window_start += self.window_slide_ns
+                cur_window_end += self.window_slide_ns
+
+            # Once all the windows have been accounted for, add them to the batch
+            if num_time_range_windows > 0:
+                time_range_info = [
+                    source_type,
+                    source_id,
+                    time_range_info_start,
+                    time_range_info_end,
+                    time_range_info_start,
+                    min(range_end_time, time_range_info_end),
+                    num_time_range_windows,
+                ]
+                current_batch.append(time_range_info)
 
         # Add final batch to cache list
         cache_info.append(current_batch)
@@ -310,6 +343,10 @@ class DatasetIterator:
 
                 window_cache.append(result_window)
                 matrix_cache.append(np.copy(sliced_views[window_i]))
+
+        if self.random_gen is not None:
+            self.random_gen.shuffle(window_cache)
+            self.random_gen.shuffle(matrix_cache)
 
         self.window_cache = window_cache
         self.matrix_cache = matrix_cache

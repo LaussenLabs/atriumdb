@@ -1,6 +1,6 @@
 import numpy as np
 
-from atriumdb import DatasetIterator
+from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.window import Window
 
 

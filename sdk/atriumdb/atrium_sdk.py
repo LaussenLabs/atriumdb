@@ -45,6 +45,8 @@ from typing import Union, List, Tuple, Optional
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 from atriumdb.windowing.dataset_iterator import DatasetIterator
+from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
+from atriumdb.windowing.random_access_iterator import RandomAccessDatasetIterator
 from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.window import CommonWindowFormat, Signal
 from atriumdb.windowing.window_config import WindowConfig
@@ -1639,8 +1641,10 @@ class AtriumSDK:
                                                      start_time_inclusive_ns, end_time_exclusive_ns,
                                                      measure_info_to_id_dictionary, triplet_to_expected_count_period)
 
-    def get_iterator(self, definition: Union[DatasetDefinition, str], window_duration, window_slide, gap_tolerance=None,
-                     num_windows_prefetch=None, time_units: str = None, label_threshold=0.5) -> DatasetIterator:
+    def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None,
+                     num_windows_prefetch=None, time_units: str = None, label_threshold=0.5,
+                     iterator_type=None, window_filter_fn=None, shuffle=False,
+                     max_cache_duration=None) -> DatasetIterator:
         """
         Constructs and returns a `DatasetIterator` object that allows iteration over the dataset according to
         the specified definition.
@@ -1669,6 +1673,23 @@ class AtriumSDK:
         :param label_threshold: The percentage of the window that must contain a label before the entire window is
             marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
         :type label_threshold: float
+        :param iterator_type: Specify the type of iterator. If set to 'random_access', a RandomAccessDatasetIterator
+          will be returned, allowing indexed access to dataset windows. If set to 'filtered',
+          a FilteredDatasetIterator will be returned with additional filtering functionality based on
+          the `window_filter_fn`. By default or if set to None, a standard DatasetIterator is returned.
+        :type iterator_type: str, optional
+        :param window_filter_fn: If provided, only windows for which this function returns True will be included in the
+             iteration. This function should accept a window as its argument. This is only applicable
+             if `iterator_type` is set to 'filtered'.
+        :type window_filter_fn: callable, optional
+        :param shuffle: If True, the order of windows will be randomized before iteration. If set to an integer, this
+            value will seed the random number generator for reproducible shuffling. If False, windows are
+            returned in their original order.
+        :type shuffle: Union[bool, int], optional
+        :param max_cache_duration: The maximum duration for a single cache window in the same time units as specified by
+           `time_units`. If the total duration of data exceeds this value, the dataset will be
+           divided into cache windows not exceeding this threshold.
+        :type max_cache_duration: int, optional
 
         :return: DatasetIterator object to easily iterate over the specified data.
         :rtype: DatasetIterator
@@ -1715,13 +1736,33 @@ class AtriumSDK:
         window_slide = int(window_slide * time_unit_options[time_units])
         if gap_tolerance is not None:
             gap_tolerance = int(gap_tolerance * time_unit_options[time_units])
+        if max_cache_duration is not None:
+            max_cache_duration = int(max_cache_duration * time_unit_options[time_units])
 
         validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
             definition, self, gap_tolerance=gap_tolerance)
 
-        return DatasetIterator(
-            self, validated_measure_list, validated_label_set_list, validated_sources, window_duration, window_slide,
-            num_windows_prefetch=num_windows_prefetch, time_units=time_units, label_threshold=label_threshold)
+        # Create appropriate iterator object based on iterator_type
+        if iterator_type == 'random_access':
+            iterator = RandomAccessDatasetIterator(
+                self, validated_measure_list, validated_label_set_list, validated_sources,
+                window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
+                label_threshold=label_threshold, time_units=time_units)
+        elif iterator_type == 'filtered':
+            if window_filter_fn is None:
+                raise ValueError("window_filter_fn must be provided when iterator_type is 'filtered'")
+            iterator = FilteredDatasetIterator(
+                self, validated_measure_list, validated_label_set_list, validated_sources,
+                window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
+                label_threshold=label_threshold, time_units=time_units, window_filter_fn=window_filter_fn)
+        else:
+            iterator = DatasetIterator(
+                self, validated_measure_list, validated_label_set_list, validated_sources,
+                window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
+                label_threshold=label_threshold, time_units=time_units, shuffle=shuffle,
+                max_cache_duration=max_cache_duration)
+
+        return iterator
 
     def _generate_device_windows(self, window_config, device_id, device_tag, batch_duration_ns, start_time_inclusive_ns,
                                  end_time_exclusive_ns, measure_info_to_id_dictionary,

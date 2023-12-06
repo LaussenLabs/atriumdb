@@ -1,8 +1,8 @@
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
-from atriumdb import DatasetIterator
 from atriumdb.windowing.window import Window
+from atriumdb.windowing.dataset_iterator import DatasetIterator
 
 
 class FilteredDatasetIterator(DatasetIterator):
@@ -104,6 +104,10 @@ class FilteredDatasetIterator(DatasetIterator):
                     matrix_cache.append(np.copy(sliced_views[window_i]))
                 else:
                     num_filtered_windows += 1
+
+        if self.random_gen is not None:
+            self.random_gen.shuffle(window_cache)
+            self.random_gen.shuffle(matrix_cache)
 
         self.window_cache = window_cache
         self.matrix_cache = matrix_cache
