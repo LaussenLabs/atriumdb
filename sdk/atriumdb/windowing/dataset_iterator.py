@@ -116,7 +116,7 @@ class DatasetIterator:
 
         # Lists containing the starting index for each batch and details about each batch respectively.
         # Also, the total length (number of windows) in the dataset.
-        self.batch_first_index, self.batch_info, self._length = self._extract_batch_info()
+        self.batch_info, self.batch_first_index, self._length = self._extract_cache_info()
 
         # Variables to store the start and end indices of the current batch.
         # initialized to -1 so that the first request will always trigger a batch load.
@@ -151,6 +151,87 @@ class DatasetIterator:
         # Window Cache
         self.window_cache = None
         self.matrix_cache = None
+
+    def _extract_cache_info(self):
+        cache_info = []  # List to hold all batches
+        starting_window_index_per_batch = [0]  # Starts with 0 to indicate the first window starts at index 0
+        total_number_of_windows = 0  # A counter for the total number of windows across all batches
+
+        current_batch = []
+        current_batch_num_windows = 0
+        # For each source type
+        for source_type, sources in self.sources.items():
+
+            # For each source identifier of that type
+            for source_id, time_ranges in sources.items():
+
+                # For all time ranges in that source
+                # nanosecond epoch (int), nanosecond epoch (int)
+                for range_start_time, range_end_time in time_ranges:
+                    num_time_range_windows = 0
+                    time_range_info_start = cur_window_start = range_start_time
+                    time_range_info_end = cur_window_end = cur_window_start + self.window_duration_ns
+
+                    # While the next window is valid
+                    while cur_window_start < range_end_time:
+
+                        # Increment Window Counters
+                        num_time_range_windows += 1
+                        current_batch_num_windows += 1
+                        total_number_of_windows += 1
+
+                        # Update the valid end_time
+                        time_range_info_end = cur_window_end
+
+                        # Check if we've gone over.
+                        if current_batch_num_windows >= self.max_batch_size:
+                            # Add current time_range_info to the batch
+                            if num_time_range_windows > 0:
+                                time_range_info = [
+                                    source_type,
+                                    source_id,
+                                    time_range_info_start,
+                                    time_range_info_end,
+                                    time_range_info_start,
+                                    min(range_end_time, time_range_info_end),
+                                    num_time_range_windows,
+                                ]
+                                current_batch.append(time_range_info)
+
+                            # Add batch to cache list
+                            cache_info.append(current_batch)
+
+                            # Reset Batch
+                            current_batch = []
+                            current_batch_num_windows = 0
+                            starting_window_index_per_batch.append(total_number_of_windows)
+
+                            # Separate Time Range
+                            time_range_info_start = cur_window_start + self.window_slide_ns
+                            num_time_range_windows = 0
+
+                        # Locate next possible window
+                        cur_window_start += self.window_slide_ns
+                        cur_window_end += self.window_slide_ns
+
+                    # Once all the windows have been accounted for, add them to the batch
+                    if num_time_range_windows > 0:
+                        time_range_info = [
+                            source_type,
+                            source_id,
+                            time_range_info_start,
+                            time_range_info_end,
+                            time_range_info_start,
+                            min(range_end_time, time_range_info_end),
+                            num_time_range_windows,
+                        ]
+                        current_batch.append(time_range_info)
+
+        # Add final batch to cache list
+        cache_info.append(current_batch)
+        starting_window_index_per_batch.append(total_number_of_windows)
+
+        return cache_info, starting_window_index_per_batch, total_number_of_windows
 
     def old_extract_batch_info(self):
         # Initialize empty lists to store batch details and starting window indices
@@ -376,23 +457,22 @@ class DatasetIterator:
         window_cache = []
         matrix_cache = []
 
-        batch_data = [self.batch_info[batch_index]]
+        # batch_data = [self.batch_info[batch_index]]
+        batch_data = self.batch_info[batch_index]
 
-        for source_index, (source_type, source_identifier, source_batch_start_time, source_batch_end_time, range_start_time, range_end_time) in enumerate(batch_data):
-
-            source_num_windows = batch_num_windows
-            source_size = batch_size
+        for source_index, (source_type, source_identifier, source_batch_start_time, source_batch_end_time, range_start_time, range_end_time, range_num_windows) in enumerate(batch_data):
+            range_size = self.row_size + (range_num_windows - 1) * self.slide_size
             # Pre load source matrix and associated times
-            source_matrix = np.full((len(self.measures), source_size), np.nan)
+            source_matrix = np.full((len(self.measures), range_size), np.nan)
 
-            quantized_end_time = source_batch_start_time + (source_size * self.row_period_ns)
+            quantized_end_time = source_batch_start_time + (range_size * self.row_period_ns)
             source_time_array = np.arange(source_batch_start_time, quantized_end_time, self.row_period_ns)
 
             device_id, patient_id, query_patient_id = self.unpack_source_info(source_identifier, source_type)
 
             source_batch_data_dictionary = self._query_source_data(
                 device_id, query_patient_id, source_batch_start_time, source_batch_end_time, range_start_time,
-                range_end_time, source_num_windows, source_size, source_matrix)
+                range_end_time, range_num_windows, range_size, source_matrix)
 
             windowed_views = sliding_window_view(
                 source_matrix, (len(self.measures), self.row_size), axis=None)
