@@ -1653,6 +1653,13 @@ class AtriumSDK:
         If certain parts of the cohort definition aren't present within the dataset, the method will truncate the
         requested cohort to fit the dataset and issue warnings about the dropped data.
 
+        When using a Pytorch DataLoader, ensure that `get_iterator`'s `num_windows_prefetch` is greater than the DataLoader
+        `batch_size` * `num_workers` * `prefetch_factor`. If you do this, then the Dataloader will correctly cooperate
+        with the Iterator's cache functionality.
+
+        Additionally, when shuffling we recommend you set `cached_windows_per_source = num_windows_prefetch // 100`
+        for balanced randomness vs performance.
+
         :param definition: A DefinitionYAML object or string representation specifying the measures and
                            patients or devices over particular time intervals.
         :type definition: Union[DatasetDefinition, str]
