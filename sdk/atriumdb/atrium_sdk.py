@@ -1644,7 +1644,7 @@ class AtriumSDK:
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None,
                      num_windows_prefetch=None, time_units: str = None, label_threshold=0.5,
                      iterator_type=None, window_filter_fn=None, shuffle=False,
-                     max_cache_duration=None) -> DatasetIterator:
+                     cached_windows_per_source=None) -> DatasetIterator:
         """
         Constructs and returns a `DatasetIterator` object that allows iteration over the dataset according to
         the specified definition.
@@ -1686,10 +1686,10 @@ class AtriumSDK:
             value will seed the random number generator for reproducible shuffling. If False, windows are
             returned in their original order.
         :type shuffle: Union[bool, int], optional
-        :param max_cache_duration: The maximum duration for a single cache window in the same time units as specified by
-           `time_units`. If the total duration of data exceeds this value, the dataset will be
-           divided into cache windows not exceeding this threshold.
-        :type max_cache_duration: int, optional
+        :param cached_windows_per_source: The maximum number of windows to cache for a single source before moving
+            on to a new source, helpful for adding more randomness to the shuffle. Making it too small heavily decreases
+            efficiency, making it too large will make the windows less random when shuffled.
+        :type cached_windows_per_source: int, optional
 
         :return: DatasetIterator object to easily iterate over the specified data.
         :rtype: DatasetIterator
@@ -1736,8 +1736,12 @@ class AtriumSDK:
         window_slide = int(window_slide * time_unit_options[time_units])
         if gap_tolerance is not None:
             gap_tolerance = int(gap_tolerance * time_unit_options[time_units])
-        if max_cache_duration is not None:
-            max_cache_duration = int(max_cache_duration * time_unit_options[time_units])
+
+        max_cache_duration_per_source = None
+        if cached_windows_per_source is not None:
+            assert isinstance(cached_windows_per_source, int), "cached_windows_per_source must be of type int."
+            assert cached_windows_per_source > 0, "cached_windows_per_source must be at least 1."
+            max_cache_duration_per_source = window_duration + (window_slide * (cached_windows_per_source - 1))
 
         validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
             definition, self, gap_tolerance=gap_tolerance)
@@ -1747,20 +1751,22 @@ class AtriumSDK:
             iterator = RandomAccessDatasetIterator(
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
-                label_threshold=label_threshold, time_units=time_units)
+                label_threshold=label_threshold, time_units=time_units, max_cache_duration=max_cache_duration_per_source,
+                shuffle=shuffle)
         elif iterator_type == 'filtered':
             if window_filter_fn is None:
                 raise ValueError("window_filter_fn must be provided when iterator_type is 'filtered'")
             iterator = FilteredDatasetIterator(
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
-                label_threshold=label_threshold, time_units=time_units, window_filter_fn=window_filter_fn)
+                label_threshold=label_threshold, time_units=time_units, window_filter_fn=window_filter_fn,
+                max_cache_duration=max_cache_duration_per_source, shuffle=shuffle)
         else:
             iterator = DatasetIterator(
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, time_units=time_units, shuffle=shuffle,
-                max_cache_duration=max_cache_duration)
+                max_cache_duration=max_cache_duration_per_source)
 
         return iterator
 

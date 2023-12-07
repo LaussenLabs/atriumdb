@@ -20,10 +20,10 @@ class FilteredDatasetIterator(DatasetIterator):
     """
     def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
-                 label_threshold=0.5, time_units=None, window_filter_fn=None):
+                 label_threshold=0.5, time_units=None, shuffle=False, max_cache_duration=None, window_filter_fn=None):
         super().__init__(sdk, validated_measure_list, validated_label_set_list, validated_sources,
-                         window_duration_ns, window_slide_ns, num_windows_prefetch,
-                         label_threshold, time_units)
+                         window_duration_ns, window_slide_ns, num_windows_prefetch, label_threshold, time_units,
+                         shuffle, max_cache_duration)
         self.window_filter_fn = window_filter_fn
 
     def _load_batch_matrix(self, idx: int):
