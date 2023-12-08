@@ -4101,11 +4101,11 @@ class AtriumSDK:
             raise NotImplementedError("API mode is not yet supported for this method.")
 
         # Check for the XOR condition for label_set_name and label_set_id
-        if (label_set_name is not None) == (label_set_id is not None):
+        if (label_set_name is not None) and (label_set_id is not None):
             raise ValueError("Either label_set_name or label_set_id should be provided, but not both.")
 
         # Check for the XOR condition for device_tag and device_id
-        if (device_tag is not None) == (device_id is not None):
+        if (device_tag is not None) and (device_id is not None):
             raise ValueError("Either device_tag or device_id should be provided, but not both.")
 
         # Check for device_id/device_tag or patient_id
