@@ -508,6 +508,19 @@ class DatasetIterator:
         """
         while self.cache_window_i >= len(self.window_cache):
             if self.next_cache_index >= len(self.batch_info):
+                # Reset iterator
+                self.current_batch_start_index = -1
+                self.current_batch_end_index = -1
+                self.next_cache_index = 0
+
+                # Attribute to store the batch label information.
+                self.batch_label_time_series = None
+                self.batch_label_thresholds = None
+
+                # Window Cache
+                self.window_cache = []
+                self.matrix_cache = []
+                self.cache_window_i = 0
                 raise StopIteration
             self._load_batch_matrix(self.batch_first_index[self.next_cache_index])
             self.cache_window_i = 0
