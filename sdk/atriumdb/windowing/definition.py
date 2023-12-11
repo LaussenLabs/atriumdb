@@ -145,6 +145,9 @@ class DatasetDefinition:
         :param int gap_tolerance: The maximum allowable gap size in the data such that the output considers a
             region continuous. Put another way, the minimum gap size, such that the output of this method will add
             a new row.
+        :param merge_strategy: Strategy to merge intervals. 'union' (default) for returning all intervals with at
+            least one specified measure or label, 'intersection' for returning all intervals with every specified
+            measure or label.
         :return: DatasetDefinition object
         """
         # Validate build_from_signal_type
