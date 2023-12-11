@@ -128,7 +128,7 @@ class DatasetDefinition:
     @classmethod
     def build_from_intervals(cls, sdk, build_from_signal_type, measures=None, labels=None, patient_id_list=None,
                              mrn_list=None, device_id_list=None, device_tag_list=None, start_time=None, end_time=None,
-                             gap_tolerance=None):
+                             gap_tolerance=None, merge_strategy=None):
         """
         Class method that builds a DatasetDefinition object using signal-based intervals.
 
@@ -156,7 +156,8 @@ class DatasetDefinition:
                                                   patient_id_list=patient_id_list,
                                                   mrn_list=mrn_list, device_id_list=device_id_list,
                                                   device_tag_list=device_tag_list, start_time=start_time,
-                                                  end_time=end_time, gap_tolerance=gap_tolerance)
+                                                  end_time=end_time, gap_tolerance=gap_tolerance,
+                                                  merge_strategy=merge_strategy)
 
         # Create a DatasetDefinition instance
         kwargs = {
