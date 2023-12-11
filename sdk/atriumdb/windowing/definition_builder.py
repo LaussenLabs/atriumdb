@@ -3,11 +3,13 @@ import numpy as np
 from atriumdb.adb_functions import get_measure_id_from_generic_measure
 from atriumdb.intervals.compact import reverse_compact_list
 from atriumdb.intervals.intersection import list_intersection
+from atriumdb.intervals.union import intervals_union_list
 
 
 def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None, mrn_list=None,
                            device_id_list=None, device_tag_list=None, start_time=None, end_time=None,
-                           gap_tolerance=None):
+                           gap_tolerance=None, merge_strategy=None):
+    merge_strategy = "union" if merge_strategy is None else merge_strategy
     gap_tolerance = 0 if gap_tolerance is None else gap_tolerance
     # Check that exactly one source identifier list is provided
     source_lists = [patient_id_list, mrn_list, device_id_list, device_tag_list]
@@ -71,14 +73,19 @@ def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None
         else:
             raise ValueError("Either measures or labels must be provided.")
 
-        if len(interval_list) == 0:
-            merged_interval_array = np.array([], dtype=np.int64)
-        else:
-            merged_interval_list = interval_list[0]
-            for interval_array in interval_list[1:]:
-                merged_interval_list = list_intersection(merged_interval_list, interval_array)
+        if merge_strategy == "union":
+            merged_interval_array = intervals_union_list(interval_list)
+        elif merge_strategy == "intersection":
+            if len(interval_list) == 0:
+                merged_interval_array = np.array([], dtype=np.int64)
+            else:
+                merged_interval_list = interval_list[0]
+                for interval_array in interval_list[1:]:
+                    merged_interval_list = list_intersection(merged_interval_list, interval_array)
 
-            merged_interval_array = np.array(reverse_compact_list(merged_interval_list), dtype=np.int64)
+                merged_interval_array = np.array(reverse_compact_list(merged_interval_list), dtype=np.int64)
+        else:
+            raise ValueError("merge_strategy must be either union or intersection")
 
         if merged_interval_array.size > 0:
             # Convert to list of dictionaries with "start" and "end" keys
