@@ -88,8 +88,9 @@ def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None
             raise ValueError("merge_strategy must be either union or intersection")
 
         if merged_interval_array.size > 0:
+            merged_interval_array = close_gaps(merged_interval_array, gap_tolerance)
             # Convert to list of dictionaries with "start" and "end" keys
-            intervals = [{'start': int(start), 'end': int(end)} for start, end in merged_interval_array.reshape(-1, 2)]
+            intervals = [{'start': int(start), 'end': int(end)} for start, end in merged_interval_array]
             # Add these intervals to the correct element in the source_intervals dictionary
             if patient_id is not None:
                 source_intervals['patient_ids'][patient_id] = intervals
@@ -97,6 +98,28 @@ def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None
                 source_intervals['device_ids'][device_id] = intervals
 
     return source_intervals
+
+
+def close_gaps(sorted_2d_array, gap_tolerance):
+    if len(sorted_2d_array) == 0:
+        return np.array([], dtype=np.int64)
+
+    merged = [sorted_2d_array[0].tolist()]
+    last_merged_interval = merged[-1]
+
+    for i in range(1, len(sorted_2d_array)):
+        current_interval = sorted_2d_array[i]
+
+        # Check if the current interval is within the gap tolerance of the last merged interval
+        if current_interval[0] - last_merged_interval[1] <= gap_tolerance:
+            # Update the end of the last merged interval
+            last_merged_interval[1] = current_interval[1]
+        else:
+            # Add the current interval as a new entry
+            merged.append(current_interval.tolist())
+            last_merged_interval = merged[-1]
+
+    return np.array(merged, dtype=np.int64)
 
 
 def get_label_intervals(sdk, label_name: str, device_id=None, patient_id=None, start=None, end=None,
