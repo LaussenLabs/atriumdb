@@ -23,6 +23,8 @@ from tqdm import tqdm
 
 from atriumdb import AtriumSDK
 from atriumdb.adb_functions import convert_value_to_nanoseconds
+from atriumdb.transfer.adb.devices import transfer_devices
+from atriumdb.transfer.adb.measures import transfer_measures
 
 MIN_TRANSFER_TIME = -(2**63)
 MAX_TRANSFER_TIME = (2**63) - 1
@@ -176,39 +178,6 @@ def ingest_data(to_sdk, measure_id, device_id, headers, times, values):
     except Exception as e:
         print(e)
         return
-
-
-def transfer_measures(from_sdk, to_sdk, measure_id_list=None):
-    from_measures = from_sdk.get_all_measures()
-
-    measure_map = {}
-    for from_measure_id, measure_info in from_measures.items():
-        if measure_id_list is None or from_measure_id in measure_id_list:
-            measure_tag = measure_info['tag']
-            freq = measure_info['freq_nhz']
-            units = measure_info['unit']
-            measure_name = measure_info['name']
-            to_measure_id = to_sdk.insert_measure(
-                measure_tag=measure_tag, freq=freq, units=units, measure_name=measure_name, measure_id=from_measure_id)
-
-            measure_map[from_measure_id] = to_measure_id
-
-    return measure_map
-
-
-def transfer_devices(from_sdk, to_sdk, device_id_list=None):
-    from_devices = from_sdk.get_all_devices()
-
-    device_map = {}
-    for from_device_id, device_info in from_devices.items():
-        if device_id_list is None or from_device_id in device_id_list:
-            device_tag = device_info['tag']
-            device_name = device_info['name']
-            to_device_id = to_sdk.insert_device(device_tag=device_tag, device_name=device_name, device_id=from_device_id)
-
-            device_map[from_device_id] = to_device_id
-
-    return device_map
 
 
 def transfer_patients(from_sdk, to_sdk, patient_id_list=None, mrn_list=None, deidentify=None):
