@@ -420,4 +420,4 @@ class DatasetDefinition:
 
         # Save the dataset definition to a YAML file
         with open(filepath, 'w') as file:
-            yaml.dump(self.data_dict, file)
+            yaml.dump(self.data_dict, file, sort_keys=False)
