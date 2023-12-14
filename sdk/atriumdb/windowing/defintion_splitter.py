@@ -60,6 +60,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     # Optionally output duration information for each partition if verbose mode is enabled.
     if verbose:
         print(duration_info)
+        return partitioned_definition_objects, duration_info
 
     return partitioned_definition_objects
 
