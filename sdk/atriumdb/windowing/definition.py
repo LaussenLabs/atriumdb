@@ -155,7 +155,17 @@ class DatasetDefinition:
             raise ValueError("build_from_signal_type must be either 'measures' or 'labels'")
 
         # Build the source intervals using the build_source_intervals function
-        source_intervals = build_source_intervals(sdk, measures=measures, labels=labels,
+        if build_from_signal_type == "measures":
+            assert measures, "If you are building on measures, you must provide measures"
+            build_measures = measures
+            build_labels = None
+        else:
+            # "labels"
+            assert labels, "If you are building on labels, you must provide labels"
+            build_measures = None
+            build_labels = labels
+
+        source_intervals = build_source_intervals(sdk, measures=build_measures, labels=build_labels,
                                                   patient_id_list=patient_id_list,
                                                   mrn_list=mrn_list, device_id_list=device_id_list,
                                                   device_tag_list=device_tag_list, start_time=start_time,
