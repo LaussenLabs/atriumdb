@@ -55,6 +55,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     partitioned_definition_objects = convert_source_lists_to_definitions(partitioned_source_list, definition)
 
     # Gather information about the distribution of durations across different partitions.
+    # TODO: Add Num Patients to duration_info
     duration_info = get_duration_info(partitioned_durations, priority_stratification_labels)
 
     # Optionally output duration information for each partition if verbose mode is enabled.
