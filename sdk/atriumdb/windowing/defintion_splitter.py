@@ -217,11 +217,11 @@ def get_duration_info(partitioned_durations, priority_stratification_labels, con
     time_units = "hours" if convert_to_hours else "nanoseconds"
 
     for partition_index, durations in enumerate(partitioned_durations):
-        total_waveform_duration = durations[0] / (3600 * 1e9) if convert_to_hours else durations[0]
+        total_waveform_duration = round(durations[0] / (3600 * 1e9), 3) if convert_to_hours else durations[0]
         duration_info = {"partition": partition_index, f"total waveform {time_units}": total_waveform_duration}
         for label_index, label in enumerate(priority_stratification_labels, start=1):
             label_key = f"{label} {time_units}"
-            duration_info[label_key] = durations[label_index] / (3600 * 1e9) if convert_to_hours else durations[label_index]
+            duration_info[label_key] = round(durations[label_index] / (3600 * 1e9), 3) if convert_to_hours else durations[label_index]
 
         duration_info_list.append(duration_info)
 
