@@ -2,6 +2,7 @@ from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.definition import DatasetDefinition
 import numpy as np
 import random
+import copy
 from tqdm import tqdm
 
 
