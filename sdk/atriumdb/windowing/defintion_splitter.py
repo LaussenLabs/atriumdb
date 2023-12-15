@@ -23,7 +23,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
 
     Example:
     --------
-    >>> from atriumdb import DatasetDefinition, AtriumSDK
+    >>> from atriumdb import DatasetDefinition, AtriumSDK, partition_dataset
     >>> definition = DatasetDefinition(...)
     >>> sdk = AtriumSDK(...)
     >>> train_def, test_def, val_def = partition_dataset(
