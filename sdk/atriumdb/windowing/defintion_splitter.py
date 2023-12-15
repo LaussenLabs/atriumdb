@@ -2,7 +2,7 @@ from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.definition import DatasetDefinition
 import numpy as np
 import random
-import copy
+from tqdm import tqdm
 
 
 def partition_dataset(definition, sdk, partition_ratios, priority_stratification_labels=None, random_state=None,
@@ -56,7 +56,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     # Generate list of random states if n_trials is given
     random_states = get_random_states(n_trials, random_state) if n_trials else [random_state]
 
-    for trial_random_state in random_states:
+    for trial_random_state in tqdm(random_states, desc="Running partition distribution trials", unit="trial"):
         # Perform stratified partitioning of the dataset based on the labels.
         partitioned_source_list, partitioned_durations, partition_source_counts = stratified_partition_by_labels(
             label_duration_list, partition_ratios, random_state=trial_random_state)
