@@ -35,6 +35,8 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
             verbose=False
         )
     """
+    if len(definition.data_dict['measures']) == 0:
+        raise ValueError("Supplied dataset has no measures and therefore cannot stratify based on measure availability")
 
     # Validate the dataset definition and gather necessary components.
     validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
