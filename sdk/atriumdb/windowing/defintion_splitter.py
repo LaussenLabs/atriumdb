@@ -6,7 +6,7 @@ import copy
 
 
 def partition_dataset(definition, sdk, partition_ratios, priority_stratification_labels=None, random_state=None,
-                      verbose=False):
+                      verbose=False, n_trials=None, num_show_best_trials=None):
     """
     Partition a dataset into training, testing, and optionally validation sets, with an option for stratified splitting based on priority labels.
 
@@ -18,6 +18,9 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     :param priority_stratification_labels: Optional. A list of labels (either as integers or strings) given priority in the stratification process. If integers, they are treated as label set IDs. If strings, they are converted to IDs using the SDK.
     :param random_state: Optional. An integer that seeds the random number generator for reproducible splits.
     :param verbose: Optional. A boolean flag that, when set to True, enables the function to print detailed information about the splitting process.
+    :param n_trials: Optional. An integer specifying the number of trials to run with different random states in order to find the most balanced partitioning. If None, the function runs only once using the provided or default random state.
+    :param num_show_best_trials: Optional. An integer specifying the number of best trials to display if verbose is True and multiple trials (n_trials > 1) are run. If None or 0, no trials are displayed.
+
 
     :return: A tuple of DatasetDefinition instances for the training, testing, and optionally validation sets. The tuple will contain two or three elements depending on whether a validation set is created.
 
@@ -49,22 +52,65 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     # Calculate the duration for each label in each data source.
     label_duration_list = get_label_duration_list(validated_sources, priority_stratification_label_set_ids, sdk)
 
-    # Perform stratified partitioning of the dataset based on the labels.
+    trials_results = []
+    # Generate list of random states if n_trials is given
+    random_states = get_random_states(n_trials, random_state) if n_trials else [random_state]
+
+    for trial_random_state in random_states:
+        # Perform stratified partitioning of the dataset based on the labels.
+        partitioned_source_list, partitioned_durations, partition_source_counts = stratified_partition_by_labels(
+            label_duration_list, partition_ratios, random_state=trial_random_state)
+
+        # Gather information about the distribution of durations across different partitions.
+        duration_info = get_duration_info(partitioned_durations, priority_stratification_labels, partition_source_counts)
+        ratio_obedience_metric = evaluate_ratio_obedience_metric(duration_info, partition_ratios)
+        trials_results.append((ratio_obedience_metric, trial_random_state, duration_info))
+
+        if n_trials is None:
+            # If we're not using trials, return immediately.
+            # Convert the partitioned source lists into DatasetDefinition objects.
+            partitioned_definition_objects = convert_source_lists_to_definitions(partitioned_source_list, definition)
+            if verbose:
+                return partitioned_definition_objects, duration_info
+            return partitioned_definition_objects
+
+    # Sort the trials to find the best one.
+    best_trials = sorted(trials_results, key=lambda x: x[0])
+
+    # Display the specified number of best trials if verbose is True.
+    if verbose and num_show_best_trials is not None:
+        print(f"Displaying top {num_show_best_trials} trials:")
+        for i, trial in enumerate(best_trials[:num_show_best_trials]):
+            trial_random_state, trial_ratio_obedience_metric, trial_duration_info = trial[1], trial[0], trial[2]
+            print(f"\nTrial {i + 1} - Random State: {trial_random_state}, RMSE: {trial_ratio_obedience_metric}")
+            for partition_info in trial_duration_info:
+                print(partition_info)
+            print("-" * 50)
+
+    # Select the best trial based on the metric.
+    best_trial_random_state = best_trials[0][1] if best_trials else random_state
+
+    # Rerun the partitioning using the best trial's random state.
     partitioned_source_list, partitioned_durations, partition_source_counts = stratified_partition_by_labels(
-        label_duration_list, partition_ratios, random_state=random_state)
+        label_duration_list, partition_ratios, random_state=best_trial_random_state)
 
     # Convert the partitioned source lists into DatasetDefinition objects.
-    partitioned_definition_objects = convert_source_lists_to_definitions(partitioned_source_list, definition)
+    final_partitioned_definition_objects = convert_source_lists_to_definitions(partitioned_source_list, definition)
 
-    # Gather information about the distribution of durations across different partitions.
-    duration_info = get_duration_info(partitioned_durations, priority_stratification_labels, partition_source_counts)
+    # Gather final information about the distribution of durations across different partitions.
+    final_duration_info = get_duration_info(partitioned_durations, priority_stratification_labels,
+                                            partition_source_counts)
 
-    # Optionally output duration information for each partition if verbose mode is enabled.
     if verbose:
-        print(duration_info)
-        return partitioned_definition_objects, duration_info
+        print("Final partitioning using best trial's random state:")
+        print(f"Random State: {best_trial_random_state}")
+        print('-' * 50)
+        for partition in final_duration_info:
+            print(partition)
+        print("-" * 50 + "\n")
+        return final_partitioned_definition_objects, final_duration_info
 
-    return partitioned_definition_objects
+    return final_partitioned_definition_objects
 
 
 def get_priority_stratification_label_set_ids(priority_labels, validated_label_set_list, sdk):
@@ -234,3 +280,47 @@ def get_duration_info(partitioned_durations, priority_stratification_labels, par
         duration_info_list.append(duration_info)
 
     return duration_info_list
+
+
+def evaluate_ratio_obedience_metric(duration_info, target_ratios):
+    """
+    Evaluate how well the partitions divided the total waveform time and each label according to the target ratios.
+
+    :param duration_info: List of dictionaries containing information about partition durations.
+    :param target_ratios: The target ratios used for splitting, a list of integers like [1, 2, 3].
+    :return: The computed ratio_obedience_metric.
+    """
+    # Convert target ratios to proportions
+    total_target_ratio = sum(target_ratios)
+    target_proportions = [r / total_target_ratio for r in target_ratios]
+
+    # Initialize variables to store sums of squared errors for each category
+    error_sums = {key: 0 for key in duration_info[0] if key not in ['partition', 'num_sources']}
+    num_partitions = len(duration_info)
+
+    # Calculate sums of squared errors
+    for key in error_sums:
+        actual_durations = [partition[key] for partition in duration_info]
+        total_duration = sum(actual_durations)
+        expected_durations = [total_duration * prop for prop in target_proportions]
+
+        for actual, expected in zip(actual_durations, expected_durations):
+            error_sums[key] += (actual - expected) ** 2
+
+    # Calculate RMSE for each category and combine them
+    rmses = [np.sqrt(error_sum / num_partitions) for error_sum in error_sums.values()]
+    combined_metric = np.mean(rmses)  # or use np.sum(rmses) for a cumulative error
+
+    return combined_metric
+
+
+def get_random_states(n_trials, random_state=None):
+    """
+    Generate a list of random states.
+
+    :param n_trials: Number of random states to generate.
+    :param random_state: Seed for the random number generator.
+    :return: A list of random states.
+    """
+    rng = np.random.default_rng(random_state)
+    return rng.choice(np.iinfo(np.int32).max, size=n_trials, replace=False).tolist()
