@@ -50,15 +50,14 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     label_duration_list = get_label_duration_list(validated_sources, priority_stratification_label_set_ids, sdk)
 
     # Perform stratified partitioning of the dataset based on the labels.
-    partitioned_source_list, partitioned_durations = stratified_partition_by_labels(
+    partitioned_source_list, partitioned_durations, partition_source_counts = stratified_partition_by_labels(
         label_duration_list, partition_ratios, random_state=random_state)
 
     # Convert the partitioned source lists into DatasetDefinition objects.
     partitioned_definition_objects = convert_source_lists_to_definitions(partitioned_source_list, definition)
 
     # Gather information about the distribution of durations across different partitions.
-    # TODO: Add Num Patients to duration_info
-    duration_info = get_duration_info(partitioned_durations, priority_stratification_labels)
+    duration_info = get_duration_info(partitioned_durations, priority_stratification_labels, partition_source_counts)
 
     # Optionally output duration information for each partition if verbose mode is enabled.
     if verbose:
@@ -153,6 +152,7 @@ def stratified_partition_by_labels(data_list, partition_ratios, random_state=Non
     # Initialize partitions and their total sums
     partitions = [[] for _ in range(len(ratios))]
     partition_sums = [np.zeros(len(total_sums), dtype=np.int64) for _ in range(len(ratios))]
+    partition_source_counts = [0 for _ in range(len(ratios))]
 
     # Function to find the best partition for the current item
     def find_best_partition(item):
@@ -170,8 +170,9 @@ def stratified_partition_by_labels(data_list, partition_ratios, random_state=Non
         best_partition = find_best_partition(item)
         partitions[best_partition].append(item)
         partition_sums[best_partition] += item[3:]
+        partition_source_counts[best_partition] += 1
 
-    return partitions, partition_sums
+    return partitions, partition_sums, partition_source_counts
 
 
 def convert_source_lists_to_definitions(partitioned_source_list, original_definition):
@@ -214,13 +215,18 @@ def convert_source_lists_to_definitions(partitioned_source_list, original_defini
     return partitioned_definitions
 
 
-def get_duration_info(partitioned_durations, priority_stratification_labels, convert_to_hours=True):
+def get_duration_info(partitioned_durations, priority_stratification_labels, partition_source_counts,
+                      convert_to_hours=True):
     duration_info_list = []
     time_units = "hours" if convert_to_hours else "nanoseconds"
 
-    for partition_index, durations in enumerate(partitioned_durations):
+    for partition_index, (durations, source_count) in enumerate(zip(partitioned_durations, partition_source_counts)):
         total_waveform_duration = round(durations[0] / (3600 * 1e9), 3) if convert_to_hours else durations[0]
-        duration_info = {"partition": partition_index, f"total waveform {time_units}": total_waveform_duration}
+        duration_info = {
+            "partition": partition_index,
+            f"total waveform {time_units}": total_waveform_duration,
+            "num_sources": source_count
+        }
         for label_index, label in enumerate(priority_stratification_labels, start=1):
             label_key = f"{label} {time_units}"
             duration_info[label_key] = round(durations[label_index] / (3600 * 1e9), 3) if convert_to_hours else durations[label_index]
