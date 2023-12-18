@@ -42,41 +42,52 @@ Once installed, you can access the CLI by running the `atriumdb` command. For he
 Authentication
 =========================
 
-To use the CLI for authentication and remote access, you will need to install the `atriumdb` package with the `cli` and `remote` optional dependency.
+To use the AtriumDB CLI for authentication and remote access, you only need to specify the `endpoint-url` when logging in. The CLI will now automatically detect the URL from the last login for all subsequent commands.
+
+To log in and set the endpoint URL, simply use the `atriumdb login` command with the `--endpoint-url` option. This option now supports login with an optional port:
 
 .. code-block:: bash
 
-    pip install atriumdb[cli,remote]
+    # Login with a port
+    atriumdb login --endpoint-url "https://example.com:443/v1"
 
-You can then use the `atriumdb` CLI to set the endpoint URL and log in to the remote API.
+    # Login without specifying a port
+    atriumdb login --endpoint-url "https://example.com/v1"
 
-.. code-block:: bash
-
-    atriumdb --endpoint-url http://example.com/api/v1 login
-
-If the endpoint URL is already set in the .env file or as an environment variable, you can simply log in like this:
-
-Create a file named `.env` in the same directory as your script and add the following content:
-
-.. code-block:: ini
-
-    ATRIUMDB_ENDPOINT_URL=http://example.com/api/v1
-
-Now, you can log in using the CLI:
+After logging in, the authentication credentials, including the API token and endpoint URL, are securely stored. If you need to refresh your token, you can now do so with the `atriumdb refresh-token` command, which uses the stored endpoint URL:
 
 .. code-block:: bash
 
-    atriumdb login
+    atriumdb refresh-token
 
-After logging in, the `atriumdb` CLI will store the API token in the `.env` file. You can update your `.env` file to include the API token as well:
+To view your current CLI configuration, including the endpoint URL and API token, use the `atriumdb config` command:
 
-.. code-block:: ini
+.. code-block:: bash
 
-    ATRIUMDB_ENDPOINT_URL=http://example.com/api/v1
-    ATRIUMDB_API_TOKEN=4e78a93749ead7893
+    atriumdb config
 
-Now, you can access the remote dataset using the AtriumSDK object, as shown in the "Connecting to an Existing Dataset" section.
+Authentication Timeout
+-----------------------
 
+If a certain period of inactivity passes or the CLI detects that the authentication has timed out, the CLI will prompt you to reauthenticate using the `atriumdb refresh-token` or re-run the `atriumdb login` command with your endpoint URL.
+
+Modifying the `.env` File
+---------------------------
+
+Directly editing the `.env` file is no longer recommended. The AtriumDB CLI will manage all necessary environment variables for you, ensuring secure and effective handling of authentication credentials.
+
+Connecting to an Existing Dataset
+----------------------------------
+
+After successfully logging in using the updated methods described above, you can continue to use the AtriumSDK in remote mode with any Python scripts. The synchronization with your current login state occurs automatically.
+
+Remember that while instantiating the `AtriumSDK`, there's no need to explicitly provide the API token, as it will be read from the stored credentials:
+
+.. code-block:: python
+
+    sdk = AtriumSDK(metadata_connection_type="api", api_url="https://example.com/v1")
+
+    # The SDK will now use the stored API token from the last successful login.
 
 ========================================================
 Using AtriumSDK in Remote Mode with CLI Authentication
@@ -100,7 +111,7 @@ To use the AtriumSDK in remote mode, follow these steps:
 
 .. code-block:: python
 
-    sdk = AtriumSDK(metadata_connection_type="api", api_url="http://example.com/api/v1")
+    sdk = AtriumSDK(metadata_connection_type="api", api_url="http://example.com/v1")
 
 By setting `metadata_connection_type` to `"api"`, the AtriumSDK will automatically detect and use the API token stored in the `.env` file for remote API calls (alternatively you can specify the token in the `token` parameter).
 
