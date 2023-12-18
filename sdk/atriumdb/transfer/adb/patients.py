@@ -1,27 +1,87 @@
-# patient_info_to_transfer is default "all" or a list of strings equal to the keys/columns in the patient table that we want to transfer
-
-# if deidentify is True, then we randomly assign new patient_ids to the to_sdk from range(10_000, 10_000 + 2 * len(total_transfered_patients)
-# deidentify can also be a filename (str or Path) to a deidentification table
-
-# patient_id_list or mrn_list must be not None, if mrn_list is not None, it is converted into a patient_id_list using the from_sdk
 import csv
 from pathlib import Path
 from typing import Dict, Union
 import random
 
 
-def transfer_patient_info(from_sdk, to_sdk, patient_id_list=None, mrn_list=None, deidentify=True,
+def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None, deidentify=True,
                           patient_info_to_transfer=None, start_time_nano=None, end_time_nano=None):
     """
-    Transfers patient information, patient to device mapping and patient histories
+    Transfers patient information, mappings between patients and devices, and (TODO: patient history records) from one
+    AtriumSDK instance to another. Depending on the `deidentify` parameter, it may also anonymize
+    patient IDs in the transfer process.
+
+   :param AtriumSDK src_sdk: The source SDK instance from which to transfer data.
+   :param AtriumSDK dest_sdk: The destination SDK instance to transfer data to.
+   :param list patient_id_list: (Optional) A list of patient IDs to transfer. If not provided, `mrn_list`
+    will be used to generate this list. If set to "all", transfer all patient info.
+   :param list mrn_list: (Optional) A list of medical record numbers (MRNs) corresponding to the patients to transfer.
+    If `patient_id_list` is not provided, `mrn_list` will be used to determine patients to transfer.
+   :param union[bool, str, Path] deidentify: If True, randomly assign new patient IDs. If a filename (str or Path)
+    is provided, use the deidentification table from the file. If False, keep the original patient IDs.
+   :param list patient_info_to_transfer: (Optional) A list of patient info keys to transfer.
+    If None or "all", transfer all patient info.
+   :param int start_time_nano: (Optional) The start time in nanoseconds for patient-device history records.
+   :param int end_time_nano: (Optional) The end time in nanoseconds for patient-device history records.
+
+   :raises ValueError: If both `patient_id_list` and `mrn_list` are None, or if the provided
+    `patient_info_to_transfer` contains invalid keys.
+
+   .. note::
+      - If `deidentify` is a filename, it assumes that the CSV format is as follows: original_patient_id,new_patient_id
+      - If you use `deidentify=True`, make sure that patient confidentiality is not compromised by any other
+        patient-related data that is transferred.
+
+   Examples:
+   ---------
+
+   .. code-block:: python
+
+      from atriumdb import AtriumSDK
+      from atriumdb.transfer.adb.patients import transfer_patient_info
+
+      # Initialize source and destination SDK instances
+      src_sdk = AtriumSDK(dataset_location="./src_dataset")
+      dest_sdk = AtriumSDK(dataset_location="./dest_dataset")
+
+      # Transfer specific patients using their patient IDs
+      transfer_patient_info(src_sdk, dest_sdk, patient_id_list=[1234, 5678])
+
+      # Transfer all patients with deidentification
+      transfer_patient_info(src_sdk, dest_sdk, patient_id_list="all", deidentify=True)
+
+      # Transfer data using MRNs and specify a deidentification map from a file
+      transfer_patient_info(src_sdk, dest_sdk, mrn_list=[123456, 654321], deidentify="deid_map.csv")
+
+      # Transfer all patient info between a specific time range
+      transfer_patient_info(src_sdk, dest_sdk, patient_id_list="all", start_time_nano=1617264000000000000, end_time_nano=1617350400000000000)
+
     """
-    patient_id_list = validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list)
+    patient_id_list = validate_patient_transfer_list(src_sdk, patient_id_list, mrn_list)
 
     patient_id_map = create_patient_id_map(patient_id_list, deidentify)
 
-    transfer_patient_table(from_sdk, to_sdk, patient_id_list, patient_id_map, patient_info_to_transfer)
+    transfer_patient_table(src_sdk, dest_sdk, patient_id_list, patient_id_map, patient_info_to_transfer)
 
-    transfer_patient_device_mapping(from_sdk, to_sdk, patient_id_list, patient_id_map, start_time_nano, end_time_nano)
+    transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_time_nano, end_time_nano)
+
+
+def transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_time_nano, end_time_nano):
+    dest_device_dict = dest_sdk.get_all_devices()
+
+    src_to_dest_dev_ids_dict = {src_sdk.get_device_id(device_info['tag']): dest_dev_id for dest_dev_id, device_info in
+                                dest_device_dict.items() if src_sdk.get_device_id(device_info['tag']) is not None}
+
+    device_patient_list = src_sdk.get_device_patient_data(
+        device_id_list=list(src_to_dest_dev_ids_dict.keys()), patient_id_list=list(patient_id_map.keys()),
+        start_time=start_time_nano, end_time=end_time_nano)
+
+    dest_device_patient_list = []
+    for device_id, patient_id, start_time, end_time in device_patient_list:
+        dest_device_patient_list.append(
+            [src_to_dest_dev_ids_dict[device_id], patient_id_map[patient_id], start_time, end_time])
+
+    dest_sdk.insert_device_patient_data(device_patient_data=dest_device_patient_list)
 
 
 def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list):
