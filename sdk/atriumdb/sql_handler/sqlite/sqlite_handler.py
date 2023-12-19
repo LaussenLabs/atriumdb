@@ -61,6 +61,9 @@ class SQLiteHandler(SQLHandler):
 
         return conn
 
+    def connection(self, begin=False):
+        return self.sqlite_db_connection(begin=begin)
+
     @contextmanager
     def sqlite_db_connection(self, begin=False):
         conn = self.sqlite_connect()

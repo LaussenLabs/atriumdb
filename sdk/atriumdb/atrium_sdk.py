@@ -236,6 +236,9 @@ class AtriumSDK:
             # Lazy caching, cache only built if patient info requested later
             self._patients = {}
 
+            # A dictionary of a list of matching ids in order of number of blocks (DESC) for each tag.
+            self._measure_tag_to_ordered_id = {}
+
             # Create a dictionary to map measure information to measure IDs
             self._measure_ids = {}
             for measure_id, measure_info in self._measures.items():
@@ -2740,6 +2743,25 @@ class AtriumSDK:
 
         # Return the measure ID
         return measure_id
+
+    def get_measure_id_list_from_tag(self, measure_tag: str):
+        """
+        Returns a list of matching measure_ids for a given tag in DESC order by number of stored blocks.
+        Helpful for finding all ids or the most prevalent id for a given tag.
+
+        :param measure_tag: The tag of the measure.
+        :return: A list of measure_ids
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError
+
+        if measure_tag in self._measure_tag_to_ordered_id:
+            return self._measure_tag_to_ordered_id[measure_tag]
+
+        # Reload the cache
+        self._measure_tag_to_ordered_id = self.sql_handler.get_tag_to_measure_ids_dict()
+
+        return self._measure_tag_to_ordered_id.get(measure_tag, [])
 
     def get_measure_info(self, measure_id: int):
         """

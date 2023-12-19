@@ -26,6 +26,10 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
+    def connection(self, begin=False):
+        pass
+
+    @abstractmethod
     def interval_exists(self, measure_id, device_id, start_time_nano):
         pass
 
@@ -276,3 +280,76 @@ class SQLHandler(ABC):
     @abstractmethod
     def select_label_source_info_by_id(self, label_source_id):
         pass
+
+    def get_measure_id_with_most_rows(self, tag: str):
+        # Query to get all matching measure.ids
+        measure_ids_query = """
+        SELECT id FROM measure WHERE tag = ?
+        """
+        measure_ids = []
+
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(measure_ids_query, (tag,))
+            measure_ids = [row[0] for row in cursor.fetchall()]
+
+        # Query to find the measure.id with the most rows in block_index
+        most_rows_query = """
+        SELECT measure_id, COUNT(*) as row_count
+        FROM block_index
+        WHERE measure_id IN ({})
+        GROUP BY measure_id
+        ORDER BY row_count DESC
+        LIMIT 1
+        """.format(','.join(['?'] * len(measure_ids)))
+
+        if measure_ids:
+            if len(measure_ids) == 1:
+                return measure_ids[0]
+            with self.connection(begin=False) as (conn, cursor):
+                cursor.execute(most_rows_query, measure_ids)
+                result = cursor.fetchone()
+                return result[0] if result else None
+        else:
+            return None
+
+    def get_tag_to_measure_ids_dict(self):
+        # Step 1: Retrieve all measures and construct id-to-tag mapping
+        measure_query = """
+        SELECT id, tag FROM measure
+        """
+        id_to_tag = {}
+
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(measure_query)
+            for row in cursor.fetchall():
+                measure_id, tag = row
+                if tag not in id_to_tag:
+                    id_to_tag[tag] = []
+                id_to_tag[tag].append(measure_id)
+
+        # Step 2: Get count of rows for each measure ID from block_index
+        block_index_query = """
+        SELECT measure_id, COUNT(*) as row_count
+        FROM block_index
+        GROUP BY measure_id
+        """
+
+        measure_id_to_count = {}
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(block_index_query)
+            for row in cursor.fetchall():
+                measure_id, count = row
+                measure_id_to_count[measure_id] = count
+
+        # Step 3: Construct the final dictionary
+        tag_to_sorted_measure_ids = {}
+        for tag, measure_ids in id_to_tag.items():
+            # Sort the measure IDs by count, descending order
+            sorted_measure_ids = sorted(
+                measure_ids,
+                key=lambda x: measure_id_to_count.get(x, 0),
+                reverse=True
+            )
+            tag_to_sorted_measure_ids[tag] = sorted_measure_ids
+
+        return tag_to_sorted_measure_ids

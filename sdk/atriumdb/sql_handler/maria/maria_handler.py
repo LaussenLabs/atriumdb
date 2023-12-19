@@ -118,6 +118,9 @@ class MariaDBHandler(SQLHandler):
             cursor.close()
             conn.close()
 
+    def connection(self, begin=False):
+        return self.maria_db_connection(begin=begin)
+
     def create_schema(self):
         conn = self.maria_connect_no_db()
         cursor = conn.cursor()
