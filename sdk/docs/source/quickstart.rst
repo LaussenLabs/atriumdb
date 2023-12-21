@@ -53,7 +53,7 @@ If it's a MariaDB dataset you will also have to specify the connection parameter
     sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type="mysql", connection_params=connection_params)
 
     # Connect to a remote dataset using the API
-    api_url = "http://example.com/api/v1"
+    api_url = "http://example.com/v1"
     token = "4e78a93749ead7893"
     sdk = AtriumSDK(api_url=api_url, token=token, metadata_connection_type="api")
 
@@ -130,28 +130,22 @@ You can then use the `atriumdb` CLI to set the endpoint URL and log in to the re
 
 .. code-block:: bash
 
-    atriumdb --endpoint-url http://example.com/api/v1 login
+    atriumdb login --endpoint-url "https://example.com/v1"
 
-If the endpoint URL is already set in the .env file or as an environment variable, you can simply log in like this:
-
-Create a file named `.env` in the same directory as your script and add the following content:
+This command, after authenticating your API connection, will save your URL, token, auth expiration time, and connection mode in the `.env`:
 
 .. code-block:: ini
 
-    ATRIUMDB_ENDPOINT_URL=http://example.com/api/v1
+    ATRIUMDB_ENDPOINT_URL=https://example.com/v1
+    ATRIUMDB_API_TOKEN='aBcD012345eFgHI'
+    ATRIUMDB_AUTH_EXPIRATION_TIME=1234567890.1234567
+    ATRIUMDB_DATABASE_TYPE='api'
 
-Now, you can log in using the CLI:
+Once these variables have been set after running `login`, you can refresh the token using:
 
 .. code-block:: bash
 
-    atriumdb login
-
-After logging in, the `atriumdb` CLI will store the API token in the `.env` file. You can update your `.env` file to include the API token as well:
-
-.. code-block:: ini
-
-    ATRIUMDB_ENDPOINT_URL=http://example.com/api/v1
-    ATRIUMDB_API_TOKEN=4e78a93749ead7893
+    atriumdb refresh-token
 
 Now, you can access the remote dataset using the AtriumSDK object, as shown in the "Connecting to an Existing Dataset" section.
 
