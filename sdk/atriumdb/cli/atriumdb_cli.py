@@ -24,10 +24,11 @@ import qrcodeT
 import urllib3
 import os
 import time
+from urllib.parse import urlparse
 
 from auth0.authentication.token_verifier import TokenVerifier, AsymmetricSignatureVerifier
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key, get_key
 
 from atriumdb import AtriumSDK
 from atriumdb.adb_functions import parse_metadata_uri
@@ -43,7 +44,8 @@ import logging
 
 _LOGGER = logging.getLogger(__name__)
 
-load_dotenv(dotenv_path="./.env", override=True)
+dotenv_path = "./.env"
+load_dotenv(dotenv_path=dotenv_path, override=True)
 
 cli_help_text = """
 The atriumdb command is a command line interface for the Atrium database, 
@@ -95,11 +97,26 @@ def cli(ctx, dataset_location, metadata_uri, database_type, endpoint_url, api_to
 
 
 @click.command(help="Endpoint to login with QR code.")
+@click.option("--endpoint-url", type=str, required=True, help="The endpoint to connect to for a remote AtriumDB server")
 @click.pass_context
-def login(ctx):
-    endpoint_url = ctx.obj["endpoint_url"]
+def login(ctx, endpoint_url):
+    parsed_url = urlparse(endpoint_url)
 
-    endpoint_url = endpoint_url.rstrip('/')
+    # Check if a port is included in the URL
+    if parsed_url.port:
+        base_url = f"{parsed_url.scheme}://{parsed_url.hostname}:{parsed_url.port}"
+    else:
+        base_url = f"{parsed_url.scheme}://{parsed_url.hostname}"
+
+    path = parsed_url.path.rstrip('/')
+
+    # Construct the final endpoint URL
+    endpoint_url = f"{base_url}{path}"
+
+    # Write endpoint URL to .env file
+    load_dotenv(dotenv_path=dotenv_path)
+    set_key(dotenv_path, "ATRIUMDB_ENDPOINT_URL", endpoint_url)
+    load_dotenv(dotenv_path=dotenv_path, override=True)
 
     auth_conf_res = requests.get(f'{endpoint_url}/auth/cli/code')
 
@@ -148,8 +165,12 @@ def login(ctx):
     }
 
     authenticated = False
-    while not authenticated:
-        # click.echo('Checking if the user completed the flow...')
+
+    # Calculate absolute expiration time
+    expires_in = time.time() + device_code_data['expires_in']
+    expiration_time = time.time() + int(device_code_data['expires_in'])
+
+    while not authenticated and time.time() < expiration_time:
         token_response = requests.post(f'https://{auth0_domain}/oauth/token', data=token_payload)
 
         token_data = token_response.json()
@@ -160,8 +181,11 @@ def login(ctx):
 
             authenticated = True
 
-            set_env_var_in_dotenv("ATRIUMDB_API_TOKEN", token_data['access_token'])
-            set_env_var_in_dotenv("ATRIUMDB_DATABASE_TYPE", "api")
+            load_dotenv(dotenv_path=dotenv_path)
+            set_key(dotenv_path, "ATRIUMDB_API_TOKEN", token_data['access_token'])
+            set_key(dotenv_path, "ATRIUMDB_DATABASE_TYPE", "api")
+            load_dotenv(dotenv_path=dotenv_path, override=True)
+
             click.echo("Your API Token is:\n")
             click.echo(token_data['access_token'])
             click.echo("The variable ATRIUMDB_API_TOKEN has been set in your .env file and")
@@ -172,6 +196,58 @@ def login(ctx):
             exit(1)
         else:
             time.sleep(device_code_data['interval'])
+
+    # Check if the authentication process timed out
+    if not authenticated:
+        click.echo("Authentication Request Timed-Out")
+
+
+@click.command(help="Refresh the API token using the stored endpoint URL.")
+@click.pass_context
+def refresh_token(ctx):
+    # Load .env file
+    load_dotenv(dotenv_path=dotenv_path)
+
+    # Check if endpoint URL is set
+    endpoint_url = get_key(dotenv_path, "ATRIUMDB_ENDPOINT_URL")
+
+    if not endpoint_url:
+        click.echo("Endpoint URL not set. Please use 'atriumdb login --endpoint-url MY_URL'.")
+        exit(1)
+
+    # Call the login function with the stored endpoint URL
+    ctx.invoke(login, endpoint_url=endpoint_url)
+
+
+@click.command(help="Displays the current CLI configuration.")
+@click.pass_context
+def config(ctx):
+    # Retrieve the configuration from the context
+    config_data = {
+        "Endpoint URL": "Not Set" if not ctx.obj.get("endpoint_url") else ctx.obj.get("endpoint_url"),
+        "API Token": "Not Set" if not ctx.obj.get("api_token") else ctx.obj.get("api_token"),
+        "Dataset Location": "Not Set" if not ctx.obj.get("dataset_location") else ctx.obj.get("dataset_location"),
+        "Metadata URI": "Not Set" if not ctx.obj.get("metadata_uri") else ctx.obj.get("metadata_uri"),
+        "Database Type": "Not Set" if not ctx.obj.get("database_type") else ctx.obj.get("database_type"),
+    }
+
+    if config_data["API Token"] != "Not Set":
+        config_data["API Token"] = config_data["API Token"][:15] + "..."
+
+    # Determine the mode (remote or local)
+    mode = "Remote" if config_data["Database Type"] == "api" else "Local"
+
+    # Prepare data for tabulation
+    data = [
+        ["Mode", mode],
+        *config_data.items()
+    ]
+
+    # Print the tabulated data
+    click.echo(tabulate(data, headers=["Configuration", "Value"], tablefmt="grid"))
+    if config_data["API Token"] != "Not Set":
+        click.echo("Full API Token:")
+        click.echo(ctx.obj.get("api_token", "Not Set"))
 
 
 @click.command()
@@ -459,6 +535,8 @@ cli.add_command(atriumdb_patient)
 cli.add_command(atriumdb_measure)
 cli.add_command(atriumdb_device)
 cli.add_command(login)
+cli.add_command(refresh_token)
+cli.add_command(config)
 
 
 def set_env_var_in_dotenv(name, value):

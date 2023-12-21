@@ -99,6 +99,24 @@ for each record and handle multiple signals in a single record.
         freq_nano = record.fs * 1_000_000_000
         time_arr = np.arange(record.sig_len, dtype=np.int64) * int(10 ** 9 // record.fs)
 
+        # Read The Record Annotations
+        annotation = wfdb.rdann(n, 'atr', pn_dir="mitdb", summarize_labels=True, return_label_elements=['description'])
+        label_time_idx_array = annotation.sample
+        label_time_array = time_arr[label_time_idx_array]
+        label_value_list = annotation.description
+
+        # Define list of labels for the record
+        labels = []
+
+        # Create labels for each annotation
+        for i in range(len(label_value_list)):
+            start_time = label_time_array[i]
+            end_time = start_time + int(10 ** 9 // record.fs)  # Assuming an annotation lasts for one sample
+            labels.append(('Arrhythmia Annotation', device_id, start_time, end_time, label_value_list[i]))
+
+        # Insert labels into the database
+        sdk.insert_labels(labels=labels, time_units='ns', source_type='device_id')
+
         # If there are multiple signals in one record, split them into separate dataset entries
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
@@ -335,6 +353,23 @@ We will iterate through the records in the MIT-BIH Arrhythmia Database and compa
            # Check that both the signal and time arrays from MIT-BIH and AtriumDB are equal
            assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
 
+
+Retrieving Labels from the Dataset
+------------------------------------------
+
+We can also retrieve the annotations inserted as atriumdb labels earlier in the tutorial, first by recalling the different
+label names inserted into the dataset:
+
+.. code-block:: python
+    label_set_dict = sdk.get_all_label_sets()
+    label_set_names = [label_info['name'] for label_id, label_info in label_set_dict.items()]
+
+And then by calling `AtriumSDK.get_labels` to retrieve the label information:
+
+.. code-block:: python
+    for record_name in tqdm(record_names):
+       # Read the record from the MIT-BIH Arrhythmia Database
+       label_data = sdk.get_labels(name_list=label_set_names, device_list=[record_name])
 
 Visualizing the Dataset
 -------------------------------

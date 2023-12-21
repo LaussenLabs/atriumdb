@@ -76,7 +76,7 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
         np.random.seed(seed)
         random.seed(seed)
     num_records = 0
-    for record in get_records(dataset_name='mitdb'):
+    for (record, annotation) in get_records(dataset_name='mitdb'):
         if max_records and num_records >= max_records:
             return
         num_records += 1
@@ -151,7 +151,7 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
     num_records = 0
 
     device_patient_dict = {}
-    for record, d_record in zip(get_records(dataset_name='mitdb'), get_records(dataset_name='mitdb', physical=False)):
+    for (record, annotation), (d_record, d_annotation) in zip(get_records(dataset_name='mitdb'), get_records(dataset_name='mitdb', physical=False)):
         if max_records and num_records >= max_records:
             return
         num_records += 1
