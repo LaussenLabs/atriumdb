@@ -29,8 +29,8 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
 
    .. note::
       - If `deidentify` is a filename, it assumes that the CSV format is as follows: original_patient_id,new_patient_id
-      - If you use `deidentify=True`, make sure that patient confidentiality is not compromised by any other
-        patient-related data that is transferred.
+      - If you use `deidentify=True`, you may also want to restrict what patient information is being transferred
+        using patient_info_to_transfer
 
    Examples:
    ---------
