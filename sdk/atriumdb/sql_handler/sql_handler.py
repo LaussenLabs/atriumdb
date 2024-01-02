@@ -302,18 +302,18 @@ class SQLHandler(ABC):
         LIMIT 1
         """.format(','.join(['?'] * len(measure_ids)))
 
-        if measure_ids:
-            if len(measure_ids) == 1:
-                return measure_ids[0]
-            with self.connection(begin=False) as (conn, cursor):
-                cursor.execute(most_rows_query, measure_ids)
-                result = cursor.fetchone()
-                return result[0] if result else None
-        else:
+        if not measure_ids:
             return None
 
+        if len(measure_ids) == 1:
+            return measure_ids[0]
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(most_rows_query, measure_ids)
+            result = cursor.fetchone()
+            return result[0] if result else None
+
     def get_tag_to_measure_ids_dict(self):
-        # Step 1: Retrieve all measures and construct id-to-tag mapping
+        # Retrieve all measures and construct id-to-tag mapping
         measure_query = """
         SELECT id, tag FROM measure
         """
@@ -327,7 +327,7 @@ class SQLHandler(ABC):
                     id_to_tag[tag] = []
                 id_to_tag[tag].append(measure_id)
 
-        # Step 2: Get count of rows for each measure ID from block_index
+        # Get count of rows for each measure ID from block_index
         block_index_query = """
         SELECT measure_id, COUNT(*) as row_count
         FROM block_index
@@ -341,7 +341,7 @@ class SQLHandler(ABC):
                 measure_id, count = row
                 measure_id_to_count[measure_id] = count
 
-        # Step 3: Construct the final dictionary
+        # Construct the final dictionary
         tag_to_sorted_measure_ids = {}
         for tag, measure_ids in id_to_tag.items():
             # Sort the measure IDs by count, descending order
