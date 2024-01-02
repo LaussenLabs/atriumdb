@@ -1,4 +1,4 @@
-AtriumDB Datasets
+Dataset Iterators
 ========================
 
 Iterating Over a Dataset
@@ -13,12 +13,23 @@ of data.
 For this reason, AtriumDB has a `AtriumSDK.get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_ method, that
 preloads large amounts of data in your RAM, and feeds it to you piece by piece in an iterable Class.
 
+`AtriumSDK.get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_ also does the job of windowing and indexing
+your data for you, which makes tasks like training a model much simpler.
+
 What is the ``get_iterator`` method?
 ###################################################
 
-The `AtriumSDK.get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_ method allows users to define a set of measures and specific patients or devices over particular time intervals through the `DatasetDefinition Class <contents.html#atriumdb.DatasetDefinition>`_ or a filename pointing to a valid :ref:`definition_file_format`. It ensures that the defined cohort exists within the available dataset. If portions of the cohort definition fall outside the dataset's boundaries, the method trims the cohort to fit within the available dataset and raises warnings about any data that has been omitted.
+The `AtriumSDK.get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_ method allows users to define a set of
+measures and specific patients or devices over particular time intervals through the
+`DatasetDefinition Class <contents.html#atriumdb.DatasetDefinition>`_ or a filename pointing to a valid
+:ref:`definition_file_format`. It ensures that the defined cohort exists within the available dataset.
+If portions of the cohort definition fall outside the dataset's boundaries, the method trims the cohort to fit within
+the available dataset and raises warnings about any data that has been omitted.
 
-The method returns a ``DatasetIterator`` object. This object provides both ``__len__`` and ``__getitem__`` methods, making iterating over the desired data straightforward and intuitive.
+The method returns a ``DatasetIterator`` object. This object implements ``__len__``, ``__next__`` and ``__getitem__``
+methods, allowing it to be looped over or iterated upon using traditional python code conventions like
+``for window in iterator`` or ``window = next(iterator)``. It also allows the class to directly facilitate a
+PyTorch Dataloader.
 
 How to Use
 #################
@@ -58,28 +69,40 @@ How to Use
 
    definition = DatasetDefinition(measures=measures, device_ids=device_ids)
 
-3. Set your desired parameters: window size and slide size (durations in nanoseconds), also num_windows_prefetch is the number of windows to preload for optimization:
+You can also use mrns or device tags to device your sources. See the
+`DatasetDefinition Class <contents.html#atriumdb.DatasetDefinition>`_ for more options.
+
+3. Set your desired parameters: **window_duration** and **window_slide** (durations in nanoseconds by default,
+changeable using ``time_units`` param, output times with conform to ``time_units`` units):
 
 .. code-block:: python
 
    slide_size_nano = window_size_nano = 60_000_000_000  # 1 minute nano
 
-4. Optional parameters: num_windows_prefetch is the number of windows to preload for optimization (recommend a high number for reasonable performance,
-None or leaving it default will pick a number of windows to make the number of cached value up to 10 million values.
-gap_tolerance informs the gap tolerance for the auto-generated definition intervals when using "all" mode, so that gaps between continuous data will be merged if
-they are less than gap_tolerance.
+4. Optional parameters:
+
+**num_windows_prefetch** is the number of windows to preload for optimization, a higher number
+increases efficiency at the cost of RAM usage (default will pick the number of windows such that the total number of
+cached values is closest to 10 million values.)
+
+**gap_tolerance** informs the auto-generated definition intervals when using "all" mode, defining the desired largest
+possible section of no data to be emitted by the windows.
+
+**time_units** defines the time units of ``window_duration``, ``window_slide`` and ``gap_tolerance`` options are
+``["s", "ms", "us", "ns"]``, default ``"ns"``.
 
 .. code-block:: python
 
    num_windows_prefetch = 100_000  # preload 100,000 windows before emitting
    gap_tolerance = 3600_000_000_000  # No gaps between data less than an hour. (NaNs will fill the gaps)
+   time_units = "ns"
 
 5. Obtain the iterator:
 
 .. code-block:: python
 
    iterator = sdk.get_iterator(definition, window_size_nano, slide_size_nano,
-        num_windows_prefetch=num_windows_prefetch, gap_tolerance=gap_tolerance)
+        num_windows_prefetch=num_windows_prefetch, gap_tolerance=gap_tolerance, time_units=time_units)
 
 4. Iterate through the dataset:
 
@@ -100,10 +123,16 @@ they are less than gap_tolerance.
         # Total Data Matrix, useful for feeding a model.
         print(iterator.get_array_matrix(window_i))
 
+You can find explanations of the returned Window object in the :ref:`window_format` section below.
+
+.. _window_format:
+
 Window Format
 #####################
 
-The ``Window`` class represents a structured format to handle chunks or windows of data, along with associated metadata, organized into signal dictionaries. It provides a more scalable and clear way to handle data of varying frequencies without filling lower frequency measures with NaN values due to alignment with higher frequency signals.
+The ``Window`` class represents a data structure for windowed data output by the
+`DatasetIterator Class <contents.html#atriumdb.DatasetIterator>`_, it includes the raw
+data organized into signal dictionaries, along with associated metadata.
 
 **Attributes**:
 
@@ -194,11 +223,12 @@ The ``measures`` section lists various measures to be considered. Each measure c
 2. A complete measure triplet which includes:
 
    - ``tag``: The tag identifying the measure.
-   - ``freq_hz``: The frequency of the measure (in Hertz).
+   - ``freq_hz`` or ``freq_nhz``: The frequency of the measure in Hertz (floating) or nanoHertz (integer).
    - ``units``: The unit of the measure (e.g., volts, bpm).
 
 .. code-block:: yaml
 
+   # could be mrns, device_ids or device_tags
    patient_ids:
         12345:
             - start: 1682739200000000000  # nanosecond Unix Epoch Time
@@ -211,10 +241,13 @@ The ``measures`` section lists various measures to be considered. Each measure c
             - start: 1682739200000000000  # Start with no end
 
    measures:
-     - heart_rate
-     - tag: ECG
-       freq_hz: 300
-       units: mV
+        - heart_rate
+        - tag: ECG
+          freq_hz: 62.5
+          units: mV
+        - tag: ABP
+          freq_nhz: 250000000000
+          units: mV
 
 
 Definition YAML Examples
@@ -223,7 +256,7 @@ Definition YAML Examples
 Creating a DatasetDefinition object
 ###################################
 
-You can create a ``DatasetDefinition`` object in several ways:
+You can create a `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ object in several ways:
 
 1. Reading from an existing YAML file:
 
@@ -266,6 +299,9 @@ Adding to a DatasetDefinition object
 
       sdk.insert_measure(measure_tag="ART_BLD_PRESS", freq=250, units="mmHG", freq_units="Hz")
       dataset_definition.add_measure(tag="ART_BLD_PRESS")  # ValueError: More than 1 measure has that tag
+      >>> ValueError
+      dataset_definition = DatasetDefinition()
+      dataset_definition.add_measure(measure_tag="ART_BLD_PRESS", freq=62.5, units="mmHG")  # Okay
       dataset_definition.add_measure(measure_tag="ART_BLD_PRESS", freq=250, units="mmHG")  # Okay
 
 2. Adding a region:
@@ -275,7 +311,6 @@ Adding to a DatasetDefinition object
    .. code-block:: python
 
       dataset_definition.add_region(device_tag="tag_1", start=1693499415_000_000_000, end=1693583415_000_000_000)
-      dataset_definition.add_region(device_tag="tag_1", patient_id=12345, start=1693499415_000_000_000, end=1693583415_000_000_000)  # Error, only one of patient_id, mrn, device_id, device_tag should be specified.
       dataset_definition.add_region(patient_id=12345, start=1693364515_000_000_000, end=1693464515_000_000_000)
       dataset_definition.add_region(mrn=1234567, start=1659344515_000_000_000, end=1660344515_000_000_000)
       dataset_definition.add_region(mrn="7654321", time0=1659393745_000_000_000, pre=3600_000_000_000, post=3600_000_000_000)
@@ -289,4 +324,6 @@ Once you have defined all the measures and regions, you can save the definition 
 
    dataset_definition.save(filepath="path/to/saved/definition.yaml")
 
-Note that the file extension must be ``.yaml``.
+Note that the file extension must be ``.yaml`` or ``.yml``.
+
+If you would like to overwrite an existing file, include the ``force=True`` keyword parameter.
