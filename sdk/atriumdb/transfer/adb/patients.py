@@ -86,12 +86,11 @@ def transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_tim
 
 def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list):
     if patient_id_list is None and mrn_list is None:
-        # TODO: better Error msg
-        raise ValueError("One must be specified, all or list")
+        raise ValueError("Either patient_id_list or mrn_list must be specified.")
     if patient_id_list == "all":
         patient_id_list = list(from_sdk.get_all_patients.keys())
     patient_id_list = [] if patient_id_list is None else patient_id_list
-    assert isinstance(patient_id_list, list), "TODO: Good Error Message"
+    assert isinstance(patient_id_list, list), "patient_id_list must be a list of patient ids or the string \"all\""
     if mrn_list is not None:
         patient_id_from_mrn_list = []
         if mrn_list == "all":
@@ -100,7 +99,7 @@ def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list):
             mrn_to_patient_id_map = from_sdk.get_mrn_to_patient_id_map(mrn_list)
             patient_id_list.extend([mrn_to_patient_id_map[mrn] for mrn in mrn_list if mrn in mrn_to_patient_id_map])
         else:
-            raise ValueError("TODO: Write Error")
+            raise ValueError("mrn_list must be a list of patient ids or the string \"all\"")
 
         patient_id_list.extend(patient_id_from_mrn_list)
     patient_id_list = list(set(patient_id_list))
