@@ -663,19 +663,6 @@ class MariaDBHandler(SQLHandler):
             cursor.executemany(maria_insert_device_patient_query, device_patient_data)
             conn.commit()
 
-    def insert_label_set(self, name):
-        # Insert a new label type into the database and return its ID.
-        query = "INSERT INTO label_set (name) VALUES (?)"
-        with self.maria_db_connection(begin=True) as (conn, cursor):
-            try:
-                cursor.execute(query, (name,))
-                conn.commit()
-                # Return the ID of the newly inserted label type.
-                return cursor.lastrowid
-            except mariadb.IntegrityError:
-                # If there's an integrity error (e.g., a duplicate), select and return the existing ID.
-                return self.select_label_set_id(name)
-
     def select_label_sets(self):
         # Retrieve all label types from the database.
         query = "SELECT id, name FROM label_set ORDER BY id ASC"

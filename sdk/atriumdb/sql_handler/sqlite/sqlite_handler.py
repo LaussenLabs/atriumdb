@@ -655,16 +655,6 @@ class SQLiteHandler(SQLHandler):
             cursor.executemany(sqlite_insert_device_patient_query, device_patient_data)
             conn.commit()
 
-    def insert_label_set(self, name):
-        query = "INSERT INTO label_set (name) VALUES (?)"
-        with self.sqlite_db_connection(begin=True) as (conn, cursor):
-            try:
-                cursor.execute(query, (name,))
-                conn.commit()
-                return cursor.lastrowid
-            except sqlite3.IntegrityError:
-                return self.select_label_set_id(name)
-
     def select_label_sets(self):
         query = "SELECT id, name FROM label_set ORDER BY id ASC"
         try:
