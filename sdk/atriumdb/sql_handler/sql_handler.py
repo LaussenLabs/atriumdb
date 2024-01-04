@@ -227,10 +227,28 @@ class SQLHandler(ABC):
         # Insert device_patient rows.
         pass
 
-    @abstractmethod
-    def insert_label_set(self, name):
-        # Insert a new label type and return its ID.
-        pass
+    def insert_label_set(self, name, label_set_id=None):
+        if label_set_id is not None:
+            existing_label_set = self.select_label_set(label_set_id)
+            if existing_label_set:
+                if existing_label_set[1] == name:
+                    # The provided ID exists and matches the name
+                    return label_set_id
+                else:
+                    # The provided ID exists but with a different name
+                    raise ValueError(f"The id {label_set_id} already exists under label name {existing_label_set[1]}")
+
+        existing_label_set_id = self.select_label_set_id(name)
+        if existing_label_set_id is not None:
+            # The name already exists with a different ID
+            return existing_label_set_id
+
+        # Insert the new label set
+        query = "INSERT INTO label_set (id, name) VALUES (?, ?)"
+        with self.connection(begin=True) as (conn, cursor):
+            cursor.execute(query, (label_set_id, name,))
+            conn.commit()
+            return cursor.lastrowid if label_set_id is None else label_set_id
 
     @abstractmethod
     def select_label_sets(self):
