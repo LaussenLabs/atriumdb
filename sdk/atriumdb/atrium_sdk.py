@@ -2744,12 +2744,14 @@ class AtriumSDK:
         # Return the measure ID
         return measure_id
 
-    def get_measure_id_list_from_tag(self, measure_tag: str):
+    def get_measure_id_list_from_tag(self, measure_tag: str, approx=True):
         """
         Returns a list of matching measure_ids for a given tag in DESC order by number of stored blocks.
         Helpful for finding all ids or the most prevalent id for a given tag.
 
-        :param measure_tag: The tag of the measure.
+        :param str measure_tag: The tag of the measure.
+        :param bool approx: If True, approximates the result based on first 100,000 rows of the block table.
+            If False, queries the entire block table.
         :return: A list of measure_ids
         """
         if self.metadata_connection_type == "api":
@@ -2759,7 +2761,7 @@ class AtriumSDK:
             return self._measure_tag_to_ordered_id[measure_tag]
 
         # Reload the cache
-        self._measure_tag_to_ordered_id = self.sql_handler.get_tag_to_measure_ids_dict()
+        self._measure_tag_to_ordered_id = self.sql_handler.get_tag_to_measure_ids_dict(approx=approx)
 
         return self._measure_tag_to_ordered_id.get(measure_tag, [])
 

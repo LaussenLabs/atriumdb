@@ -312,7 +312,7 @@ class SQLHandler(ABC):
             result = cursor.fetchone()
             return result[0] if result else None
 
-    def get_tag_to_measure_ids_dict(self):
+    def get_tag_to_measure_ids_dict(self, approx=True):
         # Retrieve all measures and construct id-to-tag mapping
         measure_query = """
         SELECT id, tag FROM measure
@@ -328,11 +328,20 @@ class SQLHandler(ABC):
                 id_to_tag[tag].append(measure_id)
 
         # Get count of rows for each measure ID from block_index
-        block_index_query = """
-        SELECT measure_id, COUNT(*) as row_count
-        FROM block_index
-        GROUP BY measure_id
-        """
+        if approx:
+            block_index_query = """
+            SELECT measure_id, COUNT(*) as approx_count
+            FROM block_index
+            WHERE id <= 100000
+            GROUP BY measure_id;
+
+            """
+        else:
+            block_index_query = """
+            SELECT measure_id, COUNT(*) as row_count
+            FROM block_index
+            GROUP BY measure_id
+            """
 
         measure_id_to_count = {}
         with self.connection(begin=False) as (conn, cursor):
