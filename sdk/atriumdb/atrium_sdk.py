@@ -3580,11 +3580,12 @@ class AtriumSDK:
         # Return the label set information dictionary
         return label_set_info
 
-    def insert_label_set(self, name: str) -> int:
+    def insert_label_set(self, name: str, label_set_id: int = None) -> int:
         """
         Insert a label set into the database if it doesn't already exist and return the ID.
 
         :param str name: The name of the label set to insert.
+        :param int label_set_id: (Optional) The desired id of the label set to insert.
         :return: The ID of the label set.
         :rtype: int
 
@@ -3604,7 +3605,7 @@ class AtriumSDK:
 
         # If not cached, insert it into the database and update the cache
         if label_set_id is None:
-            label_set_id = self.sql_handler.insert_label_set(name)
+            label_set_id = self.sql_handler.insert_label_set(name, label_set_id=label_set_id)
             self._label_sets[label_set_id] = {'id': label_set_id, 'name': name}
             self._label_set_ids[name] = label_set_id
 

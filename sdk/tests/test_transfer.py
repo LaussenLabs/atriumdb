@@ -19,7 +19,7 @@ from atriumdb import AtriumSDK
 import shutil
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
-from atriumdb.transfer.adb.dataset import transfer_data
+from atriumdb.transfer.adb.dataset import old_transfer_data
 from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset
 from tests.testing_framework import _test_for_both, create_sibling_sdk
 
@@ -53,8 +53,8 @@ def _test_transfer(db_type, dataset_location, connection_params):
     time_units = None
     batch_size = None
 
-    transfer_data(from_sdk=sdk_1, to_sdk=sdk_2, measure_id_list=measure_id_list, device_id_list=device_id_list,
-                  patient_id_list=patient_id_list, start=start, end=end, time_units=time_units, batch_size=batch_size)
+    old_transfer_data(from_sdk=sdk_1, to_sdk=sdk_2, measure_id_list=measure_id_list, device_id_list=device_id_list,
+                      patient_id_list=patient_id_list, start=start, end=end, time_units=time_units, batch_size=batch_size)
 
     assert_mit_bih_to_dataset(sdk_2, device_patient_map=device_patient_dict, max_records=MAX_RECORDS, seed=SEED)
 
@@ -69,7 +69,7 @@ def _test_transfer_with_patient_context(db_type, dataset_location, connection_pa
     # Test
     device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
 
-    transfer_data(from_sdk=sdk_1, to_sdk=sdk_2, include_patient_context=True)
+    old_transfer_data(from_sdk=sdk_1, to_sdk=sdk_2, include_patient_context=True)
 
     assert_mit_bih_to_dataset(
         sdk_2, device_patient_map=device_patient_dict, use_patient_id=True, max_records=MAX_RECORDS, seed=SEED)
@@ -85,7 +85,7 @@ def _test_transfer_with_patient_context_deidentify_timeshift(db_type, dataset_lo
     # Test
     device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
 
-    transfer_data(from_sdk=sdk_1, to_sdk=sdk_2, include_patient_context=True, deidentify=True, time_shift=-500)
+    old_transfer_data(from_sdk=sdk_1, to_sdk=sdk_2, include_patient_context=True, deidentify=True, time_shift=-500)
 
     assert_mit_bih_to_dataset(
         sdk_2, device_patient_map=device_patient_dict, deidentify=True, time_shift=-500, max_records=MAX_RECORDS,

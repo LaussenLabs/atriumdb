@@ -83,6 +83,8 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
 
     transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_time_nano, end_time_nano)
 
+    return patient_id_map
+
 
 def transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_time_nano, end_time_nano):
     dest_device_dict = dest_sdk.get_all_devices()
@@ -212,6 +214,7 @@ def transfer_patient_table(from_sdk, to_sdk, patient_id_list, patient_id_map, pa
             # Filter patient info if patient_info_to_transfer is specified
             if patient_info_to_transfer and patient_info_to_transfer != "all":
                 patient_info = {key: patient_info[key] for key in patient_info_to_transfer if key in patient_info}
+            del patient_info["id"]
 
             # Insert patient info into to_sdk
             to_sdk.insert_patient(patient_id=new_patient_id, **patient_info)

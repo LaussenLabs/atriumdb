@@ -35,7 +35,7 @@ from atriumdb.adb_functions import parse_metadata_uri
 from atriumdb.cli.sdk import get_sdk_from_env_vars, create_sdk_from_env_vars
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.transfer.cohort.cohort_yaml import parse_atrium_cohort_yaml
-from atriumdb.transfer.adb.dataset import transfer_data
+from atriumdb.transfer.adb.dataset import old_transfer_data
 from atriumdb.transfer.formats.dataset import export_dataset, import_dataset
 from atriumdb.transfer.formats.export_data import export_data_from_sdk
 from atriumdb.transfer.formats.import_data import import_data_to_sdk
@@ -340,8 +340,8 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
         to_sdk = get_sdk_from_cli_params(dataset_location_out, metadata_uri_out, database_type_out, None,
                                          None)
 
-        transfer_data(from_sdk=from_sdk, to_sdk=to_sdk, measure_id_list=measure_ids, device_id_list=device_ids,
-                      patient_id_list=patient_ids, mrn_list=mrns, start=start_time, end=end_time)
+        old_transfer_data(from_sdk=from_sdk, to_sdk=to_sdk, measure_id_list=measure_ids, device_id_list=device_ids,
+                          patient_id_list=patient_ids, mrn_list=mrns, start=start_time, end=end_time)
 
     else:
         assert dataset_location_out is not None, "dataset-location-out option or ATRIUMDB_EXPORT_DATASET_LOCATION " \

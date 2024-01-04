@@ -15,8 +15,13 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-OVERWRITE_SETTING_NAME = 'ignore'
-PROTECTED_MODE_SETTING_NAME = 'protected_mode'
+def transfer_label_sets(src_sdk, dest_sdk, label_set_id_list=None):
+    src_labels = src_sdk.get_all_label_sets()
+    label_set_map = {}
+    for src_label_set_id, label_set_info in src_labels.items():
+        if label_set_id_list is None or src_label_set_id in label_set_id_list:
+            label_set_name = label_set_info['name']
+            dest_label_set_id = dest_sdk.insert_label_set(label_set_name, label_set_id=src_label_set_id)
+            label_set_map[src_label_set_id] = dest_label_set_id
 
-ALLOWABLE_OVERWRITE_SETTINGS = ['error', 'ignore', 'overwrite']
-ALLOWABLE_PROTECTED_MODE_SETTINGS = ['True', 'False']
+    return label_set_map

@@ -16,24 +16,144 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import random
+import time
 from typing import List
 
 import numpy as np
 from tqdm import tqdm
 
-from atriumdb import AtriumSDK
+from atriumdb.transfer.adb.labels import transfer_label_sets
+from atriumdb.transfer.adb.patients import transfer_patient_info
+from atriumdb.windowing.definition import DatasetDefinition
+from atriumdb.atrium_sdk import AtriumSDK
 from atriumdb.adb_functions import convert_value_to_nanoseconds
 from atriumdb.transfer.adb.devices import transfer_devices
 from atriumdb.transfer.adb.measures import transfer_measures
+from atriumdb.windowing.verify_definition import verify_definition
 
 MIN_TRANSFER_TIME = -(2**63)
 MAX_TRANSFER_TIME = (2**63) - 1
+DEFAULT_GAP_TOLERANCE = 30 * 24 * 60 * 60 * 1_000_000_000  # 1 month in nanoseconds.
 
 
-def transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[int] = None,
-                  device_id_list: List[int] = None, patient_id_list: List[int] = None, mrn_list: List[int] = None,
-                  start: int = None, end: int = None, time_units: str = None, batch_size=None,
-                  include_patient_context=False, deidentify=None, time_shift=None):
+def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDefinition, gap_tolerance=None,
+                  deidentify=True, patient_info_to_transfer=None):
+    # Gap tolerance is used to construct the time ranges when the validator is asked to construct it itself.
+    # Using a large value helps optimize the waveform transfer by transferring large chunks at a time.
+    gap_tolerance = DEFAULT_GAP_TOLERANCE if gap_tolerance is None else gap_tolerance
+
+    validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
+        definition, src_sdk, gap_tolerance=gap_tolerance)
+
+    src_measure_id_list = [measure_info["id"] for measure_info in validated_measure_list]
+    src_device_id_list, src_patient_id_list = extract_src_device_and_patient_id_list(validated_sources)
+
+    measure_id_map = transfer_measures(src_sdk, dest_sdk, measure_id_list=src_measure_id_list)
+    device_id_map = transfer_devices(src_sdk, dest_sdk, device_id_list=src_device_id_list)
+    patient_id_map = transfer_patient_info(
+        src_sdk, dest_sdk, patient_id_list=src_patient_id_list, deidentify=deidentify,
+        patient_info_to_transfer=patient_info_to_transfer, start_time_nano=None, end_time_nano=None)
+    label_set_id_map = transfer_label_sets(src_sdk, dest_sdk, label_set_id_list=validated_label_set_list)
+
+    # Transfer Waveforms and Labels
+    for source_type, sources in validated_sources.items():
+        # For each source identifier of that type
+        for source_id, time_ranges in tqdm(list(sources.items())):
+            dest_device_id, src_device_id = extract_device_ids(source_id, source_type, device_id_map)
+
+            if src_device_id is None:
+                continue
+
+            # Simple for now. Optimized by a large gap_tolerance.
+            # Might want to aggregate reads and writes in the future.
+            for start_time_nano, end_time_nano in time_ranges:
+                for src_measure_id, dest_measure_id in measure_id_map.items():
+                    # Insert Waveforms
+                    print()
+                    print()
+                    print("get_data", src_measure_id, start_time_nano, end_time_nano, src_device_id)
+                    tick = time.perf_counter()
+                    headers, times, values = src_sdk.get_data(
+                        src_measure_id, start_time_nano, end_time_nano, device_id=src_device_id, time_type=1,
+                        analog=False, sort=False, allow_duplicates=True)
+                    tock = time.perf_counter()
+                    print(f"{values.size} values retrieved in {round(tock-tick, 3)} seconds.")
+                    print(f"{round(values.size / (tock - tick))} values per second.")
+
+                    tick = time.perf_counter()
+                    ingest_data(dest_sdk, dest_measure_id, dest_device_id, headers, times, values)
+                    tock = time.perf_counter()
+                    print(f"{values.size} values ingested in {round(tock - tick, 3)} seconds.")
+                    print(f"{round(values.size / (tock - tick))} values per second.")
+
+                # Insert labels
+                labels = src_sdk.get_labels(
+                    label_set_id_list=list(label_set_id_map.keys()), device_list=[src_device_id],
+                    start_time=start_time_nano, end_time=end_time_nano)
+
+                insert_labels(dest_sdk, labels, device_id_map)
+
+
+def insert_labels(dest_sdk, labels, device_id_map):
+    if len(labels) == 0:
+        return
+
+    dest_labels = []
+    for label in labels:
+        label_dest_device_id = device_id_map[label['device_id']]
+        label_name = label['label_name']
+        label_start_time_n = label['start_time_n']
+        label_end_time_n = label['end_time_n']
+
+        dest_labels.append([label_name, label_dest_device_id, label_start_time_n, label_end_time_n])
+    dest_sdk.insert_labels(dest_labels, source_type="device_id")
+
+
+def extract_device_ids(source_id, source_type, device_id_map):
+    if source_type == "device_ids":
+        src_device_id = source_id
+    elif source_type == "patient_ids":
+        # Mapping failed
+        src_device_id = None
+    elif source_type == "device_patient_tuples":
+        src_device_id, _ = source_id
+    else:
+        raise ValueError(f"Source type must be either device_ids, device_patient_tuples or "
+                         f"patient_ids, not {source_type}")
+    dest_device_id = device_id_map.get(src_device_id)
+    return dest_device_id, src_device_id
+
+
+def extract_src_device_and_patient_id_list(validated_sources):
+    src_device_id_list = []
+    src_patient_id_list = []
+    for source_type, sources in validated_sources.items():
+        # For each source identifier of that type
+        for source_id, time_ranges in sources.items():
+            if source_type == "device_ids":
+                device_id = source_id
+                patient_id = None
+            elif source_type == "patient_ids":
+                device_id = None
+                patient_id = source_id
+            elif source_type == "device_patient_tuples":
+                device_id, patient_id = source_id
+            else:
+                raise ValueError(f"Source type must be either device_ids or patient_ids, not {source_type}")
+            if device_id is not None:
+                src_device_id_list.append(device_id)
+            if patient_id is not None:
+                src_patient_id_list.append(patient_id)
+
+    src_device_id_list = list(set(src_device_id_list))
+    src_patient_id_list = list(set(src_patient_id_list))
+    return src_device_id_list, src_patient_id_list
+
+
+def old_transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[int] = None,
+                      device_id_list: List[int] = None, patient_id_list: List[int] = None, mrn_list: List[int] = None,
+                      start: int = None, end: int = None, time_units: str = None, batch_size=None,
+                      include_patient_context=False, deidentify=None, time_shift=None):
     """
     Transfers data from one dataset to another. If measure_id_list, device_id_list, patient_id_list, mrn_list, start,
     end are all None, then all data is transferred, otherwise these parameters serve to limit the data transferred.
@@ -163,15 +283,22 @@ def ingest_data(to_sdk, measure_id, device_id, headers, times, values):
         if all([h.scale_m == headers[0].scale_m and
                 h.scale_b == headers[0].scale_b and
                 h.freq_nhz == headers[0].freq_nhz for h in headers]):
-            to_sdk.write_data_easy(measure_id, device_id, time_data=times, value_data=values, freq=headers[0].freq_nhz,
-                                   scale_m=headers[0].scale_m, scale_b=headers[0].scale_b)
+
+            to_sdk.write_data(measure_id, device_id, times, values, headers[0].freq_nhz, int(times[0]),
+                              raw_time_type=headers[0].t_raw_type, raw_value_type=headers[0].v_raw_type,
+                              encoded_time_type=headers[0].t_encoded_type, encoded_value_type=headers[0].v_encoded_type,
+                              scale_m=headers[0].scale_m, scale_b=headers[0].scale_b, interval_index_mode="fast")
         else:
+            print("Differently configured headers detected.")
             val_index = 0
             for h in headers:
                 try:
-                    to_sdk.write_data_easy(measure_id, device_id, time_data=times[val_index:val_index + h.num_vals],
-                                           value_data=values[val_index:val_index + h.num_vals], freq=h.freq_nhz,
-                                           scale_m=h.scale_m, scale_b=h.scale_b)
+                    to_sdk.write_data(measure_id, device_id, times, values, h.freq_nhz, int(times[0]),
+                                      raw_time_type=h.t_raw_type, raw_value_type=h.v_raw_type,
+                                      encoded_time_type=h.t_encoded_type,
+                                      encoded_value_type=h.v_encoded_type,
+                                      scale_m=h.scale_m, scale_b=h.scale_b,
+                                      interval_index_mode="fast")
                 except IndexError:
                     continue
                 val_index += h.num_vals
@@ -222,3 +349,18 @@ def transfer_patients(from_sdk, to_sdk, patient_id_list=None, mrn_list=None, dei
 
 def shift_times(times: np.ndarray, shift_amount: int):
     times -= shift_amount
+
+
+    def parse_device_ids(source_id, source_type, device_id_map):
+        if source_type == "device_ids":
+            src_device_id = source_id
+        elif source_type == "patient_ids":
+            # Mapping failed
+            src_device_id = None
+        elif source_type == "device_patient_tuples":
+            src_device_id, _ = source_id
+        else:
+            raise ValueError(f"Source type must be either device_ids, device_patient_tuples or "
+                             f"patient_ids, not {source_type}")
+        dest_device_id = device_id_map.get(src_device_id)
+        return dest_device_id, src_device_id
