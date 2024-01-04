@@ -2935,6 +2935,12 @@ class AtriumSDK:
             'end_time': end,
         }
         result = self._request("GET", "intervals", params=params)
+        merged_result = []
+        for start, end in result:
+            if len(merged_result) > 0 and start - merged_result[-1][1] <= gap_tolerance_nano:
+                merged_result[-1][1] = end
+            else:
+                merged_result.append([start, end])
 
         return np.array(result, dtype=np.int64)
 
