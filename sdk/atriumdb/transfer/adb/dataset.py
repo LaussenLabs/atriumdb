@@ -69,24 +69,18 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
             for start_time_nano, end_time_nano in time_ranges:
                 for src_measure_id, dest_measure_id in measure_id_map.items():
                     # Insert Waveforms
-                    print()
-                    print()
-                    print("get_data", src_measure_id, start_time_nano, end_time_nano, src_device_id)
-                    tick = time.perf_counter()
                     headers, times, values = src_sdk.get_data(
                         src_measure_id, start_time_nano, end_time_nano, device_id=src_device_id, time_type=1,
                         analog=False, sort=False, allow_duplicates=True)
-                    tock = time.perf_counter()
-                    print(f"{values.size} values retrieved in {round(tock-tick, 3)} seconds.")
-                    print(f"{round(values.size / (tock - tick))} values per second.")
 
-                    tick = time.perf_counter()
+                    if values.size == 0:
+                        continue
+
                     ingest_data(dest_sdk, dest_measure_id, dest_device_id, headers, times, values)
-                    tock = time.perf_counter()
-                    print(f"{values.size} values ingested in {round(tock - tick, 3)} seconds.")
-                    print(f"{round(values.size / (tock - tick))} values per second.")
 
                 # Insert labels
+                if len(label_set_id_map) == 0:
+                    continue
                 labels = src_sdk.get_labels(
                     label_set_id_list=list(label_set_id_map.keys()), device_list=[src_device_id],
                     start_time=start_time_nano, end_time=end_time_nano)
@@ -269,7 +263,7 @@ def old_transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: L
                     except Exception as e:
                         print(e)
                         start_block += batch_size
-                        continue
+                        raise e
 
                     if isinstance(time_shift, int):
                         shift_times(times, time_shift)
@@ -304,7 +298,7 @@ def ingest_data(to_sdk, measure_id, device_id, headers, times, values):
                 val_index += h.num_vals
     except Exception as e:
         print(e)
-        return
+        raise e
 
 
 def transfer_patients(from_sdk, to_sdk, patient_id_list=None, mrn_list=None, deidentify=None):

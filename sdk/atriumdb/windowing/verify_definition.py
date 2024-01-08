@@ -79,7 +79,7 @@ def _validate_measures(definition: DatasetDefinition, sdk):
 
 def _validate_label_sets(definition: DatasetDefinition, sdk):
     # If there aren't any labels, there's nothing to do.
-    if "labels" not in definition.data_dict:
+    if "labels" not in definition.data_dict or len(definition.data_dict['labels']) == 0:
         return []
 
     labels = definition.data_dict["labels"]
@@ -188,6 +188,15 @@ def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, 
         [sdk.get_interval_array(
             measure_info['id'], device_id=device_id, patient_id=patient_id, gap_tolerance_nano=gap_tolerance)
             for measure_info in validated_measures])
+
+    merged_union_intervals = []
+    for start, end in union_intervals:
+        if len(merged_union_intervals) > 0 and start - merged_union_intervals[-1][1] <= gap_tolerance:
+            merged_union_intervals[-1][1] = end
+        else:
+            merged_union_intervals.append([start, end])
+
+    union_intervals = np.array(merged_union_intervals, dtype=np.int64)
 
     if union_intervals.size == 0:
         source_type, source_id = ("device_id", device_id) if device_id is not None else ("patient_id", patient_id)

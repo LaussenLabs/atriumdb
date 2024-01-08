@@ -17,7 +17,7 @@
 
 from click.testing import CliRunner
 
-from atriumdb.cli.atriumdb_cli import export, import_
+from atriumdb.cli.atriumdb_cli import old_export, import_
 from atriumdb.cli.hello import hello
 
 from pathlib import Path
