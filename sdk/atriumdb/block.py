@@ -32,7 +32,7 @@ class Block:
         self.load_dll(path_to_dll, num_threads)
 
         self.num_threads = num_threads
-        self.block_size = 32768
+        self.block_size = 131072  # 2^17
         self.bytes_per_value_min = 1
         self.delta_order_min = 0
         self.delta_order_max = 5
