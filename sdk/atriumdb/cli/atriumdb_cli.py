@@ -30,12 +30,13 @@ from auth0.authentication.token_verifier import TokenVerifier, AsymmetricSignatu
 
 from dotenv import load_dotenv, set_key, get_key
 
-from atriumdb import AtriumSDK
+from atriumdb.atrium_sdk import AtriumSDK
+from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import parse_metadata_uri
 from atriumdb.cli.sdk import get_sdk_from_env_vars, create_sdk_from_env_vars
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.transfer.cohort.cohort_yaml import parse_atrium_cohort_yaml
-from atriumdb.transfer.adb.dataset import old_transfer_data
+from atriumdb.transfer.adb.dataset import old_transfer_data, transfer_data
 from atriumdb.transfer.formats.dataset import export_dataset, import_dataset
 from atriumdb.transfer.formats.export_data import export_data_from_sdk
 from atriumdb.transfer.formats.import_data import import_data_to_sdk
@@ -252,6 +253,48 @@ def config(ctx):
 
 @click.command()
 @click.pass_context
+@click.argument('definition_filename', type=click.Path(exists=True))
+@click.option("--gap-tolerance", type=int, default=300,
+              help="Number of seconds defining the minimum gap between different sections of data. Large numbers will "
+                   "increase efficiency by performing large queries, but may take in extra unwanted data. Leaving the "
+                   "option as the default 5 minutes strikes a good balance.")
+@click.option("--deidentify", type=bool, default=False)
+@click.option("--patient-cols", type=str, multiple=True, default=None,
+              help="List patient columns to transfer, valid options are: "
+                   "mrn, gender, dob, first_name, middle_name, last_name, first_seen, "
+                   "last_updated, source_id, weight, height")
+@click.option("--block-size", type=int, default=None, help="The target number of values per compression block.")
+@click.option("--dataset-location-out", type=click.Path(), help="Path to export directory",
+              envvar='ATRIUMDB_EXPORT_DATASET_LOCATION')
+@click.option("--metadata-uri-out", type=str, help="The URI of a metadata server",
+              envvar='ATRIUMDB_METADATA_URI_OUT')
+@click.option("--database-type-out", type=str, help="The metadata database type",
+              envvar='ATRIUMDB_DATABASE_TYPE_OUT')
+def export(ctx, definition_filename, gap_tolerance, deidentify, patient_cols, block_size,
+           dataset_location_out, metadata_uri_out, database_type_out):
+
+    patient_cols = list(patient_cols) if patient_cols else None
+
+    endpoint_url = ctx.obj["endpoint_url"]
+    api_token = ctx.obj["api_token"]
+    dataset_location = ctx.obj["dataset_location"]
+    metadata_uri = ctx.obj["metadata_uri"]
+    database_type = ctx.obj["database_type"]
+
+    src_sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
+    dest_sdk = get_sdk_from_cli_params(dataset_location_out, metadata_uri_out, database_type_out, None, None)
+
+    if block_size:
+        dest_sdk.block.block_size = block_size
+
+    definition = DatasetDefinition(filename=definition_filename)
+
+    transfer_data(src_sdk, dest_sdk, definition, gap_tolerance=gap_tolerance * (10 ** 9),
+                  deidentify=deidentify, patient_info_to_transfer=patient_cols)
+
+
+@click.command()
+@click.pass_context
 @click.option("--format", "export_format", default="adb", help="Format of the exported data",
               type=click.Choice(["adb", "csv", "parquet", "numpy", "wfdb"]))
 @click.option("--packaging-type", default="files", help="Type of packaging for the exported data",
@@ -272,8 +315,8 @@ def config(ctx):
 @click.option("--database-type-out", type=str, help="The metadata database type",
               envvar='ATRIUMDB_DATABASE_TYPE_OUT')
 @click.option("--by-patient", type=bool, default=False, help="Whether or not to include patient mapping")
-def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measures, device_ids, devices, patient_ids,
-           mrns, start_time, end_time, dataset_location_out, metadata_uri_out, database_type_out, by_patient):
+def old_export(ctx, export_format, packaging_type, cohort_file, measure_ids, measures, device_ids, devices, patient_ids,
+               mrns, start_time, end_time, dataset_location_out, metadata_uri_out, database_type_out, by_patient):
     measure_ids = None if measure_ids is not None and len(measure_ids) == 0 else list(measure_ids)
     measures = None if measures is not None and len(measures) == 0 else list(measures)
     device_ids = None if device_ids is not None and len(device_ids) == 0 else list(device_ids)
@@ -355,6 +398,10 @@ def export(ctx, export_format, packaging_type, cohort_file, measure_ids, measure
 
 def get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, api_url, api_token):
     connection_params = None if metadata_uri is None else parse_metadata_uri(metadata_uri)
+    if database_type != "api" and not (Path(dataset_location) / "tsc").is_dir():
+        return AtriumSDK.create_dataset(dataset_location=dataset_location, database_type=database_type,
+                                 connection_params=connection_params)
+
     sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type=database_type,
                     connection_params=connection_params, api_url=api_url, token=api_token)
     return sdk
@@ -530,6 +577,7 @@ def patient_ls(ctx, skip, limit, age_years_min, age_years_max, gender, source_id
 
 
 cli.add_command(export)
+cli.add_command(old_export)
 cli.add_command(import_)
 cli.add_command(atriumdb_patient)
 cli.add_command(atriumdb_measure)
