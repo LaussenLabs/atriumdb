@@ -4075,14 +4075,8 @@ class AtriumSDK:
             raise ValueError("Either device_tag or device_id should be provided, but not both.")
 
         # Check for device_id/device_tag or patient_id
-        if device_id is None and device_tag is None and patient_id is None:
-            raise ValueError("Either device_id, device_tag, or patient_id should be provided.")
-
-        if device_id and patient_id:
-            raise ValueError("Only one of device_id or patient_id should be provided.")
-
-        if device_tag and patient_id:
-            raise ValueError("Only one of device_tag or patient_id should be provided.")
+        if sum(x is not None for x in [device_id, device_tag, patient_id]) != 1:
+            raise ValueError("Exactly one of device_id, device_tag, or patient_id must be provided.")
 
         # Convert label_set_name to label_set_id if it's used
         if label_set_name:
