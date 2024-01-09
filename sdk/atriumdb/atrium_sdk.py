@@ -4143,7 +4143,7 @@ class AtriumSDK:
 
         for label in labels:
             start_idx = np.searchsorted(timestamp_array, label['start_time_n'], side='left')
-            end_idx = np.searchsorted(timestamp_array, label['end_time_n'], side='left')
+            end_idx = np.searchsorted(timestamp_array, label['end_time_n'], side='right')
             result_array[start_idx:end_idx] = 1
 
         return result_array
