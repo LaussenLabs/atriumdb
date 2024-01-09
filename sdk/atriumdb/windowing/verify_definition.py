@@ -84,7 +84,7 @@ def _validate_label_sets(definition: DatasetDefinition, sdk):
 
     labels = definition.data_dict["labels"]
 
-    all_sdk_label_sets = sdk.get_all_label_sets()
+    all_sdk_label_sets = sdk.get_all_label_names()
     all_sdk_label_set_name_to_id_dict = {
         label_info['name']: label_info['id'] for label_info in all_sdk_label_sets.values()}
 

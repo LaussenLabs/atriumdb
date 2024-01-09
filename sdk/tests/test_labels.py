@@ -42,16 +42,16 @@ def _test_labels(db_type, dataset_location, connection_params):
     assert new_device_id == device_id, "Device ID mismatch for the same device tag"
 
     label_name = "Running"
-    label_id = sdk.get_label_set_id(name=label_name)
+    label_id = sdk.get_label_name_id(name=label_name)
     assert label_id is None, "There's a label where there shouldn't be"
 
     start_time = 1000
     end_time = 2000
     sdk.insert_label(name=label_name, device=device_tag, start_time=start_time, end_time=end_time, time_units="ms")
-    label_id = sdk.get_label_set_id(name=label_name)
+    label_id = sdk.get_label_name_id(name=label_name)
     assert label_id is not None, "Failed to insert a new label type or retrieve its ID"
 
-    label_set_info = sdk.get_label_set_info(label_set_id=label_id)
+    label_set_info = sdk.get_label_name_info(label_name_id=label_id)
     assert label_set_info is not None, "Failed to retrieve label set info"
     assert label_set_info["id"] == label_id, "Mismatch in label set ID"
     assert label_set_info["name"] == label_name, "Mismatch in label set name"
@@ -107,7 +107,7 @@ def _test_labels(db_type, dataset_location, connection_params):
     assert np.array_equal(label_series, expected_series_1), "Mismatch in expected time series data"
 
     with pytest.raises(ValueError):
-        sdk.get_label_time_series(label_name=label_name, label_set_id=label_id, device_tag=device_tag,
+        sdk.get_label_time_series(label_name=label_name, label_name_id=label_id, device_tag=device_tag,
                                   start_time=start_time, end_time=end_time, sample_period=500, time_units="ms")
 
     with pytest.raises(ValueError):

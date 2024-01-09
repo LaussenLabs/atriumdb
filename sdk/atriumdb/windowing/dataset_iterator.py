@@ -339,7 +339,7 @@ class DatasetIterator:
             # Populate label matrix
             for idx, label_set_id in enumerate(self.label_sets):
                 self.sdk.get_label_time_series(
-                    label_set_id=label_set_id,
+                    label_name_id=label_set_id,
                     device_id=device_id if device_id else None,
                     patient_id=query_patient_id if query_patient_id else None,
                     start_time=batch_start_time,

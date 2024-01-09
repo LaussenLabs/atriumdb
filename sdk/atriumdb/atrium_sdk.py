@@ -231,7 +231,7 @@ class AtriumSDK:
         if metadata_connection_type != "api":
             self._measures = self.get_all_measures()
             self._devices = self.get_all_devices()
-            self._label_sets = self.get_all_label_sets()
+            self._label_sets = self.get_all_label_names()
 
             # Lazy caching, cache only built if patient info requested later
             self._patients = {}
@@ -3478,7 +3478,7 @@ class AtriumSDK:
         # Return the JSON response
         return response.json()
 
-    def get_all_label_sets(self) -> dict:
+    def get_all_label_names(self) -> dict:
         """
         Retrieve all the available label types from the database.
 
@@ -3502,7 +3502,7 @@ class AtriumSDK:
 
         return label_dict
 
-    def get_label_set_id(self, name: str):
+    def get_label_name_id(self, name: str):
         """
         Retrieve the identifier of a label type based on its name.
 
@@ -3529,19 +3529,19 @@ class AtriumSDK:
         self._label_sets[label_id] = name  # also update the label types cache
         return label_id
 
-    def get_label_set_info(self, label_set_id: int):
+    def get_label_name_info(self, label_name_id: int):
         """
         Retrieve information about a specific label set.
 
-        :param int label_set_id: The identifier of the label set to retrieve information for.
+        :param int label_name_id: The identifier of the label set to retrieve information for.
 
         :return: A dictionary containing information about the label set, including its id and name.
         :rtype: dict
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
-        >>> label_set_id = 1
-        >>> label_set_info = sdk.get_label_set_info(label_set_id)
-        >>> print(label_set_info)
+        >>> label_name_id = 1
+        >>> label_name_info = sdk.get_label_name_info(label_name_id)
+        >>> print(label_name_info)
         {'id': 1,
          'name': 'Label Set A1'}
 
@@ -3551,32 +3551,32 @@ class AtriumSDK:
             raise NotImplementedError("API mode is not yet supported for this method.")
 
         # If label set info is already cached, return it
-        if label_set_id in self._label_sets:
-            return self._label_sets[label_set_id]
+        if label_name_id in self._label_sets:
+            return self._label_sets[label_name_id]
 
         # Fetch label set info from the SQL database
-        row = self.sql_handler.select_label_set(label_set_id=label_set_id)
+        row = self.sql_handler.select_label_set(label_set_id=label_name_id)
 
         # If label set not found in the database, return None
         if row is None:
             return None
 
         # Unpack the fetched row into individual variables
-        label_set_id, label_set_name = row
+        label_name_id, label_set_name = row
 
         # Create a dictionary with the label set information
         label_set_info = {
-            'id': label_set_id,
+            'id': label_name_id,
             'name': label_set_name
         }
 
         # Cache the label set information for future use
-        self._label_sets[label_set_id] = label_set_info
+        self._label_sets[label_name_id] = label_set_info
 
         # Return the label set information dictionary
         return label_set_info
 
-    def insert_label_set(self, name: str) -> int:
+    def insert_label_name(self, name: str) -> int:
         """
         Insert a label set into the database if it doesn't already exist and return the ID.
 
@@ -3588,7 +3588,7 @@ class AtriumSDK:
 
         :example:
         >>> sdk = AtriumSDK()
-        >>> label_set_id = sdk.insert_label_set("Example Label Set")
+        >>> label_set_id = sdk.insert_label_name("Example Label Set")
         >>> print(label_set_id)
         1
         """
@@ -3821,14 +3821,14 @@ class AtriumSDK:
         # Insert the labels into the database
         self.sql_handler.insert_labels(formatted_labels)
 
-    def delete_labels(self, label_id_list=None, label_set_id_list=None, name_list=None, device_list=None,
+    def delete_labels(self, label_id_list=None, label_name_id_list=None, name_list=None, device_list=None,
                       start_time=None, end_time=None, time_units: str = None,
                       patient_id_list=None, label_source_list: Optional[List[Union[str, int]]] = None):
         """
         Delete labels from the database based on specified criteria. If no parameters are passed, the method raises an error for safety.
 
         :param List[int] label_id_list: List of label IDs to delete. Use '*' to delete all labels.
-        :param List[int] label_set_id_list: List of label set IDs to filter labels for deletion.
+        :param List[int] label_name_id_list: List of label set IDs to filter labels for deletion.
         :param List[str] name_list: List of label names to filter labels for deletion.
         :param List[Union[int, str]] device_list: List of device IDs or device tags to filter labels for deletion.
         :param int start_time: Start time filter for the labels to delete.
@@ -3858,7 +3858,7 @@ class AtriumSDK:
                 "Cannot perform delete, protected_mode not set to `False`, change in sql table to allow deletion.")
 
         if all(param is None for param in
-               [label_id_list, label_set_id_list, name_list, device_list, start_time, end_time, patient_id_list,
+               [label_id_list, label_name_id_list, name_list, device_list, start_time, end_time, patient_id_list,
                 label_source_list]):
             raise ValueError(
                 "No parameters were provided. For safety, you need to specify at least one parameter. Use label_id_list='*' to delete all labels.")
@@ -3871,7 +3871,7 @@ class AtriumSDK:
         elif label_id_list is not None:
             return self.sql_handler.delete_labels(label_id_list)
 
-        filtered_labels = self.get_labels(label_name_id_list=label_set_id_list, name_list=name_list,
+        filtered_labels = self.get_labels(label_name_id_list=label_name_id_list, name_list=name_list,
                                           device_list=device_list,
                                           start_time=start_time, end_time=end_time, time_units=time_units,
                                           patient_id_list=patient_id_list, label_source_list=label_source_list)
@@ -3885,7 +3885,7 @@ class AtriumSDK:
         Retrieve labels from the database based on specified criteria.
 
         :param List[int] label_name_id_list: List of label set IDs to filter by.
-        :param List[str] name_list: List of label names to filter by. Mutually exclusive with `label_set_id_list`.
+        :param List[str] name_list: List of label names to filter by. Mutually exclusive with `label_name_id_list`.
         :param List[Union[int, str]] device_list: List of device IDs or device tags to filter by.
         :param int start_time: Start time filter for the labels.
         :param int end_time: End time filter for the labels.
@@ -3893,7 +3893,7 @@ class AtriumSDK:
         :param List[int] patient_id_list: List of patient IDs to filter by.
         :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter by.
         :return: A list of matching labels from the database. Each label is represented as a dictionary containing:
-                 label_entry_id, label_set_id, label_set_name, device_id, device_tag, start_time_n, end_time_n,
+                 label_entry_id, label_name_id, label_name, device_id, device_tag, start_time_n, end_time_n,
                  label_source_id, label_source_name
         :rtype: List[Dict]
 
@@ -3919,15 +3919,15 @@ class AtriumSDK:
         .. note::
             - This method currently only supports database connection mode and not API mode.
             - Either `device_list` or `patient_id_list` should be provided, but not both.
-            - Either `label_set_id_list` or `name_list` should be provided, but not both.
+            - Either `label_name_id_list` or `name_list` should be provided, but not both.
 
         """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this method.")
 
-        # Ensure either label_set_id_list or name_list is provided, but not both
+        # Ensure either label_name_id_list or name_list is provided, but not both
         if label_name_id_list and name_list:
-            raise ValueError("Only one of label_set_id_list or name_list should be provided.")
+            raise ValueError("Only one of label_name_id_list or name_list should be provided.")
 
         # Ensure either device list or patient id list is provided, but not both
         if device_list and patient_id_list:
@@ -3946,7 +3946,7 @@ class AtriumSDK:
 
         # Convert label names to IDs if name_list is used
         if name_list:
-            name_id_list = [self.get_label_set_id(name) for name in name_list]
+            name_id_list = [self.get_label_name_id(name) for name in name_list]
             for label_name, label_id in zip(name_list, name_id_list):
                 if label_id is None:
                     raise ValueError(f"Label name '{label_name}' not found in the database.")
@@ -3989,7 +3989,7 @@ class AtriumSDK:
         unique_device_ids = {label[2] for label in labels}
 
         # Create dictionaries for label set and device info for optimized lookup
-        label_set_id_to_info = {label_set_id: self.get_label_set_info(label_set_id) for label_set_id in
+        label_set_id_to_info = {label_set_id: self.get_label_name_info(label_set_id) for label_set_id in
                                 unique_label_set_ids}
         device_id_to_info = {device_id: self.get_device_info(device_id) for device_id in unique_device_ids}
 
@@ -4022,15 +4022,15 @@ class AtriumSDK:
 
         return result
 
-    def get_label_time_series(self, label_name=None, label_set_id=None, device_tag=None,
+    def get_label_time_series(self, label_name=None, label_name_id=None, device_tag=None,
                               device_id=None, patient_id=None, start_time=None, end_time=None,
                               timestamp_array=None, sample_period=None, time_units: str = None,
                               out: np.ndarray = None, label_source_list: Optional[List[Union[str, int]]] = None):
         """
         Retrieve a time series representation for labels from the database based on specified criteria.
 
-        :param str label_name: Name of the label set to filter by. Mutually exclusive with `label_set_id`.
-        :param int label_set_id: ID of the label set to filter by. Mutually exclusive with `label_set_name`.
+        :param str label_name: Name of the label set to filter by. Mutually exclusive with `label_name_id`.
+        :param int label_name_id: ID of the label set to filter by. Mutually exclusive with `label_name`.
         :param str device_tag: Tag of the device to filter by. Mutually exclusive with `device_id`.
         :param int device_id: ID of the device to filter by. Mutually exclusive with `device_tag`.
         :param int patient_id: ID of the patient to filter by.
@@ -4054,7 +4054,7 @@ class AtriumSDK:
 
         .. note::
             - This method currently only supports database connection mode and not API mode.
-            - Only one of `label_set_name` or `label_set_id` should be provided.
+            - Only one of `label_name` or `label_name_id` should be provided.
             - Only one of `device_tag` or `device_id` should be provided.
             - Either `device_id`/`device_tag` or `patient_id` should be provided, but not combinations of both.
             - If using the `out` parameter, ensure its shape matches the expected result shape, and that it is initialized with zeros.
@@ -4066,9 +4066,9 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this method.")
 
-        # Check for the XOR condition for label_set_name and label_set_id
-        if (label_name is not None) == (label_set_id is not None):
-            raise ValueError("Either label_set_name or label_set_id should be provided, but not both.")
+        # Check for the XOR condition for label_name and label_name_id
+        if (label_name is not None) == (label_name_id is not None):
+            raise ValueError("Either label_name or label_name_id should be provided, but not both.")
 
         # Check for the XOR condition for device_tag and device_id
         if (device_tag is not None) == (device_id is not None):
@@ -4078,10 +4078,10 @@ class AtriumSDK:
         if sum(x is not None for x in [device_id, device_tag, patient_id]) != 1:
             raise ValueError("Exactly one of device_id, device_tag, or patient_id must be provided.")
 
-        # Convert label_set_name to label_set_id if it's used
+        # Convert label_name to label_name_id if it's used
         if label_name:
-            label_set_id = self.get_label_set_id(label_name)
-            if label_set_id is None:
+            label_name_id = self.get_label_name_id(label_name)
+            if label_name_id is None:
                 raise ValueError(f"Label set name '{label_name}' not found in the database.")
 
         # Convert device_tag to device_id if it's used
@@ -4114,7 +4114,7 @@ class AtriumSDK:
                                  "np.arange(start_time, end_time, sample_period)")
             timestamp_array = np.arange(start_time, end_time, sample_period)
 
-        labels = self.get_labels(label_name_id_list=[label_set_id] if label_set_id is not None else None,
+        labels = self.get_labels(label_name_id_list=[label_name_id] if label_name_id is not None else None,
                                  device_list=[device_id] if device_id is not None else None,
                                  patient_id_list=[patient_id] if patient_id is not None else None,
                                  start_time=start_time,
