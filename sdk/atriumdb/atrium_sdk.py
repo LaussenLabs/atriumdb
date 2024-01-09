@@ -3871,20 +3871,20 @@ class AtriumSDK:
         elif label_id_list is not None:
             return self.sql_handler.delete_labels(label_id_list)
 
-        filtered_labels = self.get_labels(label_set_id_list=label_set_id_list, name_list=name_list,
+        filtered_labels = self.get_labels(label_name_id_list=label_set_id_list, name_list=name_list,
                                           device_list=device_list,
                                           start_time=start_time, end_time=end_time, time_units=time_units,
                                           patient_id_list=patient_id_list, label_source_list=label_source_list)
         filtered_label_ids = [label_info['label_id'] for label_info in filtered_labels]
         return self.sql_handler.delete_labels(filtered_label_ids)
 
-    def get_labels(self, label_set_id_list=None, name_list=None, device_list=None,
+    def get_labels(self, label_name_id_list=None, name_list=None, device_list=None,
                    start_time=None, end_time=None, time_units: str = None,
                    patient_id_list=None, label_source_list: Optional[List[Union[str, int]]] = None):
         """
         Retrieve labels from the database based on specified criteria.
 
-        :param List[int] label_set_id_list: List of label set IDs to filter by.
+        :param List[int] label_name_id_list: List of label set IDs to filter by.
         :param List[str] name_list: List of label names to filter by. Mutually exclusive with `label_set_id_list`.
         :param List[Union[int, str]] device_list: List of device IDs or device tags to filter by.
         :param int start_time: Start time filter for the labels.
@@ -3926,7 +3926,7 @@ class AtriumSDK:
             raise NotImplementedError("API mode is not yet supported for this method.")
 
         # Ensure either label_set_id_list or name_list is provided, but not both
-        if label_set_id_list and name_list:
+        if label_name_id_list and name_list:
             raise ValueError("Only one of label_set_id_list or name_list should be provided.")
 
         # Ensure either device list or patient id list is provided, but not both
@@ -3950,7 +3950,7 @@ class AtriumSDK:
             for label_name, label_id in zip(name_list, name_id_list):
                 if label_id is None:
                     raise ValueError(f"Label name '{label_name}' not found in the database.")
-            label_set_id_list = name_id_list
+            label_name_id_list = name_id_list
 
         # Convert device tags to IDs
         if device_list:
@@ -3976,7 +3976,7 @@ class AtriumSDK:
                     raise ValueError("Label source list items must be either string (name) or integer (ID).")
 
         labels = self.sql_handler.select_labels(
-            label_set_id_list=label_set_id_list,
+            label_set_id_list=label_name_id_list,
             device_id_list=device_list,
             patient_id_list=patient_id_list,
             start_time_n=start_time,
@@ -4022,14 +4022,14 @@ class AtriumSDK:
 
         return result
 
-    def get_label_time_series(self, label_set_name=None, label_set_id=None, device_tag=None,
+    def get_label_time_series(self, label_name=None, label_set_id=None, device_tag=None,
                               device_id=None, patient_id=None, start_time=None, end_time=None,
                               timestamp_array=None, sample_period=None, time_units: str = None,
                               out: np.ndarray = None, label_source_list: Optional[List[Union[str, int]]] = None):
         """
         Retrieve a time series representation for labels from the database based on specified criteria.
 
-        :param str label_set_name: Name of the label set to filter by. Mutually exclusive with `label_set_id`.
+        :param str label_name: Name of the label set to filter by. Mutually exclusive with `label_set_id`.
         :param int label_set_id: ID of the label set to filter by. Mutually exclusive with `label_set_name`.
         :param str device_tag: Tag of the device to filter by. Mutually exclusive with `device_id`.
         :param int device_id: ID of the device to filter by. Mutually exclusive with `device_tag`.
@@ -4067,7 +4067,7 @@ class AtriumSDK:
             raise NotImplementedError("API mode is not yet supported for this method.")
 
         # Check for the XOR condition for label_set_name and label_set_id
-        if (label_set_name is not None) == (label_set_id is not None):
+        if (label_name is not None) == (label_set_id is not None):
             raise ValueError("Either label_set_name or label_set_id should be provided, but not both.")
 
         # Check for the XOR condition for device_tag and device_id
@@ -4079,10 +4079,10 @@ class AtriumSDK:
             raise ValueError("Exactly one of device_id, device_tag, or patient_id must be provided.")
 
         # Convert label_set_name to label_set_id if it's used
-        if label_set_name:
-            label_set_id = self.get_label_set_id(label_set_name)
+        if label_name:
+            label_set_id = self.get_label_set_id(label_name)
             if label_set_id is None:
-                raise ValueError(f"Label set name '{label_set_name}' not found in the database.")
+                raise ValueError(f"Label set name '{label_name}' not found in the database.")
 
         # Convert device_tag to device_id if it's used
         if device_tag:
@@ -4114,7 +4114,7 @@ class AtriumSDK:
                                  "np.arange(start_time, end_time, sample_period)")
             timestamp_array = np.arange(start_time, end_time, sample_period)
 
-        labels = self.get_labels(label_set_id_list=[label_set_id] if label_set_id is not None else None,
+        labels = self.get_labels(label_name_id_list=[label_set_id] if label_set_id is not None else None,
                                  device_list=[device_id] if device_id is not None else None,
                                  patient_id_list=[patient_id] if patient_id is not None else None,
                                  start_time=start_time,

@@ -59,7 +59,7 @@ def _test_labels(db_type, dataset_location, connection_params):
     labels = sdk.get_labels(name_list=[label_name], device_list=[device_tag])
     assert len(labels) == 1, "Incorrect number of labels retrieved"
     retrieved_label = labels[0]
-    assert retrieved_label['label_set_id'] == label_id, "Label ID mismatch"
+    assert retrieved_label['label_name_id'] == label_id, "Label ID mismatch"
     assert retrieved_label['device_id'] == device_id, "Device ID mismatch"
 
     label_2_name = "Idle"
@@ -68,7 +68,7 @@ def _test_labels(db_type, dataset_location, connection_params):
     labels_to_insert = [
         (label_2_name, device_tag, label_2_start_time, label_2_end_time, None)
     ]
-    sdk.insert_labels(labels=labels_to_insert, time_units="ms")
+    sdk.insert_labels(labels=labels_to_insert, time_units="ms", source_type="device_tag")
 
     # Retrieve multiple labels and verify their values
     retrieved_labels = sdk.get_labels(name_list=[label_name, label_2_name], device_list=[device_tag])
@@ -100,34 +100,34 @@ def _test_labels(db_type, dataset_location, connection_params):
         sdk.get_labels(name_list=[label_name], device_list=["NonExistentDevice"])
 
     # Testing get_label_time_series
-    expected_series_1 = np.array([1, 1, 0])
-    label_series = sdk.get_label_time_series(label_set_name=label_name, device_tag=device_tag,
+    expected_series_1 = np.array([1, 1, 1])
+    label_series = sdk.get_label_time_series(label_name=label_name, device_tag=device_tag,
                                              start_time=start_time, end_time=end_time + 500, sample_period=500,
                                              time_units="ms")
     assert np.array_equal(label_series, expected_series_1), "Mismatch in expected time series data"
 
     with pytest.raises(ValueError):
-        sdk.get_label_time_series(label_set_name=label_name, label_set_id=label_id, device_tag=device_tag,
+        sdk.get_label_time_series(label_name=label_name, label_set_id=label_id, device_tag=device_tag,
                                   start_time=start_time, end_time=end_time, sample_period=500, time_units="ms")
 
     with pytest.raises(ValueError):
-        sdk.get_label_time_series(label_set_name=label_name, device_id=device_id, device_tag=device_tag,
+        sdk.get_label_time_series(label_name=label_name, device_id=device_id, device_tag=device_tag,
                                   start_time=start_time, end_time=end_time, sample_period=500, time_units="ms")
 
     with pytest.raises(ValueError):
-        sdk.get_label_time_series(label_set_name=label_name, device_tag=device_tag,
+        sdk.get_label_time_series(label_name=label_name, device_tag=device_tag,
                                   start_time=start_time, end_time=end_time, sample_period=500, time_units="minutes")
 
     timestamp_array = np.array([1000, 1500, 2000, 2500, 3000], dtype=np.int64)
-    label_series_2 = sdk.get_label_time_series(label_set_name=label_name, device_tag=device_tag,
+    label_series_2 = sdk.get_label_time_series(label_name=label_name, device_tag=device_tag,
                                                timestamp_array=timestamp_array, time_units="ms")
 
-    expected_series_2 = np.array([1, 1, 0, 0, 0])
+    expected_series_2 = np.array([1, 1, 1, 0, 0])
     assert np.array_equal(label_series_2, expected_series_2), "Mismatch in expected time series data using timestamp array"
 
     with pytest.raises(ValueError):
-        sdk.get_label_time_series(label_set_name=label_name, device_tag=device_tag, start_time=start_time,
+        sdk.get_label_time_series(label_name=label_name, device_tag=device_tag, start_time=start_time,
                                   sample_period=500, time_units="ms")
 
     with pytest.raises(ValueError):
-        sdk.get_label_time_series(label_set_name=label_name, device_tag=device_tag, time_units="ms")
+        sdk.get_label_time_series(label_name=label_name, device_tag=device_tag, time_units="ms")
