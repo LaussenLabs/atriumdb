@@ -2616,6 +2616,17 @@ class AtriumSDK:
         if freq_units != "nHz":
             freq = convert_to_nanohz(freq, freq_units)
 
+        # Check for id clash
+        if measure_id is not None:
+            assert isinstance(measure_id, int)
+            measure_info = self.get_measure_info(measure_id)
+            if measure_info is not None:
+                if measure_info['tag'] == measure_tag and \
+                        measure_info['freq_nhz'] == freq and \
+                        measure_info['units'] == units:
+                    return measure_id
+                raise ValueError(f"Inserted measure_id {measure_id} already exists with data: {measure_info}")
+
         # Check if the measure already exists in the dataset
         if (measure_tag, freq, units) in self._measure_ids:
             return self._measure_ids[(measure_tag, freq, units)]
@@ -2652,6 +2663,15 @@ class AtriumSDK:
         :return: The device_id of the inserted or existing device.
         :rtype: int
         """
+
+        # Check for id clash
+        if device_id is not None:
+            assert isinstance(device_id, int)
+            device_info = self.get_device_info(device_id)
+            if device_info is not None:
+                if device_info['tag'] == device_tag:
+                    return device_id
+                raise ValueError(f"Inserted device_id {device_id} already exists with data: {device_info}")
 
         # Check if the device_tag already exists in the dataset
         if device_tag in self._device_ids:
