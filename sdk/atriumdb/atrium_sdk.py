@@ -2927,6 +2927,9 @@ class AtriumSDK:
 
     def _api_get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
                                      mrn_list: List[int] = None, start_time: int = None, end_time: int = None):
+
+        start_time = 0 if start_time is None else start_time
+        end_time = time.time_ns() if end_time is None else end_time
         # Determine the list of patient identifiers
         patient_identifiers = []
         if patient_id_list is not None:
@@ -3471,6 +3474,7 @@ class AtriumSDK:
         headers = {'Authorization': f"Bearer {self.token}"}
 
         # Send the API request using the specified method, URL, headers, and any additional arguments.
+        print(url)
         response = requests.request(method, url, headers=headers, **kwargs)
 
         # Check if the response has a 200 status code. If not, raise an error.
