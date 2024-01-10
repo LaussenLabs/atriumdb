@@ -382,6 +382,10 @@ class AtriumSDK:
             the following order: device_id, patient_id, start_time, and end_time.
         :rtype: List[Tuple[int, int, int, int]]
         """
+        if self.metadata_connection_type == "api":
+            return self._api_get_device_patient_data(device_id_list=device_id_list, patient_id_list=patient_id_list,
+                                                     mrn_list=mrn_list, start_time=start_time, end_time=end_time)
+
         if mrn_list is not None:
             patient_id_list = [] if patient_id_list is None else patient_id_list
             mrn_to_patient_id_map = self.get_mrn_to_patient_id_map(mrn_list)
@@ -2920,6 +2924,41 @@ class AtriumSDK:
 
         # Make the API call
         return self._request("GET", endpoint)
+
+    def _api_get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
+                                     mrn_list: List[int] = None, start_time: int = None, end_time: int = None):
+        # Determine the list of patient identifiers
+        patient_identifiers = []
+        if patient_id_list is not None:
+            patient_identifiers.extend([f'id|{pid}' for pid in patient_id_list])
+        if mrn_list is not None:
+            patient_identifiers.extend([f'mrn|{mrn}' for mrn in mrn_list])
+        if not patient_identifiers:
+            patient_identifiers = [f'id|{pid}' for pid in self.get_all_patients().keys()]
+
+        result = []
+        # Query each patient identifier
+        for pid in patient_identifiers:
+            if pid.split('|')[0] == "id":
+                patient_id = int(pid.split('|')[1])
+            elif pid.split('|')[0] == "mrn":
+                mrn = int(pid.split('|')[1])
+                patient_id = self.get_patient_id(mrn)
+            else:
+                raise ValueError(f"got {pid.split('|')[0]}, expected mrn or id")
+            params = {'start_time': start_time, 'end_time': end_time}
+            devices_result = self._request("GET", f"patients/{pid}/devices", params=params)
+
+            if devices_result:
+                for device in devices_result:
+                    query_device_id = device['device_id']
+                    query_start_time = device['start_time']
+                    query_end_time = device['end_time']
+                    # Filter based on device_id_list if it's provided
+                    if device_id_list is None or query_device_id in device_id_list:
+                        result.append((query_device_id, patient_id, query_start_time, query_end_time))
+
+        return result
 
     def _api_get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                                 start=None, end=None):
