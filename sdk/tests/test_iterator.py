@@ -122,13 +122,13 @@ def create_test_definition_files(sdk):
     mrns = {patient_info['mrn']: "all" for patient_info in sdk.get_all_patients().values()}
     device_tags = {device_info['tag']: "all" for device_info in sdk.get_all_devices().values()}
 
-    labels = [label_info['name'] for label_info in sdk.get_all_label_sets().values()]
+    labels = [label_info['name'] for label_info in sdk.get_all_label_names().values()]
 
     print()
     print(sdk.get_all_measures())
     print(sdk.get_all_devices())
     print(sdk.get_all_patients())
-    print(sdk.get_all_label_sets())
+    print(sdk.get_all_label_names())
 
     definition = DatasetDefinition(measures=measures, device_ids=device_ids, labels=labels)
 
