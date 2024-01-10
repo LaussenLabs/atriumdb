@@ -3504,7 +3504,6 @@ class AtriumSDK:
         headers = {'Authorization': f"Bearer {self.token}"}
 
         # Send the API request using the specified method, URL, headers, and any additional arguments.
-        print(url)
         response = requests.request(method, url, headers=headers, **kwargs)
 
         # Check if the response has a 200 status code. If not, raise an error.
