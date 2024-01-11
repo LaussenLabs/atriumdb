@@ -159,10 +159,11 @@ class WrappedBlockDll:
 
         # Set up 'convert_value_data_to_analog' method
         self.bc_dll.convert_value_data_to_analog.argtypes = [
-            c_void_p,               # void *value_data
-            POINTER(c_double),      # double *analog_values
-            POINTER(BlockMetadata), # block_metadata_t *headers
-            c_uint64                # uint64_t num_blocks
+            c_void_p,                # void *value_data
+            POINTER(c_double),       # double *analog_values
+            POINTER(BlockMetadata),  # block_metadata_t *headers
+            POINTER(c_uint64),       # uint64 *analog_values
+            c_uint64                 # uint64_t num_blocks
         ]
         self.bc_dll.convert_value_data_to_analog.restype = None
 
@@ -206,12 +207,16 @@ class WrappedBlockDll:
         # Create an array of BlockMetadata
         headers_array = BlockMetadataArray(*headers)
 
-        # Now headers_array is a contiguous block of memory holding your BlockMetadata structures
+        analog_block_start_index_array = np.zeros(num_blocks, dtype=np.uint64)
+        total_num_values = 0
+        for i, h in enumerate(headers):
+            analog_block_start_index_array[i] = total_num_values
+            total_num_values += h.num_vals
 
-        # Call the C function
         self.bc_dll.convert_value_data_to_analog(
             value_data.ctypes.data_as(c_void_p),  # value_data as void pointer
             analog_values.ctypes.data_as(POINTER(c_double)),  # analog_values as pointer to double
             cast(headers_array, POINTER(BlockMetadata)),  # headers as pointer to BlockMetadata array
+            analog_block_start_index_array.ctypes.data_as(POINTER(c_uint64)),  # block_start_array as pointer to uint64
             c_uint64(num_blocks)  # num_blocks as uint64
         )

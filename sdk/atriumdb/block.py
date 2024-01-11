@@ -251,6 +251,7 @@ class Block:
         logging.debug("------------------------")
         start_bench_scale = time.perf_counter()
         scale_m_array = np.array([h.scale_m for h in headers])
+        scale_b_array = np.array([h.scale_b for h in headers])
 
         if headers[0].v_raw_type == V_TYPE_INT64:
             value_data = np.frombuffer(value_data, dtype=np.int64)
@@ -259,14 +260,13 @@ class Block:
         else:
             raise ValueError("Header had an unsupported raw value type, {}.".format(headers[0].v_raw_type))
 
-        if analog and not np.all(scale_m_array == 0):
+        no_scale_bool = np.all(scale_m_array == 0) or (np.all(scale_m_array == 1) and np.all(scale_b_array == 0))
+        if analog and not no_scale_bool:
             if scale_factor_optimization:
                 analog_values = np.zeros(sum(h.num_vals for h in headers), dtype=np.float64)
                 self.wrapped_dll.convert_value_data_to_analog(value_data, analog_values, headers, len(headers))
                 value_data = analog_values
             else:
-                scale_b_array = np.array([h.scale_b for h in headers])
-
                 value_data = value_data.astype(np.float64, copy=False)
 
                 # Apply the scale factors to the value data
