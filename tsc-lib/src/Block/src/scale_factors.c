@@ -28,52 +28,54 @@
 #include <omp.h>
 
 
-void convert_value_data_to_analog(void *value_data, double *analog_values, block_metadata_t *headers,
-                                  uint64_t num_blocks)
+void convert_value_data_to_analog(const void *value_data, double *analog_values, const block_metadata_t *headers,
+                                  const uint64_t *analog_block_start_index_array, uint64_t num_blocks)
 {
-    char *data_pointer = (char*)value_data;
-    uint64_t analog_index = 0;
+    uint64_t i;
+    uint64_t j;
+    char *data_pointer;
+    block_metadata_t header;
+    uint64_t analog_index;
 
-    // move over values and convert type if needed
-    for(uint64_t i=0; i<num_blocks; i++) {
-        block_metadata_t header = headers[i];
+    // Parallel processing of blocks
+    #pragma omp parallel for default(none) private(i, j, data_pointer, header, analog_index) shared(headers, value_data, analog_values, analog_block_start_index_array, num_blocks)
+    for(i = 0; i < num_blocks; i++) {
+        header = headers[i];
+        analog_index = analog_block_start_index_array[i];
+
+        // This only works because int64_t and double are the same size.
+        // Will break if some architecture has double != 8 bytes.
+        data_pointer = (char*)value_data + (analog_block_start_index_array[i]) * sizeof(int64_t);
 
         if(header.v_raw_type == V_TYPE_INT64) {
             // Interpret as int64_t
-            for(uint64_t j=0; j<header.num_vals; j++) {
+            for(j = 0; j < header.num_vals; j++) {
                 int64_t int_value;
                 memcpy(&int_value, data_pointer, sizeof(int64_t));
-                analog_values[analog_index++] = (double)int_value;
+                analog_values[analog_index + j] = (double)int_value;
                 data_pointer += sizeof(int64_t);
             }
         }
         else if(header.v_raw_type == V_TYPE_DOUBLE) {
             // Interpret as double
-            for(uint64_t j=0; j<header.num_vals; j++) {
+            for(j = 0; j < header.num_vals; j++) {
                 double double_value;
                 memcpy(&double_value, data_pointer, sizeof(double));
-                analog_values[analog_index++] = double_value;
+                analog_values[analog_index + j] = double_value;
                 data_pointer += sizeof(double);
             }
         } else {
             // Unsupported value type
             printf("ERROR: Header had an unsupported raw value type: %d\n", header.v_raw_type);
-            return;
+            continue;
         }
-    }
-    
-    // Apply scale factors
-    uint64_t analog_block_start_index = 0;
-    for(uint64_t i=0; i<num_blocks; i++) {
-        block_metadata_t header = headers[i];
-        
+
+        // Apply scale factors
         if(header.scale_m != 0) {
-            for(uint64_t j=0; j<header.num_vals; j++) {
-                analog_values[analog_block_start_index+j] = 
-                        (analog_values[analog_block_start_index+j] * header.scale_m) + header.scale_b;
-            } 
+            for(j = 0; j < header.num_vals; j++) {
+                analog_values[analog_block_start_index_array[i] + j] =
+                        (analog_values[analog_block_start_index_array[i] + j] * header.scale_m) + header.scale_b;
+            }
         }
-        analog_block_start_index += header.num_vals;
     }
 }
-
