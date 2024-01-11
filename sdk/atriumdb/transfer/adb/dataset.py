@@ -37,7 +37,7 @@ DEFAULT_GAP_TOLERANCE = 30 * 24 * 60 * 60 * 1_000_000_000  # 1 month in nanoseco
 
 
 def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDefinition, gap_tolerance=None,
-                  deidentify=True, patient_info_to_transfer=None):
+                  deidentify=True, patient_info_to_transfer=None, include_labels=True):
     # Gap tolerance is used to construct the time ranges when the validator is asked to construct it itself.
     # Using a large value helps optimize the waveform transfer by transferring large chunks at a time.
     gap_tolerance = DEFAULT_GAP_TOLERANCE if gap_tolerance is None else gap_tolerance
@@ -53,7 +53,11 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     patient_id_map = transfer_patient_info(
         src_sdk, dest_sdk, patient_id_list=src_patient_id_list, deidentify=deidentify,
         patient_info_to_transfer=patient_info_to_transfer, start_time_nano=None, end_time_nano=None)
-    label_set_id_map = transfer_label_sets(src_sdk, dest_sdk, label_set_id_list=validated_label_set_list)
+
+    if include_labels:
+        label_set_id_map = transfer_label_sets(src_sdk, dest_sdk, label_set_id_list=validated_label_set_list)
+    else:
+        label_set_id_map = {}
 
     # Transfer Waveforms and Labels
     for source_type, sources in validated_sources.items():
@@ -78,11 +82,14 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
                     ingest_data(dest_sdk, dest_measure_id, dest_device_id, headers, times, values)
 
+                if not include_labels:
+                    continue
+
                 # Insert labels
                 if len(label_set_id_map) == 0:
                     continue
                 labels = src_sdk.get_labels(
-                    label_set_id_list=list(label_set_id_map.keys()), device_list=[src_device_id],
+                    label_name_id_list=list(label_set_id_map.keys()), device_list=[src_device_id],
                     start_time=start_time_nano, end_time=end_time_nano)
 
                 insert_labels(dest_sdk, labels, device_id_map)
