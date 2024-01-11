@@ -44,8 +44,8 @@ def _test_time_type_switch(db_type, dataset_location, connection_params):
 
     # Check time type 2
     start_bench = time.perf_counter()
-    _, r_times, r_values = sdk.get_data(
-        measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=2, analog=False)
+    _, r_times, r_values = sdk.get_data(measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=2,
+                                        analog=False)
     end_bench = time.perf_counter()
 
     print(round(r_values.size / (end_bench - start_bench), 4), "VPS")
@@ -54,8 +54,8 @@ def _test_time_type_switch(db_type, dataset_location, connection_params):
 
     # Check time type 1
     start_bench = time.perf_counter()
-    _, r_times, r_values = sdk.get_data(
-        measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1, analog=False)
+    _, r_times, r_values = sdk.get_data(measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1,
+                                        analog=False)
     end_bench = time.perf_counter()
 
     print(round(r_values.size / (end_bench - start_bench), 4), "VPS")

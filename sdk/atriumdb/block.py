@@ -162,7 +162,7 @@ class Block:
 
         return times, (num_block_intervals, elapsed_block_time, interval_block_start)
 
-    def decode_blocks(self, encoded_bytes, num_bytes_list, analog=True, time_type=1):
+    def decode_blocks(self, encoded_bytes, num_bytes_list, analog=True, time_type=1, scale_factor_optimization=True):
 
         # Calculate the starting byte positions of each block in the encoded bytes array
         byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
@@ -241,12 +241,7 @@ class Block:
 
         if headers[0].t_raw_type == T_TYPE_START_TIME_NUM_SAMPLES:
             time_data = merge_interval_data(time_data, period_ns)
-        if headers[0].v_raw_type == V_TYPE_INT64:
-            value_data = np.frombuffer(value_data, dtype=np.int64)
-        elif headers[0].v_raw_type == V_TYPE_DOUBLE:
-            value_data = np.frombuffer(value_data, dtype=np.float64)
-        else:
-            raise ValueError("Header had an unsupported raw value type, {}.".format(headers[0].v_raw_type))
+
         end_bench = time.perf_counter()
         logging.debug(f"interpret result bytes {(end_bench - start_bench) * 1000} ms")
 
@@ -256,40 +251,43 @@ class Block:
         logging.debug("------------------------")
         start_bench_scale = time.perf_counter()
         scale_m_array = np.array([h.scale_m for h in headers])
+
+        if headers[0].v_raw_type == V_TYPE_INT64:
+            value_data = np.frombuffer(value_data, dtype=np.int64)
+        elif headers[0].v_raw_type == V_TYPE_DOUBLE:
+            value_data = np.frombuffer(value_data, dtype=np.float64)
+        else:
+            raise ValueError("Header had an unsupported raw value type, {}.".format(headers[0].v_raw_type))
+
         if analog and not np.all(scale_m_array == 0):
-            start_bench = time.perf_counter()
-            scale_b_array = np.array([h.scale_b for h in headers])
-            end_bench = time.perf_counter()
-            logging.debug(f"\tscale: arrange linear constants {(end_bench - start_bench) * 1000} ms")
-
-            start_bench = time.perf_counter()
-            value_data = value_data.astype(np.float64, copy=False)
-            end_bench = time.perf_counter()
-            logging.debug(f"\tscale: cast value data {(end_bench - start_bench) * 1000} ms")
-
-            # Apply the scale factors to the value data
-            if np.all(scale_m_array == scale_m_array[0]) and np.all(scale_b_array == scale_b_array[0]):
-                start_bench = time.perf_counter()
-                value_data *= scale_m_array[0]
-                end_bench = time.perf_counter()
-                logging.debug(f"\tscale: apply slope {(end_bench - start_bench) * 1000} ms")
-
-                start_bench = time.perf_counter()
-                value_data += scale_b_array[0]
-                end_bench = time.perf_counter()
-                logging.debug(f"\tscale: apply y-int {(end_bench - start_bench) * 1000} ms")
-
+            if scale_factor_optimization:
+                analog_values = np.zeros(sum(h.num_vals for h in headers), dtype=np.float64)
+                self.wrapped_dll.convert_value_data_to_analog(value_data, analog_values, headers, len(headers))
+                value_data = analog_values
             else:
-                # Apply the scale factors to each region of the value data
-                v_data_regions = np.cumsum([h.num_vals for h in headers])
-                v_data_regions = np.concatenate([np.array([0], dtype=np.uint64), v_data_regions], axis=None)
+                scale_b_array = np.array([h.scale_b for h in headers])
 
-                for i in range(scale_m_array.size):
-                    if scale_m_array[i] != 0:
-                        value_data[int(v_data_regions[i]):int(v_data_regions[i + 1])] *= scale_m_array[i]
+                value_data = value_data.astype(np.float64, copy=False)
 
-                    if scale_b_array[i] != 0:
-                        value_data[int(v_data_regions[i]):int(v_data_regions[i + 1])] += scale_b_array[i]
+                # Apply the scale factors to the value data
+                if np.all(scale_m_array == scale_m_array[0]) and np.all(scale_b_array == scale_b_array[0]):
+                    value_data *= scale_m_array[0]
+
+                    value_data += scale_b_array[0]
+
+                else:
+                    # Apply the scale factors to each region of the value data
+                    v_data_regions = np.cumsum([h.num_vals for h in headers])
+                    v_data_regions = np.concatenate([np.array([0], dtype=np.uint64), v_data_regions], axis=None)
+
+                    for i in range(scale_m_array.size):
+                        if scale_m_array[i] != 0:
+                            value_data[int(v_data_regions[i]):int(v_data_regions[i + 1])] *= scale_m_array[i]
+
+                        if scale_b_array[i] != 0:
+                            value_data[int(v_data_regions[i]):int(v_data_regions[i + 1])] += scale_b_array[i]
+
+
 
         end_bench_scale = time.perf_counter()
         logging.debug(f"apply scale factors total {(end_bench_scale - start_bench_scale) * 1000} ms")

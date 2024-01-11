@@ -147,7 +147,8 @@ def _test_small_block(db_type, dataset_location, connection_params):
                    raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
                    scale_m=scale_m, scale_b=scale_b)
 
-    headers, times, values = sdk.get_data(measure_id, start_time, start_time + (10 ** 13), device_id=device_id, analog=False)
+    headers, times, values = sdk.get_data(measure_id, start_time, start_time + (10 ** 13), device_id=device_id,
+                                          analog=False)
 
     assert compare_arrays(value_data, values)
     assert compare_arrays(expected_times, times)
