@@ -36,4 +36,7 @@ void decode_blocks(void *time_data, void *value_data, void *encoded_bytes, uint6
                    const uint64_t *t_block_start, const uint64_t *v_block_start, const uint64_t *byte_start,
                    const uint64_t *t_byte_start, uint16_t num_threads);
 
+void convert_value_data_to_analog(void *value_data, double *analog_values, block_metadata_t *headers,
+                                  uint64_t num_blocks);
+
 #endif //MINIMAL_SDK_BLOCK_H
