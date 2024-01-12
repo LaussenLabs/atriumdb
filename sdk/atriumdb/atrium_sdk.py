@@ -16,6 +16,7 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import numpy as np
 
+import threading
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
     find_intervals, merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, \
@@ -34,6 +35,7 @@ from atriumdb.intervals.intervals import Intervals
 from concurrent.futures import ThreadPoolExecutor
 import time
 import random
+import atexit
 from pathlib import Path, PurePath
 from multiprocessing import cpu_count
 import sys
@@ -51,6 +53,7 @@ try:
     import requests
     from requests import Session
     from dotenv import load_dotenv
+    from websockets.sync.client import connect
 
     REQUESTS_INSTALLED = True
 except ImportError:
@@ -222,6 +225,29 @@ class AtriumSDK:
 
             self.token = token
 
+            # remove the leading http stuff and replace it with ws, also remove any trailing slashes
+            ws_url = api_url.replace("https://", "wss://").replace("http://", "ws://").rstrip('/')
+
+            # make this variable so once connection is made in the thread it is available to the sdk object
+            self.websock_conn = None
+            # The websockets lib uses a thread to receive messages. Normally you would call close() after receiving the
+            # messages to shut that thread down but since we are reducing overhead we want to keep that connection open
+            # for the life of the sdk object. If we don't shut it down then the program using the sdk will hang even
+            # after the main is finished. Since we have no control over the users or the websocket libs code we have to
+            # do this automatically. The only way to do that is to make the receiving thread a daemon thread and since
+            # we cant control its creation to set daemon=True, the only way to do that if by making a thread of our own
+            # which is a daemon then any threads spawned by that thread will also automatically be a daemon thread.
+            # This is why we do the websocket connection in our own thread.
+            self.websocket_connect_thread = threading.Thread(target=self.websocket_connect, args=(ws_url,), daemon=True).start()
+
+            # wait for thread to make the websocket connection
+            while self.websock_conn is None:
+                time.sleep(0.1)
+
+            # since our receiving thread can now exit when main completes we can register an atexit hook to close the
+            # rest of the connection properly
+            atexit.register(self.close)
+
         else:
             raise ValueError("metadata_connection_type must be one of sqlite, mysql, mariadb or api")
 
@@ -246,6 +272,15 @@ class AtriumSDK:
             # Dictionaries to map MRN to patient ID and patient ID to MRN for quick lookups.
             self._mrn_to_patient_id = {}
             self._patient_id_to_mrn = {}
+
+    def websocket_connect(self, ws_url):
+        tik = time.perf_counter()
+        self.websock_conn = connect(f"{ws_url}/sdk/ws/blocks", compression=None, max_size=None, additional_headers={"Authorization": "Bearer {}".format(self.token)})
+        print(f"Websocket connect time: {round((time.perf_counter() - tik) * 1000, 4)} ms")
+
+    def close(self):
+        self.websock_conn.close()
+        print("Websocket connection closed")
 
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None,
@@ -506,7 +541,7 @@ class AtriumSDK:
             read_list = condense_byte_read_list(file_block_list)
 
             # Read the data from the old files
-            encoded_bytes = self.file_api.read_file_list_3(measure_id, read_list, old_file_id_dict)
+            encoded_bytes = self.file_api.read_file_list_3(read_list, old_file_id_dict)
 
             # Get the number of bytes for each block
             num_bytes_list = [row[5] for row in file_block_list]
@@ -1051,31 +1086,43 @@ class AtriumSDK:
         if self.api_test_client is not None:
             # Get block requests using the test client
             block_requests = self.get_block_requests_from_test_client(block_info_list)
-        else:
+        # else:
             # Get block requests using threads
             # block_requests = self.threaded_block_requests(block_info_list)
 
-            # Get block requests using Session.
-            block_requests = self.block_session_requests(block_info_list)
+            # # Get block requests using Session.
+            # tik = time.perf_counter()
+            # block_requests = self.block_session_requests(block_info_list)
+            # print(f"Time for rest: {round((time.perf_counter()-tik) * 1000, 4)} ms")
 
             # Get block requests using threaded Session.
             # block_requests = self.threaded_session_requests(block_info_list)
 
-            # Check if any response is not ok
-            for response in block_requests:
-                if not response.ok:
-                    # Raise an exception for the failed request
-                    raise response.raise_for_status()
+            # # Check if any response is not ok
+            # for response in block_requests:
+            #     if not response.ok:
+            #         # Raise an exception for the failed request
+            #         raise response.raise_for_status()
 
-        # Concatenate the content of all responses
-        encoded_bytes = np.concatenate(
-            [np.frombuffer(response.content, dtype=np.uint8) for response in block_requests], axis=None)
+        # # Concatenate the content of all responses
+        # encoded_bytes = np.concatenate(
+        #     [np.frombuffer(response.content, dtype=np.uint8) for response in block_requests], axis=None)
+        #
+        # # Concatenate the content of all responses
+        # encoded_bytes = np.concatenate(
+        #     [np.frombuffer(response, dtype=np.uint8) for response in block_requests], axis=None)
+
+        tik = time.perf_counter()
+        encoded_bytes = self.block_websock_requests(block_info_list)
+        print(f"Time for {len(block_info_list)} blocks over websocket: {round((time.perf_counter() - tik) * 1000, 4)} ms")
+
 
         # Get the number of bytes for each block
         num_bytes_list = [row['num_bytes'] for row in block_info_list]
+        print(f"Mb/s is {(np.sum(num_bytes_list)/(time.perf_counter() - tik))/1_000_000}\n")
 
         # Decode the concatenated bytes to get headers, request times and request values
-        r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
+        r_times, r_values, headers = self.block.decode_blocks(np.copy(encoded_bytes), num_bytes_list, analog=analog,
                                                               time_type=time_type)
 
         # Sort the data based on the timestamps if sort is true
@@ -1162,8 +1209,40 @@ class AtriumSDK:
         session.headers = {"Authorization": "Bearer {}".format(self.token)}
 
         # Get the block bytes using the session for each block in the block_info_list
-        block_byte_list_2 = [self.get_block_bytes_response_from_session(row['id'], session) for row in block_info_list]
-        return block_byte_list_2
+        block_byte_list = [self.get_block_bytes_response_from_session(row['id'], session) for row in block_info_list]
+        return block_byte_list
+
+    def block_websock_requests(self, block_info_list):
+        """
+        Get block bytes using a websocket for multiple requests.
+
+        :param block_info_list: A list of dictionaries containing block information, such as block ID.
+        :return: A list of block bytes.
+        """
+        if not REQUESTS_INSTALLED:
+            raise ImportError("websockets module is not installed.")
+
+        block_ids = ','.join([str(row['id']) for row in block_info_list])
+        # print(block_ids)
+        self.websock_conn.send(block_ids)
+
+        # block_byte_list = []
+        # for message in self.websock_conn:
+        #     if message == 'Atriumdb_Done':
+        #         break
+        #     block_byte_list.append(message)
+        # # for row in block_info_list:
+        # #     self.websock_conn.send(str(row['id']))
+        # #     message = self.websock_conn.recv()
+        # #     block_byte_list.append(message)
+        # #     print(f"Received: {message}\n")
+        #
+        # return block_byte_list
+
+        message = self.websock_conn.recv()
+
+        # Create a NumPy array from the bytearray using np.frombuffer
+        return np.frombuffer(message, dtype=np.uint8)
 
     def threadless_block_requests(self, block_info_list):
         """
@@ -1407,7 +1486,7 @@ class AtriumSDK:
         read_list = condense_byte_read_list(current_blocks_meta)
 
         # Read the data from the files using the measure ID and the read list
-        encoded_bytes = self.file_api.read_file_list_3(measure_id, read_list, filename_dict)
+        encoded_bytes = self.file_api.read_file_list_3(read_list, filename_dict)
 
         # Extract the number of bytes for each block in the current blocks metadata
         num_bytes_list = [row[5] for row in current_blocks_meta]
@@ -1442,7 +1521,7 @@ class AtriumSDK:
         read_list = condense_byte_read_list(block_list)
 
         # Extract the file ID list from the read list
-        file_id_list = [row[1] for row in read_list]
+        file_id_list = [row[2] for row in read_list]
 
         # Get the dictionary mapping file IDs to their respective filenames
         filename_dict = self.get_filename_dict(file_id_list)
@@ -1536,7 +1615,7 @@ class AtriumSDK:
                     return [], np.array([]), np.array([])
 
                 # Map file_ids to filenames and return a dictionary.
-                file_id_list = [row[1] for row in read_list]
+                file_id_list = [row[2] for row in read_list]
                 filename_dict = self.get_filename_dict(file_id_list)
                 end_bench = time.perf_counter()
                 # print(f"DB query took {round((end_bench - start_bench) * 1000, 4)} ms")
@@ -1921,7 +2000,7 @@ class AtriumSDK:
         # Note: Method 2 is not working, so it's commented out
         # encoded_bytes = self.file_api.read_file_list_1(measure_id, read_list, filename_dict)
         # encoded_bytes = self.file_api.read_file_list_2(measure_id, read_list, filename_dict)
-        encoded_bytes = self.file_api.read_file_list_3(measure_id, read_list, filename_dict)
+        encoded_bytes = self.file_api.read_file_list_3(read_list, filename_dict)
 
         # End performance benchmark
         end_bench = time.perf_counter()
