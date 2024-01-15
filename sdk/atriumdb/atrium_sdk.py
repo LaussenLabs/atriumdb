@@ -1369,8 +1369,7 @@ class AtriumSDK:
 
                     # Retrieve the last window's data
                     headers, r_times, r_values = self.get_blocks(last_blocks_meta, filename_dict, measure_id,
-                                                                 start_time_n, end_time_n, analog,
-                                                                 time_type)
+                                                                 start_time_n, end_time_n, analog, time_type)
 
                     # Get the last window's data by slicing the time and value arrays
                     r_times, r_values = r_times[-window_size:], r_values[-window_size:]
@@ -1384,7 +1383,7 @@ class AtriumSDK:
                 yield from yield_data(r_times, r_values, window_size, step_size, get_last_window, current_index)
 
     def get_blocks(self, current_blocks_meta, filename_dict, measure_id, start_time_n, end_time_n, analog, time_type=1,
-                   sort=True, allow_duplicates=True, scale_factor_optimization=True):
+                   sort=True, allow_duplicates=True):
         """
         Get the headers, times, and values of blocks from the specified measure_id and time range.
 
@@ -1414,8 +1413,7 @@ class AtriumSDK:
 
         # Decode the block array and get the headers, times, and values
         r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
-                                                              time_type=time_type,
-                                                              scale_factor_optimization=scale_factor_optimization)
+                                                              time_type=time_type)
 
         # Sort the data based on the timestamps if sort is true
         if sort:
@@ -1452,7 +1450,7 @@ class AtriumSDK:
 
     def get_data(self, measure_id: int, start_time_n: int = None, end_time_n: int = None, device_id: int = None,
                  patient_id=None, time_type=1, analog=True, block_info=None, time_units: str = None, sort=True,
-                 allow_duplicates=True, scale_factor_optimization=True):
+                 allow_duplicates=True):
         """
         .. _get_data_label:
 
@@ -1471,7 +1469,6 @@ class AtriumSDK:
         >>> r_values
         ... array([ 0.32731968,  0.79003189,  0.99659552, ..., -0.59080797, -0.93542358, -0.97675089])
 
-        :param scale_factor_optimization:
         :param int measure_id: The measure identifier corresponding to the measures table in the linked relational database.
         :param int start_time_n: The start epoch in nanoseconds of the data you would like to query.
         :param int end_time_n: The end epoch in nanoseconds of the data you would like to query. The end time is not
@@ -1556,8 +1553,7 @@ class AtriumSDK:
             # Read and decode the blocks.
             headers, r_times, r_values = self.get_data_from_blocks(block_list, filename_dict, measure_id, start_time_n,
                                                                    end_time_n, analog, time_type, sort=False,
-                                                                   allow_duplicates=allow_duplicates,
-                                                                   scale_factor_optimization=scale_factor_optimization)
+                                                                   allow_duplicates=allow_duplicates)
 
             # Sort the data based on the timestamps if sort is true
             if sort and time_type == 1:
@@ -1884,13 +1880,12 @@ class AtriumSDK:
         return measure_tag_dict
 
     def get_data_from_blocks(self, block_list, filename_dict, measure_id, start_time_n, end_time_n, analog=True,
-                             time_type=1, sort=True, allow_duplicates=True, scale_factor_optimization=True):
+                             time_type=1, sort=True, allow_duplicates=True):
         """
         Retrieve data from blocks.
 
         This method reads data from the specified blocks, decodes it, and returns the headers, times, and values.
 
-        :param scale_factor_optimization:
         :param block_list: List of blocks to read data from.
         :type block_list: list
         :param filename_dict: Dictionary containing file information.
@@ -1940,8 +1935,7 @@ class AtriumSDK:
         # Decode the data and separate it into headers, times, and values
         # start_bench = time.perf_counter()
         r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
-                                                              time_type=time_type,
-                                                              scale_factor_optimization=scale_factor_optimization)
+                                                              time_type=time_type)
         # end_bench = time.perf_counter()
         # print(f"decode bytes took {round((end_bench - start_bench) * 1000, 4)} ms")
 

@@ -162,7 +162,7 @@ class Block:
 
         return times, (num_block_intervals, elapsed_block_time, interval_block_start)
 
-    def decode_blocks(self, encoded_bytes, num_bytes_list, analog=True, time_type=1, scale_factor_optimization=True):
+    def decode_blocks(self, encoded_bytes, num_bytes_list, analog=True, time_type=1):
 
         # Calculate the starting byte positions of each block in the encoded bytes array
         byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
@@ -262,32 +262,9 @@ class Block:
 
         no_scale_bool = np.all(scale_m_array == 0) or (np.all(scale_m_array == 1) and np.all(scale_b_array == 0))
         if analog and not no_scale_bool:
-            if scale_factor_optimization:
-                analog_values = np.zeros(sum(h.num_vals for h in headers), dtype=np.float64)
-                self.wrapped_dll.convert_value_data_to_analog(value_data, analog_values, headers, len(headers))
-                value_data = analog_values
-            else:
-                value_data = value_data.astype(np.float64, copy=False)
-
-                # Apply the scale factors to the value data
-                if np.all(scale_m_array == scale_m_array[0]) and np.all(scale_b_array == scale_b_array[0]):
-                    value_data *= scale_m_array[0]
-
-                    value_data += scale_b_array[0]
-
-                else:
-                    # Apply the scale factors to each region of the value data
-                    v_data_regions = np.cumsum([h.num_vals for h in headers])
-                    v_data_regions = np.concatenate([np.array([0], dtype=np.uint64), v_data_regions], axis=None)
-
-                    for i in range(scale_m_array.size):
-                        if scale_m_array[i] != 0:
-                            value_data[int(v_data_regions[i]):int(v_data_regions[i + 1])] *= scale_m_array[i]
-
-                        if scale_b_array[i] != 0:
-                            value_data[int(v_data_regions[i]):int(v_data_regions[i + 1])] += scale_b_array[i]
-
-
+            analog_values = np.zeros(sum(h.num_vals for h in headers), dtype=np.float64)
+            self.wrapped_dll.convert_value_data_to_analog(value_data, analog_values, headers, len(headers))
+            value_data = analog_values
 
         end_bench_scale = time.perf_counter()
         logging.debug(f"apply scale factors total {(end_bench_scale - start_bench_scale) * 1000} ms")
