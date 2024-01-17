@@ -18,6 +18,7 @@
 from pathlib import Path
 import uuid
 import numpy as np
+from collections import Counter
 
 
 class AtriumFileHandler:
@@ -111,6 +112,52 @@ class AtriumFileHandler:
                                      start_byte, mem_view[index:index + num_bytes])
             # Update the index for the next iteration
             index += num_bytes
+
+        # Create a NumPy array from the bytearray using np.frombuffer
+        return np.frombuffer(all_bytes, dtype=np.uint8)
+
+    def read_file_list_4(self, read_list, filename_dict):
+        # get number of times each file needs to be read by seeing how many times a file_id appears in the read list
+        file_read_counts = Counter([block[2] for block in read_list])
+
+        # Create a bytearray with the total size of the data to be read
+        all_bytes = bytearray(sum([num_bytes for _, _, _, _, num_bytes in read_list]))
+        # Create a memoryview of the bytearray
+        mem_view = memoryview(all_bytes)
+
+        # Initialize an index to keep track of the current position in the memoryview and an open_file_dict to keep
+        # track of open files
+        open_files, index = {}, 0
+        try:
+            # Iterate through the read_list and read the specified bytes from the files using read_into_bytearray
+            for measure_id, device_id, file_id, start_byte, num_bytes in read_list:
+
+                # if we have not already opened the file open it and add it to the dictionary
+                if file_id not in open_files:
+                    # Open the file in binary mode with the absolute path provided by the to_abs_path function
+                    open_files[file_id] = open(self.to_abs_path(filename_dict[file_id], measure_id, device_id), 'rb')
+
+                # get open file from dictionary
+                file = open_files[file_id]
+                # subtract 1 from the number of times the file needs to be read from
+                file_read_counts[file_id] -= 1
+
+                # Find the specified start byte position in the file
+                file.seek(start_byte)
+                # Read the data into the given bytearray object
+                file.readinto(mem_view[index:index + num_bytes])
+
+                # Update the index for the next iteration
+                index += num_bytes
+
+                # check if the file read count is 0 and if it has, close the file and remove it from the dictionary
+                if file_read_counts[file_id] == 0:
+                    open_files[file_id].close()
+                    del open_files[file_id]
+
+        # if there is an error in the program make sure to close all open files
+        finally:
+            [open_files[file_id].close() for file_id, open_file in open_files.items()]
 
         # Create a NumPy array from the bytearray using np.frombuffer
         return np.frombuffer(all_bytes, dtype=np.uint8)

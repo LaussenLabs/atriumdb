@@ -279,8 +279,19 @@ class AtriumSDK:
         print(f"Websocket connect time: {round((time.perf_counter() - tik) * 1000, 4)} ms")
 
     def close(self):
-        self.websock_conn.close()
-        print("Websocket connection closed")
+        """
+        Close all connections to mariadb or the api. This should be ran at the end of your program after you are done
+        with the sdk object.
+        """
+
+        # make sure we are in api mode and if we are close the connection
+        if self.mode == "api":
+            self.websock_conn.close()
+            print("Websocket connection closed")
+        # if we are in sql mode and there is a connection pool close it
+        elif self.metadata_connection_type == "mariadb" or self.metadata_connection_type == "mysql":
+            if self.sql_handler.pool is not None:
+                self.sql_handler.pool.close()
 
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None,
@@ -541,7 +552,7 @@ class AtriumSDK:
             read_list = condense_byte_read_list(file_block_list)
 
             # Read the data from the old files
-            encoded_bytes = self.file_api.read_file_list_3(read_list, old_file_id_dict)
+            encoded_bytes = self.file_api.read_file_list_4(read_list, old_file_id_dict)
 
             # Get the number of bytes for each block
             num_bytes_list = [row[5] for row in file_block_list]
@@ -1086,40 +1097,23 @@ class AtriumSDK:
         if self.api_test_client is not None:
             # Get block requests using the test client
             block_requests = self.get_block_requests_from_test_client(block_info_list)
-        # else:
-            # Get block requests using threads
-            # block_requests = self.threaded_block_requests(block_info_list)
-
+        else:
             # # Get block requests using Session.
             # tik = time.perf_counter()
             # block_requests = self.block_session_requests(block_info_list)
             # print(f"Time for rest: {round((time.perf_counter()-tik) * 1000, 4)} ms")
 
-            # Get block requests using threaded Session.
-            # block_requests = self.threaded_session_requests(block_info_list)
-
-            # # Check if any response is not ok
-            # for response in block_requests:
-            #     if not response.ok:
-            #         # Raise an exception for the failed request
-            #         raise response.raise_for_status()
-
-        # # Concatenate the content of all responses
-        # encoded_bytes = np.concatenate(
-        #     [np.frombuffer(response.content, dtype=np.uint8) for response in block_requests], axis=None)
-        #
-        # # Concatenate the content of all responses
-        # encoded_bytes = np.concatenate(
-        #     [np.frombuffer(response, dtype=np.uint8) for response in block_requests], axis=None)
-
-        tik = time.perf_counter()
-        encoded_bytes = self.block_websock_requests(block_info_list)
-        print(f"Time for {len(block_info_list)} blocks over websocket: {round((time.perf_counter() - tik) * 1000, 4)} ms")
-
+            tik = time.perf_counter()
+            responses = self.block_websock_requests(block_info_list)
+            print(f"Time for {len(block_info_list)} blocks over websocket: {round((time.perf_counter() - tik) * 1000, 4)} ms")
 
         # Get the number of bytes for each block
         num_bytes_list = [row['num_bytes'] for row in block_info_list]
         print(f"Mb/s is {(np.sum(num_bytes_list)/(time.perf_counter() - tik))/1_000_000}\n")
+
+        # Concatenate the content of all responses
+        encoded_bytes = np.concatenate(
+            [np.frombuffer(response, dtype=np.uint8) for response in responses], axis=None)
 
         # Decode the concatenated bytes to get headers, request times and request values
         r_times, r_values, headers = self.block.decode_blocks(np.copy(encoded_bytes), num_bytes_list, analog=analog,
@@ -1226,23 +1220,16 @@ class AtriumSDK:
         # print(block_ids)
         self.websock_conn.send(block_ids)
 
-        # block_byte_list = []
-        # for message in self.websock_conn:
-        #     if message == 'Atriumdb_Done':
-        #         break
-        #     block_byte_list.append(message)
-        # # for row in block_info_list:
-        # #     self.websock_conn.send(str(row['id']))
-        # #     message = self.websock_conn.recv()
-        # #     block_byte_list.append(message)
-        # #     print(f"Received: {message}\n")
-        #
-        # return block_byte_list
+        message_list = []
+        for message in self.websock_conn:
+            if message == 'Atriumdb_Done':
+                break
+            elif message == 'expired_token':
+                pass
+            message_list.append(message)
 
-        message = self.websock_conn.recv()
-
-        # Create a NumPy array from the bytearray using np.frombuffer
-        return np.frombuffer(message, dtype=np.uint8)
+        # message = self.websock_conn.recv()
+        return message_list
 
     def threadless_block_requests(self, block_info_list):
         """
@@ -1486,7 +1473,7 @@ class AtriumSDK:
         read_list = condense_byte_read_list(current_blocks_meta)
 
         # Read the data from the files using the measure ID and the read list
-        encoded_bytes = self.file_api.read_file_list_3(read_list, filename_dict)
+        encoded_bytes = self.file_api.read_file_list_4(read_list, filename_dict)
 
         # Extract the number of bytes for each block in the current blocks metadata
         num_bytes_list = [row[5] for row in current_blocks_meta]
@@ -1998,9 +1985,12 @@ class AtriumSDK:
 
         # Read data from files using the specified file reading method
         # Note: Method 2 is not working, so it's commented out
-        # encoded_bytes = self.file_api.read_file_list_1(measure_id, read_list, filename_dict)
-        # encoded_bytes = self.file_api.read_file_list_2(measure_id, read_list, filename_dict)
-        encoded_bytes = self.file_api.read_file_list_3(read_list, filename_dict)
+        # encoded_bytes = self.file_api.read_file_list_1(read_list, filename_dict)
+        # encoded_bytes = self.file_api.read_file_list_2(read_list, filename_dict)
+        # encoded_bytes = self.file_api.read_file_list_3(read_list, filename_dict)
+
+        # Read the data from the files using the read list
+        encoded_bytes = self.file_api.read_file_list_4(read_list, filename_dict)
 
         # End performance benchmark
         end_bench = time.perf_counter()
