@@ -713,10 +713,10 @@ class SQLiteHandler(SQLHandler):
     def delete_labels(self, label_ids):
         # Delete multiple label records from the database based on their IDs.
         query = "DELETE FROM label WHERE id = ?"
-        with self.sqlite_db_connection(begin=True) as (conn, cursor):
-            # Execute the delete query for each ID in the list.
-            for label_id in label_ids:
-                cursor.execute(query, (label_id,))
+        with self.sqlite_db_connection() as (conn, cursor):
+            # Prepare a list of tuples for the executemany method.
+            id_tuples = [(label_id,) for label_id in label_ids]
+            cursor.executemany(query, id_tuples)
             conn.commit()
 
     def select_labels(self, label_set_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
