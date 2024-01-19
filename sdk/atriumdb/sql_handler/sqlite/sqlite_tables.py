@@ -327,5 +327,5 @@ CREATE TABLE IF NOT EXISTS label (
 );
 """
 
-sqlite_label_table_index_1 = "CREATE INDEX IF NOT EXISTS label_idx1 ON label (label_set_id, device_id, start_time, end_time);"
-sqlite_label_table_index_2 = "CREATE INDEX IF NOT EXISTS label_idx1 ON label (label_set_id, device_id, label_source_id, start_time, end_time);"
+sqlite_label_table_index_1 = "CREATE INDEX IF NOT EXISTS label_idx1 ON label (label_set_id, device_id, start_time_n, end_time_n);"
+sqlite_label_table_index_2 = "CREATE INDEX IF NOT EXISTS label_idx1 ON label (label_set_id, device_id, label_source_id, start_time_n, end_time_n);"
