@@ -397,7 +397,6 @@ class MariaDBHandler(SQLHandler):
             cursor.execute(maria_insert_ignore_encounter_query,
                            (patient_id, bed_id, start_time, end_time, source_id, visit_number, last_updated))
             return cursor.lastrowid
-            return cursor.lastrowid
 
     def insert_device_encounter(self, device_id, encounter_id, start_time, end_time=None, source_id=1):
         with self.maria_db_connection(begin=False) as (conn, cursor):
