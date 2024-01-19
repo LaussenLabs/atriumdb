@@ -49,7 +49,8 @@ from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_quer
     sqlite_measure_source_id_create_index, sqlite_log_hl7_adt_source_id_create_index, sqlite_log_hl7_adt_create_query, \
     sqlite_device_patient_table, sqlite_patient_table_index_1, sqlite_patient_history_create_query, \
     sqlite_encounter_insert_trigger, sqlite_encounter_update_trigger, sqlite_encounter_delete_trigger, \
-    sqlite_label_set_create_query, sqlite_label_create_query, sqlite_label_source_create_query
+    sqlite_label_set_create_query, sqlite_label_create_query, sqlite_label_source_create_query, \
+    sqlite_label_table_index_1, sqlite_label_table_index_2
 
 
 class SQLiteHandler(SQLHandler):
@@ -131,6 +132,9 @@ class SQLiteHandler(SQLHandler):
 
         cursor.execute(sqlite_log_hl7_adt_source_id_create_index)
         cursor.execute(sqlite_patient_table_index_1)
+
+        cursor.execute(sqlite_label_table_index_1)
+        cursor.execute(sqlite_label_table_index_2)
 
         # Triggers
         cursor.execute(sqlite_encounter_insert_trigger)
