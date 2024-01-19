@@ -3522,7 +3522,7 @@ class AtriumSDK:
 
     def get_all_label_names(self) -> dict:
         """
-        Retrieve all the available label types from the database.
+        Retrieve all distinct label names from the database.
 
         :return: A dictionary where keys are label IDs and values are dictionaries containing 'id' and 'name' keys.
         :rtype: dict
