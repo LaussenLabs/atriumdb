@@ -345,8 +345,8 @@ CREATE TABLE IF NOT EXISTS label (
     end_time_n BIGINT NOT NULL,
     CONSTRAINT FOREIGN KEY (label_set_id) REFERENCES label_set(id),
     CONSTRAINT FOREIGN KEY (device_id) REFERENCES device(id),
-    CONSTRAINT FOREIGN KEY (label_source_id) REFERENCES label_source(id)
-    INDEX (label_set_id, device_id, start_time, end_time)
+    CONSTRAINT FOREIGN KEY (label_source_id) REFERENCES label_source(id),
+    INDEX (label_set_id, device_id, start_time, end_time),
     INDEX (label_set_id, device_id, label_source_id, start_time, end_time)
 );
 """
