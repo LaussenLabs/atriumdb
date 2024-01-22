@@ -44,7 +44,7 @@ def _test_insert_patient_without_id(db_type, dataset_location, connection_params
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    inserted_patient_id = sdk.insert_patient(mrn="654321", gender="F",
+    inserted_patient_id = sdk.insert_patient(mrn=654321, gender="F",
                                              dob=946684800000000000, first_name="Jane",
                                              middle_name="B", last_name="Smith",
                                              first_seen=1609459200000000000,
@@ -52,7 +52,7 @@ def _test_insert_patient_without_id(db_type, dataset_location, connection_params
 
     assert isinstance(inserted_patient_id, int) and inserted_patient_id > 0
 
-    patient_info = sdk.get_patient_info(mrn="654321")
+    patient_info = sdk.get_patient_info(mrn=654321)
 
     assert patient_info['id'] == inserted_patient_id
     assert patient_info['mrn'] == 654321

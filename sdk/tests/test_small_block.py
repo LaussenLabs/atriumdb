@@ -32,7 +32,7 @@ MAX_RECORDS = 1
 SEED = 42
 
 global_gap_index = 0
-global_d_record = next(get_records(dataset_name='mitdb', physical=False))
+global_d_record, annotation = next(get_records(dataset_name='mitdb', physical=False))
 
 
 def test_small_block():
@@ -99,8 +99,8 @@ def _test_small_block(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    one_p_record = next(get_records(dataset_name='mitdb'))
-    one_d_record = next(get_records(dataset_name='mitdb', physical=False))
+    one_p_record, annotation = next(get_records(dataset_name='mitdb'))
+    one_d_record, annotation = next(get_records(dataset_name='mitdb', physical=False))
 
     for key in one_p_record.__dict__.keys():
         value = one_p_record.__dict__[key]

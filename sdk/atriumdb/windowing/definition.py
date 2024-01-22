@@ -20,6 +20,8 @@ import os
 import warnings
 import json
 
+from atriumdb.windowing.definition_builder import build_source_intervals
+
 
 class DatasetDefinition:
     """
@@ -107,13 +109,14 @@ class DatasetDefinition:
     """
 
     def __init__(self, filename=None, measures=None, patient_ids=None, mrns=None, device_ids=None,
-                 device_tags=None):
+                 device_tags=None, labels=None):
         self.data_dict = {
             'measures': measures if measures is not None else [],
             'patient_ids': patient_ids if patient_ids is not None else {},
             'mrns': mrns if mrns is not None else {},
             'device_ids': device_ids if device_ids is not None else {},
-            'device_tags': device_tags if device_tags is not None else {}
+            'device_tags': device_tags if device_tags is not None else {},
+            'labels': labels if labels is not None else [],
         }
 
         if filename:
@@ -121,6 +124,51 @@ class DatasetDefinition:
 
         # Validate and convert the data
         self._validate_and_convert_data()
+
+    @classmethod
+    def build_from_intervals(cls, sdk, build_from_signal_type, measures=None, labels=None, patient_id_list=None,
+                             mrn_list=None, device_id_list=None, device_tag_list=None, start_time=None, end_time=None,
+                             gap_tolerance=None):
+        """
+        Class method that builds a DatasetDefinition object using signal-based intervals.
+
+        :param sdk: Data SDK used to interact with the database or data service
+        :param build_from_signal_type: Signal type to build from, either "measures" or "labels"
+        :param measures: List of measures to build from, if applicable
+        :param labels: List of labels to build from, if applicable
+        :param patient_id_list: List of patient IDs
+        :param mrn_list: List of medical record numbers
+        :param device_id_list: List of device IDs
+        :param device_tag_list: List of device tags
+        :param start_time: Start timestamp for filtering
+        :param end_time: End timestamp for filtering
+        :param int gap_tolerance: The maximum allowable gap size in the data such that the output considers a
+            region continuous. Put another way, the minimum gap size, such that the output of this method will add
+            a new row.
+        :return: DatasetDefinition object
+        """
+        # Validate build_from_signal_type
+        if build_from_signal_type not in ["measures", "labels"]:
+            raise ValueError("build_from_signal_type must be either 'measures' or 'labels'")
+
+        # Build the source intervals using the build_source_intervals function
+        source_intervals = build_source_intervals(sdk, measures=measures, labels=labels,
+                                                  patient_id_list=patient_id_list,
+                                                  mrn_list=mrn_list, device_id_list=device_id_list,
+                                                  device_tag_list=device_tag_list, start_time=start_time,
+                                                  end_time=end_time, gap_tolerance=gap_tolerance)
+
+        # Create a DatasetDefinition instance
+        kwargs = {
+            'measures': measures,
+            'labels': labels,
+            'patient_ids': source_intervals.get('patient_ids'),
+            'mrns': source_intervals.get('mrns'),
+            'device_ids': source_intervals.get('device_ids'),
+            'device_tags': source_intervals.get('device_tags'),
+        }
+        dataset_def = cls(**kwargs)
+        return dataset_def
 
     def read_yaml(self, filename):
         try:
@@ -150,6 +198,13 @@ class DatasetDefinition:
             if isinstance(measure, dict):
                 if 'tag' not in measure or ('freq_hz' not in measure and 'freq_nhz' not in measure) or 'units' not in measure:
                     raise ValueError("Measure dictionary must contain 'tag', 'freq_hz' (or 'freq_nhz'), and 'units' keys")
+
+        # Validate labels
+        if not isinstance(self.data_dict['labels'], list):
+            raise ValueError("labels must be a list or None.")
+        for label_name in self.data_dict['labels']:
+            if not isinstance(self.data_dict['labels'], list):
+                raise ValueError("labels must be a list or None.")
 
         # Validate and convert patient_ids
         for patient_id, times in self.data_dict['patient_ids'].items():
@@ -234,6 +289,32 @@ class DatasetDefinition:
             self.data_dict['measures'].append({'tag': measure_tag, 'freq_hz': freq, 'units': units})
         else:
             self.data_dict['measures'].append(measure_tag)
+
+    def add_label(self, label_name):
+        """
+        Adds a new label to the definition.
+
+        In the context of creating an iterator, labels specified will be included in the Window
+        information if present.
+
+        A label can be considered as a categorization or classification applied to a data point
+        or a set of data points in the dataset. It might represent some meaningful information
+        like 'abnormal', 'healthy', 'artifact', etc. for data sections or points.
+
+        :param label_name: Name of the label to be added.
+        :type label_name: str
+
+        **Examples**:
+
+        >>> dataset_definition.add_label(label_name="abnormal")
+        >>> dataset_definition.add_label(label_name="artifact")
+
+        :raises ValueError: If the label is already present in the definition.
+        """
+        if label_name in self.data_dict['labels']:
+            raise ValueError(f"The label '{label_name}' is already present in the definition.")
+        else:
+            self.data_dict['labels'].append(label_name)
 
     def add_region(self, patient_id=None, mrn=None, device_id=None, device_tag=None, start=None, end=None, time0=None,
                    pre=None, post=None):

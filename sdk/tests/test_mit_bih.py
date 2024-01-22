@@ -28,6 +28,32 @@ DB_NAME = 'atrium-mit-bih'
 
 MAX_RECORDS = 1
 SEED = 42
+LABEL_SET_LIST = [
+    "Normal Sinus Rhythm",
+    "Atrial Fibrillation",
+    "Atrial Flutter",
+    "Supraventricular Tachycardia",
+    "Ventricular Tachycardia",
+    "Ventricular Fibrillation",
+    "Bradycardia",
+    "Tachycardia",
+    "Premature Ventricular Contraction",
+    "Premature Atrial Contraction",
+    "First Degree Heart Block",
+    "Second Degree Heart Block",
+    "Third Degree Heart Block",
+    "Paced Rhythm",
+    "Artifact",
+    "Asystole",
+    "ST Elevation",
+    "ST Depression",
+    "T-wave Inversion",
+    "Bundle Branch Block",
+    "Idioventricular Rhythm",
+    "Junctional Rhythm",
+    "Ectopic Rhythm",
+    "Pause",
+]
 
 
 def test_mit_bih():
@@ -50,7 +76,7 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
         np.random.seed(seed)
         random.seed(seed)
     num_records = 0
-    for record in get_records(dataset_name='mitdb'):
+    for (record, annotation) in get_records(dataset_name='mitdb'):
         if max_records and num_records >= max_records:
             return
         num_records += 1
@@ -114,23 +140,23 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
             assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
 
 
-def write_mit_bih_to_dataset(sdk, max_records=None, seed=None):
+def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=None):
     seed = SEED if seed is None else seed
     if seed is not None:
         np.random.seed(seed)
         random.seed(seed)
 
+    label_set_list = LABEL_SET_LIST if label_set_list is None else label_set_list
+
     num_records = 0
 
     device_patient_dict = {}
-    for record, d_record in zip(get_records(dataset_name='mitdb'), get_records(dataset_name='mitdb', physical=False)):
+    for (record, annotation), (d_record, d_annotation) in zip(get_records(dataset_name='mitdb'), get_records(dataset_name='mitdb', physical=False)):
         if max_records and num_records >= max_records:
             return
         num_records += 1
         device_id = sdk.insert_device(device_tag=record.record_name)
-        # freq_nano = record.fs * 1_000_000_000
         freq_nano = 500 * 1_000_000_000
-        # period_nano = int(10 ** 9 // record.fs)
         period_nano = int(10 ** 18 // freq_nano)
 
         time_arr = np.arange(record.sig_len, dtype=np.int64) * period_nano
@@ -140,22 +166,25 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None):
         for gap_index, gap_duration in gap_data_2d:
             time_arr[gap_index:] += gap_duration
 
-        # Insert a random patient
         patient_id = insert_random_patients(sdk, 1)[0]
-
         device_patient_dict[device_id] = patient_id
 
-        # Map the device to the patient
         start_time = int(time_arr[0])
         end_time = int(time_arr[-1] + period_nano)
         sdk.insert_device_patient_data([(device_id, patient_id, start_time, end_time)])
 
-        # If there are multiple signals in one record, split them into two different dataset entries
+        # Divide the waveform into random segments and assign random labels
+        num_segments = random.randint(10, 100)
+        segment_duration = (end_time - start_time) // num_segments
+        for segment in range(num_segments):
+            segment_start = start_time + segment * segment_duration
+            segment_end = segment_start + segment_duration
+            label = random.choice(label_set_list)
+            sdk.insert_label(name=label, device=device_id, start_time=segment_start, end_time=segment_end, time_units='ns')
+
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
                 write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, record, d_record, i)
-
-        # If there is only one signal in the input file, insert it
         else:
             write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, record, d_record, None)
 

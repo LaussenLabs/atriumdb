@@ -297,3 +297,35 @@ sqlite_device_patient_table = """CREATE TABLE IF NOT EXISTS device_patient (
 """
 
 sqlite_patient_table_index_1 = "CREATE INDEX IF NOT EXISTS device_patient_index ON device_patient (device_id, patient_id, start_time, end_time);"
+
+sqlite_label_set_create_query = """
+CREATE TABLE IF NOT EXISTS label_set (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+name TEXT NOT NULL UNIQUE
+);
+"""
+
+sqlite_label_source_create_query = """
+CREATE TABLE IF NOT EXISTS label_source (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT
+);
+"""
+
+sqlite_label_create_query = """
+CREATE TABLE IF NOT EXISTS label (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label_set_id INTEGER NOT NULL,
+    device_id INTEGER NOT NULL,
+    label_source_id INTEGER,
+    start_time_n INTEGER NOT NULL,
+    end_time_n INTEGER NOT NULL,
+    FOREIGN KEY (label_set_id) REFERENCES label_set (id),
+    FOREIGN KEY (device_id) REFERENCES device (id),
+    FOREIGN KEY (label_source_id) REFERENCES label_source (id)
+);
+"""
+
+sqlite_label_table_index_1 = "CREATE INDEX IF NOT EXISTS label_idx1 ON label (label_set_id, device_id, start_time_n, end_time_n);"
+sqlite_label_table_index_2 = "CREATE INDEX IF NOT EXISTS label_idx1 ON label (label_set_id, device_id, label_source_id, start_time_n, end_time_n);"

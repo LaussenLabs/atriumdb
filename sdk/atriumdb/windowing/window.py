@@ -56,3 +56,5 @@ class Window:
     start_time: int
     device_id: int
     patient_id: int
+    label_time_series: np.ndarray
+    label: np.ndarray

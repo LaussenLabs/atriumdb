@@ -33,4 +33,5 @@ def get_records(dataset_name=None, physical=True):
 
     for record_name in wfdb.get_record_list(dataset_name):
         record = wfdb.rdrecord(str(dataset_dir_path / record_name), physical=physical)
-        yield record
+        annotation = wfdb.rdann(str(dataset_dir_path / record_name), 'atr', summarize_labels=True, return_label_elements=['description'])
+        yield (record, annotation)
