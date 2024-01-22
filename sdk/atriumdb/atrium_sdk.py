@@ -14,6 +14,8 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import warnings
+
 import numpy as np
 
 from atriumdb.windowing.definition import DatasetDefinition
@@ -38,7 +40,7 @@ from pathlib import Path, PurePath
 from multiprocessing import cpu_count
 import sys
 import os
-from typing import Union, List, Tuple
+from typing import Union, List, Tuple, Optional
 
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
@@ -229,6 +231,7 @@ class AtriumSDK:
         if metadata_connection_type != "api":
             self._measures = self.get_all_measures()
             self._devices = self.get_all_devices()
+            self._label_sets = self.get_all_label_names()
 
             # Lazy caching, cache only built if patient info requested later
             self._patients = {}
@@ -243,13 +246,19 @@ class AtriumSDK:
             for device_id, device_info in self._devices.items():
                 self._device_ids[device_info['tag']] = device_id
 
+            # Create a dictionary to map label type names to their IDs
+            self._label_set_ids = {}
+            for label_id, label_info in self._label_sets.items():
+                self._label_set_ids[label_info['name']] = label_id
+
             # Dictionaries to map MRN to patient ID and patient ID to MRN for quick lookups.
             self._mrn_to_patient_id = {}
             self._patient_id_to_mrn = {}
 
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None,
-                       protected_mode: str = None, overwrite: str = None, connection_params: dict = None, no_pool=False):
+                       protected_mode: str = None, overwrite: str = None, connection_params: dict = None,
+                       no_pool=False):
         """
         .. _create_dataset_label:
 
@@ -373,6 +382,10 @@ class AtriumSDK:
             the following order: device_id, patient_id, start_time, and end_time.
         :rtype: List[Tuple[int, int, int, int]]
         """
+        if self.metadata_connection_type == "api":
+            return self._api_get_device_patient_data(device_id_list=device_id_list, patient_id_list=patient_id_list,
+                                                     mrn_list=mrn_list, start_time=start_time, end_time=end_time)
+
         if mrn_list is not None:
             patient_id_list = [] if patient_id_list is None else patient_id_list
             mrn_to_patient_id_map = self.get_mrn_to_patient_id_map(mrn_list)
@@ -683,7 +696,8 @@ class AtriumSDK:
         num_full_blocks = value_data.size // self.block.block_size
         if num_full_blocks > 0 and value_data.size % self.block.block_size != 0:
             byte_start_array, encoded_bytes, encoded_headers = self._make_oversized_block(
-                encoded_time_type, encoded_value_type, freq_nhz,num_full_blocks, raw_time_type, raw_value_type, scale_b,
+                encoded_time_type, encoded_value_type, freq_nhz, num_full_blocks, raw_time_type, raw_value_type,
+                scale_b,
                 scale_m, time_0, time_data, value_data)
         # if all blocks are perfectly sized or there is less than one optimal block worth of data
         else:
@@ -728,7 +742,7 @@ class AtriumSDK:
         return encoded_bytes, encoded_headers, byte_start_array, filename
 
     def _make_oversized_block(self, encoded_time_type, encoded_value_type, freq_nhz, num_full_blocks, raw_time_type,
-                             raw_value_type, scale_b, scale_m, time_0, time_data, value_data):
+                              raw_value_type, scale_b, scale_m, time_0, time_data, value_data):
         # remove 1 from num_full_blocks since one full block will be a part of the last oversized block
         num_full_blocks -= 1
         # save original optimal block size, so you can switch back later
@@ -1629,7 +1643,7 @@ class AtriumSDK:
                                                      measure_info_to_id_dictionary, triplet_to_expected_count_period)
 
     def get_iterator(self, definition: Union[DatasetDefinition, str], window_duration, window_slide, gap_tolerance=None,
-                     num_windows_prefetch=None, time_units: str = None) -> DatasetIterator:
+                     num_windows_prefetch=None, time_units: str = None, label_threshold=0.5) -> DatasetIterator:
         """
         Constructs and returns a `DatasetIterator` object that allows iteration over the dataset according to
         the specified definition.
@@ -1655,6 +1669,9 @@ class AtriumSDK:
         :param time_units: If you would like the window_duration and window_slide to be specified in units other than
                             nanoseconds you can choose from one of ["s", "ms", "us", "ns"].
         :type time_units: str
+        :param label_threshold: The percentage of the window that must contain a label before the entire window is
+            marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
+        :type label_threshold: float
 
         :return: DatasetIterator object to easily iterate over the specified data.
         :rtype: DatasetIterator
@@ -1702,10 +1719,12 @@ class AtriumSDK:
         if gap_tolerance is not None:
             gap_tolerance = int(gap_tolerance * time_unit_options[time_units])
 
-        validated_measure_list, validated_sources = verify_definition(definition, self, gap_tolerance=gap_tolerance)
+        validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
+            definition, self, gap_tolerance=gap_tolerance)
+
         return DatasetIterator(
-            self, validated_measure_list, validated_sources, window_duration, window_slide,
-            num_windows_prefetch=num_windows_prefetch, time_units=time_units)
+            self, validated_measure_list, validated_label_set_list, validated_sources, window_duration, window_slide,
+            num_windows_prefetch=num_windows_prefetch, time_units=time_units, label_threshold=label_threshold)
 
     def _generate_device_windows(self, window_config, device_id, device_tag, batch_duration_ns, start_time_inclusive_ns,
                                  end_time_exclusive_ns, measure_info_to_id_dictionary,
@@ -2328,6 +2347,8 @@ class AtriumSDK:
         self._patient_id_to_mrn = {}
         for patient_id, patient_info in self._patients.items():
             mrn = patient_info['mrn']
+            if mrn is None:
+                continue
             self._mrn_to_patient_id[mrn] = patient_id
             self._patient_id_to_mrn[patient_id] = mrn
 
@@ -2555,7 +2576,7 @@ class AtriumSDK:
                         encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b)
 
     def insert_measure(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None,
-                       measure_name: str = None):
+                       measure_name: str = None, measure_id: int = None):
         """
         .. _insert_measure_label:
 
@@ -2582,6 +2603,7 @@ class AtriumSDK:
         :param str optional measure_tag: A unique string identifying the signal.
         :param str optional measure_name: A long form description of the signal.
         :param str optional units: The units of the signal.
+        :param int optional measure_id: The desired measure_id.
 
         """
 
@@ -2597,14 +2619,25 @@ class AtriumSDK:
         if freq_units != "nHz":
             freq = convert_to_nanohz(freq, freq_units)
 
+        # Check for id clash
+        if measure_id is not None:
+            assert isinstance(measure_id, int)
+            measure_info = self.get_measure_info(measure_id)
+            if measure_info is not None:
+                if measure_info['tag'] == measure_tag and \
+                        measure_info['freq_nhz'] == freq and \
+                        measure_info['units'] == units:
+                    return measure_id
+                raise ValueError(f"Inserted measure_id {measure_id} already exists with data: {measure_info}")
+
         # Check if the measure already exists in the dataset
         if (measure_tag, freq, units) in self._measure_ids:
             return self._measure_ids[(measure_tag, freq, units)]
 
         # Insert the new measure into the database
-        return self.sql_handler.insert_measure(measure_tag, freq, units, measure_name)
+        return self.sql_handler.insert_measure(measure_tag, freq, units, measure_name, measure_id=measure_id)
 
-    def insert_device(self, device_tag: str, device_name: str = None):
+    def insert_device(self, device_tag: str, device_name: str = None, device_id: int = None):
         """
         .. _insert_device_label:
 
@@ -2628,10 +2661,20 @@ class AtriumSDK:
 
         :param str device_tag: A unique string identifying the device (required).
         :param str device_name: A long form description of the device (optional).
+        :param int device_id: desired device_id (optional).
 
         :return: The device_id of the inserted or existing device.
         :rtype: int
         """
+
+        # Check for id clash
+        if device_id is not None:
+            assert isinstance(device_id, int)
+            device_info = self.get_device_info(device_id)
+            if device_info is not None:
+                if device_info['tag'] == device_tag:
+                    return device_id
+                raise ValueError(f"Inserted device_id {device_id} already exists with data: {device_info}")
 
         # Check if the device_tag already exists in the dataset
         if device_tag in self._device_ids:
@@ -2639,7 +2682,7 @@ class AtriumSDK:
             return self._device_ids[device_tag]
 
         # If the device_tag does not exist, insert the new device using the sql_handler
-        return self.sql_handler.insert_device(device_tag, device_name)
+        return self.sql_handler.insert_device(device_tag, device_name, device_id=device_id)
 
     def measure_device_start_time_exists(self, measure_id, device_id, start_time_nano):
         """
@@ -2838,8 +2881,11 @@ class AtriumSDK:
             return self._patients[patient_id]
 
         # Try getting the patient by MRN from the cache
-        if mrn is not None and mrn in self._mrn_to_patient_id:
-            return self._patients[self._mrn_to_patient_id[mrn]]
+        if mrn is not None:
+            # Convert mrn to int for proper sql lookup
+            mrn = int(mrn)
+            if mrn in self._mrn_to_patient_id:
+                return self._patients[self._mrn_to_patient_id[mrn]]
 
         # If we did not find the patient, refresh the patient cache
         self.get_all_patients()
@@ -2877,6 +2923,44 @@ class AtriumSDK:
 
         # Make the API call
         return self._request("GET", endpoint)
+
+    def _api_get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
+                                     mrn_list: List[int] = None, start_time: int = None, end_time: int = None):
+
+        start_time = 0 if start_time is None else start_time
+        end_time = time.time_ns() if end_time is None else end_time
+        # Determine the list of patient identifiers
+        patient_identifiers = []
+        if patient_id_list is not None:
+            patient_identifiers.extend([f'id|{pid}' for pid in patient_id_list])
+        if mrn_list is not None:
+            patient_identifiers.extend([f'mrn|{mrn}' for mrn in mrn_list])
+        if not patient_identifiers:
+            patient_identifiers = [f'id|{pid}' for pid in self.get_all_patients().keys()]
+
+        result = []
+        # Query each patient identifier
+        for pid in patient_identifiers:
+            if pid.split('|')[0] == "id":
+                patient_id = int(pid.split('|')[1])
+            elif pid.split('|')[0] == "mrn":
+                mrn = int(pid.split('|')[1])
+                patient_id = self.get_patient_id(mrn)
+            else:
+                raise ValueError(f"got {pid.split('|')[0]}, expected mrn or id")
+            params = {'start_time': start_time, 'end_time': end_time}
+            devices_result = self._request("GET", f"patients/{pid}/devices", params=params)
+
+            if devices_result:
+                for device in devices_result:
+                    query_device_id = device['device_id']
+                    query_start_time = device['start_time']
+                    query_end_time = device['end_time']
+                    # Filter based on device_id_list if it's provided
+                    if device_id_list is None or query_device_id in device_id_list:
+                        result.append((query_device_id, patient_id, query_start_time, query_end_time))
+
+        return result
 
     def _api_get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                                 start=None, end=None):
@@ -2998,11 +3082,12 @@ class AtriumSDK:
         """
         .. _get_device_id_label:
 
-        Retrieve the identifier of a device in the linked relational database based on its tag.
+        Retrieve the identifier of a device in the linked relational database based on its tag. Or None if device
+        not found.
 
         :param str device_tag: The tag of the device to retrieve the identifier for.
 
-        :return: The identifier of the device.
+        :return: The identifier of the device. Or None if device not found.
         :rtype: int
 
         >>> # Connect to example_dataset
@@ -3039,12 +3124,12 @@ class AtriumSDK:
         """
         .. _get_device_info_label:
 
-        Retrieve information about a specific device in the linked relational database.
+        Retrieve information about a specific device in the linked relational database. Or None if device not found.
 
         :param int device_id: The identifier of the device to retrieve information for.
 
         :return: A dictionary containing information about the device, including its id, tag, name, manufacturer, model,
-                 type, bed_id, and source_id.
+                 type, bed_id, and source_id. Or None if Device not found.
         :rtype: dict
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
@@ -3153,12 +3238,12 @@ class AtriumSDK:
             return self._api_get_mrn_to_patient_id_map(mrn_list)
 
         # If all mrns are in the cache
-        if all(mrn in self._mrn_to_patient_id for mrn in mrn_list):
-            return {mrn: self._mrn_to_patient_id[mrn] for mrn in mrn_list}
+        if all(int(mrn) in self._mrn_to_patient_id for mrn in mrn_list):
+            return {int(mrn): self._mrn_to_patient_id[int(mrn)] for mrn in mrn_list}
 
         # Refresh the cache and return all available mrns.
         self.get_all_patients()
-        return {mrn: self._mrn_to_patient_id[mrn] for mrn in mrn_list if mrn in self._mrn_to_patient_id}
+        return {int(mrn): self._mrn_to_patient_id[int(mrn)] for mrn in mrn_list if int(mrn) in self._mrn_to_patient_id}
 
     def get_patient_id_to_mrn_map(self, patient_id_list=None):
         """
@@ -3177,6 +3262,182 @@ class AtriumSDK:
 
         # Return a dictionary with patient IDs as keys and MRNs as values
         return {row[0]: row[1] for row in patient_list}
+
+    def get_mrn(self, patient_id):
+        """
+        Retrieve the medical record number (MRN) associated with a given patient ID.
+
+        This method searches for a patient's MRN using their patient ID. If the MRN is not found in the initial search,
+        it triggers a refresh of all patient data and searches again.
+
+        :param patient_id: The numeric identifier for the patient.
+        :return: The MRN as an integer if the patient is found; otherwise, None.
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> mrn = sdk.get_mrn(patient_id=1)
+        >>> print(mrn)
+        123456
+        """
+        # Check if we are in API mode
+        if self.metadata_connection_type == "api":
+            patient_info = self._api_get_patient_info(patient_id=patient_id)
+            return patient_info['mrn']
+
+        if patient_id in self._patient_id_to_mrn:
+            return self._patient_id_to_mrn[patient_id]
+
+        self.get_all_patients()
+
+        if patient_id in self._patient_id_to_mrn:
+            return self._patient_id_to_mrn[patient_id]
+
+        return None
+
+    def get_patient_id(self, mrn):
+        """
+        Retrieve the patient ID associated with a given medical record number (MRN).
+
+        This method looks for a patient's ID using their MRN. If the patient ID is not found in the initial search,
+        it triggers a refresh of all patient data and searches again.
+
+        :param mrn: The medical record number for the patient, as an integer.
+        :return: The patient ID as an integer if the patient is found; otherwise, None.
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> patient_id = sdk.get_patient_id(mrn=123456)
+        >>> print(patient_id)
+        1
+        """
+
+        # Convert mrn to int for sql lookup
+        mrn = int(mrn)
+
+        # Check if we are in API mode
+        if self.metadata_connection_type == "api":
+            patient_info = self._api_get_patient_info(mrn=mrn)
+            return patient_info['id']
+
+        if mrn in self._mrn_to_patient_id:
+            return self._mrn_to_patient_id[mrn]
+
+        self.get_all_patients()
+
+        if mrn in self._mrn_to_patient_id:
+            return self._mrn_to_patient_id[mrn]
+
+        return None
+
+    def convert_patient_to_device_id(self, start_time: int, end_time: int, patient_id: int = None, mrn: int = None):
+        """
+        Converts a patient ID or MRN to a device ID based on the specified time range.
+
+        :param int start_time: Start time for the association.
+        :param int end_time: End time for the association.
+        :param int patient_id: Patient ID to be converted.
+        :param int mrn: MRN to be converted.
+        :return: Device ID if a single device fully encapsulates the time range, otherwise None.
+        :rtype: int or None
+        """
+
+        # Retrieve device-patient mapping data
+        if patient_id is not None:
+            device_patient_data = self.get_device_patient_data(patient_id_list=[patient_id], start_time=start_time,
+                                                               end_time=end_time)
+        elif mrn is not None:
+            device_patient_data = self.get_device_patient_data(mrn_list=[mrn], start_time=start_time, end_time=end_time)
+        else:
+            raise ValueError("You must specify either patient_id or mrn.")
+
+        # Group data by device_id
+        device_intervals = {}
+        for device_id, _, device_start, device_end in device_patient_data:
+            if device_id not in device_intervals:
+                device_intervals[device_id] = []
+            device_intervals[device_id].append([device_start, device_end])
+
+        # Merge overlapping intervals for each device
+        for device_id in device_intervals:
+            intervals = sorted(device_intervals[device_id], key=lambda x: x[0])
+            merged_intervals = [intervals[0]]
+            for current in intervals[1:]:
+                last = merged_intervals[-1]
+                if last[1] >= current[0]:  # Overlapping intervals
+                    last[1] = max(last[1], current[1])
+                else:
+                    merged_intervals.append(current)
+            device_intervals[device_id] = merged_intervals
+
+        # Check for a device whose interval encapsulates the provided time range
+        matching_devices = []
+        for device_id, intervals in device_intervals.items():
+            for interval in intervals:
+                if interval[0] <= start_time and interval[1] >= end_time:
+                    matching_devices.append(device_id)
+
+        # Raise error if more than one match is found
+        if len(matching_devices) > 1:
+            raise ValueError(f"Multiple devices ({matching_devices}) found for the same time range with parameters: "
+                             f"start_time={start_time}, end_time={end_time}, patient_id={patient_id}, mrn={mrn}. "
+                             "Please check and fix the device_patient table.")
+
+        return matching_devices[0] if matching_devices else None
+
+    def convert_device_to_patient_id(self, start_time: int, end_time: int, device):
+        """
+        Converts a device ID or tag to a patient ID based on the specified time range.
+
+        :param int start_time: Start time for the association.
+        :param int end_time: End time for the association.
+        :param device: Device ID (int) or tag (str) to be converted.
+        :return: Patient ID if a single patient's interval encapsulates the time range, otherwise None.
+        :rtype: int or None
+        """
+
+        # Convert device tag to device ID if necessary
+        if isinstance(device, str):
+            device_id = self.get_device_id(device)
+        elif isinstance(device, int):
+            device_id = device
+        else:
+            raise ValueError(f"device must be either int or str (id or tag), not type{type(device)}")
+
+        # Retrieve device-patient mapping data
+        device_patient_data = self.get_device_patient_data(device_id_list=[device_id], start_time=start_time,
+                                                           end_time=end_time)
+
+        # Group data by patient_id
+        patient_intervals = {}
+        for _, patient_id, patient_start, patient_end in device_patient_data:
+            if patient_id not in patient_intervals:
+                patient_intervals[patient_id] = []
+            patient_intervals[patient_id].append([patient_start, patient_end])
+
+        # Merge overlapping intervals for each patient
+        for patient_id in patient_intervals:
+            intervals = sorted(patient_intervals[patient_id], key=lambda x: x[0])
+            merged_intervals = [intervals[0]]
+            for current in intervals[1:]:
+                last = merged_intervals[-1]
+                if last[1] >= current[0]:  # Overlapping intervals
+                    last[1] = max(last[1], current[1])
+                else:
+                    merged_intervals.append(current)
+            patient_intervals[patient_id] = merged_intervals
+
+        # Check for a patient whose interval encapsulates the provided time range
+        matching_patients = []
+        for patient_id, intervals in patient_intervals.items():
+            for interval in intervals:
+                if interval[0] <= start_time and interval[1] >= end_time:
+                    matching_patients.append(patient_id)
+
+        # Raise error if more than one match is found
+        if len(matching_patients) > 1:
+            raise ValueError(f"Multiple patients ({matching_patients}) found for the same time range with parameters: "
+                             f"start_time={start_time}, end_time={end_time}, device={device}. "
+                             "Please check and fix the device_patient table.")
+
+        return matching_patients[0] if matching_patients else None
 
     def _request(self, method: str, endpoint: str, **kwargs):
         """
@@ -3258,3 +3519,672 @@ class AtriumSDK:
         # Return the JSON response
         return response.json()
 
+    def get_all_label_names(self) -> dict:
+        """
+        Retrieve all distinct label names from the database.
+
+        :return: A dictionary where keys are label IDs and values are dictionaries containing 'id' and 'name' keys.
+        :rtype: dict
+
+        .. note:: This method currently only supports database connection mode and not API mode.
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this method.")
+
+        label_tuple_list = self.sql_handler.select_label_sets()
+
+        label_dict = {}
+        for label_info in label_tuple_list:
+            label_id, label_name = label_info
+            label_dict[label_id] = {
+                'id': label_id,
+                'name': label_name
+            }
+
+        return label_dict
+
+    def get_label_name_id(self, name: str):
+        """
+        Retrieve the identifier of a label type based on its name.
+
+        :param str name: The name of the label type.
+
+        :return: The identifier of the label type.
+        :rtype: int
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this method.")
+        # Check if the label name is already in the cached label type IDs dictionary
+        if name in self._label_set_ids:
+            return self._label_set_ids[name]
+
+        # If the label name is not in the cache, query the database using the SQL handler
+        label_id = self.sql_handler.select_label_set_id(name)
+
+        # If the label name is not found in the database, return None
+        if label_id is None:
+            return None
+
+        # If the label name is found in the database, store the ID in the cache
+        self._label_set_ids[name] = label_id
+        self._label_sets[label_id] = name  # also update the label types cache
+        return label_id
+
+    def get_label_name_info(self, label_name_id: int):
+        """
+        Retrieve information about a specific label set.
+
+        :param int label_name_id: The identifier of the label set to retrieve information for.
+
+        :return: A dictionary containing information about the label set, including its id and name.
+        :rtype: dict
+
+        >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+        >>> label_name_id = 1
+        >>> label_name_info = sdk.get_label_name_info(label_name_id)
+        >>> print(label_name_info)
+        {'id': 1,
+         'name': 'Label Set A1'}
+
+        """
+        # Check if metadata is fetched using API and call the appropriate method
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this method.")
+
+        # If label set info is already cached, return it
+        if label_name_id in self._label_sets:
+            return self._label_sets[label_name_id]
+
+        # Fetch label set info from the SQL database
+        row = self.sql_handler.select_label_set(label_set_id=label_name_id)
+
+        # If label set not found in the database, return None
+        if row is None:
+            return None
+
+        # Unpack the fetched row into individual variables
+        label_name_id, label_set_name = row
+
+        # Create a dictionary with the label set information
+        label_set_info = {
+            'id': label_name_id,
+            'name': label_set_name
+        }
+
+        # Cache the label set information for future use
+        self._label_sets[label_name_id] = label_set_info
+
+        # Return the label set information dictionary
+        return label_set_info
+
+    def insert_label_name(self, name: str) -> int:
+        """
+        Insert a label set into the database if it doesn't already exist and return the ID.
+
+        :param str name: The name of the label set to insert.
+        :return: The ID of the label set.
+        :rtype: int
+
+        :raises ValueError: If the label set name is empty.
+
+        :example:
+        >>> sdk = AtriumSDK()
+        >>> label_set_id = sdk.insert_label_name("Example Label Set")
+        >>> print(label_set_id)
+        1
+        """
+        if not name:
+            raise ValueError("The label set name cannot be empty.")
+
+        # Check if the label set name is already cached
+        label_set_id = self._label_set_ids.get(name)
+
+        # If not cached, insert it into the database and update the cache
+        if label_set_id is None:
+            label_set_id = self.sql_handler.insert_label_set(name)
+            self._label_sets[label_set_id] = {'id': label_set_id, 'name': name}
+            self._label_set_ids[name] = label_set_id
+
+        # Return the label set ID
+        return label_set_id
+
+    def insert_label_source(self, name: str, description: str = None) -> int:
+        """
+        Insert a label source into the database if it doesn't already exist and return its ID.
+        :param name: The unique name identifier for the label source.
+        :param description: A textual description of the label source.
+        :return: The ID of the label source.
+        """
+        return self.sql_handler.insert_label_source(name, description)
+
+    def get_label_source_id(self, name: str) -> Optional[int]:
+        """
+        Gets the label source ID from the name of the label source.
+        :param name: The name of the label source to look up.
+        :return: The label source ID or None if not found.
+        """
+        return self.sql_handler.select_label_source_id_by_name(name)
+
+    def get_label_source_info(self, label_source_id: int) -> Optional[dict]:
+        """
+        Retrieve information about a specific label source by its ID.
+        :param label_source_id: The identifier for the label source.
+        :return: A dictionary containing information about the label source, or None if not found.
+        """
+        return self.sql_handler.select_label_source_info_by_id(label_source_id)
+
+    def insert_label(self, name: str, start_time: int, end_time: int,
+                     device: Union[int, str] = None, patient_id: int = None, mrn: int = None,
+                     time_units: str = None, label_source: Union[str, int] = None):
+        """
+        Insert a label record into the database.
+
+        :param str name: Name of the label type.
+        :param int start_time: Start time for the label.
+        :param int end_time: End time for the label.
+        :param Union[int, str] device: Device ID or device tag (exclusive with device and patient_id).
+        :param int patient_id: Patient ID for the label to be inserted (exclusive with device and mrn).
+        :param int mrn: MRN for the label to be inserted (exclusive with device and patient_id).
+        :param str time_units: Units for the `start_time` and `end_time`. Valid options are 'ns', 's', 'ms', and 'us'.
+        :param Union[str, int] label_source: Name or ID of the label source.
+        :raises ValueError: If the provided label_source is not found in the database.
+
+        Example usage:
+
+        .. code-block:: python
+
+            # Insert a label for a device with ID 42
+            insert_label(name='Sleep Stage', start_time=1609459200_000_000_000, end_time=1609462800_000_000_000, device=42)
+
+            # Insert a label for a patient with patient_id 12345
+            insert_label(name='Medication', start_time=1609459200_000, end_time=1609462800_000, patient_id=12345, time_units='ms')
+
+            # Using a device tag instead of device ID
+            insert_label(name='Arrhythmia', start_time=1609459200_000_000_000, end_time=1609462800_000_000_000, device='device-tag-xyz')
+
+            # Specifying time units and label source by name
+            insert_label(name='Exercise', start_time=1609459200, end_time=1609462800, device=42, time_units='s', label_source='Manual Entry')
+
+        """
+
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for insertion.")
+
+        # Ensure exclusivity of device, patient_id, and mrn
+        provided_params = [device is not None, patient_id is not None, mrn is not None]
+        if sum(provided_params) > 1:
+            raise ValueError("Only one of device, patient_id, or mrn can be provided.")
+
+        # Convert patient_id or mrn to device ID if necessary
+        converted_device_id = None
+        if patient_id is not None:
+            converted_device_id = self.convert_patient_to_device_id(start_time, end_time, patient_id=patient_id)
+        elif mrn is not None:
+            converted_device_id = self.convert_patient_to_device_id(start_time, end_time, mrn=mrn)
+
+        # Convert device tag to device ID if necessary
+        if isinstance(device, str):
+            converted_device_id = self.get_device_id(device)
+        elif isinstance(device, int):
+            converted_device_id = device
+
+        if converted_device_id is None or (isinstance(device, int) and self.get_device_info(device) is None):
+            raise ValueError(f"device not found for device {device} patient_id {patient_id} mrn {mrn}")
+
+        # Convert time using the provided time units
+        time_units = "ns" if time_units is None else time_units
+        time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+        if time_units not in time_unit_options.keys():
+            raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
+
+        start_time *= time_unit_options[time_units]
+        end_time *= time_unit_options[time_units]
+
+        # Determine label source ID
+        if isinstance(label_source, str):
+            label_source_id = self.get_label_source_id(label_source)
+            if label_source_id is None:
+                warnings.warn(f"Label source {label_source} was not found in the database, inserting it now.")
+                label_source_id = self.insert_label_source(name=label_source)
+
+        elif isinstance(label_source, int):
+            label_source_id = label_source
+        else:
+            label_source_id = None
+
+        if name not in self._label_set_ids:
+            label_id = self.sql_handler.insert_label_set(name)
+            self._label_sets[label_id] = {'id': label_id, 'name': name}
+            self._label_set_ids[name] = label_id
+        else:
+            label_id = self._label_set_ids[name]
+
+        # Insert the label into the database
+        self.sql_handler.insert_label(label_id, converted_device_id, start_time, end_time,
+                                      label_source_id=label_source_id)
+
+    def insert_labels(self, labels: List[Tuple[str, Union[int, str], int, int, Union[str, int]]],
+                      time_units: str = None, source_type: str = None):
+        """
+        Insert multiple label records into the database.
+
+        :param List[Tuple[str, Union[int, str], int, int, Union[str, int]]] labels: A list of labels. Each label is a tuple containing:
+            - Name of the label type.
+            - Source ID based on the source_type parameter (device ID, device tag, patient ID, or MRN).
+            - Start time for the label.
+            - End time for the label.
+            - Name or ID of the label source. (Can be None, for no specified source)
+        :param str time_units: Units for the `start_time` and `end_time` of each label. Valid options are 'ns', 's', 'ms', and 'us'. (default ns)
+        :param str source_type: The type of source ID provided in the labels. Valid options are 'device_id', 'device_tag', 'patient_id', and 'mrn'.
+        :raises ValueError: If the provided label_source or source_type is not found in the database.
+
+        Example usage:
+
+        .. code-block:: python
+
+            # Using device ID as the source type
+            labels_data = [
+                ('Sleep Stage', 42, 1609459200_000_000_000, 1609462800_000_000_000, None),
+                ('Medication', 56, 1609459200_000_000_000, 1609462800_000_000_000, 'Medication DB')
+            ]
+            insert_labels(labels=labels_data, time_units='s', source_type='device_id')
+
+            # Using MRN as the source type
+            labels_data = [
+                ('Heart Rate', 1234567, 1609459200_000, 1609462800_000, None),
+                ('Blood Pressure', 1234568, 1609459200_000, 1609462800_000, 'Automatic Device')
+            ]
+            insert_labels(labels=labels_data, time_units='ms', source_type='mrn')
+
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for insertion.")
+
+        valid_source_types = ["device_id", "device_tag", "patient_id", "mrn"]
+        source_type = "device_id" if source_type is None else source_type
+        if source_type not in valid_source_types:
+            raise ValueError(f"Invalid source type. Expected one of: {', '.join(valid_source_types)}")
+
+        time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+        formatted_labels = []
+
+        for label in labels:
+            name, source_id, start_time, end_time, label_source = label
+
+            # Convert source_id based on the source_type parameter
+            if source_type == "device_tag":
+                device = self.get_device_id(source_id)
+                if device is None:
+                    raise ValueError(f"device tag {source_id} not found in database")
+            elif source_type == "patient_id":
+                device = self.convert_patient_to_device_id(start_time, end_time, patient_id=source_id)
+                if device is None:
+                    raise ValueError(f"patient id {source_id} not found in database")
+            elif source_type == "mrn":
+                device = self.convert_patient_to_device_id(start_time, end_time, mrn=source_id)
+                if device is None:
+                    raise ValueError(f"mrn {source_id} not found in database")
+            elif source_type == "device_id":
+                device = source_id
+                if self.get_device_info(source_id) is None:
+                    raise ValueError(f"device id {source_id} not found in database")
+            else:
+                raise ValueError(f"Invalid source type. Expected one of: {', '.join(valid_source_types)}")
+
+            # Adjust start and end times using time units
+            if time_units:
+                if time_units not in time_unit_options.keys():
+                    raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
+                start_time *= time_unit_options[time_units]
+                end_time *= time_unit_options[time_units]
+
+            # Determine label source ID
+            if isinstance(label_source, str):
+                label_source_id = self.get_label_source_id(label_source)
+                if label_source_id is None:
+                    warnings.warn(f"Label source {label_source} was not found in the database, inserting it now.")
+                    label_source_id = self.insert_label_source(name=label_source)
+            elif isinstance(label_source, int):
+                label_source_id = label_source
+            else:
+                label_source_id = None
+
+            if name not in self._label_set_ids:
+                label_id = self.sql_handler.insert_label_set(name)
+                self._label_sets[label_id] = {'id': label_id, 'name': name}
+                self._label_set_ids[name] = label_id
+            else:
+                label_id = self._label_set_ids[name]
+
+            # Add to the formatted labels list
+            formatted_labels.append((label_id, device, start_time, end_time, label_source_id))
+
+        # Insert the labels into the database
+        self.sql_handler.insert_labels(formatted_labels)
+
+    def delete_labels(self, label_id_list=None, label_name_id_list=None, name_list=None, device_list=None,
+                      start_time=None, end_time=None, time_units: str = None,
+                      patient_id_list=None, label_source_list: Optional[List[Union[str, int]]] = None):
+        """
+        Delete labels from the database based on specified criteria. If no parameters are passed, the method raises an error for safety.
+
+        :param List[int] label_id_list: List of label IDs to delete. Use '*' to delete all labels.
+        :param List[int] label_name_id_list: List of label set IDs to filter labels for deletion.
+        :param List[str] name_list: List of label names to filter labels for deletion.
+        :param List[Union[int, str]] device_list: List of device IDs or device tags to filter labels for deletion.
+        :param int start_time: Start time filter for the labels to delete.
+        :param int end_time: End time filter for the labels to delete.
+        :param str time_units: Units for the `start_time` and `end_time` filters.
+        :param List[int] patient_id_list: List of patient IDs to filter labels for deletion.
+        :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter labels for deletion.
+        :raises ValueError: If no parameters are provided, or if invalid parameters are provided.
+        :return: None
+
+        Example usage:
+            To delete labels for a specific device ID:
+                delete_labels(device_list=[1001])
+
+            To delete all labels:
+                delete_labels(label_id_list="*")
+        """
+
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this method.")
+
+        if "protected_mode" not in self.settings_dict:
+            raise ValueError(
+                "protected_mode is not found in settings table. protected_mode must be set and equal to False")
+        if self.settings_dict["protected_mode"] != "False":
+            raise ValueError(
+                "Cannot perform delete, protected_mode not set to `False`, change in sql table to allow deletion.")
+
+        if all(param is None for param in
+               [label_id_list, label_name_id_list, name_list, device_list, start_time, end_time, patient_id_list,
+                label_source_list]):
+            raise ValueError(
+                "No parameters were provided. For safety, you need to specify at least one parameter. Use label_id_list='*' to delete all labels.")
+
+        if label_id_list == "*":
+            all_labels = self.get_labels()
+            all_label_ids = [label_info['label_id'] for label_info in all_labels]
+            return self.sql_handler.delete_labels(all_label_ids)
+
+        elif label_id_list is not None:
+            return self.sql_handler.delete_labels(label_id_list)
+
+        filtered_labels = self.get_labels(label_name_id_list=label_name_id_list, name_list=name_list,
+                                          device_list=device_list,
+                                          start_time=start_time, end_time=end_time, time_units=time_units,
+                                          patient_id_list=patient_id_list, label_source_list=label_source_list)
+        filtered_label_ids = [label_info['label_id'] for label_info in filtered_labels]
+        return self.sql_handler.delete_labels(filtered_label_ids)
+
+    def get_labels(self, label_name_id_list=None, name_list=None, device_list=None,
+                   start_time=None, end_time=None, time_units: str = None,
+                   patient_id_list=None, label_source_list: Optional[List[Union[str, int]]] = None):
+        """
+        Retrieve labels from the database based on specified criteria.
+
+        :param List[int] label_name_id_list: List of label set IDs to filter by.
+        :param List[str] name_list: List of label names to filter by. Mutually exclusive with `label_name_id_list`.
+        :param List[Union[int, str]] device_list: List of device IDs or device tags to filter by.
+        :param int start_time: Start time filter for the labels.
+        :param int end_time: End time filter for the labels.
+        :param str time_units: Units for the `start_time` and `end_time` filters. Valid options are 'ns', 's', 'ms', and 'us'.
+        :param List[int] patient_id_list: List of patient IDs to filter by.
+        :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter by.
+        :return: A list of matching labels from the database. Each label is represented as a dictionary containing:
+                 label_entry_id, label_name_id, label_name, device_id, device_tag, start_time_n, end_time_n,
+                 label_source_id, label_source_name
+        :rtype: List[Dict]
+
+        Example:
+            Given an input filtering by a particular device ID, the output could look like:
+            [
+                {
+                    'label_id': 1,
+                    'label_name_id': 10,
+                    'label_name': 'example_name_1',
+                    'device_id': 1001,
+                    'device_tag': 'tag_1',
+                    'patient_id': 12345,
+                    'mrn': 7654321,
+                    'start_time_n': 1625000000000000000,
+                    'end_time_n': 1625100000000000000,
+                    'label_source_id': 4,
+                    'label_source': "LabelStudio_Project_1",
+                },
+                ...
+            ]
+
+        .. note::
+            - This method currently only supports database connection mode and not API mode.
+            - Either `device_list` or `patient_id_list` should be provided, but not both.
+            - Either `label_name_id_list` or `name_list` should be provided, but not both.
+
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this method.")
+
+        # Ensure either label_name_id_list or name_list is provided, but not both
+        if label_name_id_list and name_list:
+            raise ValueError("Only one of label_name_id_list or name_list should be provided.")
+
+        # Ensure either device list or patient id list is provided, but not both
+        if device_list and patient_id_list:
+            raise ValueError("Only one of device_list or patient_id_list should be provided.")
+
+        # Convert time using the provided time units, if specified
+        if time_units:
+            time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+            if time_units not in time_unit_options.keys():
+                raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
+
+            if start_time:
+                start_time *= time_unit_options[time_units]
+            if end_time:
+                end_time *= time_unit_options[time_units]
+
+        # Convert label names to IDs if name_list is used
+        if name_list:
+            name_id_list = [self.get_label_name_id(name) for name in name_list]
+            for label_name, label_id in zip(name_list, name_id_list):
+                if label_id is None:
+                    raise ValueError(f"Label name '{label_name}' not found in the database.")
+            label_name_id_list = name_id_list
+
+        # Convert device tags to IDs
+        if device_list:
+            device_id_list = []
+            for device in device_list:
+                device_id = self.get_device_id(device) if isinstance(device, str) else device
+                if device_id is None:
+                    raise ValueError(f"Device Tag {device} not found in database")
+                device_id_list.append(device_id)
+            device_list = device_id_list
+
+        label_source_id_list = []
+        if label_source_list:
+            for source in label_source_list:
+                if isinstance(source, str):
+                    label_source_id = self.get_label_source_id(source)
+                    if label_source_id is None:
+                        raise ValueError(f"Label source name '{source}' not found in the database.")
+                    label_source_id_list.append(label_source_id)
+                elif isinstance(source, int):
+                    label_source_id_list.append(source)
+                else:
+                    raise ValueError("Label source list items must be either string (name) or integer (ID).")
+
+        labels = self.sql_handler.select_labels(
+            label_set_id_list=label_name_id_list,
+            device_id_list=device_list,
+            patient_id_list=patient_id_list,
+            start_time_n=start_time,
+            end_time_n=end_time,
+            label_source_id_list=label_source_id_list if label_source_id_list else None
+        )
+
+        # Extract unique label_set_ids and device_ids
+        unique_label_set_ids = {label[1] for label in labels}
+        unique_device_ids = {label[2] for label in labels}
+
+        # Create dictionaries for label set and device info for optimized lookup
+        label_set_id_to_info = {label_set_id: self.get_label_name_info(label_set_id) for label_set_id in
+                                unique_label_set_ids}
+        device_id_to_info = {device_id: self.get_device_info(device_id) for device_id in unique_device_ids}
+
+        result = []
+        for label in labels:
+            label_entry_id, label_set_id, device_id, start_time_n, end_time_n, label_source_id = label  # Updated to include label_source_id
+
+            # Get label_source_name
+            label_source_info = self.get_label_source_info(label_source_id) if label_source_id else None
+            label_source_name = label_source_info['name'] if label_source_info else None
+
+            patient_id = self.convert_device_to_patient_id(
+                start_time=start_time_n, end_time=end_time_n, device=device_id)
+            mrn = None if patient_id is None else self.get_mrn(patient_id)
+
+            formatted_label = {
+                'label_id': label_entry_id,
+                'label_name_id': label_set_id,
+                'label_name': label_set_id_to_info[label_set_id]['name'],
+                'device_id': device_id,
+                'device_tag': device_id_to_info[device_id]['tag'],
+                'patient_id': patient_id,
+                'mrn': mrn,
+                'start_time_n': start_time_n,
+                'end_time_n': end_time_n,
+                'label_source_id': label_source_id,
+                'label_source': label_source_name
+            }
+            result.append(formatted_label)
+
+        return result
+
+    def get_label_time_series(self, label_name=None, label_name_id=None, device_tag=None,
+                              device_id=None, patient_id=None, start_time=None, end_time=None,
+                              timestamp_array=None, sample_period=None, time_units: str = None,
+                              out: np.ndarray = None, label_source_list: Optional[List[Union[str, int]]] = None):
+        """
+        Retrieve a time series representation for labels from the database based on specified criteria.
+
+        :param str label_name: Name of the label set to filter by. Mutually exclusive with `label_name_id`.
+        :param int label_name_id: ID of the label set to filter by. Mutually exclusive with `label_name`.
+        :param str device_tag: Tag of the device to filter by. Mutually exclusive with `device_id`.
+        :param int device_id: ID of the device to filter by. Mutually exclusive with `device_tag`.
+        :param int patient_id: ID of the patient to filter by.
+        :param int start_time: Start time filter for the labels.
+        :param int end_time: End time filter for the labels.
+        :param np.ndarray timestamp_array: Array of timestamps. If not provided, it's generated using `start_time`, `end_time`, and `sample_period`.
+        :param int sample_period: Time period between consecutive timestamps. Required if `timestamp_array` is not provided.
+        :param str time_units: Units for the `start_time`, `end_time`, and `sample_period` filters. Valid options are 'ns', 's', 'ms', and 'us'.
+        :param np.ndarray out: An optional pre-allocated numpy array to hold the result. The shape must match the expected result shape,
+            which is the same as `timestamp_array`. Allowed dtypes are integer types or boolean. If provided,
+            the results are written into this array in-place. It should be initialized with zeros.
+            Otherwise, a new array is allocated.
+        :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter by.
+
+        :return: An array representing the presence of a label for each timestamp. If a label is present at a given timestamp, the value is 1, otherwise 0.
+        :rtype: np.ndarray
+
+        Example:
+            Given a label set name, device tag, start and end times, and a sample period, the output could look like:
+            [0, 1, 1, 1, 0, 0, ...]
+
+        .. note::
+            - This method currently only supports database connection mode and not API mode.
+            - Only one of `label_name` or `label_name_id` should be provided.
+            - Only one of `device_tag` or `device_id` should be provided.
+            - Either `device_id`/`device_tag` or `patient_id` should be provided, but not combinations of both.
+            - If using the `out` parameter, ensure its shape matches the expected result shape, and that it is initialized with zeros.
+
+        Raises:
+            ValueError: For various reasons including but not limited to the presence of mutually exclusive arguments,
+                        absence of required arguments, or invalid time units.
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this method.")
+
+        # Check for the XOR condition for label_name and label_name_id
+        if (label_name is not None) == (label_name_id is not None):
+            raise ValueError("Either label_name or label_name_id should be provided, but not both.")
+
+        # Check for the XOR condition for device_tag and device_id
+        if (device_tag is not None) == (device_id is not None):
+            raise ValueError("Either device_tag or device_id should be provided, but not both.")
+
+        # Check for device_id/device_tag or patient_id
+        if sum(x is not None for x in [device_id, device_tag, patient_id]) != 1:
+            raise ValueError("Exactly one of device_id, device_tag, or patient_id must be provided.")
+
+        # Convert label_name to label_name_id if it's used
+        if label_name:
+            label_name_id = self.get_label_name_id(label_name)
+            if label_name_id is None:
+                raise ValueError(f"Label set name '{label_name}' not found in the database.")
+
+        # Convert device_tag to device_id if it's used
+        if device_tag:
+            device_id = self.get_device_id(device_tag)
+            if device_id is None:
+                raise ValueError(f"Device Tag {device_tag} not found in database")
+
+        # Handle time units and conversion to nanoseconds
+        if time_units:
+            time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+            if time_units not in time_unit_options.keys():
+                raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
+
+            if start_time:
+                start_time *= time_unit_options[time_units]
+            if end_time:
+                end_time *= time_unit_options[time_units]
+            if sample_period:
+                sample_period *= time_unit_options[time_units]
+
+            if timestamp_array is not None:
+                timestamp_array = convert_to_nanoseconds(timestamp_array, time_units)
+
+        # If timestamp_array is None, create it using start_time, end_time and sample_period
+        if timestamp_array is None:
+            if not all([start_time, end_time, sample_period]):
+                raise ValueError("If timestamp_array is not provided, start_time, end_time, and sample_period must be "
+                                 "set in order to generate a timestamp_array using "
+                                 "np.arange(start_time, end_time, sample_period)")
+            timestamp_array = np.arange(start_time, end_time, sample_period)
+
+        labels = self.get_labels(label_name_id_list=[label_name_id] if label_name_id is not None else None,
+                                 device_list=[device_id] if device_id is not None else None,
+                                 patient_id_list=[patient_id] if patient_id is not None else None,
+                                 start_time=start_time,
+                                 end_time=end_time,
+                                 label_source_list=label_source_list,
+                                 )
+
+        # Create a binary array to indicate presence of a label for each timestamp, if not provided.
+        if out is not None:
+            allowed_dtypes = [np.bool_] + np.sctypes['int']  # Allowed dtypes: boolean and all integer types
+
+            if out.shape != timestamp_array.shape:
+                raise ValueError(
+                    f"The 'out' array shape {out.shape} doesn't match expected shape {timestamp_array.shape}.")
+
+            if out.dtype not in allowed_dtypes:
+                valid_dtypes_str = ", ".join([dtype.__name__ for dtype in allowed_dtypes])
+                raise ValueError(f"The 'out' array dtype is {out.dtype}, but expected one of: {valid_dtypes_str}.")
+
+            if not np.all(out == 0):  # Ensure that the out array starts with all zeros
+                raise ValueError("The 'out' array should be initialized with zeros. It contains non-zero values.")
+
+            result_array = out
+        else:
+            result_array = np.zeros(timestamp_array.shape, dtype=np.int8)
+
+        for label in labels:
+            start_idx = np.searchsorted(timestamp_array, label['start_time_n'], side='left')
+            end_idx = np.searchsorted(timestamp_array, label['end_time_n'], side='right')
+            result_array[start_idx:end_idx] = 1
+
+        return result_array

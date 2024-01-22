@@ -23,6 +23,7 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
 from atriumdb.windowing.window import Window
+from atriumdb.windowing.windowing_functions import get_threshold_labels
 
 
 class DatasetIterator:
@@ -51,16 +52,23 @@ class DatasetIterator:
     :type time_units: str
     """
 
-    def __init__(self, sdk, validated_measure_list, validated_sources, window_duration_ns: int, window_slide_ns: int,
-                 num_windows_prefetch: int = None, time_units=None):
+    def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
+                 window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
+                 label_threshold=0.5, time_units=None):
         # AtriumSDK object
         self.sdk = sdk
+
+        # Store the label_threshold
+        self.label_threshold = label_threshold
 
         self.time_units = "ns" if time_units is None else time_units
         self.time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 
         # List of validated measures. Each item is a "measure_info" from sdk data.
         self.measures = validated_measure_list
+
+        # List of validated label sets. Each item is a label_set id from the label_set table.
+        self.label_sets = validated_label_set_list
 
         # Dictionary containing sources. Each source type contains identifiers (device_id/patient_id)
         # and have associated time ranges (or "all").
@@ -135,6 +143,10 @@ class DatasetIterator:
 
         # Attribute to store the batch data by measure ID.
         self.batch_data_dictionary = {}
+
+        # Attribute to store the batch label information.
+        self.batch_label_time_series = None
+        self.batch_label_thresholds = None
 
     def _extract_batch_info(self):
         # Initialize empty lists to store batch details and starting window indices
@@ -234,22 +246,24 @@ class DatasetIterator:
         if source_type == "device_ids":
             device_id = source_id
             patient_id = None
-            self.current_patient_id = None
-            self.current_device_id = source_id
         elif source_type == "patient_ids":
             device_id = None
             patient_id = source_id
-            self.current_patient_id = source_id
-            self.current_device_id = None
         elif source_type == "device_patient_tuples":
             device_id, patient_id = source_id
-            self.current_patient_id = patient_id
-            self.current_device_id = device_id
+
         else:
             raise ValueError(f"Source type must be either device_ids or patient_ids, not {source_type}")
 
-        self.batch_data_dictionary.clear()
+        # Save the source id info for the batch
+        self.current_patient_id = patient_id
+        self.current_device_id = device_id
 
+        # only query by patient if device_id isn't available.
+        query_patient_id = patient_id if device_id is None else None
+
+        # Reset and populate the batch data signal dictionary
+        self.batch_data_dictionary.clear()
         for i, measure in enumerate(self.measures):
             freq_nhz = measure['freq_nhz']
             period_ns = int(1e18 // freq_nhz)
@@ -266,8 +280,9 @@ class DatasetIterator:
             # Fetch data for this measure and window from the SDK
             data_start_time = max(range_start_time, batch_start_time)
             data_end_time = min(range_end_time, batch_end_time)
-            _, measure_sdk_times, measure_sdk_values = self.sdk.get_data(measure_id, data_start_time, data_end_time,
-                                                                         device_id=device_id, patient_id=patient_id)
+
+            _, measure_sdk_times, measure_sdk_values = self.sdk.get_data(
+                measure_id, data_start_time, data_end_time, device_id=device_id, patient_id=query_patient_id)
 
             # Batch Matrix
             # Convert times to indices on the matrix using vectorized operations
@@ -293,8 +308,8 @@ class DatasetIterator:
             measure_filled_time_array[closest_i_array_signals] = measure_sdk_times[mask]
 
             # convert time data from nanoseconds to unit of choice
-            if self.time_units != 'ns':
-                measure_filled_time_array = measure_filled_time_array / self.time_unit_options[self.time_units]
+            # if self.time_units != 'ns':
+            #     measure_filled_time_array = measure_filled_time_array / self.time_unit_options[self.time_units]
 
             # Create Windows
             windowed_measure_times = sliding_window_view(measure_filled_time_array, measure_window_size)
@@ -316,10 +331,38 @@ class DatasetIterator:
         sliced_views = windowed_views[0][::self.slide_size]
         sliced_times = windowed_times[::self.slide_size]
 
+        # If labels exist, calculate them
+        if len(self.label_sets) > 0:
+            # Preallocate label matrix
+            label_matrix = np.zeros((len(self.label_sets), len(batch_time_array)), dtype=np.int8)
+
+            # Populate label matrix
+            for idx, label_set_id in enumerate(self.label_sets):
+                self.sdk.get_label_time_series(
+                    label_name_id=label_set_id,
+                    device_id=device_id if device_id else None,
+                    patient_id=query_patient_id if query_patient_id else None,
+                    start_time=batch_start_time,
+                    end_time=batch_end_time,
+                    timestamp_array=batch_time_array,
+                    out=label_matrix[idx]
+                )
+
+            # Create label windows
+            windowed_label_views = sliding_window_view(
+                label_matrix, (len(self.label_sets), self.row_size), axis=None)
+            sliced_labels = windowed_label_views[0][::self.slide_size]
+
+            threshold_labels = get_threshold_labels(sliced_labels, label_threshold=self.label_threshold)
+
+            self.batch_label_time_series = sliced_labels
+            self.batch_label_thresholds = threshold_labels
+
         self.current_batch_start_index = batch_start_index
         self.current_batch_end_index = batch_end_index
         self.batch_matrix = sliced_views
         self.batch_times = sliced_times
+
         self.current_batch_start_time = batch_start_time
 
     def get_current_window_start(self):
@@ -439,11 +482,19 @@ class DatasetIterator:
         """
         signal_dictionary = self.get_signal_window(idx)
 
+        label_time_series = np.copy(self.batch_label_time_series[idx - self.current_batch_start_index]) if \
+            self.batch_label_time_series is not None else None
+
+        window_classification = self.batch_label_thresholds[idx - self.current_batch_start_index] if \
+            self.batch_label_thresholds is not None else None
+
         result_window = Window(
             signals=signal_dictionary,
             start_time=self.get_current_window_start(),
             device_id=self.current_device_id,
             patient_id=self.current_patient_id,
+            label_time_series=label_time_series,
+            label=window_classification,
         )
 
         return result_window

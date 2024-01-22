@@ -319,3 +319,34 @@ BEGIN
     END IF;
 END;
 """
+
+mariadb_label_set_create_query = """
+CREATE TABLE IF NOT EXISTS label_set (
+id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+name VARCHAR(128) NOT NULL UNIQUE
+);
+"""
+
+mariadb_label_source_create_query = """
+CREATE TABLE IF NOT EXISTS label_source (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT
+);
+"""
+
+mariadb_label_create_query = """
+CREATE TABLE IF NOT EXISTS label (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    label_set_id INT UNSIGNED NOT NULL,
+    device_id INT UNSIGNED NOT NULL,
+    label_source_id INT UNSIGNED,
+    start_time_n BIGINT NOT NULL,
+    end_time_n BIGINT NOT NULL,
+    CONSTRAINT FOREIGN KEY (label_set_id) REFERENCES label_set(id),
+    CONSTRAINT FOREIGN KEY (device_id) REFERENCES device(id),
+    CONSTRAINT FOREIGN KEY (label_source_id) REFERENCES label_source(id),
+    INDEX (label_set_id, device_id, start_time_n, end_time_n),
+    INDEX (label_set_id, device_id, label_source_id, start_time_n, end_time_n)
+);
+"""
