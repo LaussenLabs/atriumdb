@@ -14,14 +14,10 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-import numpy as np
-from fastapi.testclient import TestClient
-
-from atriumdb.adb_functions import sort_data
+import time
+import threading
+import uvicorn
 from atriumdb.atrium_sdk import AtriumSDK
-from tests.generate_wfdb import get_records
-
 from tests.mock_api.app import app
 from tests.mock_api.sdk_dependency import get_sdk_instance
 from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset
@@ -33,6 +29,13 @@ SEED = 42
 
 
 def test_api():
+    def start_server():
+        uvicorn.run(app)
+
+    # start server in daemon thread so it exits when complete
+    websocket_connect_thread = threading.Thread(target=start_server, daemon=True)
+    websocket_connect_thread.start()
+
     _test_for_both(DB_NAME, _test_api)
 
 
@@ -42,30 +45,13 @@ def _test_api(db_type, dataset_location, connection_params):
 
     write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
 
-    client = TestClient(app)
-    client.app.dependency_overrides[get_sdk_instance] = lambda: sdk
+    app.dependency_overrides[get_sdk_instance] = lambda: sdk
 
-    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="", api_test_client=client)
+    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="http://127.0.0.1:8000", validate_token=False)
+    # change the sdk token expiry so the test can work
+    api_sdk.token_expiry = time.time() + 1_000_000
+
     assert_mit_bih_to_dataset(api_sdk, max_records=MAX_RECORDS, seed=SEED)
+    # close api connection
+    api_sdk.close()
 
-
-def mock_get_data_api(sdk, client: TestClient, measure_id, end_time, start_time, device_id):
-    block_info_url = sdk.get_block_info_api_url(measure_id, start_time, end_time, device_id, None, None)
-    block_info_response = client.get(block_info_url)
-    block_info_list = block_info_response.json()
-    if len(block_info_list) == 0:
-        return [], np.array([], dtype=np.int64)
-    block_requests = []
-    for block_info in block_info_list:
-        block_id = block_info['id']
-        block_request_url = sdk.api_url + f"/v1/sdk/blocks/{block_id}"
-        response = client.get(block_request_url)
-        block_requests.append(response)
-    encoded_bytes = np.concatenate(
-        [np.frombuffer(response.content, dtype=np.uint8) for response in block_requests], axis=None)
-    num_bytes_list = [row['num_bytes'] for row in block_info_list]
-    r_times, r_values, headers = sdk.block.decode_blocks(encoded_bytes, num_bytes_list, analog=True,
-                                                         time_type=1)
-    r_times, r_values = sort_data(r_times, r_values, headers, start_time, end_time)
-
-    return headers, r_times, r_values

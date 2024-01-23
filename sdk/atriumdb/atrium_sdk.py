@@ -52,8 +52,9 @@ from atriumdb.windowing.window_config import WindowConfig
 try:
     import requests
     from requests import Session
-    from dotenv import load_dotenv
+    from dotenv import load_dotenv, set_key
     from websockets.sync.client import connect
+    from atriumdb.adb_remote import _validate_bearer_token
 
     REQUESTS_INSTALLED = True
 except ImportError:
@@ -92,7 +93,9 @@ class AtriumSDK:
     :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" connection type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
     :param int num_threads: Specifies the number of threads to use when processing data.
     :param str api_url: Specifies the URL of the server hosting the API in "api" connection type.
-    :param str token: An authentication token for the API in "api" connection type.
+    :param str token: An authorization token for the API in "api" connection type.
+    :param str refresh_token: A token to refresh your authorization token if it expires while you are doing something. Only for the API in "api" connection type.
+    :param bool validate_token: Do you want the sdk to check if your token is valid when the sdk object is created. If it is not valid it will attempt to use the refresh token to get you a new one. Only for "api" connection type.
     :param str tsc_file_location: A file path pointing to the directory in which the TSC (time series compression) files are written for this dataset. Used to customize the TSC directory location, rather than using `dataset_location/tsc`.
     :param str atriumdb_lib_path: A file path pointing to the shared library (CDLL) that powers the compression and decompression. Not required for most users.
 
@@ -119,16 +122,16 @@ class AtriumSDK:
     >>> # Remote API Mode
     >>> api_url = "http://example.com/v1"
     >>> token = "4e78a93749ead7893"
+    >>> refresh_token = "87d9gvss9wj4"
     >>> metadata_connection_type = "api"
-    >>> sdk = AtriumSDK(api_url=api_url, token=token, metadata_connection_type=metadata_connection_type)
+    >>> sdk = AtriumSDK(metadata_connection_type=metadata_connection_type, api_url=api_url, token=token, refresh_token=refresh_token)
     """
 
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
                  connection_params: dict = None, num_threads: int = None, api_url: str = None, token: str = None,
-                 tsc_file_location: str = None, atriumdb_lib_path: str = None, api_test_client=None, no_pool=False):
+                 refresh_token=None, validate_token=True, tsc_file_location: str = None, atriumdb_lib_path: str = None, no_pool=False):
 
         self.dataset_location = dataset_location
-        self.api_test_client = api_test_client
 
         # Set default metadata connection type if not provided
         metadata_connection_type = DEFAULT_META_CONNECTION_TYPE if \
@@ -210,44 +213,57 @@ class AtriumSDK:
         elif metadata_connection_type == 'api':
             # Check if the necessary modules are installed for API connections
             if not REQUESTS_INSTALLED:
-                raise ImportError("Must install requests and python-dotenv or simply atriumdb[remote].")
+                raise ImportError("Must install requests, python-dotenv, websockets and PyJWT or simply atriumdb[remote].")
 
             self.mode = "api"
             self.api_url = api_url
+            # remove the leading http stuff and replace it with ws, also remove any trailing slashes
+            self.ws_url = api_url.replace("https://", "wss://").replace("http://", "ws://").rstrip('/')
+            # make this variable so once connection is made in the thread it is available to the sdk object
+            self.websock_conn = None
 
-            # Load API token from environment variables if not provided
-            if token is None and api_test_client is None:
+            # need this variable so when we refresh the token we know if a .env file was supplied and we should set the token key
+            self.dot_env_loaded = False
+
+            # Load API and refresh token from environment variables if not provided
+            if token is None:
                 load_dotenv(dotenv_path="./.env", override=True)
                 try:
                     token = os.environ['ATRIUMDB_API_TOKEN']
+                    self.dot_env_loaded = True
                 except KeyError:
                     token = None
+            if refresh_token is None:
+                load_dotenv(dotenv_path="./.env", override=True)
+                try:
+                    refresh_token = os.environ['ATRIUMDB_API_REFRESH_TOKEN']
+                except KeyError:
+                    refresh_token = None
 
-            self.token = token
+            self.token, self.refresh_token = token, refresh_token
 
-            # remove the leading http stuff and replace it with ws, also remove any trailing slashes
-            ws_url = api_url.replace("https://", "wss://").replace("http://", "ws://").rstrip('/')
+            if validate_token:
+                # send get request to the atriumdb api to get the info you need to validate the API token
+                auth_config_response = requests.get(f'{self.api_url}/auth/cli/code')
 
-            # make this variable so once connection is made in the thread it is available to the sdk object
-            self.websock_conn = None
-            # The websockets lib uses a thread to receive messages. Normally you would call close() after receiving the
-            # messages to shut that thread down but since we are reducing overhead we want to keep that connection open
-            # for the life of the sdk object. If we don't shut it down then the program using the sdk will hang even
-            # after the main is finished. Since we have no control over the users or the websocket libs code we have to
-            # do this automatically. The only way to do that is to make the receiving thread a daemon thread and since
-            # we cant control its creation to set daemon=True, the only way to do that if by making a thread of our own
-            # which is a daemon then any threads spawned by that thread will also automatically be a daemon thread.
-            # This is why we do the websocket connection in our own thread.
-            self.websocket_connect_thread = threading.Thread(target=self.websocket_connect, args=(ws_url,), daemon=True).start()
+                if auth_config_response.status_code != 200:
+                    raise RuntimeError(f"Something went wrong when getting Auth info from the API. HTTP Error {auth_config_response.status_code}")
 
-            # wait for thread to make the websocket connection
-            while self.websock_conn is None:
-                time.sleep(0.1)
+                # information returned from atriumdb API that we need for validation now and refreshing of the token later
+                self.auth_config = auth_config_response.json()
 
-            # since our receiving thread can now exit when main completes we can register an atexit hook to close the
-            # rest of the connection properly
-            atexit.register(self.close)
+                try:
+                    # validate bearer token and get its expiry, if token is expired already refresh it
+                    decoded_token = _validate_bearer_token(self.token, self.auth_config)
+                    self.token_expiry = decoded_token['exp']
+                except Exception:
+                    # if the token is invalid attempt to refresh it
+                    self._refresh_token()
 
+            # need to check incase the token was just refreshed and the connection already made
+            if self.websock_conn is None:
+                # connect to the websocket
+                self._websocket_connect()
         else:
             raise ValueError("metadata_connection_type must be one of sqlite, mysql, mariadb or api")
 
@@ -273,25 +289,8 @@ class AtriumSDK:
             self._mrn_to_patient_id = {}
             self._patient_id_to_mrn = {}
 
-    def websocket_connect(self, ws_url):
-        tik = time.perf_counter()
-        self.websock_conn = connect(f"{ws_url}/sdk/ws/blocks", compression=None, max_size=None, additional_headers={"Authorization": "Bearer {}".format(self.token)})
-        print(f"Websocket connect time: {round((time.perf_counter() - tik) * 1000, 4)} ms")
-
-    def close(self):
-        """
-        Close all connections to mariadb or the api. This should be ran at the end of your program after you are done
-        with the sdk object.
-        """
-
-        # make sure we are in api mode and if we are close the connection
-        if self.mode == "api":
-            self.websock_conn.close()
-            print("Websocket connection closed")
-        # if we are in sql mode and there is a connection pool close it
-        elif self.metadata_connection_type == "mariadb" or self.metadata_connection_type == "mysql":
-            if self.sql_handler.pool is not None:
-                self.sql_handler.pool.close()
+        # register an atexit hook to close any open connections properly
+        atexit.register(self.close)
 
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None,
@@ -1093,30 +1092,16 @@ class AtriumSDK:
             # Return empty arrays for headers, request times and request values
             return [], np.array([], dtype=np.int64), np.array([], dtype=np.float64)
 
-        # Check if the test client is being used
-        if self.api_test_client is not None:
-            # Get block requests using the test client
-            block_requests = self.get_block_requests_from_test_client(block_info_list)
-        else:
-            # # Get block requests using Session.
-            # tik = time.perf_counter()
-            # block_requests = self.block_session_requests(block_info_list)
-            # print(f"Time for rest: {round((time.perf_counter()-tik) * 1000, 4)} ms")
-
-            tik = time.perf_counter()
-            responses = self.block_websock_requests(block_info_list)
-            print(f"Time for {len(block_info_list)} blocks over websocket: {round((time.perf_counter() - tik) * 1000, 4)} ms")
-
         # Get the number of bytes for each block
         num_bytes_list = [row['num_bytes'] for row in block_info_list]
-        print(f"Mb/s is {(np.sum(num_bytes_list)/(time.perf_counter() - tik))/1_000_000}\n")
 
-        # Concatenate the content of all responses
-        encoded_bytes = np.concatenate(
-            [np.frombuffer(response, dtype=np.uint8) for response in responses], axis=None)
+        # tik = time.perf_counter()
+        encoded_bytes = self.block_websocket_request(block_info_list)
+        # print(f"Time for {len(block_info_list)} blocks over websocket: {round((time.perf_counter() - tik) * 1000, 4)} ms")
+        # print(f"Mb/s is {(np.sum(num_bytes_list)/(time.perf_counter() - tik))/1_000_000}\n")\
 
         # Decode the concatenated bytes to get headers, request times and request values
-        r_times, r_values, headers = self.block.decode_blocks(np.copy(encoded_bytes), num_bytes_list, analog=analog,
+        r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
                                                               time_type=time_type)
 
         # Sort the data based on the timestamps if sort is true
@@ -1125,88 +1110,7 @@ class AtriumSDK:
 
         return headers, r_times, r_values
 
-    def get_block_requests_from_test_client(self, block_info_list):
-        """
-        Get block requests from the test client using the given block_info_list.
-
-        :param block_info_list: A list of dictionaries containing block information, such as block ID.
-        :return: A list of block requests.
-        """
-        block_requests = []
-
-        # Iterate through the block_info_list
-        for block_info in block_info_list:
-            # Extract the block ID from the block_info dictionary
-            block_id = block_info['id']
-
-            # Create the endpoint URL for the block request
-            endpoint = f"/sdk/blocks/{block_id}"
-            block_request_url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
-
-            # Send a GET request for the block using the test client and store the response
-            response = self.api_test_client.get(block_request_url)
-            block_requests.append(response)
-
-        # Check the status code of each block request response
-        for response in block_requests:
-            if not response.status_code == 200:
-                raise response.raise_for_status()
-
-        return block_requests
-
-    def threaded_block_requests(self, block_info_list):
-        """
-        Get block bytes using multiple threads.
-
-        :param block_info_list: A list of dictionaries containing block information, such as block ID.
-        :return: A list of block bytes.
-        """
-        if not REQUESTS_INSTALLED:
-            raise ImportError("requests module is not installed.")
-
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            block_byte_list_threaded = list(
-                executor.map(self.get_block_bytes_response, [row['id'] for row in block_info_list]))
-        return block_byte_list_threaded
-
-    def threaded_session_requests(self, block_info_list):
-        """
-                Get block bytes using multiple threads.
-
-                :param block_info_list: A list of dictionaries containing block information, such as block ID.
-                :return: A list of block bytes.
-                """
-        if not REQUESTS_INSTALLED:
-            raise ImportError("requests module is not installed.")
-
-        session = Session()
-        session_list = [session for _ in range(len(block_info_list))]
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            block_byte_list_threaded = list(
-                executor.map(self.get_block_bytes_response_from_session,
-                             [row['id'] for row in block_info_list],
-                             session_list))
-        return block_byte_list_threaded
-
-    def block_session_requests(self, block_info_list):
-        """
-        Get block bytes using a session for multiple requests.
-
-        :param block_info_list: A list of dictionaries containing block information, such as block ID.
-        :return: A list of block bytes.
-        """
-        if not REQUESTS_INSTALLED:
-            raise ImportError("requests module is not installed.")
-
-        # Create a session and set the Authorization header with the token
-        session = Session()
-        session.headers = {"Authorization": "Bearer {}".format(self.token)}
-
-        # Get the block bytes using the session for each block in the block_info_list
-        block_byte_list = [self.get_block_bytes_response_from_session(row['id'], session) for row in block_info_list]
-        return block_byte_list
-
-    def block_websock_requests(self, block_info_list):
+    def block_websocket_request(self, block_info_list):
         """
         Get block bytes using a websocket for multiple requests.
 
@@ -1216,71 +1120,31 @@ class AtriumSDK:
         if not REQUESTS_INSTALLED:
             raise ImportError("websockets module is not installed.")
 
+        # check if the api token will expire within 10 seconds and if so refresh it
+        if time.time() >= self.token_expiry-10:
+            # get new API token
+            self._refresh_token()
+
+        # make a comma delimited string of all the blocks we want from the API
         block_ids = ','.join([str(row['id']) for row in block_info_list])
-        # print(block_ids)
         self.websock_conn.send(block_ids)
 
+        # wait for all the blocks to be sent. At the end the message 'Atriumdb_Done' will be sent so we can break out
+        # of the receiving loop without closing the connection
         message_list = []
         for message in self.websock_conn:
             if message == 'Atriumdb_Done':
                 break
             elif message == 'expired_token':
-                pass
+                # this should not happen since the sdk should refresh the token before it tries to send a request
+                raise RuntimeError("API token has expired")
+
             message_list.append(message)
 
-        # message = self.websock_conn.recv()
-        return message_list
+        # Concatenate the content of all messages
+        encoded_bytes = np.concatenate([np.frombuffer(message, dtype=np.uint8) for message in message_list], axis=None)
 
-    def threadless_block_requests(self, block_info_list):
-        """
-        Get block bytes without using threads or sessions.
-
-        :param block_info_list: A list of dictionaries containing block information, such as block ID.
-        :return: A list of block bytes.
-        """
-        block_byte_list = [self.get_block_bytes_response(row['id']) for row in block_info_list]
-        return block_byte_list
-
-    def get_block_bytes_response(self, block_id):
-        """
-        Retrieve the block bytes response for a given block ID.
-
-        :param block_id: The ID of the block to retrieve.
-        :type block_id: str
-        :raises ImportError: If the requests module is not installed.
-        :return: The block bytes response.
-        :rtype: requests.Response
-        """
-        if not REQUESTS_INSTALLED:
-            raise ImportError("requests module is not installed.")
-
-        # Set up the headers with the API token
-        headers = {"Authorization": "Bearer {}".format(self.token)}
-
-        # Create the endpoint URL for the block request
-        endpoint = f"/sdk/blocks/{block_id}"
-        block_request_url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
-
-        # Make the request and return the response
-        return requests.get(block_request_url, headers=headers)
-
-    def get_block_bytes_response_from_session(self, block_id, session):
-        """
-        Retrieve the block bytes response for a given block ID using a session.
-
-        :param block_id: The ID of the block to retrieve.
-        :type block_id: str
-        :param session: The session to use for the request.
-        :type session: Session
-        :return: The block bytes response.
-        :rtype: requests.Response
-        """
-        # Create the endpoint URL for the block request
-        endpoint = f"/sdk/blocks/{block_id}"
-        block_request_url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
-
-        # Make the request using the session and return the response
-        return session.get(block_request_url)
+        return encoded_bytes
 
     def get_block_info_api_url(self, measure_id, start_time_n, end_time_n, device_id, patient_id, mrn):
         """
@@ -1379,7 +1243,6 @@ class AtriumSDK:
         current_index = 0
         current_blocks_meta = []
         remaining_values = sum([block_metadata['num_values'] for block_metadata in block_list])
-        times_before, values_before = None, None
 
         # Iterate through the blocks
         for block_metadata in block_list:
@@ -2933,7 +2796,7 @@ class AtriumSDK:
 
         :raises HTTPException: If the API response indicates an error (e.g., patient not found).
 
-        >>> sdk = AtriumSDK(api_url="http://example.com/api/v1", token="your_api_token", metadata_connection_type="api")
+        >>> sdk = AtriumSDK(metadata_connection_type="api", api_url="http://example.com/api/v1", token="your_api_token", refresh_token="your_refresh_token")
         >>> patient_info = sdk.get_patient_info(mrn='1234567')
         >>> print(patient_info)  # Expected output: dictionary with patient info as returned by the API
         """
@@ -3253,8 +3116,7 @@ class AtriumSDK:
         Send an API request using the specified method and endpoint.
 
         This method checks if the `requests` module is installed, and then sends the API request
-        using the provided method and endpoint. If a test client is provided, it will use the test
-        client instead of sending the request to the actual API.
+        using the provided method and endpoint.
 
         :param method: The HTTP method to use for the request (e.g., 'GET', 'POST', etc.).
         :type method: str
@@ -3271,12 +3133,13 @@ class AtriumSDK:
         if not REQUESTS_INSTALLED:
             raise ImportError("requests module is not installed.")
 
-        # If a test client is provided, use it to send the request.
-        if self.api_test_client is not None:
-            return self._test_client_request(method, endpoint, **kwargs)
-
         # Construct the full URL by combining the base API URL and the endpoint.
         url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
+
+        # check if the api token will expire within 10 seconds and if so refresh it
+        if time.time() >= self.token_expiry-10:
+            # get new API token
+            self._refresh_token()
 
         # Set the authorization header using the stored access token.
         headers = {'Authorization': f"Bearer {self.token}"}
@@ -3292,39 +3155,67 @@ class AtriumSDK:
         # Return the JSON response from the API request.
         return response.json()
 
-    def _test_client_request(self, method: str, endpoint: str, **kwargs):
+    def _websocket_connect(self):
+        def conn():
+            self.websock_conn = connect(f"{self.ws_url}/sdk/blocks/ws", compression=None, max_size=None, additional_headers={"Authorization": "Bearer {}".format(self.token)})
+
+        # The websockets lib uses a thread to receive messages. Normally you would call close() after receiving the
+        # messages to shut that thread down but since we are reducing overhead we want to keep that connection open
+        # for the life of the sdk object. If we don't shut it down then the program using the sdk will hang even
+        # after the main is finished. Since we have no control over the users or the websocket libs code we have to
+        # do this automatically. The only way to do that is to make the receiving thread a daemon thread and since
+        # we cant control its creation to set daemon=True, the only way to do that if by making a thread of our own
+        # which is a daemon then any threads spawned by that thread will also automatically be a daemon thread.
+        # This is why we do the websocket connection in our own thread.
+        websocket_connect_thread = threading.Thread(target=conn, daemon=True)
+        websocket_connect_thread.start()
+
+        # wait for thread to make the websocket connection
+        websocket_connect_thread.join()
+
+    def _refresh_token(self):
+        if self.websock_conn is not None:
+            # close old websocket connection
+            self.websock_conn.close()
+
+        # send request to Auth0 to refresh your API token using your refresh token
+        token_payload = {'grant_type': 'refresh_token', 'client_id': self.auth_config['auth0_client_id'], 'refresh_token': self.refresh_token}
+        token_response = requests.post(f'https://{self.auth_config["auth0_tenant"]}/oauth/token', data=token_payload)
+
+        # parse the response
+        token_data = token_response.json()
+
+        if token_response.status_code != 200:
+            raise RuntimeError(f"Something went wrong when refreshing your API token. HTTP Error {token_response.status_code}, {token_data}")
+
+        # save new access token
+        self.token = token_data['access_token']
+
+        # validate bearer token and get its expiry
+        decoded_token = _validate_bearer_token(self.token, self.auth_config)
+        self.token_expiry = decoded_token['exp']
+
+        # make sure the user is using a .env file to store the token
+        if self.dot_env_loaded:
+            # change the api token in the .env file and the atriumdb class attribute to the new token
+            set_key("./.env", "ATRIUMDB_API_TOKEN", token_data['access_token'])
+            # load the new environment variables into the OS
+            load_dotenv(dotenv_path="./.env", override=True)
+
+        # reconnect to the API websocket with the new token
+        self._websocket_connect()
+
+    def close(self):
         """
-        Send an HTTP request to a locally handled test endpoint using the provided method and
-        optional keyword arguments.
-
-        :param method: The HTTP method to use for the request (e.g., "GET", "POST").
-        :type method: str
-        :param endpoint: The API endpoint to send the request to (e.g., "/users").
-        :type endpoint: str
-        :param kwargs: Optional keyword arguments to pass to the request method.
-                       These can include "headers", "params", "data", "json", etc.
-        :type kwargs: dict
-        :return: The JSON response from the API.
-        :rtype: dict
-        :raises ValueError: If the request fails with a non-200 status code.
+        Close all connections to mariadb or the api. This should be ran at the end of your program after you are done
+        with the sdk object.
         """
-        # Get the headers from the kwargs, or use an empty dictionary if not provided
-        headers = kwargs.get("headers", {})
 
-        # Add the Authorization header with the Bearer token
-        headers['Authorization'] = f"Bearer {self.token}"
-
-        # Update the headers in kwargs
-        kwargs["headers"] = headers
-
-        # Send the request using the provided method, endpoint, and kwargs
-        response = self.api_test_client.request(method, endpoint, **kwargs)
-
-        # Check if the response has a non-200 status code
-        if response.status_code != 200:
-            # Raise a ValueError with the status code and response text
-            raise ValueError(f"API TestClient request failed with status code {response.status_code}: {response.text}")
-
-        # Return the JSON response
-        return response.json()
+        # make sure we are in api mode and if we are close the connection
+        if self.mode == "api" and self.websock_conn is not None:
+            self.websock_conn.close()
+            print("Websocket connection closed")
+        # if we are in sql mode and there is a connection pool close it
+        elif (self.metadata_connection_type == "mariadb" or self.metadata_connection_type == "mysql") and self.sql_handler.pool is not None:
+            self.sql_handler.pool.close()
 

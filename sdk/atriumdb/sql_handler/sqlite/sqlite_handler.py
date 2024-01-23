@@ -266,6 +266,13 @@ class SQLiteHandler(SQLHandler):
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_select_files_by_id_list, file_id_list)
             rows = cursor.fetchall()
+
+            # check to see if any file_ids were not found in the file index by checking if the length of the two lists are different
+            if len(rows) != len(set(file_id_list)):
+                # find out which block_ids were part of the query but no results were found by subtracting the sets
+                set_diff = set(file_id_list) - set([row[0] for row in rows])
+                raise RuntimeError(f"Cannot find file_ids={set_diff} in AtriumDB.")
+
         return rows
 
     def select_blocks_from_file(self, file_id: int):
@@ -285,6 +292,23 @@ class SQLiteHandler(SQLHandler):
                                                                num_bytes, start_time_n, end_time_n, num_values))
             row = cursor.fetchone()
         return row
+
+    def select_blocks_by_ids(self, block_id_list: List[int | str]):
+
+        placeholders = ', '.join(['?'] * len(block_id_list))
+        maria_select_files_by_id_list = f"SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values FROM block_index WHERE id IN ({placeholders}) ORDER BY file_id, start_byte ASC"
+
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(maria_select_files_by_id_list, block_id_list)
+            rows = cursor.fetchall()
+
+        # check to see if any blocks were not found in the block index by checking if the length of the two lists are different
+        if len(rows) != len(block_id_list):
+            # find out which block_ids were part of the query but no results were found by subtracting the sets
+            set_diff = set([int(id) for id in block_id_list]) - set([row[0] for row in rows])
+            raise RuntimeError(f"Cannot find block_ids={set_diff} in AtriumDB.")
+
+        return rows
 
     def select_interval(self, interval_id: int = None, measure_id: int = None, device_id: int = None,
                         start_time_n: int = None, end_time_n: int = None):
