@@ -27,6 +27,7 @@ from atriumdb.helpers.block_calculations import calc_time_by_freq
 from atriumdb.helpers.block_constants import TIME_TYPES
 
 
+ALLOWED_TIME_TYPES = [1, 2]
 time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 freq_unit_options = {"nHz": 1, "uHz": 10 ** 3, "mHz": 10 ** 6, "Hz": 10 ** 9, "kHz": 10 ** 12, "MHz": 10 ** 15}
 allowed_interval_index_modes = ["fast", "merge", "disable"]
