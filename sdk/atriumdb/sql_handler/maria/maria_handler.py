@@ -677,24 +677,6 @@ class MariaDBHandler(SQLHandler):
                 # An error occurred for a different reason, re-raise the exception
                 raise
 
-    def select_label_set(self, label_set_id: int):
-        query = "SELECT id, name FROM label_set WHERE id = ? LIMIT 1"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(query, (label_set_id,))
-            row = cursor.fetchone()
-        return row
-
-    def select_label_set_id(self, name):
-        # Retrieve the ID of a label type by its name.
-        query = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
-        with self.maria_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(query, (name,))
-            result = cursor.fetchone()
-            # Return the ID if it exists or None otherwise.
-            if result:
-                return result[0]
-            return None
-
     def insert_label(self, label_set_id, device_id, start_time_n, end_time_n, label_source_id=None):
         # Insert a new label record into the database.
         query = """

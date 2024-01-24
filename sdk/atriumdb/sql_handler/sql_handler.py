@@ -227,16 +227,17 @@ class SQLHandler(ABC):
         # Insert device_patient rows.
         pass
 
-    def insert_label_set(self, name, label_set_id=None):
+    def insert_label_set(self, name, label_set_id=None, parent_id=None):
         if label_set_id is not None:
             existing_label_set = self.select_label_set(label_set_id)
             if existing_label_set:
-                if existing_label_set[1] == name:
+                if existing_label_set[1] == name and existing_label_set[2] == parent_id:
                     # The provided ID exists and matches the name
                     return label_set_id
                 else:
                     # The provided ID exists but with a different name
-                    raise ValueError(f"The id {label_set_id} already exists under label name {existing_label_set[1]}")
+                    raise ValueError(f"The id {label_set_id} already exists under label name {existing_label_set[1]} "
+                                     f"and parent {existing_label_set[2]}")
 
         existing_label_set_id = self.select_label_set_id(name)
         if existing_label_set_id is not None:
@@ -244,9 +245,9 @@ class SQLHandler(ABC):
             return existing_label_set_id
 
         # Insert the new label set
-        query = "INSERT INTO label_set (id, name) VALUES (?, ?)"
+        query = "INSERT INTO label_set (id, name, parent_id) VALUES (?, ?, ?)"
         with self.connection(begin=True) as (conn, cursor):
-            cursor.execute(query, (label_set_id, name,))
+            cursor.execute(query, (label_set_id, name, parent_id,))
             conn.commit()
             return cursor.lastrowid if label_set_id is None else label_set_id
 
@@ -255,15 +256,119 @@ class SQLHandler(ABC):
         # Retrieve all label types.
         pass
 
-    @abstractmethod
     def select_label_set(self, label_set_id: int):
-        # Retrieve information about a specific label set.
-        pass
+        query = "SELECT id, name, parent_id FROM label_set WHERE id = ? LIMIT 1"
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, (label_set_id,))
+            row = cursor.fetchone()
+        return row
 
-    @abstractmethod
     def select_label_set_id(self, name):
-        # Retrieve ID of a label type by its name.
-        pass
+        # Retrieve the ID of a label type by its name.
+        query = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(query, (name,))
+            result = cursor.fetchone()
+            # Return the ID if it exists or None otherwise.
+            if result:
+                return result[0]
+            return None
+
+    def select_parent(self, label_set_id: int = None, name: str = None):
+        if label_set_id is None and name is None:
+            raise ValueError("Either label_set_id or name must be provided")
+
+        query = """
+        SELECT parent.id, parent.name FROM label_set
+        INNER JOIN label_set AS parent ON label_set.parent_id = parent.id
+        WHERE {}
+        LIMIT 1;
+        """
+
+        with self.connection() as (conn, cursor):
+            if label_set_id is not None:
+                cursor.execute(query.format("label_set.id = ?"), (label_set_id,))
+            else:
+                cursor.execute(query.format("label_set.name = ?"), (name,))
+            return cursor.fetchone()
+
+    def select_all_ancestors(self, label_set_id: int = None, name: str = None):
+        if label_set_id is None and name is None:
+            raise ValueError("Either label_set_id or name must be provided")
+
+        query = """
+        WITH RECURSIVE ancestors(id, name, parent_id) AS (
+            SELECT id, name, parent_id FROM label_set WHERE {}
+            UNION ALL
+            SELECT ls.id, ls.name, ls.parent_id FROM label_set ls
+            INNER JOIN ancestors ON ls.id = ancestors.parent_id
+        )
+        SELECT id, name FROM ancestors WHERE id != ?;
+        """
+
+        with self.connection() as (conn, cursor):
+            if label_set_id is not None:
+                cursor.execute(query.format("id = ?"), (label_set_id, label_set_id))
+            else:
+                query_for_name = """
+                SELECT id FROM label_set WHERE name = ? LIMIT 1;
+                """
+                cursor.execute(query_for_name, (name,))
+                row = cursor.fetchone()
+                if row:
+                    cursor.execute(query.format("id = ?"), (row[0], row[0]))
+                else:
+                    return None
+            return cursor.fetchall()
+
+    def select_children(self, label_set_id: int = None, name: str = None):
+        if label_set_id is None and name is None:
+            raise ValueError("Either label_set_id or name must be provided")
+
+        query = """
+        SELECT id, name FROM label_set
+        WHERE parent_id = ?
+        """
+
+        with self.connection() as (conn, cursor):
+            if label_set_id is not None:
+                cursor.execute(query, (label_set_id,))
+            else:
+                id_query = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
+                cursor.execute(id_query, (name,))
+                result = cursor.fetchone()
+                if result:
+                    cursor.execute(query, (result[0],))
+                else:
+                    return None
+            return cursor.fetchall()
+
+    def select_all_descendants(self, label_set_id: int = None, name: str = None):
+        if label_set_id is None and name is None:
+            raise ValueError("Either label_set_id or name must be provided")
+
+        query = """
+        WITH RECURSIVE descendants(id, name, parent_id) AS (
+            SELECT id, name, parent_id FROM label_set WHERE {}
+            UNION ALL
+            SELECT ls.id, ls.name, ls.parent_id FROM label_set ls
+            INNER JOIN descendants ON ls.parent_id = descendants.id
+        )
+        SELECT id, name FROM descendants WHERE id != ?;
+        """
+
+        with self.connection() as (conn, cursor):
+            if label_set_id is not None:
+                cursor.execute(query.format("parent_id = ?"), (label_set_id, label_set_id))
+            else:
+                query_for_name = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
+                cursor.execute(query_for_name, (name,))
+                row = cursor.fetchone()
+                if row:
+                    cursor.execute(query.format("parent_id = ?"), (row[0], row[0]))
+                else:
+                    return None
+            return cursor.fetchall()
 
     @abstractmethod
     def insert_label(self, label_set_id, device_id, start_time_n, end_time_n, label_source_id=None):
