@@ -1120,8 +1120,8 @@ class AtriumSDK:
         if not REQUESTS_INSTALLED:
             raise ImportError("websockets module is not installed.")
 
-        # check if the api token will expire within 10 seconds and if so refresh it
-        if time.time() >= self.token_expiry-10:
+        # check if the api token will expire within 30 seconds and if so refresh it
+        if time.time() >= self.token_expiry-30:
             # get new API token
             self._refresh_token()
 
@@ -3136,8 +3136,8 @@ class AtriumSDK:
         # Construct the full URL by combining the base API URL and the endpoint.
         url = f"{self.api_url.rstrip('/')}/{endpoint.lstrip('/')}"
 
-        # check if the api token will expire within 10 seconds and if so refresh it
-        if time.time() >= self.token_expiry-10:
+        # check if the api token will expire within 30 seconds and if so refresh it
+        if time.time() >= self.token_expiry-30:
             # get new API token
             self._refresh_token()
 
