@@ -29,8 +29,42 @@ def test_iterator():
 
 
 def _test_iterator(db_type, dataset_location, connection_params):
+    print()  # I use this convention to gain an extra line to separate test information from future prints.
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    # larger test
+    write_mit_bih_to_dataset(sdk, max_records=2, seed=42)
+    # Uncomment line below to recreate test files
+    # create_test_definition_files(sdk)
+
+    test_parameters = [
+        # definition, expected_device_id_type, expected_patient_id_type
+        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_devices.yaml"), int, int),
+        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_patients.yaml"), int, int),
+        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_mrns.yaml"), int, int),
+        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_tags.yaml"), int, int),
+    ]
+
+    window_size_nano = 1_024 * 1_000_000_000
+    for definition, expected_device_id_type, expected_patient_id_type in test_parameters:
+        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None)
+
+        for window_i, window in enumerate(iterator):
+            assert isinstance(window.start_time, int)
+            assert isinstance(window.device_id, expected_device_id_type)
+            assert isinstance(window.patient_id, expected_patient_id_type)
+
+            for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
+                assert isinstance(signal_dict['times'], np.ndarray)
+                assert isinstance(signal_dict['values'], np.ndarray)
+
+            # Old matrix
+            assert isinstance(iterator.get_array_matrix(window_i), np.ndarray)
+
+            # Labels
+            assert isinstance(window.label_time_series, np.ndarray)
+            assert isinstance(window.label, np.ndarray)
 
     # Check for the case of partial windows
     partial_freq_nano = 1_000_000_000
@@ -71,34 +105,8 @@ def _test_iterator(db_type, dataset_location, connection_params):
             else:
                 assert window.patient_id is None
 
-    # larger test
-    write_mit_bih_to_dataset(sdk, max_records=2, seed=42)
-    # Uncomment line below to recreate test files
-    # create_test_definition_files(sdk)
-
-    test_parameters = [
-        # definition, expected_device_id_type, expected_patient_id_type
-        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_devices.yaml"), int, int),
-        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_patients.yaml"), int, int),
-        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_mrns.yaml"), int, int),
-        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_tags.yaml"), int, int),
-    ]
-
-    window_size_nano = 1_024 * 1_000_000_000
-    for definition, expected_device_id_type, expected_patient_id_type in test_parameters:
-        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None)
-
-        for window_i, window in enumerate(iterator):
-            assert isinstance(window.start_time, int)
-            assert isinstance(window.device_id, expected_device_id_type)
-            assert isinstance(window.patient_id, expected_patient_id_type)
-
-            for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
-                assert isinstance(signal_dict['times'], np.ndarray)
-                assert isinstance(signal_dict['values'], np.ndarray)
-
-            # Old matrix
-            assert isinstance(iterator.get_array_matrix(window_i), np.ndarray)
+        assert window.label_time_series is None
+        assert window.label is None
 
 
 def create_test_definition_files(sdk):
@@ -114,24 +122,27 @@ def create_test_definition_files(sdk):
     mrns = {patient_info['mrn']: "all" for patient_info in sdk.get_all_patients().values()}
     device_tags = {device_info['tag']: "all" for device_info in sdk.get_all_devices().values()}
 
+    labels = [label_info['name'] for label_info in sdk.get_all_label_names().values()]
+
     print()
     print(sdk.get_all_measures())
     print(sdk.get_all_devices())
     print(sdk.get_all_patients())
+    print(sdk.get_all_label_names())
 
-    definition = DatasetDefinition(measures=measures, device_ids=device_ids)
+    definition = DatasetDefinition(measures=measures, device_ids=device_ids, labels=labels)
 
     definition.save("./example_data/mitbih_seed_42_all_devices.yaml", force=True)
 
-    definition = DatasetDefinition(measures=measures, patient_ids=patient_ids)
+    definition = DatasetDefinition(measures=measures, patient_ids=patient_ids, labels=labels)
 
     definition.save("./example_data/mitbih_seed_42_all_patients.yaml", force=True)
 
-    definition = DatasetDefinition(measures=measures, mrns=mrns)
+    definition = DatasetDefinition(measures=measures, mrns=mrns, labels=labels)
 
     definition.save("./example_data/mitbih_seed_42_all_mrns.yaml", force=True)
 
-    definition = DatasetDefinition(measures=measures, device_tags=device_tags)
+    definition = DatasetDefinition(measures=measures, device_tags=device_tags, labels=labels)
 
     definition.save("./example_data/mitbih_seed_42_all_tags.yaml", force=True)
 

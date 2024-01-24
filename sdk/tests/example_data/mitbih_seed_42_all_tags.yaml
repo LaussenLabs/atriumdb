@@ -2,6 +2,28 @@ device_ids: {}
 device_tags:
   '100': all
   '101': all
+labels:
+- ST Depression
+- Bradycardia
+- Ectopic Rhythm
+- Idioventricular Rhythm
+- Paced Rhythm
+- Tachycardia
+- Artifact
+- T-wave Inversion
+- Premature Ventricular Contraction
+- Normal Sinus Rhythm
+- Ventricular Fibrillation
+- Premature Atrial Contraction
+- Atrial Flutter
+- Supraventricular Tachycardia
+- Third Degree Heart Block
+- Second Degree Heart Block
+- Junctional Rhythm
+- Bundle Branch Block
+- Pause
+- First Degree Heart Block
+- Atrial Fibrillation
 measures:
 - freq_nhz: 500000000000
   tag: MLII

@@ -51,7 +51,22 @@ def map_validated_sources(sources: dict, sdk) -> dict:
     process_ids(patient_ids, 'patient_ids')
     process_ids(device_ids, 'device_ids')
 
+    if 'device_patient_tuples' in mapped_sources:
+        mapped_sources['device_patient_tuples'] = reorder_dict_by_sublist(mapped_sources['device_patient_tuples'])
+
     return mapped_sources
+
+
+def reorder_dict_by_sublist(input_dict):
+    # Turn the dictionary into a list of (key, value) pairs.
+    dict_items = list(input_dict.items())
+
+    # Sort the list of pairs based on the first element of the first sublist in the values.
+    sorted_items = sorted(dict_items, key=lambda item: item[1][0][0])
+
+    # Create a new dictionary using the sorted pairs.
+    new_dict = {key: value for key, value in sorted_items}
+    return new_dict
 
 
 def aggregate_time_ranges(device_patient_data: List[Tuple[int, int, int, int]]):

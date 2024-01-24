@@ -21,6 +21,7 @@ from typing import List, Tuple, Dict
 import yaml
 import numpy as np
 
+from atriumdb.adb_functions import get_measure_id_from_generic_measure
 from atriumdb.intervals.union import intervals_union_list
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.windowing.map_definition_sources import map_validated_sources
@@ -39,12 +40,15 @@ def verify_definition(definition, sdk, gap_tolerance=None):
     # Validate measures
     validated_measure_list = _validate_measures(definition, sdk)
 
+    # Validate label sets
+    validated_label_set_list = _validate_label_sets(definition, sdk)
+
     # Validate sources
     validated_sources = _validate_sources(definition, sdk, validated_measure_list, gap_tolerance=gap_tolerance)
 
     mapped_sources = map_validated_sources(validated_sources, sdk)
 
-    return validated_measure_list, mapped_sources
+    return validated_measure_list, validated_label_set_list, mapped_sources
 
 
 def _validate_measures(definition: DatasetDefinition, sdk):
@@ -55,60 +59,45 @@ def _validate_measures(definition: DatasetDefinition, sdk):
     validated_measure_list = []
 
     for measure_spec in measures:
-        if isinstance(measure_spec, str):
-            # Assume measure_spec is a measure_tag
-            search_result = sdk.search_measures(tag_match=measure_spec)
-            search_result = {measure_id: measure_info for measure_id, measure_info in search_result.items()
-                             if measure_info['tag'] == measure_spec}
+        measure_id = get_measure_id_from_generic_measure(sdk, measure_spec)
 
-            if len(search_result) == 0:
-                raise ValueError(f"Measure {measure_spec} not found in SDK. Must use AtriumSDK.insert_measure if you "
-                                 f"want the iterator to output the measure")
+        if measure_id is None:
+            raise ValueError(f"Measure {measure_spec} not found in SDK. Must use AtriumSDK.insert_measure if you "
+                             f"want the iterator to output the measure")
 
-            elif len(search_result) != 1:
-                raise ValueError(f"Measure Tag {measure_spec} has more than one matching measure.")
-
-            measure_info = list(search_result.values())[0]
-            validated_measure_info = {
-                'id': int(measure_info.get('id')),
-                'tag': measure_info['tag'],
-                'freq_nhz': measure_info.get('freq_nhz'),
-                'units': measure_info.get('unit')
-            }
-
-        elif isinstance(measure_spec, dict):
-            if "freq_nhz" in measure_spec:
-                measure_id = sdk.get_measure_id(
-                    measure_spec['tag'],
-                    measure_spec.get('freq_nhz'),
-                    measure_spec.get('units'),
-                )
-            else:
-                measure_id = sdk.get_measure_id(
-                    measure_spec['tag'],
-                    measure_spec.get('freq_hz'),
-                    measure_spec.get('units'),
-                    freq_units="Hz"
-                )
-
-            if measure_id is None:
-                raise ValueError(f"Measure {measure_spec} not found in SDK. Must use AtriumSDK.insert_measure if you "
-                                 f"want the iterator to output the measure")
-
-            measure_info = sdk.get_measure_info(measure_id)
-            validated_measure_info = {
-                'id': measure_id,
-                'tag': measure_info['tag'],
-                'freq_nhz': measure_info.get('freq_nhz'),
-                'units': measure_info.get('unit')
-            }
-        else:
-            raise ValueError(f"measure_spec {measure_spec} of invalid type: "
-                             f"{type(measure_spec)}, must be string or dict")
-
+        measure_info = sdk.get_measure_info(measure_id)
+        validated_measure_info = {
+            'id': measure_id,
+            'tag': measure_info['tag'],
+            'freq_nhz': measure_info.get('freq_nhz'),
+            'units': measure_info.get('unit')
+        }
         validated_measure_list.append(validated_measure_info)
 
     return validated_measure_list
+
+
+def _validate_label_sets(definition: DatasetDefinition, sdk):
+    # If there aren't any labels, there's nothing to do.
+    if "labels" not in definition.data_dict:
+        return []
+
+    labels = definition.data_dict["labels"]
+
+    all_sdk_label_sets = sdk.get_all_label_names()
+    all_sdk_label_set_name_to_id_dict = {
+        label_info['name']: label_info['id'] for label_info in all_sdk_label_sets.values()}
+
+    validated_label_set_list = []
+
+    for label in labels:
+        if label not in all_sdk_label_set_name_to_id_dict:
+            raise ValueError(f"Label set {label} not found in SDK. Must use AtriumSDK.insert_label with a valid label if you "
+                             f"want the iterator to output the label set {label}. If you don't have any valid labels, but still want"
+                             f"to include the label set use: AtriumSDK.sql_handler.insert_label_set(name) to introduce a new label set.")
+        validated_label_set_list.append(all_sdk_label_set_name_to_id_dict[label])
+
+    return validated_label_set_list
 
 
 def _validate_sources(definition: DatasetDefinition, sdk, validated_measure_list, gap_tolerance=None):
@@ -176,7 +165,7 @@ def _validate_sources(definition: DatasetDefinition, sdk, validated_measure_list
                 else:
                     warnings.warn(f"Device ID {device_id} not found in database, omitting from cohort data")
 
-        elif source_type == 'measures':
+        elif source_type in ['measures', 'labels']:
             # Not a source type
             continue
         else:

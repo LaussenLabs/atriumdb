@@ -48,7 +48,9 @@ from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_quer
     sqlite_device_bed_id_create_index, sqlite_device_source_id_create_index, sqlite_insert_adb_source, \
     sqlite_measure_source_id_create_index, sqlite_log_hl7_adt_source_id_create_index, sqlite_log_hl7_adt_create_query, \
     sqlite_device_patient_table, sqlite_patient_table_index_1, sqlite_patient_history_create_query, \
-    sqlite_encounter_insert_trigger, sqlite_encounter_update_trigger, sqlite_encounter_delete_trigger
+    sqlite_encounter_insert_trigger, sqlite_encounter_update_trigger, sqlite_encounter_delete_trigger, \
+    sqlite_label_set_create_query, sqlite_label_create_query, sqlite_label_source_create_query, \
+    sqlite_label_table_index_1, sqlite_label_table_index_2
 
 
 class SQLiteHandler(SQLHandler):
@@ -103,6 +105,10 @@ class SQLiteHandler(SQLHandler):
         cursor.execute(sqlite_log_hl7_adt_create_query)
         cursor.execute(sqlite_device_patient_table)
 
+        cursor.execute(sqlite_label_set_create_query)
+        cursor.execute(sqlite_label_create_query)
+        cursor.execute(sqlite_label_source_create_query)
+
         # Create Indices
         cursor.execute(sqlite_block_index_idx_query)
         cursor.execute(sqlite_interval_index_idx_query)
@@ -126,6 +132,9 @@ class SQLiteHandler(SQLHandler):
 
         cursor.execute(sqlite_log_hl7_adt_source_id_create_index)
         cursor.execute(sqlite_patient_table_index_1)
+
+        cursor.execute(sqlite_label_table_index_1)
+        cursor.execute(sqlite_label_table_index_2)
 
         # Triggers
         cursor.execute(sqlite_encounter_insert_trigger)
@@ -163,11 +172,14 @@ class SQLiteHandler(SQLHandler):
             rows = cursor.fetchall()
         return rows
 
-    def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None):
+    def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None, measure_id=None):
         units = DEFAULT_UNITS if units is None else units
 
         with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(sqlite_insert_ignore_measure_query, (measure_tag, freq_nhz, units, measure_name))
+            if measure_id is None:
+                cursor.execute("INSERT OR IGNORE INTO measure (tag, freq_nhz, unit, name) VALUES (?, ?, ?, ?);", (measure_tag, freq_nhz, units, measure_name))
+            else:
+                cursor.execute("INSERT OR IGNORE INTO measure (id, tag, freq_nhz, unit, name) VALUES (?, ?, ?, ?, ?);", (measure_id, measure_tag, freq_nhz, units, measure_name))
             conn.commit()
             cursor.execute(sqlite_select_measure_from_triplet_query, (measure_tag, freq_nhz, units))
             measure_id = cursor.fetchone()[0]
@@ -185,9 +197,13 @@ class SQLiteHandler(SQLHandler):
             row = cursor.fetchone()
         return row
 
-    def insert_device(self, device_tag: str, device_name: str = None):
+    def insert_device(self, device_tag: str, device_name: str = None, device_id=None):
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(sqlite_insert_ignore_device_query, (device_tag, device_name))
+            if device_id is not None:
+                cursor.execute("INSERT OR IGNORE INTO device (id, tag, name) VALUES (?, ?, ?);", (device_id, device_tag, device_name))
+            else:
+                cursor.execute("INSERT OR IGNORE INTO device (tag, name) VALUES (?, ?);", (device_tag, device_name))
+
             conn.commit()
             cursor.execute(sqlite_select_device_from_tag_query, (device_tag,))
             device_id = cursor.fetchone()[0]
@@ -663,3 +679,157 @@ class SQLiteHandler(SQLHandler):
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.executemany(sqlite_insert_device_patient_query, device_patient_data)
             conn.commit()
+
+    def insert_label_set(self, name):
+        query = "INSERT INTO label_set (name) VALUES (?)"
+        with self.sqlite_db_connection(begin=True) as (conn, cursor):
+            try:
+                cursor.execute(query, (name,))
+                conn.commit()
+                return cursor.lastrowid
+            except sqlite3.IntegrityError:
+                return self.select_label_set_id(name)
+
+    def select_label_sets(self):
+        query = "SELECT id, name FROM label_set ORDER BY id ASC"
+        try:
+            with self.sqlite_db_connection(begin=False) as (conn, cursor):
+                cursor.execute(query)
+                return cursor.fetchall()
+        except sqlite3.OperationalError as e:
+            if 'no such table' in str(e):
+                return []  # Table doesn't exist, return an empty list
+            else:
+                # An error occurred for a different reason, re-raise the exception
+                raise
+
+    def select_label_set(self, label_set_id: int):
+        query = "SELECT id, name FROM label_set WHERE id = ? LIMIT 1"
+        with self.sqlite_db_connection(begin=False) as (conn, cursor):
+            cursor.execute(query, (label_set_id,))
+            row = cursor.fetchone()
+        return row
+
+    def select_label_set_id(self, name):
+        query = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
+        with self.sqlite_db_connection(begin=False) as (conn, cursor):
+            cursor.execute(query, (name,))
+            result = cursor.fetchone()
+            if result:
+                return result[0]
+            return None
+
+    def insert_label(self, label_set_id, device_id, start_time_n, end_time_n, label_source_id=None):
+        query = """
+        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n, label_source_id) 
+        VALUES (?, ?, ?, ?, ?)
+        """
+        with self.sqlite_db_connection(begin=True) as (conn, cursor):
+            cursor.execute(query, (label_set_id, device_id, start_time_n, end_time_n, label_source_id))
+            conn.commit()
+            return cursor.lastrowid
+
+    def insert_labels(self, labels):
+        query = """
+        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n, label_source_id) 
+        VALUES (?, ?, ?, ?, ?)
+        """
+        with self.sqlite_db_connection(begin=True) as (conn, cursor):
+            cursor.executemany(query, labels)
+            conn.commit()
+
+    def delete_labels(self, label_ids):
+        # Delete multiple label records from the database based on their IDs.
+        query = "DELETE FROM label WHERE id = ?"
+        with self.sqlite_db_connection() as (conn, cursor):
+            # Prepare a list of tuples for the executemany method.
+            id_tuples = [(label_id,) for label_id in label_ids]
+            cursor.executemany(query, id_tuples)
+            conn.commit()
+
+    def select_labels(self, label_set_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
+                      end_time_n=None, label_source_id_list=None):
+        # Query By Patient.
+        if patient_id_list is not None:
+            results = []
+
+            for patient_id in patient_id_list:
+                device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
+
+                for device_id, device_start_time, device_end_time in device_time_ranges:
+                    # Ensure start and end times are within the provided bounds, if they exist.
+                    final_start_time = max(start_time_n, device_start_time) if start_time_n else device_start_time
+                    final_end_time = min(end_time_n, device_end_time) if end_time_n else device_end_time
+
+                    # Recursively call select_labels for each device_id.
+                    results.extend(self.select_labels(label_set_id_list=label_set_id_list, device_id_list=[device_id],
+                                                      start_time_n=final_start_time, end_time_n=final_end_time,
+                                                      label_source_id_list=label_source_id_list))
+
+            # Sort the results by start_time_n primarily and then by end_time_n secondarily
+            results.sort(key=lambda x: (x[3], x[4]))
+            return results
+
+        query = "SELECT id, label_set_id, device_id, start_time_n, end_time_n, label_source_id FROM label WHERE 1=1"
+        params = []
+
+        if label_set_id_list:
+            placeholders = ', '.join(['?'] * len(label_set_id_list))
+            query += f" AND label_set_id IN ({placeholders})"
+            params.extend(label_set_id_list)
+
+        if device_id_list:
+            placeholders = ', '.join(['?'] * len(device_id_list))
+            query += f" AND device_id IN ({placeholders})"
+            params.extend(device_id_list)
+
+        # Add conditions for label source IDs, if provided.
+        if label_source_id_list:
+            placeholders = ', '.join(['?'] * len(label_source_id_list))
+            query += f" AND label_source_id IN ({placeholders})"
+            params.extend(label_source_id_list)
+
+        if end_time_n:
+            query += " AND start_time_n <= ?"
+            params.append(end_time_n)
+        if start_time_n:
+            query += " AND end_time_n >= ?"
+            params.append(start_time_n)
+
+        # Sort by start_time_n
+        # Used in iterator logic, alter with caution.
+        query += " ORDER BY start_time_n ASC, end_time_n ASC"
+
+        with self.sqlite_db_connection(begin=False) as (conn, cursor):
+            cursor.execute(query, params)
+            return cursor.fetchall()
+
+    def insert_label_source(self, name, description=None):
+        # First, check if the label_source with the given name already exists
+        select_query = "SELECT id FROM label_source WHERE name = ?"
+        with self.sqlite_db_connection(begin=False) as (conn, cursor):
+            cursor.execute(select_query, (name,))
+            result = cursor.fetchone()
+            if result:
+                # A label_source with the given name already exists, return its id
+                return result[0]
+
+        query = "INSERT INTO label_source (name, description) VALUES (?, ?)"
+        with self.sqlite_db_connection(begin=True) as (conn, cursor):
+            cursor.execute(query, (name, description))
+            conn.commit()
+            return cursor.lastrowid
+
+    def select_label_source_id_by_name(self, name):
+        query = "SELECT id FROM label_source WHERE name = ? LIMIT 1"
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(query, (name,))
+            result = cursor.fetchone()
+            return result[0] if result else None
+
+    def select_label_source_info_by_id(self, label_source_id):
+        query = "SELECT id, name, description FROM label_source WHERE id = ? LIMIT 1"
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(query, (label_source_id,))
+            result = cursor.fetchone()
+            return {'id': result[0], 'name': result[1], 'description': result[2]} if result else None

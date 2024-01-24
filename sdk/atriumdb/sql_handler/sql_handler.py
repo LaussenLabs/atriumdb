@@ -42,7 +42,7 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None):
+    def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None, measure_id=None):
         # Insert measure if it doesn't exist, return id.
         pass
 
@@ -52,7 +52,7 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def insert_device(self, device_tag: str, device_name: str = None):
+    def insert_device(self, device_tag: str, device_name: str = None, device_id=None):
         # Insert device if it doesn't exist, return id.
         pass
 
@@ -221,4 +221,58 @@ class SQLHandler(ABC):
     @abstractmethod
     def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
         # Insert device_patient rows.
+        pass
+
+    @abstractmethod
+    def insert_label_set(self, name):
+        # Insert a new label type and return its ID.
+        pass
+
+    @abstractmethod
+    def select_label_sets(self):
+        # Retrieve all label types.
+        pass
+
+    @abstractmethod
+    def select_label_set(self, label_set_id: int):
+        # Retrieve information about a specific label set.
+        pass
+
+    @abstractmethod
+    def select_label_set_id(self, name):
+        # Retrieve ID of a label type by its name.
+        pass
+
+    @abstractmethod
+    def insert_label(self, label_set_id, device_id, start_time_n, end_time_n, label_source_id=None):
+        # Insert a single label entry and return its ID.
+        pass
+
+    @abstractmethod
+    def insert_labels(self, labels):
+        # Insert multiple label entries and return their IDs.
+        # `labels` is a list of tuples (label_set_id, device_id, start_time_n, end_time_n, label_source_id)
+        pass
+
+    @abstractmethod
+    def delete_labels(self, label_ids):
+        # Delete multiple label records from the database based on their IDs.
+        pass
+
+    @abstractmethod
+    def select_labels(self, label_set_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
+                      end_time_n=None, label_source_id_list=None):
+        # Retrieve labels based on provided criteria.
+        pass
+
+    @abstractmethod
+    def insert_label_source(self, name, description):
+        pass
+
+    @abstractmethod
+    def select_label_source_id_by_name(self, name):
+        pass
+
+    @abstractmethod
+    def select_label_source_info_by_id(self, label_source_id):
         pass

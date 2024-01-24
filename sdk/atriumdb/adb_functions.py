@@ -383,3 +383,44 @@ def convert_gap_data_to_timestamps(headers, r_times, r_values, start_time_n=None
         r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
     return full_timestamps, r_values
+
+
+def get_measure_id_from_generic_measure(sdk, measure):
+    measure_id = None
+    if isinstance(measure, int):
+        measure_id = measure
+
+    elif isinstance(measure, str):
+        # Assume measure_spec is a measure_tag
+        search_result = sdk.search_measures(tag_match=measure)
+        search_result = {measure_id: measure_info for measure_id, measure_info in search_result.items()
+                         if measure_info['tag'] == measure}
+
+        if len(search_result) == 0:
+            raise ValueError(
+                f"Measure {measure} not found in SDK. Must use AtriumSDK.insert_measure if you "
+                f"want the iterator to output the measure")
+
+        elif len(search_result) != 1:
+            raise ValueError(f"Measure Tag {measure} has more than one matching measure.")
+
+        measure_info = list(search_result.values())[0]
+        measure_id = int(measure_info.get('id'))
+
+    elif isinstance(measure, dict):
+        if "freq_nhz" in measure:
+            measure_id = sdk.get_measure_id(
+                measure['tag'],
+                measure.get('freq_nhz'),
+                measure.get('units'),
+            )
+        else:
+            measure_id = sdk.get_measure_id(
+                measure['tag'],
+                measure.get('freq_hz'),
+                measure.get('units'),
+                freq_units="Hz"
+            )
+    else:
+        raise ValueError(f"measure type {type(measure)} not supported.")
+    return measure_id

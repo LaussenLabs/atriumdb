@@ -15,8 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-maria_insert_ignore_measure_query = "INSERT IGNORE INTO measure (tag, freq_nhz, unit, name) " \
-                              "VALUES (?, ?, ?, ?);"
+maria_insert_ignore_measure_query = "INSERT IGNORE INTO measure (tag, freq_nhz, unit, name) VALUES (?, ?, ?, ?);"
 maria_select_measure_from_id = "SELECT id, tag, name, freq_nhz, code, unit, unit_label, unit_code, source_id FROM measure WHERE id = ?"
 maria_select_measure_from_triplet_query = "SELECT id, tag, name, freq_nhz, code, unit, unit_label, unit_code, source_id FROM measure WHERE tag = ? AND freq_nhz = ? AND unit = ?"
 
