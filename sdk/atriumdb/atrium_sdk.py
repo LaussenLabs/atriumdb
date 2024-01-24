@@ -55,6 +55,7 @@ try:
     from dotenv import load_dotenv, set_key
     from websockets.sync.client import connect
     from atriumdb.adb_remote import _validate_bearer_token
+    import jwt
 
     REQUESTS_INSTALLED = True
 except ImportError:
@@ -256,7 +257,7 @@ class AtriumSDK:
                     # validate bearer token and get its expiry, if token is expired already refresh it
                     decoded_token = _validate_bearer_token(self.token, self.auth_config)
                     self.token_expiry = decoded_token['exp']
-                except Exception:
+                except jwt.PyJWTError:
                     # if the token is invalid attempt to refresh it
                     self._refresh_token()
 
