@@ -42,8 +42,8 @@ def _test_write_oversized_block_timestamp(db_type, dataset_location, connection_
                    raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=None, scale_b=None)
 
     # Check time type 1
-    _, r_times, r_values = sdk.get_data(
-        measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1, analog=False)
+    _, r_times, r_values = sdk.get_data(measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1,
+                                        analog=False)
 
     assert np.array_equal(r_times, timestamp_arr)
     assert np.array_equal(r_values, values)
@@ -62,8 +62,8 @@ def _test_write_oversized_block_timestamp(db_type, dataset_location, connection_
                    raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=None, scale_b=None)
 
     # Check time type 1
-    _, r_times, r_values = sdk.get_data(
-        measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1, analog=False)
+    _, r_times, r_values = sdk.get_data(measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1,
+                                        analog=False)
 
     assert np.array_equal(r_times, timestamp_arr)
     assert np.array_equal(r_values, values)
@@ -82,8 +82,8 @@ def _test_write_oversized_block_timestamp(db_type, dataset_location, connection_
                    raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=None, scale_b=None)
 
     # Check time type 1
-    _, r_times, r_values = sdk.get_data(
-        measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1, analog=False)
+    _, r_times, r_values = sdk.get_data(measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1,
+                                        analog=False)
 
     assert np.array_equal(r_times, timestamp_arr)
     assert np.array_equal(r_values, values)
@@ -103,8 +103,8 @@ def _test_write_oversized_block_timestamp(db_type, dataset_location, connection_
                    raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=None, scale_b=None)
 
     # Check time type 1
-    _, r_times, r_values = sdk.get_data(
-        measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1, analog=False)
+    _, r_times, r_values = sdk.get_data(measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1,
+                                        analog=False)
 
     assert np.array_equal(r_times, timestamp_arr)
     assert np.array_equal(r_values, values)
@@ -170,14 +170,14 @@ def _test_write_oversized_block_gap(db_type, dataset_location, connection_params
                        raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=None, scale_b=None)
 
         # Check time type 2
-        _, r_times, r_values = sdk.get_data(
-            measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=2, analog=False)
+        _, r_times, r_values = sdk.get_data(measure_id, start_time_nano, end_time_nano, device_id=device_id,
+                                            time_type=2, analog=False)
 
         assert np.array_equal(r_values, values)
 
         # Check time type 1
-        _, r_times, r_values = sdk.get_data(
-            measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1, analog=False)
+        _, r_times, r_values = sdk.get_data(measure_id, start_time_nano, end_time_nano, device_id=device_id,
+                                            time_type=1, analog=False)
 
         assert np.array_equal(r_times, timestamp_arr)
         assert np.array_equal(r_values, values)
@@ -197,8 +197,8 @@ def _test_write_oversized_block_gap(db_type, dataset_location, connection_params
                    raw_time_type=2, raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=None,
                    scale_b=None)
 
-    _, r_times, r_values = sdk.get_data(
-        measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1, analog=False)
+    _, r_times, r_values = sdk.get_data(measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1,
+                                        analog=False)
 
     assert np.array_equal(r_times, timestamp_arr)
     assert np.array_equal(r_values, values)
@@ -216,8 +216,8 @@ def _test_write_oversized_block_gap(db_type, dataset_location, connection_params
                    raw_time_type=2, raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=None,
                    scale_b=None)
 
-    _, r_times, r_values = sdk.get_data(
-        measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1, analog=False)
+    _, r_times, r_values = sdk.get_data(measure_id, start_time_nano, end_time_nano, device_id=device_id, time_type=1,
+                                        analog=False)
 
     assert np.array_equal(r_times, timestamp_arr)
     assert np.array_equal(r_values, values)

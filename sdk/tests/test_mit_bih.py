@@ -107,8 +107,8 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
                 expected_values = record.p_signal.T[i].astype(np.float64)
                 expected_times = time_arr
 
-                headers, read_times, read_values = sdk.get_data(measure_id, int(time_arr[0]), int(time_arr[-1]) + period_ns,
-                                                                **query_args)
+                headers, read_times, read_values = sdk.get_data(measure_id, int(time_arr[0]),
+                                                                int(time_arr[-1]) + period_ns, **query_args)
 
                 if not np.allclose(expected_values, read_values):
                     print("Wrong Values")

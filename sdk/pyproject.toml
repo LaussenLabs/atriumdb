@@ -80,6 +80,7 @@ all = [
 testing = [
     "wfdb >= 4.1.0, < 5",
     "names >= 0.3.0, < 1",
+    "uvicorn >= 0.27.0, < 1",
     "pytest"
 ]
 

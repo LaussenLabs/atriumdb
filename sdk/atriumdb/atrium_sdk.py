@@ -1313,8 +1313,7 @@ class AtriumSDK:
 
                     # Retrieve the last window's data
                     headers, r_times, r_values = self.get_blocks(last_blocks_meta, filename_dict, measure_id,
-                                                                 start_time_n, end_time_n, analog,
-                                                                 time_type)
+                                                                 start_time_n, end_time_n, analog, time_type)
 
                     # Get the last window's data by slicing the time and value arrays
                     r_times, r_values = r_times[-window_size:], r_values[-window_size:]
