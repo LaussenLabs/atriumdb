@@ -21,12 +21,9 @@ from pathlib import Path
 
 import requests
 import qrcodeT
-import urllib3
 import os
 import time
 from urllib.parse import urlparse
-
-from auth0.authentication.token_verifier import TokenVerifier, AsymmetricSignatureVerifier
 
 from dotenv import load_dotenv, set_key, get_key
 
@@ -118,6 +115,7 @@ def login(ctx, endpoint_url):
     set_key(dotenv_path, "ATRIUMDB_ENDPOINT_URL", endpoint_url)
     load_dotenv(dotenv_path=dotenv_path, override=True)
 
+    # send get request to the atriumdb api to get the info you need to authenticate with Auth0
     auth_conf_res = requests.get(f'{endpoint_url}/auth/cli/code')
 
     if auth_conf_res.status_code == 404:
@@ -128,24 +126,21 @@ def login(ctx, endpoint_url):
         _LOGGER.error("Something went wrong")
         exit()
 
+    # information returned from atriumdb API
     auth_conf = auth_conf_res.json()
     auth0_domain = auth_conf['auth0_tenant']
     auth0_client_id = auth_conf['auth0_client_id']
     api_audience = auth_conf['auth0_audience']
     algorithms = auth_conf['algorithms']
 
-    def validate_token(id_token):
-        jwks_url = f'https://{auth0_domain}/.well-known/jwks.json'
-        issuer = f'https://{auth0_domain}/'
-        sv = AsymmetricSignatureVerifier(jwks_url)
-        tv = TokenVerifier(signature_verifier=sv, issuer=issuer, audience=auth0_client_id)
-        tv.verify(id_token)
-
+    # payload for post request to get the device code from Auth0
     device_code_payload = {
         'client_id': auth0_client_id,
-        'scope': 'openid profile',
+        'scope': 'openid profile offline_access',
         'audience': api_audience
     }
+
+    # send a post request to get the device code
     device_code_response = requests.post(f'https://{auth0_domain}/oauth/device/code', data=device_code_payload)
 
     if device_code_response.status_code != 200:
@@ -158,38 +153,38 @@ def login(ctx, endpoint_url):
     click.echo(f"2. Enter the following code: \n{device_code_data['user_code']}")
     qrcodeT.qrcodeT(device_code_data['verification_uri_complete'])
 
+    # this is the payload to get a token for "input constrained devices"
     token_payload = {
         'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
         'device_code': device_code_data['device_code'],
         'client_id': auth0_client_id
     }
-
     authenticated = False
 
     # Calculate absolute expiration time
-    expires_in = time.time() + device_code_data['expires_in']
     expiration_time = time.time() + int(device_code_data['expires_in'])
 
     while not authenticated and time.time() < expiration_time:
         token_response = requests.post(f'https://{auth0_domain}/oauth/token', data=token_payload)
-
         token_data = token_response.json()
+
         if token_response.status_code == 200:
             click.echo('Authenticated!')
-
-            validate_token(token_data['id_token'])
-
             authenticated = True
 
-            load_dotenv(dotenv_path=dotenv_path)
+            # set the new keys in the .env file
             set_key(dotenv_path, "ATRIUMDB_API_TOKEN", token_data['access_token'])
+            set_key(dotenv_path, "ATRIUMDB_API_REFRESH_TOKEN", token_data['refresh_token'])
             set_key(dotenv_path, "ATRIUMDB_DATABASE_TYPE", "api")
-            load_dotenv(dotenv_path=dotenv_path, override=True)
 
-            click.echo("Your API Token is:\n")
-            click.echo(token_data['access_token'])
-            click.echo("The variable ATRIUMDB_API_TOKEN has been set in your .env file and")
-            load_dotenv(dotenv_path="./.env", override=True)
+            click.echo("Your API Token is:")
+            click.echo(f"{token_data['access_token']} \n")
+            click.echo("Your Refresh Token is:")
+            click.echo(f"{token_data['refresh_token']} \n")
+            click.echo("The variables ATRIUMDB_API_TOKEN and ATRIUMDB_API_REFRESH_TOKEN have been set in your .env file")
+
+            # load environment variables into the OS
+            load_dotenv(dotenv_path=dotenv_path, override=True)
 
         elif token_data['error'] not in ('authorization_pending', 'slow_down'):
             click.echo(token_data['error_description'])

@@ -111,4 +111,4 @@ def _test_block_select(sql_handler):
     print(intervals)
 
     print()
-    print(sql_handler.select_files([0, 1, 2, 3, 4]))
+    print(sql_handler.select_files([1, 2]))
