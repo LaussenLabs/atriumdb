@@ -15,7 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-OVERWRITE_SETTING_NAME = 'ignore'
+OVERWRITE_SETTING_NAME = 'overwrite'
 PROTECTED_MODE_SETTING_NAME = 'protected_mode'
 
 ALLOWABLE_OVERWRITE_SETTINGS = ['error', 'ignore', 'overwrite']
