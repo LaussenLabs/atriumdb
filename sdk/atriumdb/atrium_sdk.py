@@ -1828,6 +1828,18 @@ class AtriumSDK:
 
         return measure_tag_dict
 
+    def get_data_from_tsc_file(self, file_path, analog=True, time_type=1, sort=True, allow_duplicates=True):
+        encoded_bytes = self.file_api.read_from_filepath(file_path)
+
+        r_times, r_values, headers = self.block.decode_block_from_bytes_alone(
+            encoded_bytes, analog=analog, time_type=time_type)
+
+        # Sort the data based on the timestamps if sort is true
+        if sort and time_type == 1:
+            r_times, r_values = sort_data(r_times, r_values, headers, 0, (2**63) - 1, allow_duplicates)
+
+        return headers, r_times, r_values
+
     def get_data_from_blocks(self, block_list, filename_dict, measure_id, start_time_n, end_time_n, analog=True,
                              time_type=1, sort=True, allow_duplicates=True):
         """

@@ -161,3 +161,16 @@ class AtriumFileHandler:
 
         # Create a NumPy array from the bytearray using np.frombuffer
         return np.frombuffer(all_bytes, dtype=np.uint8)
+
+    def read_from_filepath(self, file_path):
+        # Ensure the file_path is a Path object
+        file_path = Path(file_path)
+
+        # Read the file in binary mode
+        with file_path.open('rb') as file:
+            file_bytes = file.read()
+
+        # Create a writable numpy array from the file bytes
+        writable_file_bytes = np.frombuffer(file_bytes, dtype=np.uint8).copy()
+
+        return writable_file_bytes
