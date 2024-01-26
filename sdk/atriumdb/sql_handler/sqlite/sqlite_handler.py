@@ -49,7 +49,8 @@ from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_quer
     sqlite_measure_source_id_create_index, sqlite_log_hl7_adt_source_id_create_index, sqlite_log_hl7_adt_create_query, \
     sqlite_device_patient_table, sqlite_patient_table_index_1, sqlite_patient_history_create_query, \
     sqlite_encounter_insert_trigger, sqlite_encounter_update_trigger, sqlite_encounter_delete_trigger, \
-    sqlite_label_set_create_query, sqlite_label_create_query, sqlite_label_source_create_query
+    sqlite_label_set_create_query, sqlite_label_create_query, sqlite_label_source_create_query, \
+    sqlite_label_table_index_1, sqlite_label_table_index_2
 
 
 class SQLiteHandler(SQLHandler):
@@ -134,6 +135,9 @@ class SQLiteHandler(SQLHandler):
 
         cursor.execute(sqlite_log_hl7_adt_source_id_create_index)
         cursor.execute(sqlite_patient_table_index_1)
+
+        cursor.execute(sqlite_label_table_index_1)
+        cursor.execute(sqlite_label_table_index_2)
 
         # Triggers
         cursor.execute(sqlite_encounter_insert_trigger)
@@ -281,6 +285,13 @@ class SQLiteHandler(SQLHandler):
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_select_files_by_id_list, file_id_list)
             rows = cursor.fetchall()
+
+            # check to see if any file_ids were not found in the file index by checking if the length of the two lists are different
+            if len(rows) != len(set(file_id_list)):
+                # find out which block_ids were part of the query but no results were found by subtracting the sets
+                set_diff = set(file_id_list) - set([row[0] for row in rows])
+                raise RuntimeError(f"Cannot find file_ids={set_diff} in AtriumDB.")
+
         return rows
 
     def select_blocks_from_file(self, file_id: int):
@@ -300,6 +311,23 @@ class SQLiteHandler(SQLHandler):
                                                                num_bytes, start_time_n, end_time_n, num_values))
             row = cursor.fetchone()
         return row
+
+    def select_blocks_by_ids(self, block_id_list: List[int | str]):
+
+        placeholders = ', '.join(['?'] * len(block_id_list))
+        maria_select_files_by_id_list = f"SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values FROM block_index WHERE id IN ({placeholders}) ORDER BY file_id, start_byte ASC"
+
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute(maria_select_files_by_id_list, block_id_list)
+            rows = cursor.fetchall()
+
+        # check to see if any blocks were not found in the block index by checking if the length of the two lists are different
+        if len(rows) != len(block_id_list):
+            # find out which block_ids were part of the query but no results were found by subtracting the sets
+            set_diff = set([int(id) for id in block_id_list]) - set([row[0] for row in rows])
+            raise RuntimeError(f"Cannot find block_ids={set_diff} in AtriumDB.")
+
+        return rows
 
     def select_interval(self, interval_id: int = None, measure_id: int = None, device_id: int = None,
                         start_time_n: int = None, end_time_n: int = None):
@@ -690,10 +718,10 @@ class SQLiteHandler(SQLHandler):
     def delete_labels(self, label_ids):
         # Delete multiple label records from the database based on their IDs.
         query = "DELETE FROM label WHERE id = ?"
-        with self.sqlite_db_connection(begin=True) as (conn, cursor):
-            # Execute the delete query for each ID in the list.
-            for label_id in label_ids:
-                cursor.execute(query, (label_id,))
+        with self.sqlite_db_connection() as (conn, cursor):
+            # Prepare a list of tuples for the executemany method.
+            id_tuples = [(label_id,) for label_id in label_ids]
+            cursor.executemany(query, id_tuples)
             conn.commit()
 
     def select_labels(self, label_set_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,

@@ -15,8 +15,18 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from atriumdb import AtriumSDK
+import jwt
 
 
-def get_sdk_instance() -> AtriumSDK:
-    return AtriumSDK()
+def _validate_bearer_token(token, auth_config):
+    jwks_client = jwt.PyJWKClient(f"https://{auth_config['auth0_tenant']}/.well-known/jwks.json")
+    jwt_signing_key = jwks_client.get_signing_key_from_jwt(token).key
+    payload = jwt.decode(
+        token,
+        jwt_signing_key,
+        algorithms=auth_config['algorithms'][0],
+        audience=auth_config['auth0_audience'],
+        issuer=f"https://{auth_config['auth0_tenant']}/",
+    )
+    return payload
+
