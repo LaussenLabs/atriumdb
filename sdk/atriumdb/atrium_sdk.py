@@ -3538,10 +3538,15 @@ class AtriumSDK:
 
         label_dict = {}
         for label_info in label_tuple_list:
-            label_id, label_name = label_info
+            label_id, label_name, parent_id = label_info
+            parent_name = None
+            if parent_id is not None:
+                parent_name = self.get_label_name_info(parent_id)['name']
             label_dict[label_id] = {
                 'id': label_id,
-                'name': label_name
+                'name': label_name,
+                'parent_id': parent_id,
+                'parent_name': parent_name,
             }
 
         return label_dict
