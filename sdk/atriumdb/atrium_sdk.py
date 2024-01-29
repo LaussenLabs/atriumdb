@@ -3587,7 +3587,9 @@ class AtriumSDK:
         >>> label_name_info = sdk.get_label_name_info(label_name_id)
         >>> print(label_name_info)
         {'id': 1,
-         'name': 'Label Set A1'}
+         'name': 'Label A1',
+         'parent_id': 2,
+         'parent_name': 'Label Class A'}
 
         """
         # Check if metadata is fetched using API and call the appropriate method
@@ -3606,12 +3608,18 @@ class AtriumSDK:
             return None
 
         # Unpack the fetched row into individual variables
-        label_name_id, label_set_name = row
+        label_name_id, label_set_name, parent_id = row
+
+        parent_name = None
+        if parent_id is not None:
+            parent_name = self.get_label_name_info(parent_id)
 
         # Create a dictionary with the label set information
         label_set_info = {
             'id': label_name_id,
-            'name': label_set_name
+            'name': label_set_name,
+            'parent_id': parent_id,
+            'parent_name': parent_name
         }
 
         # Cache the label set information for future use
@@ -3662,6 +3670,64 @@ class AtriumSDK:
 
         # Return the label set ID
         return label_name_id
+
+    def get_label_name_children(self, label_set_id: int = None, name: str = None):
+        """
+        Retrieve all children of a specific label set.
+
+        :param int label_set_id: The identifier of the label set.
+        :param str name: The name of the label set.
+
+        :return: A list of dictionaries, each representing a child label set.
+        :rtype: list
+
+        :example:
+        >>> sdk = AtriumSDK()
+        >>> children_by_id = sdk.get_label_name_children(label_set_id=1)
+        >>> for child in children_by_id:
+        ...     print(child)
+        ... {'id': 2, 'name': 'Label Set A1', 'parent_id': 1, 'parent_name': 'Label Set A'}
+        ... {'id': 3, 'name': 'Label Set A2', 'parent_id': 1, 'parent_name': 'Label Set A'}
+        >>> children_by_name = sdk.get_label_name_children(name="Label Set B")
+        >>> for child in children_by_name:
+        ...     print(child)
+        ... {'id': 5, 'name': 'Label Set B1', 'parent_id': 4, 'parent_name': 'Label Set B'}
+
+        """
+        if name:
+            label_set_id = self.get_label_name_id(name)
+
+        children = self.sql_handler.select_label_name_children(label_set_id)
+        return [self.get_label_name_info(child_id) for child_id, _ in children]
+
+    def get_label_name_parent(self, label_set_id: int = None, name: str = None):
+        """
+        Retrieve the parent of a specific label set.
+
+        :param int label_set_id: The identifier of the label set.
+        :param str name: The name of the label set.
+
+        :return: A dictionary representing the parent label set.
+        :rtype: dict
+
+        :example:
+        >>> sdk = AtriumSDK()
+        >>> parent_by_id = sdk.get_label_name_parent(label_set_id=2)
+        >>> print(parent_by_id)
+        ... {'id': 1, 'name': 'Label Set A', 'parent_id': None, 'parent_name': None}
+        >>> parent_by_name = sdk.get_label_name_parent(name="Label Set A2")
+        >>> print(parent_by_name)
+        ... {'id': 1, 'name': 'Label Set A', 'parent_id': None, 'parent_name': None}
+
+        """
+        if name:
+            label_set_id = self.get_label_name_id(name)
+
+        parent_id, _ = self.sql_handler.select_label_name_parent(label_set_id)
+        if parent_id:
+            return self.get_label_name_info(parent_id)
+        else:
+            return None
 
     def insert_label_source(self, name: str, description: str = None) -> int:
         """

@@ -446,7 +446,7 @@ def collect_all_descendant_ids(label_set_ids, sql_handler):
 
     while to_process:
         current_id = to_process.pop()
-        child_records = sql_handler.select_children(label_set_id=current_id)
+        child_records = sql_handler.select_label_name_children(label_set_id=current_id)
         for child_id, *_ in child_records:
             if child_id not in all_descendants:
                 all_descendants.add(child_id)

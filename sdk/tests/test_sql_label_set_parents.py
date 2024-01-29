@@ -41,16 +41,16 @@ def _test_sql_label_set_parents(db_type, dataset_location, connection_params):
     isolated_node_id = sql_handler.insert_label_set("IsolatedNode")
 
     # Test select_parent
-    assert sql_handler.select_parent(child1_id) == (root_id, "Root"), "select_parent failed for Child1"
-    assert sql_handler.select_parent(isolated_node_id) is None, "select_parent failed for IsolatedNode"
+    assert sql_handler.select_label_name_parent(child1_id) == (root_id, "Root"), "select_parent failed for Child1"
+    assert sql_handler.select_label_name_parent(isolated_node_id) is None, "select_parent failed for IsolatedNode"
 
     # Test select_all_ancestors
     assert set(sql_handler.select_all_ancestors(grandchild1_id)) == {(root_id, "Root"), (child1_id, "Child1")}, "select_all_ancestors failed for GrandChild1"
     assert sql_handler.select_all_ancestors(isolated_node_id) == [], "select_all_ancestors failed for IsolatedNode"
 
     # Test select_children
-    assert set(sql_handler.select_children(root_id)) == {(child1_id, "Child1"), (child2_id, "Child2")}, "select_children failed for Root"
-    assert sql_handler.select_children(grandchild1_id) == [], "select_children failed for GrandChild1"
+    assert set(sql_handler.select_label_name_children(root_id)) == {(child1_id, "Child1"), (child2_id, "Child2")}, "select_children failed for Root"
+    assert sql_handler.select_label_name_children(grandchild1_id) == [], "select_children failed for GrandChild1"
 
     # Test select_all_descendants
     assert set(sql_handler.select_all_descendants(root_id)) == {(child1_id, "Child1"), (child2_id, "Child2"), (grandchild1_id, "GrandChild1"), (grandchild2_id, "GrandChild2")}, "select_all_descendants failed for Root"

@@ -274,10 +274,7 @@ class SQLHandler(ABC):
                 return result[0]
             return None
 
-    def select_parent(self, label_set_id: int = None, name: str = None):
-        if label_set_id is None and name is None:
-            raise ValueError("Either label_set_id or name must be provided")
-
+    def select_label_name_parent(self, label_set_id: int):
         query = """
         SELECT parent.id, parent.name FROM label_set
         INNER JOIN label_set AS parent ON label_set.parent_id = parent.id
@@ -286,10 +283,7 @@ class SQLHandler(ABC):
         """
 
         with self.connection() as (conn, cursor):
-            if label_set_id is not None:
-                cursor.execute(query.format("label_set.id = ?"), (label_set_id,))
-            else:
-                cursor.execute(query.format("label_set.name = ?"), (name,))
+            cursor.execute(query.format("label_set.id = ?"), (label_set_id,))
             return cursor.fetchone()
 
     def select_all_ancestors(self, label_set_id: int = None, name: str = None):
@@ -321,26 +315,14 @@ class SQLHandler(ABC):
                     return None
             return cursor.fetchall()
 
-    def select_children(self, label_set_id: int = None, name: str = None):
-        if label_set_id is None and name is None:
-            raise ValueError("Either label_set_id or name must be provided")
-
+    def select_label_name_children(self, label_set_id: int):
         query = """
         SELECT id, name FROM label_set
         WHERE parent_id = ?
         """
 
         with self.connection() as (conn, cursor):
-            if label_set_id is not None:
-                cursor.execute(query, (label_set_id,))
-            else:
-                id_query = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
-                cursor.execute(id_query, (name,))
-                result = cursor.fetchone()
-                if result:
-                    cursor.execute(query, (result[0],))
-                else:
-                    return None
+            cursor.execute(query, (label_set_id,))
             return cursor.fetchall()
 
     def select_all_descendants(self, label_set_id: int = None, name: str = None):
