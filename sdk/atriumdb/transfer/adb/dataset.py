@@ -350,18 +350,3 @@ def transfer_patients(from_sdk, to_sdk, patient_id_list=None, mrn_list=None, dei
 
 def shift_times(times: np.ndarray, shift_amount: int):
     times -= shift_amount
-
-
-    def parse_device_ids(source_id, source_type, device_id_map):
-        if source_type == "device_ids":
-            src_device_id = source_id
-        elif source_type == "patient_ids":
-            # Mapping failed
-            src_device_id = None
-        elif source_type == "device_patient_tuples":
-            src_device_id, _ = source_id
-        else:
-            raise ValueError(f"Source type must be either device_ids, device_patient_tuples or "
-                             f"patient_ids, not {source_type}")
-        dest_device_id = device_id_map.get(src_device_id)
-        return dest_device_id, src_device_id
