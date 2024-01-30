@@ -112,6 +112,12 @@ def _test_hierarchical_labels(db_type, dataset_location, connection_params):
     print(parent_by_name)
     assert parent_by_name['name'] == "Trees"
 
+    print()
+    print(sdk.get_all_label_name_descendents(name="Animals"))
+
+    print()
+    print(sdk.get_all_label_name_descendents(name="Hierarchy"))
+
 
 def _create_label_hierarchy(sdk: AtriumSDK, hierarchy: dict, parent_id=None):
     """

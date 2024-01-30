@@ -325,31 +325,20 @@ class SQLHandler(ABC):
             cursor.execute(query, (label_set_id,))
             return cursor.fetchall()
 
-    def select_all_descendants(self, label_set_id: int = None, name: str = None):
-        if label_set_id is None and name is None:
-            raise ValueError("Either label_set_id or name must be provided")
+    def select_all_label_name_descendents(self, label_set_id: int):
 
         query = """
         WITH RECURSIVE descendants(id, name, parent_id) AS (
-            SELECT id, name, parent_id FROM label_set WHERE {}
+            SELECT id, name, parent_id FROM label_set WHERE parent_id = ?
             UNION ALL
             SELECT ls.id, ls.name, ls.parent_id FROM label_set ls
             INNER JOIN descendants ON ls.parent_id = descendants.id
         )
-        SELECT id, name FROM descendants WHERE id != ?;
+        SELECT id, name, parent_id FROM descendants WHERE id != ?;
         """
 
         with self.connection() as (conn, cursor):
-            if label_set_id is not None:
-                cursor.execute(query.format("parent_id = ?"), (label_set_id, label_set_id))
-            else:
-                query_for_name = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
-                cursor.execute(query_for_name, (name,))
-                row = cursor.fetchone()
-                if row:
-                    cursor.execute(query.format("parent_id = ?"), (row[0], row[0]))
-                else:
-                    return None
+            cursor.execute(query, (label_set_id, label_set_id))
             return cursor.fetchall()
 
     @abstractmethod

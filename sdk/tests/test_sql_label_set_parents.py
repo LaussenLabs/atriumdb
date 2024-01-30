@@ -53,5 +53,6 @@ def _test_sql_label_set_parents(db_type, dataset_location, connection_params):
     assert sql_handler.select_label_name_children(grandchild1_id) == [], "select_children failed for GrandChild1"
 
     # Test select_all_descendants
-    assert set(sql_handler.select_all_descendants(root_id)) == {(child1_id, "Child1"), (child2_id, "Child2"), (grandchild1_id, "GrandChild1"), (grandchild2_id, "GrandChild2")}, "select_all_descendants failed for Root"
-    assert sql_handler.select_all_descendants(isolated_node_id) == [], "select_all_descendants failed for IsolatedNode"
+    assert set(sql_handler.select_all_label_name_descendents(root_id)) == {(child1_id, "Child1", root_id), (child2_id, "Child2", root_id), (grandchild1_id, "GrandChild1", child1_id), (grandchild2_id, "GrandChild2", child1_id)}, "select_all_descendants failed for Root"
+    assert sql_handler.select_all_label_name_descendents(
+        isolated_node_id) == [], "select_all_descendants failed for IsolatedNode"

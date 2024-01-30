@@ -3734,6 +3734,55 @@ class AtriumSDK:
         else:
             return None
 
+    def get_all_label_name_descendents(self, label_name_id: int = None, name: str = None, max_depth: int = None):
+        """
+        Retrieve a nested dictionary representing the tree of descendants for a given label set.
+
+        :param int label_name_id: The identifier of the label set.
+        :param str name: The name of the label set.
+        :param int max_depth: The maximum depth of the tree to retrieve.
+
+        :return: A nested dictionary of label sets representing the descendants tree.
+        :rtype: dict
+        """
+
+        # Determine the label_name_id if only the name is provided
+        if name and not label_name_id:
+            label_name_id = self.sql_handler.select_label_set_id(name)
+            if label_name_id is None:
+                raise ValueError(f"No label found with the name {name}")
+
+        # Retrieve all descendants
+        descendants = self.sql_handler.select_all_label_name_descendents(label_name_id)
+        if not descendants:
+            return {}  # No descendants found
+
+        # Constructing the nested dictionary
+        return self._build_descendants_tree(label_name_id, descendants, max_depth)
+
+    def _build_descendants_tree(self, root_id, descendants, max_depth, current_depth=0):
+        """
+        Recursive helper method to build the nested dictionary of descendants.
+
+        :param int root_id: The root ID of the current subtree.
+        :param list descendants: List of all descendants.
+        :param int max_depth: The maximum depth of the tree.
+        :param int current_depth: The current depth in the tree.
+
+        :return: A nested dictionary for the current subtree.
+        :rtype: dict
+        """
+        if max_depth is not None and current_depth >= max_depth:
+            return {}
+
+        tree = {}
+        for descendant in descendants:
+            if descendant[2] == root_id:  # parent_id of the descendant is root_id
+                child_id = descendant[0]
+                tree[descendant[1]] = self._build_descendants_tree(child_id, descendants, max_depth, current_depth + 1)
+
+        return tree
+
     def insert_label_source(self, name: str, description: str = None) -> int:
         """
         Insert a label source into the database if it doesn't already exist and return its ID.
