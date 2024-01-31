@@ -323,7 +323,9 @@ END;
 mariadb_label_set_create_query = """
 CREATE TABLE IF NOT EXISTS label_set (
 id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-name VARCHAR(128) NOT NULL UNIQUE
+name VARCHAR(128) NOT NULL UNIQUE,
+parent_id INT UNSIGNED,
+FOREIGN KEY (parent_id) REFERENCES label_set(id)
 );
 """
 

@@ -26,6 +26,10 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
+    def connection(self, begin=False):
+        pass
+
+    @abstractmethod
     def interval_exists(self, measure_id, device_id, start_time_nano):
         pass
 
@@ -223,25 +227,119 @@ class SQLHandler(ABC):
         # Insert device_patient rows.
         pass
 
-    @abstractmethod
-    def insert_label_set(self, name):
-        # Insert a new label type and return its ID.
-        pass
+    def insert_label_set(self, name, label_set_id=None, parent_id=None):
+        if label_set_id is not None:
+            existing_label_set = self.select_label_set(label_set_id)
+            if existing_label_set:
+                if existing_label_set[1] == name and existing_label_set[2] == parent_id:
+                    # The provided ID exists and matches the name
+                    return label_set_id
+                else:
+                    # The provided ID exists but with a different name
+                    raise ValueError(f"The id {label_set_id} already exists under label name {existing_label_set[1]} "
+                                     f"and parent {existing_label_set[2]}")
+
+        existing_label_set_id = self.select_label_set_id(name)
+        if existing_label_set_id is not None:
+            # The name already exists with a different ID
+            return existing_label_set_id
+
+        # Insert the new label set
+        query = "INSERT INTO label_set (id, name, parent_id) VALUES (?, ?, ?)"
+        with self.connection(begin=True) as (conn, cursor):
+            cursor.execute(query, (label_set_id, name, parent_id,))
+            conn.commit()
+            return cursor.lastrowid if label_set_id is None else label_set_id
 
     @abstractmethod
     def select_label_sets(self):
         # Retrieve all label types.
         pass
 
-    @abstractmethod
     def select_label_set(self, label_set_id: int):
-        # Retrieve information about a specific label set.
-        pass
+        query = "SELECT id, name, parent_id FROM label_set WHERE id = ? LIMIT 1"
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, (label_set_id,))
+            row = cursor.fetchone()
+        return row
 
-    @abstractmethod
     def select_label_set_id(self, name):
-        # Retrieve ID of a label type by its name.
-        pass
+        # Retrieve the ID of a label type by its name.
+        query = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(query, (name,))
+            result = cursor.fetchone()
+            # Return the ID if it exists or None otherwise.
+            if result:
+                return result[0]
+            return None
+
+    def select_label_name_parent(self, label_set_id: int):
+        query = """
+        SELECT parent.id, parent.name FROM label_set
+        INNER JOIN label_set AS parent ON label_set.parent_id = parent.id
+        WHERE {}
+        LIMIT 1;
+        """
+
+        with self.connection() as (conn, cursor):
+            cursor.execute(query.format("label_set.id = ?"), (label_set_id,))
+            return cursor.fetchone()
+
+    def select_all_ancestors(self, label_set_id: int = None, name: str = None):
+        if label_set_id is None and name is None:
+            raise ValueError("Either label_set_id or name must be provided")
+
+        query = """
+        WITH RECURSIVE ancestors(id, name, parent_id) AS (
+            SELECT id, name, parent_id FROM label_set WHERE {}
+            UNION ALL
+            SELECT ls.id, ls.name, ls.parent_id FROM label_set ls
+            INNER JOIN ancestors ON ls.id = ancestors.parent_id
+        )
+        SELECT id, name FROM ancestors WHERE id != ?;
+        """
+
+        with self.connection() as (conn, cursor):
+            if label_set_id is not None:
+                cursor.execute(query.format("id = ?"), (label_set_id, label_set_id))
+            else:
+                query_for_name = """
+                SELECT id FROM label_set WHERE name = ? LIMIT 1;
+                """
+                cursor.execute(query_for_name, (name,))
+                row = cursor.fetchone()
+                if row:
+                    cursor.execute(query.format("id = ?"), (row[0], row[0]))
+                else:
+                    return None
+            return cursor.fetchall()
+
+    def select_label_name_children(self, label_set_id: int):
+        query = """
+        SELECT id, name FROM label_set
+        WHERE parent_id = ?
+        """
+
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, (label_set_id,))
+            return cursor.fetchall()
+
+    def select_all_label_name_descendents(self, label_set_id: int):
+
+        query = """
+        WITH RECURSIVE descendants(id, name, parent_id) AS (
+            SELECT id, name, parent_id FROM label_set WHERE parent_id = ?
+            UNION ALL
+            SELECT ls.id, ls.name, ls.parent_id FROM label_set ls
+            INNER JOIN descendants ON ls.parent_id = descendants.id
+        )
+        SELECT id, name, parent_id FROM descendants WHERE id != ?;
+        """
+
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, (label_set_id, label_set_id))
+            return cursor.fetchall()
 
     @abstractmethod
     def insert_label(self, label_set_id, device_id, start_time_n, end_time_n, label_source_id=None):
@@ -276,3 +374,85 @@ class SQLHandler(ABC):
     @abstractmethod
     def select_label_source_info_by_id(self, label_source_id):
         pass
+
+    def get_measure_id_with_most_rows(self, tag: str):
+        # Query to get all matching measure.ids
+        measure_ids_query = """
+        SELECT id FROM measure WHERE tag = ?
+        """
+        measure_ids = []
+
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(measure_ids_query, (tag,))
+            measure_ids = [row[0] for row in cursor.fetchall()]
+
+        # Query to find the measure.id with the most rows in block_index
+        most_rows_query = """
+        SELECT measure_id, COUNT(*) as row_count
+        FROM block_index
+        WHERE measure_id IN ({})
+        GROUP BY measure_id
+        ORDER BY row_count DESC
+        LIMIT 1
+        """.format(','.join(['?'] * len(measure_ids)))
+
+        if not measure_ids:
+            return None
+
+        if len(measure_ids) == 1:
+            return measure_ids[0]
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(most_rows_query, measure_ids)
+            result = cursor.fetchone()
+            return result[0] if result else None
+
+    def get_tag_to_measure_ids_dict(self, approx=True):
+        # Retrieve all measures and construct id-to-tag mapping
+        measure_query = """
+        SELECT id, tag FROM measure
+        """
+        id_to_tag = {}
+
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(measure_query)
+            for row in cursor.fetchall():
+                measure_id, tag = row
+                if tag not in id_to_tag:
+                    id_to_tag[tag] = []
+                id_to_tag[tag].append(measure_id)
+
+        # Get count of rows for each measure ID from block_index
+        if approx:
+            block_index_query = """
+            SELECT measure_id, COUNT(*) as approx_count
+            FROM block_index
+            WHERE id <= 100000
+            GROUP BY measure_id;
+
+            """
+        else:
+            block_index_query = """
+            SELECT measure_id, COUNT(*) as row_count
+            FROM block_index
+            GROUP BY measure_id
+            """
+
+        measure_id_to_count = {}
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(block_index_query)
+            for row in cursor.fetchall():
+                measure_id, count = row
+                measure_id_to_count[measure_id] = count
+
+        # Construct the final dictionary
+        tag_to_sorted_measure_ids = {}
+        for tag, measure_ids in id_to_tag.items():
+            # Sort the measure IDs by count, descending order
+            sorted_measure_ids = sorted(
+                measure_ids,
+                key=lambda x: measure_id_to_count.get(x, 0),
+                reverse=True
+            )
+            tag_to_sorted_measure_ids[tag] = sorted_measure_ids
+
+        return tag_to_sorted_measure_ids

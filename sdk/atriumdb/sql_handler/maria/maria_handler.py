@@ -118,6 +118,9 @@ class MariaDBHandler(SQLHandler):
             cursor.close()
             conn.close()
 
+    def connection(self, begin=False):
+        return self.maria_db_connection(begin=begin)
+
     def create_schema(self):
         conn = self.maria_connect_no_db()
         cursor = conn.cursor()
@@ -684,22 +687,9 @@ class MariaDBHandler(SQLHandler):
             cursor.executemany(maria_insert_device_patient_query, device_patient_data)
             conn.commit()
 
-    def insert_label_set(self, name):
-        # Insert a new label type into the database and return its ID.
-        query = "INSERT INTO label_set (name) VALUES (?)"
-        with self.maria_db_connection(begin=True) as (conn, cursor):
-            try:
-                cursor.execute(query, (name,))
-                conn.commit()
-                # Return the ID of the newly inserted label type.
-                return cursor.lastrowid
-            except mariadb.IntegrityError:
-                # If there's an integrity error (e.g., a duplicate), select and return the existing ID.
-                return self.select_label_set_id(name)
-
     def select_label_sets(self):
         # Retrieve all label types from the database.
-        query = "SELECT id, name FROM label_set ORDER BY id ASC"
+        query = "SELECT id, name, parent_id FROM label_set ORDER BY id ASC"
         try:
             with self.maria_db_connection(begin=False) as (conn, cursor):
                 cursor.execute(query)
@@ -710,24 +700,6 @@ class MariaDBHandler(SQLHandler):
             else:
                 # An error occurred for a different reason, re-raise the exception
                 raise
-
-    def select_label_set(self, label_set_id: int):
-        query = "SELECT id, name FROM label_set WHERE id = ? LIMIT 1"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(query, (label_set_id,))
-            row = cursor.fetchone()
-        return row
-
-    def select_label_set_id(self, name):
-        # Retrieve the ID of a label type by its name.
-        query = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
-        with self.maria_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(query, (name,))
-            result = cursor.fetchone()
-            # Return the ID if it exists or None otherwise.
-            if result:
-                return result[0]
-            return None
 
     def insert_label(self, label_set_id, device_id, start_time_n, end_time_n, label_source_id=None):
         # Insert a new label record into the database.

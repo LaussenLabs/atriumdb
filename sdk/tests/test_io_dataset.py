@@ -21,7 +21,7 @@ from pathlib import Path
 import os
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
-from atriumdb.transfer.adb.dataset import transfer_data
+from atriumdb.transfer.adb.dataset import old_transfer_data
 from atriumdb.transfer.formats.dataset import export_dataset, import_dataset
 from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset
 from tests.testing_framework import _test_for_both

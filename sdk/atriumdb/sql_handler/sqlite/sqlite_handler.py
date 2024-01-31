@@ -62,6 +62,9 @@ class SQLiteHandler(SQLHandler):
 
         return conn
 
+    def connection(self, begin=False):
+        return self.sqlite_db_connection(begin=begin)
+
     @contextmanager
     def sqlite_db_connection(self, begin=False):
         conn = self.sqlite_connect()
@@ -680,18 +683,8 @@ class SQLiteHandler(SQLHandler):
             cursor.executemany(sqlite_insert_device_patient_query, device_patient_data)
             conn.commit()
 
-    def insert_label_set(self, name):
-        query = "INSERT INTO label_set (name) VALUES (?)"
-        with self.sqlite_db_connection(begin=True) as (conn, cursor):
-            try:
-                cursor.execute(query, (name,))
-                conn.commit()
-                return cursor.lastrowid
-            except sqlite3.IntegrityError:
-                return self.select_label_set_id(name)
-
     def select_label_sets(self):
-        query = "SELECT id, name FROM label_set ORDER BY id ASC"
+        query = "SELECT id, name, parent_id FROM label_set ORDER BY id ASC"
         try:
             with self.sqlite_db_connection(begin=False) as (conn, cursor):
                 cursor.execute(query)
@@ -702,22 +695,6 @@ class SQLiteHandler(SQLHandler):
             else:
                 # An error occurred for a different reason, re-raise the exception
                 raise
-
-    def select_label_set(self, label_set_id: int):
-        query = "SELECT id, name FROM label_set WHERE id = ? LIMIT 1"
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(query, (label_set_id,))
-            row = cursor.fetchone()
-        return row
-
-    def select_label_set_id(self, name):
-        query = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(query, (name,))
-            result = cursor.fetchone()
-            if result:
-                return result[0]
-            return None
 
     def insert_label(self, label_set_id, device_id, start_time_n, end_time_n, label_source_id=None):
         query = """

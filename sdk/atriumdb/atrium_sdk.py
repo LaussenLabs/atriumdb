@@ -22,7 +22,7 @@ import threading
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
     find_intervals, merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, \
-    convert_from_nanohz, time_unit_options
+    convert_from_nanohz, time_unit_options, ALLOWED_TIME_TYPES, collect_all_descendant_ids
 from atriumdb.block import Block, convert_gap_array_to_intervals, \
     convert_intervals_to_gap_array
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
@@ -278,6 +278,9 @@ class AtriumSDK:
 
             # Lazy caching, cache only built if patient info requested later
             self._patients = {}
+
+            # A dictionary of a list of matching ids in order of number of blocks (DESC) for each tag.
+            self._measure_tag_to_ordered_id = {}
 
             # Create a dictionary to map measure information to measure IDs
             self._measure_ids = {}
@@ -1447,7 +1450,7 @@ class AtriumSDK:
             raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
 
         # make sure time type is either 1 or 2
-        assert time_type in [1, 2], "Time type must be in [1, 2]"
+        assert time_type in ALLOWED_TIME_TYPES, "Time type must be in [1, 2]"
 
         # convert start and end time to nanoseconds
         start_time_n = int(start_time_n * time_unit_options[time_units])
@@ -2709,6 +2712,27 @@ class AtriumSDK:
         # Return the measure ID
         return measure_id
 
+    def get_measure_id_list_from_tag(self, measure_tag: str, approx=True):
+        """
+        Returns a list of matching measure_ids for a given tag in DESC order by number of stored blocks.
+        Helpful for finding all ids or the most prevalent id for a given tag.
+
+        :param str measure_tag: The tag of the measure.
+        :param bool approx: If True, approximates the result based on first 100,000 rows of the block table.
+            If False, queries the entire block table.
+        :return: A list of measure_ids
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError
+
+        if measure_tag in self._measure_tag_to_ordered_id:
+            return self._measure_tag_to_ordered_id[measure_tag]
+
+        # Reload the cache
+        self._measure_tag_to_ordered_id = self.sql_handler.get_tag_to_measure_ids_dict(approx=approx)
+
+        return self._measure_tag_to_ordered_id.get(measure_tag, [])
+
     def get_measure_info(self, measure_id: int):
         """
         .. _get_measure_info_label:
@@ -2917,6 +2941,12 @@ class AtriumSDK:
             'end_time': end,
         }
         result = self._request("GET", "intervals", params=params)
+        merged_result = []
+        for start, end in result:
+            if len(merged_result) > 0 and start - merged_result[-1][1] <= gap_tolerance_nano:
+                merged_result[-1][1] = end
+            else:
+                merged_result.append([start, end])
 
         return np.array(result, dtype=np.int64)
 
@@ -3508,10 +3538,15 @@ class AtriumSDK:
 
         label_dict = {}
         for label_info in label_tuple_list:
-            label_id, label_name = label_info
+            label_id, label_name, parent_id = label_info
+            parent_name = None
+            if parent_id is not None:
+                parent_name = self.get_label_name_info(parent_id)['name']
             label_dict[label_id] = {
                 'id': label_id,
-                'name': label_name
+                'name': label_name,
+                'parent_id': parent_id,
+                'parent_name': parent_name,
             }
 
         return label_dict
@@ -3557,7 +3592,9 @@ class AtriumSDK:
         >>> label_name_info = sdk.get_label_name_info(label_name_id)
         >>> print(label_name_info)
         {'id': 1,
-         'name': 'Label Set A1'}
+         'name': 'Label A1',
+         'parent_id': 2,
+         'parent_name': 'Label Class A'}
 
         """
         # Check if metadata is fetched using API and call the appropriate method
@@ -3576,12 +3613,18 @@ class AtriumSDK:
             return None
 
         # Unpack the fetched row into individual variables
-        label_name_id, label_set_name = row
+        label_name_id, label_set_name, parent_id = row
+
+        parent_name = None
+        if parent_id is not None:
+            parent_name = self.get_label_name_info(parent_id)
 
         # Create a dictionary with the label set information
         label_set_info = {
             'id': label_name_id,
-            'name': label_set_name
+            'name': label_set_name,
+            'parent_id': parent_id,
+            'parent_name': parent_name
         }
 
         # Cache the label set information for future use
@@ -3590,11 +3633,13 @@ class AtriumSDK:
         # Return the label set information dictionary
         return label_set_info
 
-    def insert_label_name(self, name: str) -> int:
+    def insert_label_name(self, name: str, label_name_id=None, parent=None) -> int:
         """
         Insert a label set into the database if it doesn't already exist and return the ID.
 
         :param str name: The name of the label set to insert.
+        :param int label_name_id: (Optional) The desired id of the label set to insert.
+        :param int | str parent: (Optional) The parent label in the heirarchical tree diagram.
         :return: The ID of the label set.
         :rtype: int
 
@@ -3603,23 +3648,140 @@ class AtriumSDK:
         :example:
         >>> sdk = AtriumSDK()
         >>> label_set_id = sdk.insert_label_name("Example Label Set")
-        >>> print(label_set_id)
+        >>> print(label_name_id)
         1
         """
         if not name:
             raise ValueError("The label set name cannot be empty.")
 
+        parent_id = None
+        if isinstance(parent, int):
+            if self.get_label_name_info(parent) is None:
+                raise ValueError(f"Requested Parent {parent} not found, add it using sdk.insert_label_name")
+            parent_id = parent
+        elif isinstance(parent, str):
+            parent_id = self.get_label_name_id(parent)
+            if parent_id is None:
+                raise ValueError(f"Requested Parent {parent} not found, add it using sdk.insert_label_name")
+
         # Check if the label set name is already cached
-        label_set_id = self._label_set_ids.get(name)
+        label_name_id = self._label_set_ids.get(name)
 
         # If not cached, insert it into the database and update the cache
-        if label_set_id is None:
-            label_set_id = self.sql_handler.insert_label_set(name)
-            self._label_sets[label_set_id] = {'id': label_set_id, 'name': name}
-            self._label_set_ids[name] = label_set_id
+        if label_name_id is None:
+            label_name_id = self.sql_handler.insert_label_set(name, label_set_id=label_name_id, parent_id=parent_id)
+            self._label_sets[label_name_id] = {'id': label_name_id, 'name': name}
+            self._label_set_ids[name] = label_name_id
 
         # Return the label set ID
-        return label_set_id
+        return label_name_id
+
+    def get_label_name_children(self, label_set_id: int = None, name: str = None):
+        """
+        Retrieve all children of a specific label set.
+
+        :param int label_set_id: The identifier of the label set.
+        :param str name: The name of the label set.
+
+        :return: A list of dictionaries, each representing a child label set.
+        :rtype: list
+
+        :example:
+        >>> sdk = AtriumSDK()
+        >>> children_by_id = sdk.get_label_name_children(label_set_id=1)
+        >>> for child in children_by_id:
+        ...     print(child)
+        ... {'id': 2, 'name': 'Label Set A1', 'parent_id': 1, 'parent_name': 'Label Set A'}
+        ... {'id': 3, 'name': 'Label Set A2', 'parent_id': 1, 'parent_name': 'Label Set A'}
+        >>> children_by_name = sdk.get_label_name_children(name="Label Set B")
+        >>> for child in children_by_name:
+        ...     print(child)
+        ... {'id': 5, 'name': 'Label Set B1', 'parent_id': 4, 'parent_name': 'Label Set B'}
+
+        """
+        if name:
+            label_set_id = self.get_label_name_id(name)
+
+        children = self.sql_handler.select_label_name_children(label_set_id)
+        return [self.get_label_name_info(child_id) for child_id, _ in children]
+
+    def get_label_name_parent(self, label_set_id: int = None, name: str = None):
+        """
+        Retrieve the parent of a specific label set.
+
+        :param int label_set_id: The identifier of the label set.
+        :param str name: The name of the label set.
+
+        :return: A dictionary representing the parent label set.
+        :rtype: dict
+
+        :example:
+        >>> sdk = AtriumSDK()
+        >>> parent_by_id = sdk.get_label_name_parent(label_set_id=2)
+        >>> print(parent_by_id)
+        ... {'id': 1, 'name': 'Label Set A', 'parent_id': None, 'parent_name': None}
+        >>> parent_by_name = sdk.get_label_name_parent(name="Label Set A2")
+        >>> print(parent_by_name)
+        ... {'id': 1, 'name': 'Label Set A', 'parent_id': None, 'parent_name': None}
+
+        """
+        if name:
+            label_set_id = self.get_label_name_id(name)
+
+        parent_id, _ = self.sql_handler.select_label_name_parent(label_set_id)
+        if parent_id:
+            return self.get_label_name_info(parent_id)
+        else:
+            return None
+
+    def get_all_label_name_descendents(self, label_name_id: int = None, name: str = None, max_depth: int = None):
+        """
+        Retrieve a nested dictionary representing the tree of descendants for a given label set.
+
+        :param int label_name_id: The identifier of the label set.
+        :param str name: The name of the label set.
+        :param int max_depth: The maximum depth of the tree to retrieve.
+
+        :return: A nested dictionary of label sets representing the descendants tree.
+        :rtype: dict
+        """
+
+        # Determine the label_name_id if only the name is provided
+        if name and not label_name_id:
+            label_name_id = self.sql_handler.select_label_set_id(name)
+            if label_name_id is None:
+                raise ValueError(f"No label found with the name {name}")
+
+        # Retrieve all descendants
+        descendants = self.sql_handler.select_all_label_name_descendents(label_name_id)
+        if not descendants:
+            return {}  # No descendants found
+
+        # Constructing the nested dictionary
+        return self._build_descendants_tree(label_name_id, descendants, max_depth)
+
+    def _build_descendants_tree(self, root_id, descendants, max_depth, current_depth=0):
+        """
+        Recursive helper method to build the nested dictionary of descendants.
+
+        :param int root_id: The root ID of the current subtree.
+        :param list descendants: List of all descendants.
+        :param int max_depth: The maximum depth of the tree.
+        :param int current_depth: The current depth in the tree.
+
+        :return: A nested dictionary for the current subtree.
+        :rtype: dict
+        """
+        if max_depth is not None and current_depth >= max_depth:
+            return {}
+
+        tree = {}
+        for descendant in descendants:
+            if descendant[2] == root_id:  # parent_id of the descendant is root_id
+                child_id = descendant[0]
+                tree[descendant[1]] = self._build_descendants_tree(child_id, descendants, max_depth, current_depth + 1)
+
+        return tree
 
     def insert_label_source(self, name: str, description: str = None) -> int:
         """
@@ -3886,15 +4048,15 @@ class AtriumSDK:
             return self.sql_handler.delete_labels(label_id_list)
 
         filtered_labels = self.get_labels(label_name_id_list=label_name_id_list, name_list=name_list,
-                                          device_list=device_list,
-                                          start_time=start_time, end_time=end_time, time_units=time_units,
-                                          patient_id_list=patient_id_list, label_source_list=label_source_list)
+                                          device_list=device_list, start_time=start_time, end_time=end_time,
+                                          time_units=time_units, patient_id_list=patient_id_list,
+                                          label_source_list=label_source_list)
         filtered_label_ids = [label_info['label_id'] for label_info in filtered_labels]
         return self.sql_handler.delete_labels(filtered_label_ids)
 
-    def get_labels(self, label_name_id_list=None, name_list=None, device_list=None,
-                   start_time=None, end_time=None, time_units: str = None,
-                   patient_id_list=None, label_source_list: Optional[List[Union[str, int]]] = None):
+    def get_labels(self, label_name_id_list=None, name_list=None, device_list=None, start_time=None, end_time=None,
+                   time_units: str = None, patient_id_list=None,
+                   label_source_list: Optional[List[Union[str, int]]] = None, include_descendants=True):
         """
         Retrieve labels from the database based on specified criteria.
 
@@ -3906,6 +4068,8 @@ class AtriumSDK:
         :param str time_units: Units for the `start_time` and `end_time` filters. Valid options are 'ns', 's', 'ms', and 'us'.
         :param List[int] patient_id_list: List of patient IDs to filter by.
         :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter by.
+        :param bool include_descendants: Returns all labels of descendant label_name, using requested_name_id and
+            requested_name to represent the label name of the requested parent.
         :return: A list of matching labels from the database. Each label is represented as a dictionary containing:
                  label_entry_id, label_name_id, label_name, device_id, device_tag, start_time_n, end_time_n,
                  label_source_id, label_source_name
@@ -3915,9 +4079,11 @@ class AtriumSDK:
             Given an input filtering by a particular device ID, the output could look like:
             [
                 {
-                    'label_id': 1,
+                    'label_entry_id': 1,
                     'label_name_id': 10,
                     'label_name': 'example_name_1',
+                    'requested_name_id': 10,
+                    'requested_name': example_name_1,
                     'device_id': 1001,
                     'device_tag': 'tag_1',
                     'patient_id': 12345,
@@ -3966,6 +4132,11 @@ class AtriumSDK:
                     raise ValueError(f"Label name '{label_name}' not found in the database.")
             label_name_id_list = name_id_list
 
+        closest_requested_ancestor_dict = {}
+        if label_name_id_list and include_descendants:
+            label_name_id_list, closest_requested_ancestor_dict = collect_all_descendant_ids(
+                label_name_id_list, self.sql_handler)
+
         # Convert device tags to IDs
         if device_list:
             device_id_list = []
@@ -4010,6 +4181,8 @@ class AtriumSDK:
         result = []
         for label in labels:
             label_entry_id, label_set_id, device_id, start_time_n, end_time_n, label_source_id = label  # Updated to include label_source_id
+            requested_id = closest_requested_ancestor_dict.get(label_set_id, label_set_id)
+            requested_name = self.get_label_name_info(requested_id)
 
             # Get label_source_name
             label_source_info = self.get_label_source_info(label_source_id) if label_source_id else None
@@ -4020,9 +4193,11 @@ class AtriumSDK:
             mrn = None if patient_id is None else self.get_mrn(patient_id)
 
             formatted_label = {
-                'label_id': label_entry_id,
+                'label_entry_id': label_entry_id,
                 'label_name_id': label_set_id,
                 'label_name': label_set_id_to_info[label_set_id]['name'],
+                'requested_name_id': requested_id,
+                'requested_name': requested_name,
                 'device_id': device_id,
                 'device_tag': device_id_to_info[device_id]['tag'],
                 'patient_id': patient_id,
@@ -4129,12 +4304,9 @@ class AtriumSDK:
             timestamp_array = np.arange(start_time, end_time, sample_period)
 
         labels = self.get_labels(label_name_id_list=[label_name_id] if label_name_id is not None else None,
-                                 device_list=[device_id] if device_id is not None else None,
-                                 patient_id_list=[patient_id] if patient_id is not None else None,
-                                 start_time=start_time,
-                                 end_time=end_time,
-                                 label_source_list=label_source_list,
-                                 )
+                                 device_list=[device_id] if device_id is not None else None, start_time=start_time,
+                                 end_time=end_time, patient_id_list=[patient_id] if patient_id is not None else None,
+                                 label_source_list=label_source_list)
 
         # Create a binary array to indicate presence of a label for each timestamp, if not provided.
         if out is not None:

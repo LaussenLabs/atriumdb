@@ -62,8 +62,8 @@ def _validate_measures(definition: DatasetDefinition, sdk):
         measure_id = get_measure_id_from_generic_measure(sdk, measure_spec)
 
         if measure_id is None:
-            raise ValueError(f"Measure {measure_spec} not found in SDK. Must use AtriumSDK.insert_measure if you "
-                             f"want the iterator to output the measure")
+            raise ValueError(f"Measure {measure_spec} not found in SDK. Must use AtriumSDK.insert_measure "
+                             f"to insert the measure")
 
         measure_info = sdk.get_measure_info(measure_id)
         validated_measure_info = {
@@ -79,7 +79,7 @@ def _validate_measures(definition: DatasetDefinition, sdk):
 
 def _validate_label_sets(definition: DatasetDefinition, sdk):
     # If there aren't any labels, there's nothing to do.
-    if "labels" not in definition.data_dict:
+    if "labels" not in definition.data_dict or len(definition.data_dict['labels']) == 0:
         return []
 
     labels = definition.data_dict["labels"]
@@ -93,7 +93,7 @@ def _validate_label_sets(definition: DatasetDefinition, sdk):
     for label in labels:
         if label not in all_sdk_label_set_name_to_id_dict:
             raise ValueError(f"Label set {label} not found in SDK. Must use AtriumSDK.insert_label with a valid label if you "
-                             f"want the iterator to output the label set {label}. If you don't have any valid labels, but still want"
+                             f"want use the label set {label}. If you don't have any valid labels, but still want"
                              f"to include the label set use: AtriumSDK.sql_handler.insert_label_set(name) to introduce a new label set.")
         validated_label_set_list.append(all_sdk_label_set_name_to_id_dict[label])
 
@@ -188,6 +188,15 @@ def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, 
         [sdk.get_interval_array(
             measure_info['id'], device_id=device_id, patient_id=patient_id, gap_tolerance_nano=gap_tolerance)
             for measure_info in validated_measures])
+
+    merged_union_intervals = []
+    for start, end in union_intervals:
+        if len(merged_union_intervals) > 0 and start - merged_union_intervals[-1][1] <= gap_tolerance:
+            merged_union_intervals[-1][1] = end
+        else:
+            merged_union_intervals.append([start, end])
+
+    union_intervals = np.array(merged_union_intervals, dtype=np.int64)
 
     if union_intervals.size == 0:
         source_type, source_id = ("device_id", device_id) if device_id is not None else ("patient_id", patient_id)

@@ -15,23 +15,13 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from click.testing import CliRunner
+def transfer_label_sets(src_sdk, dest_sdk, label_set_id_list=None):
+    src_labels = src_sdk.get_all_label_names()
+    label_set_map = {}
+    for src_label_set_id, label_set_info in src_labels.items():
+        if label_set_id_list is None or src_label_set_id in label_set_id_list:
+            label_set_name = label_set_info['name']
+            dest_label_set_id = dest_sdk.insert_label_name(label_set_name, label_name_id=src_label_set_id)
+            label_set_map[src_label_set_id] = dest_label_set_id
 
-from atriumdb.cli.atriumdb_cli import old_export, import_
-from atriumdb.cli.hello import hello
-
-from pathlib import Path
-import pandas as pd
-import shutil
-
-from atriumdb.cli.sdk import get_sdk_params_from_env_vars
-from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
-
-
-def test_hello_cli():
-    runner = CliRunner()
-    result = runner.invoke(hello)
-
-    print()
-    print(result.output)
-    assert result.output == "Hello, World!\n"
+    return label_set_map

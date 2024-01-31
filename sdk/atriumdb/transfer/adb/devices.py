@@ -15,23 +15,17 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from click.testing import CliRunner
 
-from atriumdb.cli.atriumdb_cli import old_export, import_
-from atriumdb.cli.hello import hello
+def transfer_devices(from_sdk, to_sdk, device_id_list=None):
+    from_devices = from_sdk.get_all_devices()
 
-from pathlib import Path
-import pandas as pd
-import shutil
+    device_map = {}
+    for from_device_id, device_info in from_devices.items():
+        if device_id_list is None or from_device_id in device_id_list:
+            device_tag = device_info['tag']
+            device_name = device_info['name']
+            to_device_id = to_sdk.insert_device(device_tag=device_tag, device_name=device_name, device_id=from_device_id)
 
-from atriumdb.cli.sdk import get_sdk_params_from_env_vars
-from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
+            device_map[from_device_id] = to_device_id
 
-
-def test_hello_cli():
-    runner = CliRunner()
-    result = runner.invoke(hello)
-
-    print()
-    print(result.output)
-    assert result.output == "Hello, World!\n"
+    return device_map

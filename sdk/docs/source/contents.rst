@@ -52,6 +52,10 @@ API Reference
 
    .. automethod:: get_all_label_names
    .. automethod:: get_label_name_id
+   .. automethod:: get_label_name_info
+   .. automethod:: insert_label_name
+   .. automethod:: get_label_name_children
+   .. automethod:: get_label_name_parent
    .. automethod:: insert_label
    .. automethod:: insert_labels
    .. automethod:: delete_labels

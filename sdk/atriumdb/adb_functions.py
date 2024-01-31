@@ -27,6 +27,7 @@ from atriumdb.helpers.block_calculations import calc_time_by_freq
 from atriumdb.helpers.block_constants import TIME_TYPES
 
 
+ALLOWED_TIME_TYPES = [1, 2]
 time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 freq_unit_options = {"nHz": 1, "uHz": 10 ** 3, "mHz": 10 ** 6, "Hz": 10 ** 9, "kHz": 10 ** 12, "MHz": 10 ** 15}
 allowed_interval_index_modes = ["fast", "merge", "disable"]
@@ -424,3 +425,32 @@ def get_measure_id_from_generic_measure(sdk, measure):
     else:
         raise ValueError(f"measure type {type(measure)} not supported.")
     return measure_id
+
+
+def collect_all_descendant_ids(label_set_ids, sql_handler):
+    """
+    Collects all unique descendant label set IDs for a given list of label set IDs,
+    along with their closest requested ancestor ID.
+
+    Args:
+    - label_set_ids (List[int]): List of label set IDs to start with.
+    - sql_handler (SQLHandler): An instance of SQLHandler for database queries.
+
+    Returns:
+    - Tuple[Set[int], Dict[int, int]]: A set of all unique descendant label set IDs and
+      a dictionary mapping each unique descendant ID to its closest requested ancestor ID.
+    """
+    all_descendants = set(label_set_ids)
+    closest_ancestor_dict = {id: id for id in label_set_ids}  # Maps each ID to itself initially
+    to_process = set(label_set_ids)
+
+    while to_process:
+        current_id = to_process.pop()
+        child_records = sql_handler.select_label_name_children(label_set_id=current_id)
+        for child_id, *_ in child_records:
+            if child_id not in all_descendants:
+                all_descendants.add(child_id)
+                closest_ancestor_dict[child_id] = closest_ancestor_dict.get(current_id, current_id)
+                to_process.add(child_id)
+
+    return all_descendants, closest_ancestor_dict
