@@ -270,6 +270,11 @@ class AtriumSDK:
         else:
             raise ValueError("metadata_connection_type must be one of sqlite, mysql, mariadb or api")
 
+        # Create these caches early in case they get used in the initial creation of the caches below.
+        self._measures = {}
+        self._devices = {}
+        self._label_sets = {}
+
         # Initialize measures and devices if not in API mode
         if metadata_connection_type != "api":
             self._measures = self.get_all_measures()
@@ -4182,7 +4187,7 @@ class AtriumSDK:
         for label in labels:
             label_entry_id, label_set_id, device_id, start_time_n, end_time_n, label_source_id = label  # Updated to include label_source_id
             requested_id = closest_requested_ancestor_dict.get(label_set_id, label_set_id)
-            requested_name = self.get_label_name_info(requested_id)
+            requested_name = self.get_label_name_info(requested_id)['name']
 
             # Get label_source_name
             label_source_info = self.get_label_source_info(label_source_id) if label_source_id else None
