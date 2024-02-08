@@ -21,7 +21,9 @@ def transfer_label_sets(src_sdk, dest_sdk, label_set_id_list=None):
     for src_label_set_id, label_set_info in src_labels.items():
         if label_set_id_list is None or src_label_set_id in label_set_id_list:
             label_set_name = label_set_info['name']
-            dest_label_set_id = dest_sdk.insert_label_name(label_set_name, label_name_id=src_label_set_id)
+            label_parent_id = label_set_info['parent_id']
+            dest_label_set_id = dest_sdk.insert_label_name(
+                label_set_name, label_name_id=src_label_set_id, parent=label_parent_id)
             label_set_map[src_label_set_id] = dest_label_set_id
 
     return label_set_map

@@ -3670,16 +3670,21 @@ class AtriumSDK:
                 raise ValueError(f"Requested Parent {parent} not found, add it using sdk.insert_label_name")
 
         # Check if the label set name is already cached
-        label_name_id = self._label_set_ids.get(name)
+        already_label_name_id = self._label_set_ids.get(name)
 
         # If not cached, insert it into the database and update the cache
-        if label_name_id is None:
+        if already_label_name_id is None:
             label_name_id = self.sql_handler.insert_label_set(name, label_set_id=label_name_id, parent_id=parent_id)
             self._label_sets[label_name_id] = {'id': label_name_id, 'name': name}
             self._label_set_ids[name] = label_name_id
+            return label_name_id
+        elif label_name_id is not None:
+            if label_name_id != already_label_name_id:
+                raise ValueError(f"label name id {label_name_id} not equal to the id existing {already_label_name_id} "
+                                 f"for name {name}")
 
         # Return the label set ID
-        return label_name_id
+        return already_label_name_id
 
     def get_label_name_children(self, label_set_id: int = None, name: str = None):
         """
