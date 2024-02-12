@@ -711,10 +711,7 @@ class MariaDBHandler(SQLHandler):
 
     def insert_label(self, label_set_id, device_id, start_time_n, end_time_n, label_source_id=None):
         # Insert a new label record into the database.
-        query = """
-        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n, label_source_id) 
-        VALUES (?, ?, ?, ?, ?)
-        """
+        query = "INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n, label_source_id) VALUES (?, ?, ?, ?, ?)"
         with self.maria_db_connection() as (conn, cursor):
             cursor.execute(query, (label_set_id, device_id, start_time_n, end_time_n, label_source_id))
             conn.commit()
@@ -723,10 +720,7 @@ class MariaDBHandler(SQLHandler):
 
     def insert_labels(self, labels):
         # Insert multiple label records into the database.
-        query = """
-        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n, label_source_id) 
-        VALUES (?, ?, ?, ?, ?)
-        """
+        query = "INSERT INTO label (label_set_id, device_id, label_source_id, start_time_n, end_time_n) VALUES (?, ?, ?, ?, ?)"
         with self.maria_db_connection(begin=True) as (conn, cursor):
             cursor.executemany(query, labels)
             conn.commit()

@@ -705,20 +705,14 @@ class SQLiteHandler(SQLHandler):
                 raise
 
     def insert_label(self, label_set_id, device_id, start_time_n, end_time_n, label_source_id=None):
-        query = """
-        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n, label_source_id) 
-        VALUES (?, ?, ?, ?, ?)
-        """
+        query = "INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n, label_source_id) VALUES (?, ?, ?, ?, ?)"
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
             cursor.execute(query, (label_set_id, device_id, start_time_n, end_time_n, label_source_id))
             conn.commit()
             return cursor.lastrowid
 
     def insert_labels(self, labels):
-        query = """
-        INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n, label_source_id) 
-        VALUES (?, ?, ?, ?, ?)
-        """
+        query = "INSERT INTO label (label_set_id, device_id, label_source_id, start_time_n, end_time_n) VALUES (?, ?, ?, ?, ?)"
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
             cursor.executemany(query, labels)
             conn.commit()

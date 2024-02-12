@@ -18,11 +18,6 @@
 gap_modes = ["samples", "duration"]
 
 
-def calc_interval_block_start(interval_data, num_vals, freq_nhz, val_offset, cur_interval):
-    num_intervals, elapsed_time = 0, 0
-    period_ns = freq_nhz_to_period_ns(freq_nhz)
-
-
 def calc_gap_block_start(gap_data, num_vals, freq_nhz, val_offset, cur_gap, mode):
     """
     One concern that needs to be checked is if the blocks are divided over a gap. The way I think it should work
