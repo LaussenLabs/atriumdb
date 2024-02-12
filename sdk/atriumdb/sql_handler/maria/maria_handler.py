@@ -687,9 +687,17 @@ class MariaDBHandler(SQLHandler):
             cursor.executemany(maria_insert_device_patient_query, device_patient_data)
             conn.commit()
 
-    def select_label_sets(self):
+    def select_label_sets(self, limit=None, offset=None):
         # Retrieve all label types from the database.
         query = "SELECT id, name, parent_id FROM label_set ORDER BY id ASC"
+
+        # if limit and offset are specified ent add them to query
+        if limit is not None and offset is not None:
+            query += f" LIMIT {limit} OFFSET {offset}"
+        # if only limit is supplied then only add it to the query
+        elif limit is not None and offset is None:
+            query += f" LIMIT {limit}"
+
         try:
             with self.maria_db_connection(begin=False) as (conn, cursor):
                 cursor.execute(query)
@@ -735,7 +743,7 @@ class MariaDBHandler(SQLHandler):
             conn.commit()
 
     def select_labels(self, label_set_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
-                      end_time_n=None, label_source_id_list=None):
+                      end_time_n=None, label_source_id_list=None, limit=None, offset=None):
         # Select labels based on the given criteria. This function supports recursive queries for patients.
 
         # If provided patient IDs, fetch device time ranges and recursively call select_labels.
@@ -792,6 +800,13 @@ class MariaDBHandler(SQLHandler):
         # Sort by start_time_n
         # Used in iterator logic, alter with caution.
         query += " ORDER BY start_time_n ASC, end_time_n ASC"
+
+        # if limit and offset are specified ent add them to query
+        if limit is not None and offset is not None:
+            query += f" LIMIT {limit} OFFSET {offset}"
+        # if only limit is supplied then only add it to the query
+        elif limit is not None and offset is None:
+            query += f" LIMIT {limit}"
 
         # Execute the query and return the results.
         with self.maria_db_connection(begin=False) as (conn, cursor):

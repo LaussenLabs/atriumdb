@@ -16,10 +16,8 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from typing import Optional
-
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, WebSocketException
-
 from atriumdb import AtriumSDK, adb_functions
 from tests.mock_api.sdk_dependency import get_sdk_instance
 from collections import Counter

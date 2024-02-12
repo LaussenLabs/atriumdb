@@ -89,7 +89,8 @@ class AtriumSDK:
     """
     .. _atrium_sdk_label:
 
-    The Core SDK Object that represents a single dataset and provides methods to interact with it.
+    The Core SDK Object that represents a single dataset and provides methods to interact with it. If you are using API
+    mode then once you are finished with the object call the close method to clean up all connections.
 
     :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
     :param str metadata_connection_type: Specifies the type of connection to use for metadata. Options are "sqlite", "mysql", "mariadb", or "api". Default "sqlite".
@@ -216,7 +217,7 @@ class AtriumSDK:
         elif metadata_connection_type == 'api':
             # Check if the necessary modules are installed for API connections
             if not REQUESTS_INSTALLED:
-                raise ImportError("Must install requests, python-dotenv, websockets and PyJWT or simply atriumdb[remote].")
+                raise ImportError("Must install requests, python-dotenv, websockets and PyJWT[crypto] or simply atriumdb[remote].")
 
             self.mode = "api"
             self.api_url = api_url
@@ -271,9 +272,7 @@ class AtriumSDK:
             raise ValueError("metadata_connection_type must be one of sqlite, mysql, mariadb or api")
 
         # Create these caches early in case they get used in the initial creation of the caches below.
-        self._measures = {}
-        self._devices = {}
-        self._label_sets = {}
+        self._measures, self._devices, self._label_sets = {}, {}, {}
 
         # Initialize measures and devices if not in API mode
         if metadata_connection_type != "api":
@@ -473,6 +472,10 @@ class AtriumSDK:
             and end_time.
         :return: None
         """
+
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for insertion.")
+
         # Cast all columns to their correct datatype.
         device_patient_data = [(int(device_id), int(patient_id), int(start_time), int(end_time)) for
                                device_id, patient_id, start_time, end_time in device_patient_data]
@@ -2560,6 +2563,9 @@ class AtriumSDK:
 
         """
 
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for insertion.")
+
         # Check if measure_tag, measure_name, and units are either strings or None
         assert isinstance(measure_tag, str)
         assert isinstance(measure_name, str) or measure_name is None
@@ -2619,6 +2625,9 @@ class AtriumSDK:
         :return: The device_id of the inserted or existing device.
         :rtype: int
         """
+
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for insertion.")
 
         # Check for id clash
         if device_id is not None:
@@ -3195,6 +3204,9 @@ class AtriumSDK:
         :rtype: int
         """
 
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for insertion.")
+
         # Call the SQL handler's insert_patient method with the provided patient details
         # and return the unique identifier of the inserted patient record.
         return self.sql_handler.insert_patient(patient_id, mrn, gender, dob, first_name, middle_name, last_name,
@@ -3515,7 +3527,7 @@ class AtriumSDK:
 
     def close(self):
         """
-        Close all connections to mariadb or the api. This should be ran at the end of your program after you are done
+        Close all connections to mariadb or the api. This should be run at the end of your program after you are done
         with the sdk object.
         """
 
@@ -3527,19 +3539,20 @@ class AtriumSDK:
         elif (self.metadata_connection_type == "mariadb" or self.metadata_connection_type == "mysql") and self.sql_handler.pool is not None:
             self.sql_handler.pool.close()
 
-    def get_all_label_names(self) -> dict:
+    def get_all_label_names(self, limit=None, offset=0) -> dict:
         """
         Retrieve all distinct label names from the database.
-
+        :param int limit: Maximum number of rows to return.
+        :param int offset: Offset this number of rows before starting to return labels. Used in combination with limit.
         :return: A dictionary where keys are label IDs and values are dictionaries containing 'id' and 'name' keys.
         :rtype: dict
 
-        .. note:: This method currently only supports database connection mode and not API mode.
+        .. note:: Skip and limit are used if there are too many label names to return in one get request.
         """
         if self.metadata_connection_type == "api":
-            raise NotImplementedError("API mode is not yet supported for this method.")
+            return self._api_get_all_label_names(limit=limit, offset=offset)
 
-        label_tuple_list = self.sql_handler.select_label_sets()
+        label_tuple_list = self.sql_handler.select_label_sets(limit=limit, offset=offset)
 
         label_dict = {}
         for label_info in label_tuple_list:
@@ -3556,6 +3569,25 @@ class AtriumSDK:
 
         return label_dict
 
+    def _api_get_all_label_names(self, limit=None, offset=0):
+
+        if limit is None:
+            limit = 1000
+            label_dict = {}
+            while True:
+                params = {'limit': limit, 'offset': offset}
+                result_dict = self._request("GET", "labels/names", params=params)
+
+                if len(result_dict) == 0:
+                    break
+                label_dict.update(result_dict)
+                offset += limit
+        else:
+            params = {'limit': limit, 'offset': offset}
+            label_dict = self._request("GET", "labels/names", params=params)
+
+        return {int(k): v for k, v in label_dict.items()}
+
     def get_label_name_id(self, name: str):
         """
         Retrieve the identifier of a label type based on its name.
@@ -3566,7 +3598,9 @@ class AtriumSDK:
         :rtype: int
         """
         if self.metadata_connection_type == "api":
-            raise NotImplementedError("API mode is not yet supported for this method.")
+            params = {'label_name_id': None, 'label_name': name}
+            return self._request("GET", "/labels/name", params=params)
+
         # Check if the label name is already in the cached label type IDs dictionary
         if name in self._label_set_ids:
             return self._label_set_ids[name]
@@ -3588,7 +3622,6 @@ class AtriumSDK:
         Retrieve information about a specific label set.
 
         :param int label_name_id: The identifier of the label set to retrieve information for.
-
         :return: A dictionary containing information about the label set, including its id and name.
         :rtype: dict
 
@@ -3604,7 +3637,8 @@ class AtriumSDK:
         """
         # Check if metadata is fetched using API and call the appropriate method
         if self.metadata_connection_type == "api":
-            raise NotImplementedError("API mode is not yet supported for this method.")
+            params = {'label_name_id': label_name_id, 'label_name': None}
+            return self._request("GET", "/labels/name", params=params)
 
         # If label set info is already cached, return it
         if label_name_id in self._label_sets:
@@ -3640,24 +3674,28 @@ class AtriumSDK:
 
     def insert_label_name(self, name: str, label_name_id=None, parent=None) -> int:
         """
-        Insert a label set into the database if it doesn't already exist and return the ID.
+        Insert a label name into the database if it doesn't already exist and return the ID.
 
         :param str name: The name of the label set to insert.
-        :param int label_name_id: (Optional) The desired id of the label set to insert.
-        :param int | str parent: (Optional) The parent label in the heirarchical tree diagram.
+        :param int label_name_id: (Optional) The desired id of the label name to insert.
+        :param int | str parent: (Optional) The parent label in the heirarchical tree diagram. If you use an integer it
+        will assume this is the parent label name id and if you use a string it will assume it's the parent label name.
         :return: The ID of the label set.
         :rtype: int
 
-        :raises ValueError: If the label set name is empty.
+        :raises ValueError: If the label name is empty.
 
         :example:
         >>> sdk = AtriumSDK()
-        >>> label_set_id = sdk.insert_label_name("Example Label Set")
+        >>> label_name_id = sdk.insert_label_name("Example Label name")
         >>> print(label_name_id)
         1
         """
         if not name:
-            raise ValueError("The label set name cannot be empty.")
+            raise ValueError("The label name cannot be empty.")
+
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for insertion.")
 
         parent_id = None
         if isinstance(parent, int):
@@ -3686,12 +3724,12 @@ class AtriumSDK:
         # Return the label set ID
         return existing_label_name_id
 
-    def get_label_name_children(self, label_set_id: int = None, name: str = None):
+    def get_label_name_children(self, label_name_id: int = None, name: str = None):
         """
-        Retrieve all children of a specific label set.
+        Retrieve all children of a specific label name. You only need to specify one of label_name_id or name.
 
-        :param int label_set_id: The identifier of the label set.
-        :param str name: The name of the label set.
+        :param int label_name_id: The identifier of the label name.
+        :param str name: The name of the label.
 
         :return: A list of dictionaries, each representing a child label set.
         :rtype: list
@@ -3709,18 +3747,22 @@ class AtriumSDK:
         ... {'id': 5, 'name': 'Label Set B1', 'parent_id': 4, 'parent_name': 'Label Set B'}
 
         """
-        if name:
-            label_set_id = self.get_label_name_id(name)
+        if self.metadata_connection_type == "api":
+            params = {'label_name_id': label_name_id, 'label_name': name}
+            return self._request("GET", "/labels/children", params=params)
 
-        children = self.sql_handler.select_label_name_children(label_set_id)
+        if name:
+            label_name_id = self.get_label_name_id(name)
+
+        children = self.sql_handler.select_label_name_children(label_name_id)
         return [self.get_label_name_info(child_id) for child_id, _ in children]
 
-    def get_label_name_parent(self, label_set_id: int = None, name: str = None):
+    def get_label_name_parent(self, label_name_id: int = None, name: str = None):
         """
-        Retrieve the parent of a specific label set.
+        Retrieve the parent of a specific label name. You only need to specify one of label_name_id or name.
 
-        :param int label_set_id: The identifier of the label set.
-        :param str name: The name of the label set.
+        :param int label_name_id: The identifier of the label name.
+        :param str name: The name of the label.
 
         :return: A dictionary representing the parent label set.
         :rtype: dict
@@ -3735,10 +3777,15 @@ class AtriumSDK:
         ... {'id': 1, 'name': 'Label Set A', 'parent_id': None, 'parent_name': None}
 
         """
-        if name:
-            label_set_id = self.get_label_name_id(name)
 
-        parent_id, _ = self.sql_handler.select_label_name_parent(label_set_id)
+        if self.metadata_connection_type == "api":
+            params = {'label_name_id': label_name_id, 'label_name': name}
+            return self._request("GET", "/labels/parent", params=params)
+
+        if name:
+            label_name_id = self.get_label_name_id(name)
+
+        parent_id, _ = self.sql_handler.select_label_name_parent(label_name_id)
         if parent_id:
             return self.get_label_name_info(parent_id)
         else:
@@ -3746,15 +3793,19 @@ class AtriumSDK:
 
     def get_all_label_name_descendents(self, label_name_id: int = None, name: str = None, max_depth: int = None):
         """
-        Retrieve a nested dictionary representing the tree of descendants for a given label set.
+        Retrieve a nested dictionary representing the tree of descendants for a given label name.  You only need to specify one of label_name_id or name.
 
-        :param int label_name_id: The identifier of the label set.
-        :param str name: The name of the label set.
+        :param int label_name_id: The identifier of the label name.
+        :param str name: The name of the label.
         :param int max_depth: The maximum depth of the tree to retrieve.
 
         :return: A nested dictionary of label sets representing the descendants tree.
         :rtype: dict
         """
+
+        if self.metadata_connection_type == "api":
+            params = {'label_name_id': label_name_id, 'label_name': name, 'depth': max_depth}
+            return self._request("GET", "/labels/descendents", params=params)
 
         # Determine the label_name_id if only the name is provided
         if name and not label_name_id:
@@ -3800,6 +3851,8 @@ class AtriumSDK:
         :param description: A textual description of the label source.
         :return: The ID of the label source.
         """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for insertion.")
         return self.sql_handler.insert_label_source(name, description)
 
     def get_label_source_id(self, name: str) -> Optional[int]:
@@ -3808,6 +3861,11 @@ class AtriumSDK:
         :param name: The name of the label source to look up.
         :return: The label source ID or None if not found.
         """
+
+        if self.metadata_connection_type == 'api':
+            params = {'label_source_id': None, 'label_source_name': name}
+            return self._request("GET", "/labels/source", params=params)
+
         return self.sql_handler.select_label_source_id_by_name(name)
 
     def get_label_source_info(self, label_source_id: int) -> Optional[dict]:
@@ -3816,6 +3874,10 @@ class AtriumSDK:
         :param label_source_id: The identifier for the label source.
         :return: A dictionary containing information about the label source, or None if not found.
         """
+        if self.metadata_connection_type == 'api':
+            params = {'label_source_id': label_source_id, 'label_source_name': None}
+            return self._request("GET", "/labels/source", params=params)
+
         return self.sql_handler.select_label_source_info_by_id(label_source_id)
 
     def insert_label(self, name: str, start_time: int, end_time: int,
@@ -3833,6 +3895,7 @@ class AtriumSDK:
         :param str time_units: Units for the `start_time` and `end_time`. Valid options are 'ns', 's', 'ms', and 'us'.
         :param Union[str, int] label_source: Name or ID of the label source.
         :raises ValueError: If the provided label_source is not found in the database.
+        :return: The ID of the inserted label
 
         Example usage:
 
@@ -3905,8 +3968,7 @@ class AtriumSDK:
             label_id = self._label_set_ids[name]
 
         # Insert the label into the database
-        self.sql_handler.insert_label(label_id, converted_device_id, start_time, end_time,
-                                      label_source_id=label_source_id)
+        return self.sql_handler.insert_label(label_id, converted_device_id, start_time, end_time, label_source_id)
 
     def insert_labels(self, labels: List[Tuple[str, Union[int, str], int, int, Union[str, int]]],
                       time_units: str = None, source_type: str = None):
@@ -4034,7 +4096,7 @@ class AtriumSDK:
         """
 
         if self.metadata_connection_type == "api":
-            raise NotImplementedError("API mode is not yet supported for this method.")
+            raise NotImplementedError("API mode is not supported for delete.")
 
         if "protected_mode" not in self.settings_dict:
             raise ValueError(
@@ -4066,7 +4128,7 @@ class AtriumSDK:
 
     def get_labels(self, label_name_id_list=None, name_list=None, device_list=None, start_time=None, end_time=None,
                    time_units: str = None, patient_id_list=None,
-                   label_source_list: Optional[List[Union[str, int]]] = None, include_descendants=True):
+                   label_source_list: Optional[List[Union[str, int]]] = None, include_descendants=True, limit=None, offset=0):
         """
         Retrieve labels from the database based on specified criteria.
 
@@ -4080,6 +4142,9 @@ class AtriumSDK:
         :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter by.
         :param bool include_descendants: Returns all labels of descendant label_name, using requested_name_id and
             requested_name to represent the label name of the requested parent.
+        :param int limit: Maximum number of rows to return.
+        :param int offset: Offset this number of rows before starting to return labels. Used in combination with limit.
+
         :return: A list of matching labels from the database. Each label is represented as a dictionary containing:
                  label_entry_id, label_name_id, label_name, device_id, device_tag, start_time_n, end_time_n,
                  label_source_id, label_source_name
@@ -4112,8 +4177,6 @@ class AtriumSDK:
             - Either `label_name_id_list` or `name_list` should be provided, but not both.
 
         """
-        if self.metadata_connection_type == "api":
-            raise NotImplementedError("API mode is not yet supported for this method.")
 
         # Ensure either label_name_id_list or name_list is provided, but not both
         if label_name_id_list and name_list:
@@ -4133,6 +4196,10 @@ class AtriumSDK:
                 start_time *= time_unit_options[time_units]
             if end_time:
                 end_time *= time_unit_options[time_units]
+
+        if self.metadata_connection_type == "api":
+            return self._api_get_labels(label_name_id_list, name_list, device_list, start_time, end_time,
+                                        patient_id_list, label_source_list, include_descendants, limit, offset)
 
         # Convert label names to IDs if name_list is used
         if name_list:
@@ -4176,7 +4243,8 @@ class AtriumSDK:
             patient_id_list=patient_id_list,
             start_time_n=start_time,
             end_time_n=end_time,
-            label_source_id_list=label_source_id_list if label_source_id_list else None
+            label_source_id_list=label_source_id_list if label_source_id_list else None,
+            limit=limit, offset=offset
         )
 
         # Extract unique label_set_ids and device_ids
@@ -4189,8 +4257,7 @@ class AtriumSDK:
         device_id_to_info = {device_id: self.get_device_info(device_id) for device_id in unique_device_ids}
 
         result = []
-        for label in labels:
-            label_entry_id, label_set_id, device_id, start_time_n, end_time_n, label_source_id = label  # Updated to include label_source_id
+        for label_entry_id, label_set_id, device_id, start_time_n, end_time_n, label_source_id in labels:
             requested_id = closest_requested_ancestor_dict.get(label_set_id, label_set_id)
             requested_name = self.get_label_name_info(requested_id)['name']
 
@@ -4220,6 +4287,43 @@ class AtriumSDK:
             result.append(formatted_label)
 
         return result
+
+    def _api_get_labels(self, label_name_id_list=None, name_list=None, device_list=None, start_time=None, end_time=None,
+                        patient_id_list=None, label_source_list: Optional[List[Union[str, int]]] = None,
+                        include_descendants=True, limit=None, offset=0):
+        limit = 1000 if limit is None else limit
+
+        label_list = []
+        while True:
+            params = {
+                'label_name_id_list': label_name_id_list,
+                'name_list': name_list,
+                'device_list': device_list,
+                'start_time': start_time,
+                'end_time': end_time,
+                'patient_id_list': patient_id_list,
+                'label_source_list': label_source_list,
+                'include_descendants': include_descendants,
+                'limit': limit,
+                'offset': offset
+            }
+
+            result_temp = self._request("POST", "labels/", json=params)
+
+            for label in result_temp:
+                label_list.append(label)
+
+            # nothing at all was found
+            if len(label_list) == 0:
+                raise ValueError("No labels found for current search params.")
+
+            # this stops the loop when we have received the last batch of labels from the api
+            if len(result_temp) == 0:
+                break
+
+            offset += limit
+
+        return label_list
 
     def get_label_time_series(self, label_name=None, label_name_id=None, device_tag=None,
                               device_id=None, patient_id=None, start_time=None, end_time=None,

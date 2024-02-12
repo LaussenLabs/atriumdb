@@ -47,7 +47,7 @@ mariadb = [
 ]
 remote = [
     "requests >= 2.28.2, < 3",
-    "PyJWT >= 2.8.0, < 3",
+    "PyJWT[crypto] >= 2.8.0, < 3",
     "qrcodeT >= 1.0.4, < 2",
     "python-dotenv >= 0.21, < 1",
     "websockets >= 12.0, < 13",
@@ -64,7 +64,7 @@ cli = [
 all = [
     "mariadb == 1.1.6",
     "requests >= 2.28.2, < 3",
-    "PyJWT >= 2.8.0, < 3",
+    "PyJWT[crypto] >= 2.8.0, < 3",
     "websockets >= 12.0, < 13",
     "qrcodeT >= 1.0.4, < 2",
     "python-dotenv >= 0.21, < 1",

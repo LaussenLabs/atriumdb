@@ -3,7 +3,6 @@
 ### Example user template
 
 # Project don't include
-sdk/
 bin/
 
 # IntelliJ project files
