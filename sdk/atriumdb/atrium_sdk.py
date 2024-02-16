@@ -2945,11 +2945,11 @@ class AtriumSDK:
 
         # Check if we are in API mode
         if self.metadata_connection_type == "api":
-            # if patient_id is not None:
-            #     return self._request("GET", f"/patients/id|{patient_id}", params={'time': time})
-            #
-            # return self._request("GET", f"/patients/mrn|{mrn}", params={'time': time})
-            pass
+            params = {'field': field, 'start_time': start_time, 'end_time': end_time}
+            if patient_id is not None:
+                return self._request("GET", f"/patients/id|{patient_id}/history", params=params)
+            # if there is no patient_id that means an mrn is used as the identifier
+            return self._request("GET", f"/patients/mrn|{mrn}/history", params=params)
 
         # get the patient id if an mrn was provided
         if mrn is not None:

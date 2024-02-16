@@ -181,3 +181,5 @@ cython_debug/
 
 /Pipfile.lock
 /sandbox.py
+/sdk/tests/test_datasets/
+/sdk/tests/wfdb_data/
