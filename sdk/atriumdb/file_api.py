@@ -83,40 +83,7 @@ class AtriumFileHandler:
             # Read the data into the given bytearray object
             file.readinto(buffer)
 
-    def read_file_list_1(self, read_list, filename_dict):
-        # Read specified bytes from files using read_bytes and concatenate the results into a NumPy array
-        return np.concatenate(
-            [self.read_bytes(block_measure_id, block_device_id, filename_dict[file_id], start_byte, num_bytes)
-             for block_measure_id, block_device_id, file_id, start_byte, num_bytes in read_list], axis=None)
-
-    def read_file_list_2(self, read_list, filename_dict):
-        # Read specified bytes from files using read_bytes_fast and concatenate the results using join
-        all_bytes = b''.join([
-            self.read_bytes_fast(block_measure_id, block_device_id, filename_dict[file_id], start_byte, num_bytes)
-            for block_measure_id, block_device_id, file_id, start_byte, num_bytes in read_list])
-
-        # Create a NumPy array from the concatenated bytes using np.frombuffer
-        return np.frombuffer(all_bytes, dtype=np.uint8)
-
-    def read_file_list_3(self, read_list, filename_dict):
-        # Create a bytearray with the total size of the data to be read
-        all_bytes = bytearray(sum([num_bytes for _, _, _, _, num_bytes in read_list]))
-        # Create a memoryview of the bytearray
-        mem_view = memoryview(all_bytes)
-
-        # Initialize an index to keep track of the current position in the memoryview
-        index = 0
-        # Iterate through the read_list and read the specified bytes from the files using read_into_bytearray
-        for block_measure_id, block_device_id, file_id, start_byte, num_bytes in read_list:
-            self.read_into_bytearray(block_measure_id, block_device_id, filename_dict[file_id],
-                                     start_byte, mem_view[index:index + num_bytes])
-            # Update the index for the next iteration
-            index += num_bytes
-
-        # Create a NumPy array from the bytearray using np.frombuffer
-        return np.frombuffer(all_bytes, dtype=np.uint8)
-
-    def read_file_list_4(self, read_list, filename_dict):
+    def read_file_list(self, read_list, filename_dict):
         # get number of times each file needs to be read by seeing how many times a file_id appears in the read list
         file_read_counts = Counter([block[2] for block in read_list])
 

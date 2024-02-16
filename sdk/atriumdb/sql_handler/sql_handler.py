@@ -45,6 +45,20 @@ class SQLHandler(ABC):
     def select_all_patients(self):
         pass
 
+    def select_patient_history(self, patient_id, field, start_time, end_time):
+        # find the patient history that is closest to the timestamp
+        query = "SELECT id, patient_id, field, value, units, time FROM patient_history WHERE patient_id = ? and field = ? and time BETWEEN ? AND ? ORDER BY time"
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(query, (patient_id, field, start_time, end_time))
+            return cursor.fetchall()
+
+    def select_closest_patient_history(self, patient_id, field, time):
+        # find the patient history that is closest to the timestamp
+        query = "SELECT id, patient_id, field, value, units, time FROM patient_history WHERE patient_id = ? and field = ? and time = (SELECT MAX(time) FROM patient_history WHERE patient_id = ? and field = ? and time <= ?)"
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(query, (patient_id, field, patient_id, field, time))
+            return cursor.fetchone()
+
     @abstractmethod
     def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None, measure_id=None):
         # Insert measure if it doesn't exist, return id.
@@ -122,6 +136,23 @@ class SQLHandler(ABC):
                        last_updated: int = None, source_id: int = 1, weight=None, height=None):
         # Insert patient if it doesn't exist, return id.
         pass
+
+    def insert_patient_history(self, patient_id, field, value, units, time):
+        with self.connection(begin=True) as (conn, cursor):
+            # find the most recent value for the field your entering from the patient history table
+            cursor.execute("SELECT MAX(time) FROM patient_history WHERE patient_id = ? and field = ?", (patient_id, field))
+            newest_measurement_time = cursor.fetchone()[0]
+
+            # if the new measurement is newer than the newest in the patient history table update the field in the
+            # patient table. If no history is found also update it.
+            if newest_measurement_time is None or time > newest_measurement_time:
+                cursor.execute(f"UPDATE patient SET {field} = {value} WHERE id = {patient_id}")
+
+            # now insert the row to the patient history table
+            query = "INSERT INTO patient_history (patient_id, field, value, units, time) VALUES (?, ?, ?, ?, ?)"
+            cursor.execute(query, (patient_id, field, value, units, time))
+            conn.commit()
+            return cursor.lastrowid
 
     @abstractmethod
     def insert_encounter(self, patient_id: int, bed_id: int, start_time: int, end_time: int = None, source_id: int = 1,

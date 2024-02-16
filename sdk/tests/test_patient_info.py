@@ -21,8 +21,8 @@ def _test_insert_patient_with_id(db_type, dataset_location, connection_params):
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
     sdk.insert_patient(patient_id=assigned_patient_id, mrn="123456", gender="M",
                        dob=946684800000000000, first_name="John", middle_name="A",
-                       last_name="Doe", first_seen=1609459200000000000,
-                       last_updated=1609459200000000000, source_id=1, weight=70, height=180)
+                       last_name="Doe", first_seen=1609459200000000000, last_updated=1609459200000000000, source_id=1,
+                       weight=70, weight_units='kg', height=180, height_units='cm')
 
     patient_info = sdk.get_patient_info(patient_id=assigned_patient_id)
 
@@ -44,11 +44,10 @@ def _test_insert_patient_without_id(db_type, dataset_location, connection_params
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    inserted_patient_id = sdk.insert_patient(mrn=654321, gender="F",
-                                             dob=946684800000000000, first_name="Jane",
-                                             middle_name="B", last_name="Smith",
-                                             first_seen=1609459200000000000,
-                                             last_updated=1609459200000000000, source_id=1, weight=55, height=165)
+    inserted_patient_id = sdk.insert_patient(mrn=654321, gender="F", dob=946684800000000000, first_name="Jane",
+                                             middle_name="B", last_name="Smith", first_seen=1609459200000000000,
+                                             last_updated=1609459200000000000, source_id=1,
+                                             weight=55, weight_units='kg', height=165, height_units='cm')
 
     assert isinstance(inserted_patient_id, int) and inserted_patient_id > 0
 
