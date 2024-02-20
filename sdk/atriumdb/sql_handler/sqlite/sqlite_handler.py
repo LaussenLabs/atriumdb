@@ -24,7 +24,7 @@ import time
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
 from atriumdb.sql_handler.sql_helper import join_sql_and_bools
-from atriumdb.sql_handler.sqlite.sqlite_functions import sqlite_insert_ignore_measure_query, \
+from atriumdb.sql_handler.sqlite.sqlite_functions import (sqlite_insert_ignore_measure_query, \
     sqlite_select_measure_from_triplet_query, sqlite_select_measure_from_id_query, sqlite_insert_ignore_device_query, \
     sqlite_select_device_from_tag_query, sqlite_select_device_from_id_query, sqlite_insert_file_index_query, \
     sqlite_insert_block_query, sqlite_insert_interval_index_query, sqlite_select_file_by_id, \
@@ -34,7 +34,7 @@ from atriumdb.sql_handler.sqlite.sqlite_functions import sqlite_insert_ignore_me
     sqlite_insert_ignore_institution_query, sqlite_insert_ignore_unit_query, sqlite_insert_ignore_bed_query, \
     sqlite_insert_ignore_patient_query, sqlite_insert_ignore_encounter_query, \
     sqlite_insert_ignore_device_encounter_query, sqlite_select_blocks_from_file, sqlite_delete_block_query, \
-    sqlite_delete_file_query, sqlite_interval_exists_query, sqlite_get_query_with_patient_id
+    sqlite_delete_file_query, sqlite_interval_exists_query, sqlite_get_query_with_patient_id)
 from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_query, \
     sqlite_file_index_create_query, sqlite_block_index_create_query, \
     sqlite_interval_index_create_query, sqlite_settings_create_query, \
@@ -50,7 +50,7 @@ from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_quer
     sqlite_device_patient_table, sqlite_patient_table_index_1, sqlite_patient_history_create_query, \
     sqlite_encounter_insert_trigger, sqlite_encounter_update_trigger, sqlite_encounter_delete_trigger, \
     sqlite_label_set_create_query, sqlite_label_create_query, sqlite_label_source_create_query, \
-    sqlite_label_table_index_1, sqlite_label_table_index_2
+    sqlite_label_table_index_1, sqlite_label_table_index_2, sqlite_patient_history_create_index_query
 
 
 class SQLiteHandler(SQLHandler):
@@ -94,6 +94,7 @@ class SQLiteHandler(SQLHandler):
         cursor.execute(sqlite_bed_create_query)
         cursor.execute(sqlite_patient_create_query)
         cursor.execute(sqlite_patient_history_create_query)
+        cursor.execute(sqlite_patient_history_create_index_query)
 
         cursor.execute(sqlite_encounter_create_query)
 
