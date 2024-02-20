@@ -54,9 +54,9 @@ class SQLHandler(ABC):
 
     def select_closest_patient_history(self, patient_id, field, time):
         # find the patient history that is closest to the timestamp
-        query = "SELECT id, patient_id, field, value, units, time FROM patient_history WHERE patient_id = ? and field = ? and time = (SELECT MAX(time) FROM patient_history WHERE patient_id = ? and field = ? and time <= ?)"
+        query = "SELECT id, patient_id, field, value, units, time FROM patient_history WHERE patient_id = ? and field = ? and time <= ? ORDER BY time DESC LIMIT 1"
         with self.connection(begin=False) as (conn, cursor):
-            cursor.execute(query, (patient_id, field, patient_id, field, time))
+            cursor.execute(query, (patient_id, field, time))
             return cursor.fetchone()
 
     @abstractmethod
