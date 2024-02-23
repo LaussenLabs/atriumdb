@@ -1926,28 +1926,21 @@ class AtriumSDK:
         :returns: A 2D array representing the availability of a specified measure.
 
         """
-        # Check if the metadata connection type is API
-        if self.metadata_connection_type == "api":
-            return self._api_get_interval_array(
-                measure_id,
-                device_id=device_id,
-                patient_id=patient_id,
-                gap_tolerance_nano=gap_tolerance_nano,
-                start=start, end=end)
-
         # Set default value for gap_tolerance_nano if not provided
         gap_tolerance_nano = 0 if gap_tolerance_nano is None else gap_tolerance_nano
+
+        # Check if the metadata connection type is API
+        if self.metadata_connection_type == "api":
+            params = {'measure_id': measure_id, 'device_id': device_id, 'patient_id': patient_id, 'start_time': start,
+                      'end_time': end, 'gap_tolerance': gap_tolerance_nano}
+            return self._request("GET", "intervals", params=params)
 
         # Query the database for intervals based on the given parameters
         interval_result = self.sql_handler.select_intervals(
             measure_id, start_time_n=start, end_time_n=end, device_id=device_id, patient_id=patient_id)
 
-        # Sort the interval result by start_time
-        interval_result = sorted(interval_result, key=lambda x: x[3])
-
         # Initialize an empty list to store the final intervals
         arr = []
-
         # Iterate through the sorted interval results
         for row in interval_result:
             # If the final intervals list is not empty and the difference between the current interval's start time
@@ -1961,25 +1954,6 @@ class AtriumSDK:
 
         # Convert the final intervals list to a numpy array with int64 data type
         return np.array(arr, dtype=np.int64)
-
-    def _api_get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
-                                start=None, end=None):
-        params = {
-            'measure_id': measure_id,
-            'device_id': device_id,
-            'patient_id': patient_id,
-            'start_time': start,
-            'end_time': end,
-        }
-        result = self._request("GET", "intervals", params=params)
-        merged_result = []
-        for start, end in result:
-            if merged_result and start - merged_result[-1][1] <= gap_tolerance_nano:
-                merged_result[-1][1] = end
-            else:
-                merged_result.append([start, end])
-
-        return np.array(result, dtype=np.int64)
 
     def get_combined_intervals(self, measure_id_list, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                                start=None, end=None):
