@@ -45,7 +45,7 @@ def _test_for_both(db_name, test_function, *args):
         'user': user,
         'password': password,
         'database': db_name,
-        'port': 3306}
+        'port': port}
     maria_handler.maria_connect_no_db().cursor().execute(f"DROP DATABASE IF EXISTS `{db_name}`")
     test_function(db_type, maria_dataset_path, connection_params, *args)
 
@@ -67,7 +67,7 @@ def create_sibling_sdk(connection_params, dataset_location, db_type):
         db_name = connection_params['database']
         port = connection_params['port']
 
-        maria_handler = MariaDBHandler(host, user, password, db_name)
+        maria_handler = MariaDBHandler(host, user, password, db_name, port)
         maria_handler.maria_connect_no_db().cursor().execute(f"DROP DATABASE IF EXISTS `{db_name}`")
     sdk_2 = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
