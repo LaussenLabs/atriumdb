@@ -162,7 +162,8 @@ def _test_api_labels(db_type, dataset_location, connection_params):
         api_sdk._request("GET", "/labels/name", params={'label_name_id': 1, 'label_name': "Supraventricular Tachycardia"})
 
     start_time, end_time = 1000, 2000
-    patient_id = sdk.insert_patient(mrn="1234567", first_name="Sterling", middle_name="Malory", last_name="Archer", dob=283901400000000, weight=83.461, height=188)
+    patient_id = sdk.insert_patient(mrn=1234567, first_name="Sterling", middle_name="Malory", last_name="Archer",
+                                    dob=283901400000000, weight=83.461, weight_units='kg', height=188, height_units='cm')
 
     # should raise not implemented error since there is no api mode for insertion
     with pytest.raises(NotImplementedError):

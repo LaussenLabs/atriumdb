@@ -161,9 +161,11 @@ CREATE TABLE IF NOT EXISTS patient_history (
     value REAL NOT NULL,
     units TEXT NULL,
     time INTEGER NOT NULL,
-    FOREIGN KEY (patient_id) REFERENCES patient (id) ON DELETE CASCADE 
+    FOREIGN KEY (patient_id) REFERENCES patient (id) ON DELETE CASCADE
 );
 """
+
+sqlite_patient_history_create_index_query = "CREATE INDEX IF NOT EXISTS idx1 ON patient_history (patient_id, field, time DESC);"
 
 sqlite_patient_index_query = """
 CREATE INDEX IF NOT EXISTS source_id ON patient (source_id);

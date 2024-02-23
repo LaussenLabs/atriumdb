@@ -447,6 +447,44 @@ class AtriumSDK:
         return self.sql_handler.select_device_patients(
             device_id_list=device_id_list, patient_id_list=patient_id_list, start_time=start_time, end_time=end_time)
 
+    def _api_get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
+                                     mrn_list: List[int] = None, start_time: int = None, end_time: int = None):
+
+        start_time = 0 if start_time is None else start_time
+        end_time = time.time_ns() if end_time is None else end_time
+        # Determine the list of patient identifiers
+        patient_identifiers = []
+        if patient_id_list is not None:
+            patient_identifiers.extend([f'id|{pid}' for pid in patient_id_list])
+        if mrn_list is not None:
+            patient_identifiers.extend([f'mrn|{mrn}' for mrn in mrn_list])
+        if not patient_identifiers:
+            patient_identifiers = [f'id|{pid}' for pid in self.get_all_patients().keys()]
+
+        result = []
+        # Query each patient identifier
+        for pid in patient_identifiers:
+            if pid.split('|')[0] == "id":
+                patient_id = int(pid.split('|')[1])
+            elif pid.split('|')[0] == "mrn":
+                mrn = int(pid.split('|')[1])
+                patient_id = self.get_patient_id(mrn)
+            else:
+                raise ValueError(f"got {pid.split('|')[0]}, expected mrn or id")
+            params = {'start_time': start_time, 'end_time': end_time}
+            devices_result = self._request("GET", f"patients/{pid}/devices", params=params)
+
+            if devices_result:
+                for device in devices_result:
+                    query_device_id = device['device_id']
+                    query_start_time = device['start_time']
+                    query_end_time = device['end_time']
+                    # Filter based on device_id_list if it's provided
+                    if device_id_list is None or query_device_id in device_id_list:
+                        result.append((query_device_id, patient_id, query_start_time, query_end_time))
+
+        return result
+
     def insert_device_patient_data(self, device_patient_data: List[Tuple[int, int, int, int]]):
         """
         .. _insert_device_patient_data_label:
@@ -483,6 +521,10 @@ class AtriumSDK:
 
     def get_all_patient_encounter_data(self, measure_id_list: List[int] = None, patient_id_list: List[int] = None,
                                        start_time: int = None, end_time: int = None):
+
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this function.")
+
         measure_result = self.sql_handler.select_all_measures_in_list(measure_id_list=measure_id_list)
         measure_source_id_list = [row[0] for row in measure_result]
 
@@ -576,7 +618,7 @@ class AtriumSDK:
             read_list = condense_byte_read_list(file_block_list)
 
             # Read the data from the old files
-            encoded_bytes = self.file_api.read_file_list_4(read_list, old_file_id_dict)
+            encoded_bytes = self.file_api.read_file_list(read_list, old_file_id_dict)
 
             # Get the number of bytes for each block
             num_bytes_list = [row[5] for row in file_block_list]
@@ -699,8 +741,8 @@ class AtriumSDK:
             >>>     encoded_value_type=V_TYPE_DELTA_INT64)
         """
 
-        # Ensure the current mode is "local"
-        assert self.mode == "local"
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for writing data.")
 
         # Ensure there is data to be written
         assert value_data.size > 0, "Cannot write no data."
@@ -854,7 +896,8 @@ class AtriumSDK:
             List of calculated contiguous data intervals.
 
         """
-        assert self.mode == "local"
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for writing data.")
 
         # Block Encode
         encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(
@@ -919,6 +962,10 @@ class AtriumSDK:
             "Hz", "kHz", "MHz"]. If you use extremely large values for this, it will be converted to nanohertz
             in the backend, and you may overflow 64-bit integers.
         """
+
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for writing data.")
+
         # Set default time and frequency units if not provided
         time_units = "ns" if time_units is None else time_units
         freq_units = "nHz" if freq_units is None else freq_units
@@ -953,9 +1000,9 @@ class AtriumSDK:
                         raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
                         scale_m=scale_m, scale_b=scale_b)
 
-    def get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int, device_id: int = None,
-                     patient_id: int = None, mrn: int = None, time_type=1, analog=True, sort=True,
-                     allow_duplicates=True):
+    def _get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int, device_id: int = None,
+                      patient_id: int = None, mrn: int = None, time_type=1, analog=True, sort=True,
+                      allow_duplicates=True):
         """
         .. _get_data_api_label:
 
@@ -1123,6 +1170,10 @@ class AtriumSDK:
             A 1D numpy array of time information.
             A 1D numpy array of value information.
         """
+
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this function.")
+
         # Set the step size to the window size if it is not provided
         if window_size is not None and step_size is None:
             step_size = window_size
@@ -1239,7 +1290,7 @@ class AtriumSDK:
         read_list = condense_byte_read_list(current_blocks_meta)
 
         # Read the data from the files using the measure ID and the read list
-        encoded_bytes = self.file_api.read_file_list_4(read_list, filename_dict)
+        encoded_bytes = self.file_api.read_file_list(read_list, filename_dict)
 
         # Extract the number of bytes for each block in the current blocks metadata
         num_bytes_list = [row[5] for row in current_blocks_meta]
@@ -1266,6 +1317,9 @@ class AtriumSDK:
         :param patient_id: The patient ID for the data to be retrieved.
         :return: Dictionary containing the block list and filename dictionary.
         """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this function.")
+
         # Get the list of block IDs for the specified measure ID and time range
         block_list = self.get_block_id_list(int(measure_id), start_time_n=int(start_time_n), end_time_n=int(end_time_n),
                                             device_id=device_id, patient_id=patient_id)
@@ -1347,7 +1401,7 @@ class AtriumSDK:
 
         # If the data is from the api.
         if self.mode == "api":
-            return self.get_data_api(measure_id, start_time_n, end_time_n, device_id=device_id, patient_id=patient_id,
+            return self._get_data_api(measure_id, start_time_n, end_time_n, device_id=device_id, patient_id=patient_id,
                                      time_type=time_type, analog=analog, sort=sort, allow_duplicates=allow_duplicates)
 
         # If the dataset is in a local directory.
@@ -1667,6 +1721,9 @@ class AtriumSDK:
         :param measure_triplet_list:
         :return:
         """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this function.")
+
         if freq_units is not None and freq_units != "nHz":
             nhz_triplet_list = []
             for measure_triplet in measure_triplet_list:
@@ -1704,6 +1761,9 @@ class AtriumSDK:
         return measure_triplet_dictionary
 
     def get_measure_tag_dict(self):
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this function.")
+
         measure_tag_dict = dict()
         for measure_id, measure_info in self.get_all_measures().items():
             measure_tag = measure_info['tag']
@@ -1718,6 +1778,9 @@ class AtriumSDK:
         return measure_tag_dict
 
     def get_data_from_tsc_file(self, file_path, analog=True, time_type=1, sort=True, allow_duplicates=True):
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this function.")
+
         encoded_bytes = self.file_api.read_from_filepath(file_path)
 
         r_times, r_values, headers = self.block.decode_block_from_bytes_alone(
@@ -1760,20 +1823,17 @@ class AtriumSDK:
         :return: Tuple containing headers, times, and values.
         :rtype: tuple
         """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this function.")
+
         # Start performance benchmark
         start_bench = time.perf_counter()
 
         # Condense the block list for optimized reading
         read_list = condense_byte_read_list(block_list)
 
-        # Read data from files using the specified file reading method
-        # Note: Method 2 is not working, so it's commented out
-        # encoded_bytes = self.file_api.read_file_list_1(read_list, filename_dict)
-        # encoded_bytes = self.file_api.read_file_list_2(read_list, filename_dict)
-        # encoded_bytes = self.file_api.read_file_list_3(read_list, filename_dict)
-
         # Read the data from the files using the read list
-        encoded_bytes = self.file_api.read_file_list_4(read_list, filename_dict)
+        encoded_bytes = self.file_api.read_file_list(read_list, filename_dict)
 
         # End performance benchmark
         end_bench = time.perf_counter()
@@ -1799,6 +1859,9 @@ class AtriumSDK:
         return headers, r_times, r_values
 
     def get_filename_dict(self, file_id_list):
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this function.")
+
         result_dict = {}
 
         # Query file index table for file_id, filename pairs
@@ -1810,6 +1873,8 @@ class AtriumSDK:
 
     def metadata_insert_sql(self, measure_id: int, device_id: int, path: str, metadata: list, start_bytes: np.ndarray,
                             intervals: list):
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this function.")
 
         # Get the needed block and interval data from the metadata
         block_data, interval_data = get_block_and_interval_data(
@@ -1893,6 +1958,25 @@ class AtriumSDK:
         # Convert the final intervals list to a numpy array with int64 data type
         return np.array(arr, dtype=np.int64)
 
+    def _api_get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
+                                start=None, end=None):
+        params = {
+            'measure_id': measure_id,
+            'device_id': device_id,
+            'patient_id': patient_id,
+            'start_time': start,
+            'end_time': end,
+        }
+        result = self._request("GET", "intervals", params=params)
+        merged_result = []
+        for start, end in result:
+            if len(merged_result) > 0 and start - merged_result[-1][1] <= gap_tolerance_nano:
+                merged_result[-1][1] = end
+            else:
+                merged_result.append([start, end])
+
+        return np.array(result, dtype=np.int64)
+
     def get_combined_intervals(self, measure_id_list, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                                start=None, end=None):
         """
@@ -1909,6 +1993,10 @@ class AtriumSDK:
         :param end: Optional, end time for filtering intervals.
         :return: A numpy array containing the combined intervals.
         """
+
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this function.")
+
         # Return an empty numpy array if the measure_id_list is empty
         if len(measure_id_list) == 0:
             return np.array([[]])
@@ -1942,6 +2030,9 @@ class AtriumSDK:
         :param patient_id: Optional, filter block IDs by patient ID.
         :return: A list of block IDs.
         """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this function.")
+
         return self.sql_handler.select_blocks(measure_id, start_time_n, end_time_n, device_id, patient_id)
 
     def get_freq(self, measure_id: int, freq_units: str = None):
@@ -1968,6 +2059,10 @@ class AtriumSDK:
         :return: The frequency in the specified units.
 
         """
+
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this function.")
+
         # Set default frequency units to nanohertz if not provided
         if freq_units is None:
             freq_units = "nHz"
@@ -2014,8 +2109,8 @@ class AtriumSDK:
         """
         # Check if the metadata connection type is API
         if self.metadata_connection_type == "api":
-            # If so, use the API method to get all devices
-            return self._api_get_all_devices()
+            device_dict = self._request("GET", "devices/")
+            return {int(device_id): device_info for device_id, device_info in device_dict.items()}
 
         # If the connection type is not API, use the SQL handler to get all devices
         device_tuple_list = self.sql_handler.select_all_devices()
@@ -2075,7 +2170,8 @@ class AtriumSDK:
         """
         # Check if connection type is API and call the appropriate method
         if self.metadata_connection_type == "api":
-            return self._api_get_all_measures()
+            measure_dict = self._request("GET", "measures/")
+            return {int(measure_id): measure_info for measure_id, measure_info in measure_dict.items()}
 
         # Get all measures from the SQL handler
         measure_tuple_list = self.sql_handler.select_all_measures()
@@ -2206,7 +2302,7 @@ class AtriumSDK:
         """
         # Check if the metadata connection type is "api" and call the appropriate method
         if self.metadata_connection_type == "api":
-            return self._api_search_devices(tag_match, name_match)
+            return self._request("GET", "devices/", params={'device_tag': tag_match, 'device_name': name_match})
 
         # Get all devices from the linked relational database
         all_devices = self.get_all_devices()
@@ -2258,7 +2354,8 @@ class AtriumSDK:
         """
         # Check the metadata connection type and call the appropriate API search method if necessary
         if self.metadata_connection_type == "api":
-            return self._api_search_measures(tag_match, freq, unit, name_match, freq_units)
+            params = {'measure_tag': tag_match, 'freq': freq, 'unit': unit, 'measure_name': name_match, 'freq_units': freq_units}
+            return self._request("GET", "measures/", params=params)
 
         # Set the default frequency units to "Hz" if not provided
         freq_units = "Hz" if freq_units is None else freq_units
@@ -2684,6 +2781,9 @@ class AtriumSDK:
         ... True
         """
 
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not yet supported for this function.")
+
         # Call the interval_exists method of the SQL handler with the provided parameters
         # and return the result.
         return self.sql_handler.interval_exists(measure_id, device_id, start_time_nano)
@@ -2752,7 +2852,7 @@ class AtriumSDK:
         :return: A list of measure_ids
         """
         if self.metadata_connection_type == "api":
-            raise NotImplementedError
+            raise NotImplementedError("API mode is not yet supported for this function.")
 
         if measure_tag in self._measure_tag_to_ordered_id:
             return self._measure_tag_to_ordered_id[measure_tag]
@@ -2795,7 +2895,7 @@ class AtriumSDK:
         """
         # Check if metadata connection type is API
         if self.metadata_connection_type == "api":
-            return self._api_get_measure_info(measure_id)
+            return self._request("GET", f"measures/{measure_id}")
 
         # If measure_id is already in the cache, return the cached measure info
         if measure_id in self._measures:
@@ -2831,22 +2931,22 @@ class AtriumSDK:
         # Return the measure information dictionary
         return measure_info
 
-    def _api_get_all_measures(self):
-        measure_dict = self._request("GET", "measures/")
-        measure_dict_with_ints = {int(measure_id): measure_info for measure_id, measure_info in measure_dict.items()}
-        return measure_dict_with_ints
-
-    def get_patient_info(self, patient_id=None, mrn=None):
+    def get_patient_info(self, patient_id: int = None, mrn: int = None, time: int = None, time_units: str = None):
         """
         Retrieve information about a specific patient using either their numeric patient id or medical record number (MRN).
 
-        :param patient_id: (Optional) The numeric identifier for the patient.
-        :param mrn: (Optional) The medical record number for the patient.
+        :param int patient_id: The numeric identifier for the patient.
+        :param int mrn: The medical record number for the patient.
+        :param int time: (Optional) If you want the patient information for a specific time enter the epoch timestamp here.
+         The function will get you the closest information available at a time less than or equal to the timestamp you
+         provide. If left as None the function will get the most recent information.
+        :param str time_units: (Optional) Units for the time. Valid options are 'ns', 's', 'ms', and 'us'. Default is nanoseconds.
         :return: A dictionary containing the patient's information, including id, MRN, gender, date of birth (dob),
                  first name, middle name, last name, date first seen, last updated datetime, source identifier, height, and weight.
+                 If a time is specified you will also get the height/weight units and the time that each measurement was taken.
                  Returns None if patient not found.
 
-        :raises ValueError: If both patient_id and mrn are not provided.
+        :raises ValueError: If both patient_id and mrn are not provided or neither of them are provided.
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> patient_info = sdk.get_patient_info(patient_id=1)
@@ -2863,131 +2963,180 @@ class AtriumSDK:
             'last_updated': 1609545600000000000,  # Nanoseconds since epoch
             'source_id': 1,
             'weight': 10.1,
-            'height': 50.0
+            'weight_units': 'kg',
+            'weight_time': 1609545500000000000,  # Nanoseconds since epoch
+            'height': 50.0,
+            'height_units': 'kg',
+            'height_time': 1609544500000000000,  # Nanoseconds since epoch
         }
         """
-        # Check if we are in API mode
-        if self.metadata_connection_type == "api":
-            return self._api_get_patient_info(patient_id=patient_id, mrn=mrn)
+        # Handle time units and conversion to nanoseconds
+        if time_units and time:
+            time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+            if time_units not in time_unit_options.keys():
+                raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
+            time *= time_unit_options[time_units]
 
         # Check if we have either patient ID or MRN
         if patient_id is None and mrn is None:
             raise ValueError("Either patient_id or mrn must be provided.")
+        # make sure they supply only one of patient id or mrn
+        if patient_id is not None and mrn is not None:
+            raise ValueError("Only one of patient_id or mrn should be provided.")
 
-        # Try getting the patient by ID from the cache
-        if patient_id is not None and patient_id in self._patients:
-            return self._patients[patient_id]
+        # Check if we are in API mode
+        if self.metadata_connection_type == "api":
+            if patient_id is not None:
+                return self._request("GET", f"/patients/id|{patient_id}", params={'time': time})
+            return self._request("GET", f"/patients/mrn|{mrn}", params={'time': time})
+
+        patient_info = None
 
         # Try getting the patient by MRN from the cache
         if mrn is not None:
             # Convert mrn to int for proper sql lookup
             mrn = int(mrn)
             if mrn in self._mrn_to_patient_id:
-                return self._patients[self._mrn_to_patient_id[mrn]]
+                patient_id = self._mrn_to_patient_id[mrn]
+
+        # Try getting the patient by ID from the cache
+        if patient_id is not None and patient_id in self._patients:
+            patient_info = self._patients[patient_id]
 
         # If we did not find the patient, refresh the patient cache
-        self.get_all_patients()
+        if patient_info is None or patient_id is None:
+            self.get_all_patients()
 
-        # Try finding the patient in the updated cache
-        if patient_id is not None and patient_id in self._patients:
-            return self._patients[patient_id]
-        if mrn is not None and mrn in self._mrn_to_patient_id:
-            return self._patients[self._mrn_to_patient_id[mrn]]
+        # Try finding the patient in the updated cache if necessary
+        if patient_info is None and mrn is not None and mrn in self._mrn_to_patient_id:
+            patient_id = self._mrn_to_patient_id[mrn]
+
+        if patient_info is None and patient_id is not None and patient_id in self._patients:
+            patient_info = self._patients[patient_id]
 
         # If the patient is still not found, return None
-        return None
+        if patient_info is None or patient_id is None:
+            return None
 
-    def _api_get_patient_info(self, patient_id=None, mrn=None):
+        # If a time was specified then get the patient info closest to that timestamp
+        if time is not None:
+            # make them none incase no matching info is available for the supplied time
+            patient_info['height'], patient_info['height_units'], patient_info['height_time'] = None, None, None
+            patient_info['weight'], patient_info['weight_units'], patient_info['weight_time'] = None, None, None
+
+            # update the patient dictionary with the height/weight closest to the time
+            height = self.sql_handler.select_closest_patient_history(patient_id=patient_id, field='height', time=time)
+            if height:
+                patient_info['height'], patient_info['height_units'], patient_info['height_time'] = height[3], height[4], height[5]
+            weight = self.sql_handler.select_closest_patient_history(patient_id=patient_id, field='weight', time=time)
+            if weight:
+                patient_info['weight'], patient_info['weight_units'], patient_info['weight_time'] = weight[3], weight[4], weight[5]
+        return patient_info
+
+    def get_patient_history(self, field: str, patient_id: int = None, mrn: int = None, start_time: int = None, end_time: int = None, time_units: str = None):
         """
-        Retrieve information about a specific patient through API when in API mode.
+        Retrieve a list of a patients historical measurements using either their numeric patient id or medical record number (MRN).
+        If start_time and end_time are left empty it will give all the patient's history. The results are returned in ascending order by time.
 
-        :param patient_id: The numeric identifier for the patient.
-        :param mrn: The medical record number for the patient.
-        :return: A dictionary with patient information obtained from the API.
+        :param str field: Which part of the patients history do you want. Valid options are 'height' or 'weight'.
+        :param int patient_id: The numeric identifier for the patient.
+        :param int mrn: The medical record number for the patient.
+        :param int start_time: The starting epoch time for the range of time you want the patient's history. If none it will get all history before the end_time.
+        :param int end_time: The end epoch time for the range of time you want the patient's history. If none it will get all history after the start_time.
+        :param str time_units: (Optional) Units for the time. Valid options are 'ns', 's', 'ms', and 'us'. Default is nanoseconds.
 
-        :raises HTTPException: If the API response indicates an error (e.g., patient not found).
+        :return: A list of tuples containing the value of the measurement, the units the value is measured in and the
+        epoch timestamp of when the measurement was taken. [(3.3, 'kg', 1483264800000000000), (3.4, 'kg', 1483268400000000000)]
 
-        >>> sdk = AtriumSDK(metadata_connection_type="api", api_url="http://example.com/api/v1", token="your_api_token", refresh_token="your_refresh_token")
-        >>> patient_info = sdk.get_patient_info(mrn='1234567')
-        >>> print(patient_info)  # Expected output: dictionary with patient info as returned by the API
+        :raises ValueError: If both patient_id and mrn are not provided or neither of them are provided or if start_time is >= end_time or invalid time_unit/field entered.
         """
-        # Check which identifier is used and create the proper endpoint
-        if patient_id is not None:
-            endpoint = f"patients/id|{patient_id}"
-        elif mrn is not None:
-            endpoint = f"patients/mrn|{mrn}"
-        else:
+        # Check if we have either patient ID or MRN
+        if patient_id is None and mrn is None:
             raise ValueError("Either patient_id or mrn must be provided.")
+        # make sure they supply only one of patient id or mrn
+        if patient_id is not None and mrn is not None:
+            raise ValueError("Only one of patient_id or mrn should be provided.")
+        # check to make sure a proper field was entered
+        if field not in ('height', 'weight'):
+            raise ValueError("Invalid field. Expected either 'height' or 'weight'")
+        # check that start_time is not greater than end time
+        if start_time is not None and end_time is not None and start_time >= end_time:
+            raise ValueError("Start_time cannot be >= end_time")
 
-        # Make the API call
-        return self._request("GET", endpoint)
+        # Handle time units and conversion to nanoseconds
+        if time_units:
+            time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+            if time_units not in time_unit_options.keys():
+                raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
+            if start_time is not None:
+                start_time *= time_unit_options[time_units]
+            if end_time is not None:
+                end_time *= time_unit_options[time_units]
 
-    def _api_get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
-                                     mrn_list: List[int] = None, start_time: int = None, end_time: int = None):
+        # if the end time is none set it to 10 seconds into the future so you get all data after the start_time
+        if end_time is None:
+            end_time = time.time_ns() + 10_000_000_000
+        # if the start time is none set it to 0 so you get all data before the end_time
+        if start_time is None:
+            start_time = 0
 
-        start_time = 0 if start_time is None else start_time
-        end_time = time.time_ns() if end_time is None else end_time
-        # Determine the list of patient identifiers
-        patient_identifiers = []
-        if patient_id_list is not None:
-            patient_identifiers.extend([f'id|{pid}' for pid in patient_id_list])
-        if mrn_list is not None:
-            patient_identifiers.extend([f'mrn|{mrn}' for mrn in mrn_list])
-        if not patient_identifiers:
-            patient_identifiers = [f'id|{pid}' for pid in self.get_all_patients().keys()]
+        # Check if we are in API mode
+        if self.metadata_connection_type == "api":
+            params = {'field': field, 'start_time': start_time, 'end_time': end_time}
+            if patient_id is not None:
+                return self._request("GET", f"/patients/id|{patient_id}/history", params=params)
+            # if there is no patient_id that means an mrn is used as the identifier
+            return self._request("GET", f"/patients/mrn|{mrn}/history", params=params)
 
-        result = []
-        # Query each patient identifier
-        for pid in patient_identifiers:
-            if pid.split('|')[0] == "id":
-                patient_id = int(pid.split('|')[1])
-            elif pid.split('|')[0] == "mrn":
-                mrn = int(pid.split('|')[1])
-                patient_id = self.get_patient_id(mrn)
-            else:
-                raise ValueError(f"got {pid.split('|')[0]}, expected mrn or id")
-            params = {'start_time': start_time, 'end_time': end_time}
-            devices_result = self._request("GET", f"patients/{pid}/devices", params=params)
+        # get the patient id if an mrn was provided
+        if mrn is not None:
+            patient_id = self.get_patient_id(mrn)
 
-            if devices_result:
-                for device in devices_result:
-                    query_device_id = device['device_id']
-                    query_start_time = device['start_time']
-                    query_end_time = device['end_time']
-                    # Filter based on device_id_list if it's provided
-                    if device_id_list is None or query_device_id in device_id_list:
-                        result.append((query_device_id, patient_id, query_start_time, query_end_time))
+        # if the patient was not found return none
+        if patient_id is None:
+            return None
 
-        return result
+        return self.sql_handler.select_patient_history(patient_id, field, start_time, end_time)
 
-    def _api_get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
-                                start=None, end=None):
-        params = {
-            'measure_id': measure_id,
-            'device_id': device_id,
-            'patient_id': patient_id,
-            'start_time': start,
-            'end_time': end,
-        }
-        result = self._request("GET", "intervals", params=params)
-        merged_result = []
-        for start, end in result:
-            if len(merged_result) > 0 and start - merged_result[-1][1] <= gap_tolerance_nano:
-                merged_result[-1][1] = end
-            else:
-                merged_result.append([start, end])
+    def insert_patient_history(self, field: str, value: float, units: str, time: int, time_units: str = None, patient_id: int = None, mrn: int = None):
+        """
+        Insert a patient history record using either their numeric patient id or medical record number (MRN).
 
-        return np.array(result, dtype=np.int64)
+        :param str field: Which part of the patients history you want to insert. Valid options are 'height' or 'weight'.
+        :param float value: The value of the measurement you want to insert.
+        :param str units: The units of the measurement you want to insert
+        :param int time: The epoch timestamp of the time the measurement was taken.
+        :param str time_units: (Optional) Units for the time. Valid options are 'ns', 's', 'ms', and 'us'. Default is nanoseconds.
+        :param int patient_id: The numeric identifier for the patient.
+        :param int mrn: The medical record number for the patient.
 
-    def _api_search_measures(self, tag_match=None, freq_nhz=None, unit=None, name_match=None, freq_units=None):
-        params = {
-            'measure_tag': tag_match,
-            'freq': freq_nhz,
-            'unit': unit,
-            'measure_name': name_match,
-            'freq_units': freq_units,
-        }
-        return self._request("GET", "measures/", params=params)
+        :return: A list of tuples containing the value of the measurement, the units the value is measured in and the
+        epoch timestamp of when the measurement was taken. [(3.3, 'kg', 1483264800000000000), (3.4, 'kg', 1483268400000000000)]
+
+        :raises ValueError: If both patient_id and mrn are not provided or neither of them are provided or if start_time is >= end_time or invalid time_unit/field entered.
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for insertion.")
+
+        # Handle time units and conversion to nanoseconds
+        if time_units:
+            time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+            if time_units not in time_unit_options.keys():
+                raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
+            time *= time_unit_options[time_units]
+
+        # Check if we have either patient ID or MRN
+        if patient_id is None and mrn is None:
+            raise ValueError("Either patient_id or mrn must be provided.")
+        # make sure they supply only one of patient id or mrn
+        if patient_id is not None and mrn is not None:
+            raise ValueError("Only one of patient_id or mrn should be provided.")
+
+        # if they supplied an mrn convert it to a patient_id
+        if mrn is not None:
+            patient_id = self.get_patient_id(int(mrn))
+
+        return self.sql_handler.insert_patient_history(patient_id, field, value, units, time)
 
     def _api_get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None,
                             freq_units: str = None):
@@ -3014,35 +3163,13 @@ class AtriumSDK:
 
         return None
 
-    def _api_get_measure_info(self, measure_id: int):
-        return self._request("GET", f"measures/{measure_id}")
-
     def _api_get_device_id(self, device_tag: str):
-        params = {
-            'device_tag': device_tag,
-        }
-        devices_result = self._request("GET", "devices/", params=params)
+        devices_result = self._request("GET", "devices/", params={'device_tag': device_tag})
 
         for device_id, device_info in devices_result.items():
             if device_tag == device_info['tag']:
                 return int(device_id)
-
         return None
-
-    def _api_get_device_info(self, device_id: int):
-        return self._request("GET", f"devices/{device_id}")
-
-    def _api_search_devices(self, tag_match=None, name_match=None):
-        params = {
-            'device_tag': tag_match,
-            'device_name': name_match,
-        }
-        return self._request("GET", "devices/", params=params)
-
-    def _api_get_all_devices(self):
-        device_dict = self._request("GET", "devices/")
-        device_dict_with_ints = {int(device_id): device_info for device_id, device_info in device_dict.items()}
-        return device_dict_with_ints
 
     def _api_get_all_patients(self, skip=None, limit=None):
         skip = 0 if skip is None else skip
@@ -3072,15 +3199,6 @@ class AtriumSDK:
             patient_dict = {int(patient_id): patient_info for patient_id, patient_info in result_temp.items()}
 
         return patient_dict
-
-    def _api_get_mrn_to_patient_id_map(self, mrn_list):
-        result_dict = {}
-
-        for mrn in mrn_list:
-            result_temp = self._request("GET", f"patients/mrn|{mrn}")
-            result_dict[int(mrn)] = int(result_temp['id'])
-
-        return result_dict
 
     def get_device_id(self, device_tag: str) -> int:
         """
@@ -3152,7 +3270,7 @@ class AtriumSDK:
         """
         # Check if metadata is fetched using API and call the appropriate method
         if self.metadata_connection_type == "api":
-            return self._api_get_device_info(device_id)
+            return self._request("GET", f"devices/{device_id}")
 
         # If device info is already cached, return it
         if device_id in self._devices:
@@ -3187,8 +3305,10 @@ class AtriumSDK:
         # Return the device information dictionary
         return device_info
 
-    def insert_patient(self, patient_id=None, mrn=None, gender=None, dob=None, first_name=None, middle_name=None,
-                       last_name=None, first_seen=None, last_updated=None, source_id=1, weight=None, height=None):
+    def insert_patient(self, patient_id: int = None, mrn: int = None, gender: str = None, dob: int = None,
+                       first_name: str = None, middle_name: str = None, last_name: str = None, first_seen: int = None,
+                       last_updated: int = None, source_id: int = 1, weight: float = None, weight_units: str = None,
+                       height: float = None, height_units: str = None):
         """
         .. _insert_patient_label:
 
@@ -3212,8 +3332,12 @@ class AtriumSDK:
         :param int first_seen: The date when the patient was first seen as a nanosecond epoch.
         :param int last_updated: The date when the patient record was last updated as a nanosecond epoch.
         :param int source_id: The unique identifier of the source from which the patient information was obtained.
-        :param float weight: The patients current weight.
-        :param float height: The patients current height
+        :param float weight: The patients current weight. The time recorded for this weight measurement in the patient
+         history table will be the current time. If you want to make it another time use insert_patient_history instead.
+        :param str weight_units: The units of the patients weight. This must be specified if inserting a weight.
+        :param float height: The patients current height. The time recorded for this height measurement in the patient
+         history table will be the current time. If you want to make it another time use insert_patient_history instead.
+        :param str height_units: The units of the patients height. This must be specified if inserting a height.
 
         :return: The unique identifier of the inserted patient record.
         :rtype: int
@@ -3222,10 +3346,26 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
 
-        # Call the SQL handler's insert_patient method with the provided patient details
-        # and return the unique identifier of the inserted patient record.
-        return self.sql_handler.insert_patient(patient_id, mrn, gender, dob, first_name, middle_name, last_name,
-                                               first_seen, last_updated, source_id, weight, height)
+        # Insert the patient with null for height and weight since it will be updated by
+        patient_id = self.sql_handler.insert_patient(patient_id, mrn, gender, dob, first_name, middle_name, last_name,
+                                                 first_seen, last_updated, source_id)
+
+        # current time will be the time for the weight and height
+        insert_time = time.time_ns()
+
+        # insert the weight into the patient history table. This will update the weight on the patient table
+        if weight is not None:
+            if weight_units is None:
+                raise ValueError("You must specify the units if you are specifying a weight")
+            self.insert_patient_history(field='weight', value=weight, units=weight_units, time=insert_time, patient_id=patient_id)
+
+        # insert the height into the patient history table. This will update the height on the patient table
+        if height is not None:
+            if height_units is None:
+                raise ValueError("You must specify the units if you are specifying a height")
+            self.insert_patient_history(field='height', value=height, units=height_units, time=insert_time, patient_id=patient_id)
+
+        return patient_id
 
     def get_mrn_to_patient_id_map(self, mrn_list=None):
         """
@@ -3251,6 +3391,15 @@ class AtriumSDK:
         # Refresh the cache and return all available mrns.
         self.get_all_patients()
         return {int(mrn): self._mrn_to_patient_id[int(mrn)] for mrn in mrn_list if int(mrn) in self._mrn_to_patient_id}
+
+    def _api_get_mrn_to_patient_id_map(self, mrn_list):
+        result_dict = {}
+
+        for mrn in mrn_list:
+            result_temp = self._request("GET", f"patients/mrn|{mrn}", params={'time': None})
+            result_dict[int(mrn)] = int(result_temp['id'])
+
+        return result_dict
 
     def get_patient_id_to_mrn_map(self, patient_id_list=None):
         """
@@ -3287,8 +3436,7 @@ class AtriumSDK:
         """
         # Check if we are in API mode
         if self.metadata_connection_type == "api":
-            patient_info = self._api_get_patient_info(patient_id=patient_id)
-            return patient_info['mrn']
+            return self._request("GET", f"/patients/id|{patient_id}", params={'time': None})['mrn']
 
         if patient_id in self._patient_id_to_mrn:
             return self._patient_id_to_mrn[patient_id]
@@ -3300,14 +3448,14 @@ class AtriumSDK:
 
         return None
 
-    def get_patient_id(self, mrn):
+    def get_patient_id(self, mrn: int):
         """
         Retrieve the patient ID associated with a given medical record number (MRN).
 
         This method looks for a patient's ID using their MRN. If the patient ID is not found in the initial search,
         it triggers a refresh of all patient data and searches again.
 
-        :param mrn: The medical record number for the patient, as an integer.
+        :param int mrn: The medical record number for the patient, as an integer.
         :return: The patient ID as an integer if the patient is found; otherwise, None.
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
@@ -3321,8 +3469,7 @@ class AtriumSDK:
 
         # Check if we are in API mode
         if self.metadata_connection_type == "api":
-            patient_info = self._api_get_patient_info(mrn=mrn)
-            return patient_info['id']
+            return self._request("GET", f"/patients/mrn|{mrn}", params={'time': None})['id']
 
         if mrn in self._mrn_to_patient_id:
             return self._mrn_to_patient_id[mrn]
