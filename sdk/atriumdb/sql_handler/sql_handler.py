@@ -46,8 +46,9 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None, measure_id=None):
-        # Insert measure if it doesn't exist, return id.
+    def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None,
+                       measure_id=None, code: str = None, unit_label: str = None, unit_code: str = None,
+                       source_id: int = None):
         pass
 
     @abstractmethod
@@ -56,8 +57,8 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def insert_device(self, device_tag: str, device_name: str = None, device_id=None):
-        # Insert device if it doesn't exist, return id.
+    def insert_device(self, device_tag: str, device_name: str = None, device_id=None, manufacturer: str = None,
+                      model: str = None, device_type: str = None, bed_id: int = None, source_id: int = None):
         pass
 
     @abstractmethod
@@ -138,26 +139,6 @@ class SQLHandler(ABC):
     @abstractmethod
     def select_all_settings(self):
         # Select all settings from settings table.
-        pass
-
-    @abstractmethod
-    def insert_source(self, s_name: str, description: str = None):
-        # Insert source if it doesn't exist, return id.
-        pass
-
-    @abstractmethod
-    def insert_institution(self, i_name: str):
-        # Insert institution if it doesn't exist, return id.
-        pass
-
-    @abstractmethod
-    def insert_unit(self, institution_id: int, u_name: str, u_type: str):
-        # Insert unit if it doesn't exist, return id.
-        pass
-
-    @abstractmethod
-    def insert_bed(self, unit_id: int, b_name: str):
-        # Insert bed if it doesn't exist, return id.
         pass
 
     @abstractmethod
@@ -456,3 +437,96 @@ class SQLHandler(ABC):
             tag_to_sorted_measure_ids[tag] = sorted_measure_ids
 
         return tag_to_sorted_measure_ids
+
+    def insert_source(self, name: str, description: str = None):
+        query = "INSERT INTO source (name, description) VALUES (?, ?)"
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, (name, description))
+            conn.commit()
+            return cursor.lastrowid
+
+    def select_source(self, source_id: int = None, name: str = None):
+        query = "SELECT id, name, description FROM source WHERE "
+        params = []
+        if source_id:
+            query += "id = ?"
+            params.append(source_id)
+        elif name:
+            query += "name = ?"
+            params.append(name)
+        else:
+            raise ValueError("Either source_id or name must be provided")
+
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, params)
+            return cursor.fetchone()
+
+    def insert_institution(self, name: str):
+        query = "INSERT INTO institution (name) VALUES (?)"
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, (name,))
+            conn.commit()
+            return cursor.lastrowid
+
+    def select_institution(self, institution_id: int = None, name: str = None):
+        query = "SELECT id, name FROM institution WHERE "
+        params = []
+        if institution_id:
+            query += "id = ?"
+            params.append(institution_id)
+        elif name:
+            query += "name = ?"
+            params.append(name)
+        else:
+            raise ValueError("Either institution_id or name must be provided")
+
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, params)
+            return cursor.fetchone()
+
+    def insert_unit(self, institution_id: int, name: str, unit_type: str):
+        query = "INSERT INTO unit (institution_id, name, type) VALUES (?, ?, ?)"
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, (institution_id, name, unit_type))
+            conn.commit()
+            return cursor.lastrowid
+
+    def select_unit(self, unit_id: int = None, name: str = None):
+        query = "SELECT id, institution_id, name, type FROM unit WHERE "
+        params = []
+        if unit_id:
+            query += "id = ?"
+            params.append(unit_id)
+        elif name:
+            query += "name = ?"
+            params.append(name)
+        else:
+            raise ValueError("Either unit_id or name must be provided")
+
+        with self.connection() as (conn, cursor):
+            
+            cursor.execute(query, params)
+            return cursor.fetchone()
+
+    def insert_bed(self, unit_id: int, name: str):
+        query = "INSERT INTO bed (unit_id, name) VALUES (?, ?)"
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, (unit_id, name))
+            conn.commit()
+            return cursor.lastrowid
+
+    def select_bed(self, bed_id: int = None, name: str = None):
+        query = "SELECT id, unit_id, name FROM bed WHERE "
+        params = []
+        if bed_id:
+            query += "id = ?"
+            params.append(bed_id)
+        elif name:
+            query += "name = ?"
+            params.append(name)
+        else:
+            raise ValueError("Either bed_id or name must be provided")
+
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, params)
+            return cursor.fetchone()

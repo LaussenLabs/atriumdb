@@ -175,18 +175,19 @@ class SQLiteHandler(SQLHandler):
             rows = cursor.fetchall()
         return rows
 
-    def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None, measure_id=None):
-        units = DEFAULT_UNITS if units is None else units
+    def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None,
+                       measure_id=None, code: str = None, unit_label: str = None, unit_code: str = None,
+                       source_id: int = None):
+        units = "" if units is None else units
 
-        with self.sqlite_db_connection() as (conn, cursor):
-            if measure_id is None:
-                cursor.execute("INSERT OR IGNORE INTO measure (tag, freq_nhz, unit, name) VALUES (?, ?, ?, ?);", (measure_tag, freq_nhz, units, measure_name))
-            else:
-                cursor.execute("INSERT OR IGNORE INTO measure (id, tag, freq_nhz, unit, name) VALUES (?, ?, ?, ?, ?);", (measure_id, measure_tag, freq_nhz, units, measure_name))
+        with self.connection() as (conn, cursor):
+            cursor.execute(
+                "INSERT OR IGNORE INTO measure (id, tag, freq_nhz, unit, name, code, unit_label, unit_code, source_id) VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?);",
+                (measure_id, measure_tag, freq_nhz, units, measure_name, code, unit_label, unit_code, source_id))
             conn.commit()
-            cursor.execute(sqlite_select_measure_from_triplet_query, (measure_tag, freq_nhz, units))
-            measure_id = cursor.fetchone()[0]
-        return measure_id
+
+            return cursor.lastrowid
 
     def select_measure(self, measure_id: int = None, measure_tag: str = None, freq_nhz: int = None, units: str = None):
         units = DEFAULT_UNITS if units is None else units
@@ -200,17 +201,18 @@ class SQLiteHandler(SQLHandler):
             row = cursor.fetchone()
         return row
 
-    def insert_device(self, device_tag: str, device_name: str = None, device_id=None):
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            if device_id is not None:
-                cursor.execute("INSERT OR IGNORE INTO device (id, tag, name) VALUES (?, ?, ?);", (device_id, device_tag, device_name))
-            else:
-                cursor.execute("INSERT OR IGNORE INTO device (tag, name) VALUES (?, ?);", (device_tag, device_name))
-
+    def insert_device(self, device_tag: str, device_name: str = None, device_id=None, manufacturer: str = None,
+                      model: str = None, device_type: str = None, bed_id: int = None, source_id: int = None):
+        device_type = "static" if device_type is None else device_type
+        source_id = 1 if source_id is None else source_id
+        with self.connection() as (conn, cursor):
+            cursor.execute(
+                "INSERT OR IGNORE INTO device (id, tag, name, manufacturer, model, type, bed_id, source_id) VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?);",
+                (device_id, device_tag, device_name, manufacturer, model, device_type, bed_id, source_id))
             conn.commit()
-            cursor.execute(sqlite_select_device_from_tag_query, (device_tag,))
-            device_id = cursor.fetchone()[0]
-        return device_id
+
+            return cursor.lastrowid
 
     def select_device(self, device_id: int = None, device_tag: str = None):
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
@@ -355,26 +357,6 @@ class SQLiteHandler(SQLHandler):
             cursor.execute(sqlite_setting_select_all_query)
             settings = cursor.fetchall()
         return settings
-
-    def insert_source(self, s_name, description=None):
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(sqlite_insert_ignore_source_query, (s_name, description))
-            return cursor.lastrowid
-
-    def insert_institution(self, i_name):
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(sqlite_insert_ignore_institution_query, (i_name,))
-            return cursor.lastrowid
-
-    def insert_unit(self, institution_id, u_name, u_type):
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(sqlite_insert_ignore_unit_query, (institution_id, u_name, u_type))
-            return cursor.lastrowid
-
-    def insert_bed(self, unit_id, b_name):
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(sqlite_insert_ignore_bed_query, (unit_id, b_name))
-            return cursor.lastrowid
 
     def insert_patient(self, patient_id=None, mrn=None, gender=None, dob=None, first_name=None, middle_name=None,
                        last_name=None, first_seen=None, last_updated=None, source_id=1, weight=None, height=None):

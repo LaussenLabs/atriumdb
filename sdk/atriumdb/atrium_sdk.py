@@ -2410,34 +2410,46 @@ class AtriumSDK:
                         encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b)
 
     def insert_measure(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None,
-                       measure_name: str = None, measure_id: int = None):
+                       measure_name: str = None, measure_id: int = None, code: str = None, unit_label: str = None,
+                       unit_code: str = None, source_id: int = None, source_name: str = None):
         """
         .. _insert_measure_label:
 
         Defines a new signal type to be stored in the dataset, as well as defining metadata related to the signal.
 
-        freq and freq_units are required information, but it is also recommended to define a measure_tag
-        (which can be done by specifying measure_tag as an optional parameter).
+        `measure_tag`, `freq` and `units` are required information.
 
-        The other optional parameters are measure_name (A description of the signal) and units
-        (the units of the signal).
-
-        >>> # Define a new signal.
+        >>> # Define a new signal with additional metadata.
         >>> freq = 500
         >>> freq_units = "Hz"
         >>> measure_tag = "ECG Lead II - 500 Hz"
         >>> measure_name = "Electrocardiogram Lead II Configuration 500 Hertz"
         >>> units = "mV"
-        >>> measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq, units=units, freq_units=freq_units, measure_name=measure_name)
+        >>> code = "A0001"
+        >>> unit_label = "millivolts"
+        >>> unit_code = "mV01"
+        >>> source_id = 123
+        >>> measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq, units=units, freq_units=freq_units,
+                                            measure_name=measure_name, code=code, unit_label=unit_label,
+                                            unit_code=unit_code, source_id=source_id)
 
+        :param str measure_tag: A short string identifying the signal.
         :param freq: The sample frequency of the signal.
+        :param str units: The units of the signal.
         :param str optional freq_units: The unit used for the specified frequency. This value can be one of ["Hz",
             "kHz", "MHz"]. Keep in mind if you use extremely large values for this it will be
             converted to Hertz in the backend, and you may overflow 64bit integers.
-        :param str optional measure_tag: A unique string identifying the signal.
         :param str optional measure_name: A long form description of the signal.
-        :param str optional units: The units of the signal.
         :param int optional measure_id: The desired measure_id.
+        :param str optional code: A specific code identifying the signal.
+        :param str optional unit_label: A label for the unit.
+        :param str optional unit_code: A code for the unit.
+        :param int optional source_id: An identifier for the data source.
+        :param str source_name: The name of the data source associated with the measure, used if source_id is not
+            provided (optional).
+
+        :return: The measure_id of the inserted or existing measure.
+        :rtype: int
 
         """
 
@@ -2448,9 +2460,19 @@ class AtriumSDK:
         assert isinstance(measure_tag, str)
         assert isinstance(measure_name, str) or measure_name is None
         assert isinstance(units, str) or units is None
+        assert isinstance(code, str) or code is None
+        assert isinstance(unit_label, str) or unit_label is None
+        assert isinstance(unit_code, str) or unit_code is None
 
         # Set default frequency unit to "nHz" if not provided
         freq_units = "nHz" if freq_units is None else freq_units
+        units = "" if units is None else units
+
+        # Handle source_name to source_id conversion
+        if source_name and not source_id:
+            source_id = self.get_source_id(source_name)
+            if source_id is None:
+                raise ValueError(f"Source name {source_name} not found.")
 
         # Convert frequency to nanohertz if the provided frequency unit is not "nHz"
         if freq_units != "nHz":
@@ -2468,41 +2490,154 @@ class AtriumSDK:
                 raise ValueError(f"Inserted measure_id {measure_id} already exists with data: {measure_info}")
 
         # Check if the measure already exists in the dataset
-        if (measure_tag, freq, units) in self._measure_ids:
-            return self._measure_ids[(measure_tag, freq, units)]
+        check_measure_id = self.get_measure_id(measure_tag, freq, units=units)
+        if check_measure_id is not None:
+            return check_measure_id
 
         # Insert the new measure into the database
-        return self.sql_handler.insert_measure(measure_tag, freq, units, measure_name, measure_id=measure_id)
+        inserted_measure_id = self.sql_handler.insert_measure(
+            measure_tag, freq, units, measure_name, measure_id=measure_id, code=code, unit_label=unit_label,
+            unit_code=unit_code, source_id=source_id)
 
-    def insert_device(self, device_tag: str, device_name: str = None, device_id: int = None):
+        if inserted_measure_id is None:
+            return inserted_measure_id
+
+        # Add new measure_id into cache
+        measure_info = {
+            'id': inserted_measure_id,
+            'tag': measure_tag,
+            'name': measure_name,
+            'freq_nhz': freq,
+            'code': code,
+            'unit': units,
+            'unit_label': unit_label,
+            'unit_code': unit_code,
+            'source_id': source_id
+        }
+        self._measure_ids[(measure_tag, freq, units)] = inserted_measure_id
+        self._measures[inserted_measure_id] = measure_info
+
+        return inserted_measure_id
+
+    def get_source_id(self, source_name: str) -> int | None:
         """
-        .. _insert_device_label:
+        Get the ID for a given source name.
 
+        :param str source_name: The name of the source.
+        :return: The source_id, None if not found.
+        :rtype: int | None
+        """
+        source_data = self.sql_handler.select_source(name=source_name)
+        if source_data:
+            return source_data[0]
+        return None
+
+    def get_bed_id(self, bed_name: str) -> int | None:
+        """
+        Get the ID for a given bed name.
+
+        :param str bed_name: The name of the bed.
+        :return: The bed_id if found, else returns None.
+        :rtype: int | None
+        """
+        bed_data = self.sql_handler.select_bed(name=bed_name)
+        if bed_data:
+            return bed_data[0]
+        return None
+
+    def get_source_info(self, source_id: int) -> dict | None:
+        """
+        Get a dictionary representing the source information for a given source ID.
+
+        :param int source_id: The ID of the source.
+        :return: A dictionary with the source's information if found, else None.
+        :rtype: dict | None
+        """
+        source_data = self.sql_handler.select_source(source_id=source_id)
+        if source_data:
+            return {"id": source_data[0], "name": source_data[1], "description": source_data[2]}
+        return None
+
+    def get_bed_info(self, bed_id: int) -> dict | None:
+        """
+        Get a dictionary representing the bed information for a given bed ID.
+
+        :param int bed_id: The ID of the bed.
+        :return: A dictionary with the bed's information if found, else None.
+        :rtype: dict | None
+        """
+        bed_data = self.sql_handler.select_bed(bed_id=bed_id)
+        if bed_data:
+            return {"id": bed_data[0], "unit_id": bed_data[1], "name": bed_data[2]}
+        return None
+
+    def insert_device(self, device_tag: str, device_name: str = None, device_id: int = None, manufacturer: str = None,
+                      model: str = None, device_type: str = None, bed_id: int = None, bed_name: str = None,
+                      source_id: int = None, source_name: str = None):
+        """
         Insert a new device into the dataset and define its metadata.
 
-        This method defines a new device to be stored in the dataset, as well as
-        defining metadata related to the device. The device_tag is a required
-        parameter, while device_name is an optional parameter providing a
-        description of the device.
+        This method defines a new device to be stored in the dataset, specifying
+        metadata such as the device's tag, name, manufacturer, model, type, and
+        associations with a bed and source either by ID or by name. The `device_tag`
+        is a required parameter, while all others are optional. If both an ID and a
+        name are provided for a bed or source, the ID takes precedence.
 
-        If the device_tag already exists in the dataset, the method returns the
-        existing device_id. Otherwise, it inserts the new device into the dataset
-        using the sql_handler and returns the new device_id.
+        If the device_id is specified and already exists in the dataset with a
+        different device_tag, a ValueError is raised. If `bed_name` or `source_name`
+
+        is provided but does not match any existing records, a ValueError is also raised.
 
         Example usage:
 
-        >>> # Define a new device.
+        >>> # Define a new device using IDs.
         >>> device_tag = "Monitor A3"
         >>> device_name = "Philips Monitor A3 in Room 2B"
-        >>> new_device_id = sdk.insert_device(device_tag=device_tag, device_name=device_name)
+        >>> manufacturer = "Philips"
+        >>> model = "A3"
+        >>> device_type = "static"
+        >>> bed_id = 102
+        >>> source_id = 2
+        >>> new_device_id = sdk.insert_device(device_tag=device_tag, device_name=device_name,
+                                              manufacturer=manufacturer, model=model, device_type=device_type,
+                                              bed_id=bed_id, source_id=source_id)
+
+        >>> # Define a new device using names.
+        >>> bed_name = "Bed 2B"
+        >>> source_name = "Source A"
+        >>> new_device_id = sdk.insert_device(device_tag="Monitor B4", device_name="Siemens Monitor B4 in Bed 2B",
+                                              manufacturer="Siemens", model="B4", device_type="dynamic",
+                                              bed_name=bed_name, source_name=source_name)
 
         :param str device_tag: A unique string identifying the device (required).
         :param str device_name: A long form description of the device (optional).
-        :param int device_id: desired device_id (optional).
+        :param int device_id: Desired device_id, if specified, must not conflict with existing entries (optional).
+        :param str manufacturer: The device's manufacturer (optional).
+        :param str model: The device's model (optional).
+        :param str device_type: The type of the device, either 'static' or 'dynamic' (optional).
+        :param int bed_id: The ID of the bed associated with the device (optional).
+        :param str bed_name: The name of the bed associated with the device, used if bed_id is not provided (optional).
+        :param int source_id: The ID of the data source associated with the device (optional).
+        :param str source_name: The name of the data source associated with the device, used if source_id is not provided (optional).
 
         :return: The device_id of the inserted or existing device.
         :rtype: int
+
+        Raises:
+            ValueError: If specified device_id already exists with a different device_tag.
+                        If bed_name or source_name is provided but does not match any existing records.
         """
+        # Handle source_name to source_id conversion
+        if source_name and not source_id:
+            source_id = self.get_source_id(source_name)
+            if source_id is None:
+                raise ValueError(f"Source name {source_name} not found.")
+
+        # Handle bed_name to bed_id conversion
+        if bed_name and not bed_id:
+            bed_id = self.get_bed_id(bed_name)
+            if bed_id is None:
+                raise ValueError(f"Bed name {bed_name} not found.")
 
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
@@ -2517,12 +2652,14 @@ class AtriumSDK:
                 raise ValueError(f"Inserted device_id {device_id} already exists with data: {device_info}")
 
         # Check if the device_tag already exists in the dataset
-        if device_tag in self._device_ids:
+        check_device_id = self.get_device_id(device_tag)
+        if check_device_id is not None:
             # If it exists, return the existing device_id
-            return self._device_ids[device_tag]
+            return check_device_id
 
         # If the device_tag does not exist, insert the new device using the sql_handler
-        return self.sql_handler.insert_device(device_tag, device_name, device_id=device_id)
+        return self.sql_handler.insert_device(device_tag, device_name, device_id, manufacturer, model, device_type,
+                                              bed_id, source_id)
 
     def measure_device_start_time_exists(self, measure_id, device_id, start_time_nano):
         """
