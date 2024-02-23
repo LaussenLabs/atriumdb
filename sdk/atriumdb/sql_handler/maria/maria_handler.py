@@ -246,7 +246,7 @@ class MariaDBHandler(SQLHandler):
         return row
 
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
-                             interval_index_mode):
+                             interval_index_mode, gap_tolerance: int):
         # default to merge mode
         interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
 
@@ -269,7 +269,7 @@ class MariaDBHandler(SQLHandler):
 
             elif interval_index_mode == "merge":
                 [cursor.callproc("insert_interval", (interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"])) for interval in interval_data]
+                                    interval["end_time_n"], gap_tolerance)) for interval in interval_data]
             elif interval_index_mode == "disable":
                 # Do Nothing
                 pass
@@ -277,7 +277,7 @@ class MariaDBHandler(SQLHandler):
                 raise ValueError(f"interval_index_mode must be one of {allowed_interval_index_modes}")
 
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
-                             file_ids_to_delete: List[int]):
+                             file_ids_to_delete: List[int], gap_tolerance: int):
         with self.maria_db_connection(begin=True) as (conn, cursor):
             # insert/update file data
             for file_path, (block_data, interval_data) in file_data.items():
@@ -296,7 +296,7 @@ class MariaDBHandler(SQLHandler):
                 if len(interval_data) > 0:
                     [cursor.callproc("insert_interval",
                                      (interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                      interval["end_time_n"])) for interval in interval_data]
+                                      interval["end_time_n"], gap_tolerance)) for interval in interval_data]
 
             # delete old block data
             cursor.executemany(maria_delete_block_query, [(block_id,) for block_id in block_ids_to_delete])
@@ -481,6 +481,7 @@ class MariaDBHandler(SQLHandler):
             device_time_ranges = cursor.fetchall()
         return device_time_ranges
 
+    #TODO move this to sqlhandler and add sort
     def select_intervals(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
         assert device_id is not None or patient_id is not None, "Either device_id or patient_id must be provided"
 

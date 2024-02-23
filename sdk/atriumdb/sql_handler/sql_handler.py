@@ -82,7 +82,7 @@ class SQLHandler(ABC):
 
     @abstractmethod
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
-                             interval_index_mode):
+                             interval_index_mode, gap_tolerance: int):
         # Insert a file path to file index.
         # Insert block_index rows with foreign key file_id.
         # Insert interval_index rows.
@@ -90,7 +90,7 @@ class SQLHandler(ABC):
 
     @abstractmethod
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
-                             file_ids_to_delete: List[int]):
+                             file_ids_to_delete: List[int], gap_tolerance: int):
         pass
 
     @abstractmethod

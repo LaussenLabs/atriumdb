@@ -713,7 +713,7 @@ class AtriumSDK:
             if the data inserted has lots of gaps, is aperiodic or isn't the newest data for that device-measure combination.
             For live data ingestion, "merge" is recommended.
         :param int gap_tolerance: The maximum number of nanoseconds that can occur between two consecutive values before
-            it is treated as a break in continuity or gap.
+            it is treated as a break in continuity or gap in the interval index.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.
@@ -757,39 +757,43 @@ class AtriumSDK:
 
         # Calculate new intervals
         write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
-        write_intervals_o = Intervals(write_intervals)
 
-        # Get current intervals
-        current_intervals = self.get_interval_array(
-            measure_id, device_id=device_id, gap_tolerance_nano=0,
-            start=int(write_intervals[0][0]), end=int(write_intervals[-1][-1]))
-
-        current_intervals_o = Intervals(current_intervals)
+        # check overwrite setting
+        if OVERWRITE_SETTING_NAME not in self.settings_dict:
+            raise ValueError("Overwrite behavior not set. Please set it in the sql settings table")
+        overwrite_setting = self.settings_dict[OVERWRITE_SETTING_NAME]
 
         # Initialize variables for handling overwriting
         overwrite_file_dict, old_block_ids, old_file_list = None, None, None
 
-        # Check if there is an overlap between current and new intervals
-        if current_intervals_o.intersection(write_intervals_o).duration() > 0:
-            _LOGGER.debug(f"Overlap measure_id {measure_id}, device_id {device_id}, "
-                          f"existing intervals {current_intervals}, new intervals {write_intervals}")
-            if OVERWRITE_SETTING_NAME not in self.settings_dict:
-                raise ValueError("Overwrite detected, but overwrite behavior not set.")
+        # if overwrite is ignore there is no reason to calculate this stuff
+        if overwrite_setting != 'ignore':
+            write_intervals_o = Intervals(write_intervals)
 
-            overwrite_setting = self.settings_dict[OVERWRITE_SETTING_NAME]
+            # Get current intervals
+            current_intervals = self.get_interval_array(
+                measure_id, device_id=device_id, gap_tolerance_nano=0,
+                start=int(write_intervals[0][0]), end=int(write_intervals[-1][-1]))
 
-            # Handle overwriting based on the overwrite_setting
-            if overwrite_setting == 'overwrite':
-                _LOGGER.debug(
-                    f"({measure_id}, {device_id}): value_data: {value_data} \n time_data: {time_data} \n write_intervals: {write_intervals} \n current_intervals: {current_intervals}")
-                overwrite_file_dict, old_block_ids, old_file_list = self._overwrite_delete_data(
-                    measure_id, device_id, time_data, time_0, raw_time_type, value_data.size, freq_nhz)
-            elif overwrite_setting == 'error':
-                raise ValueError("Data to be written overlaps already ingested data.")
-            elif overwrite_setting == 'ignore':
-                pass
-            else:
-                raise ValueError(f"Overwrite setting {overwrite_setting} not recognized.")
+            current_intervals_o = Intervals(current_intervals)
+
+            # Check if there is an overlap between current and new intervals
+            if current_intervals_o.intersection(write_intervals_o).duration() > 0:
+                _LOGGER.debug(f"Overlap measure_id {measure_id}, device_id {device_id}, "
+                              f"existing intervals {current_intervals}, new intervals {write_intervals}")
+
+                # Handle overwriting based on the overwrite_setting
+                if overwrite_setting == 'overwrite':
+                    _LOGGER.debug(
+                        f"({measure_id}, {device_id}): value_data: {value_data} \n time_data: {time_data} \n write_intervals: {write_intervals} \n current_intervals: {current_intervals}")
+                    overwrite_file_dict, old_block_ids, old_file_list = self._overwrite_delete_data(
+                        measure_id, device_id, time_data, time_0, raw_time_type, value_data.size, freq_nhz)
+                elif overwrite_setting == 'error':
+                    raise ValueError("Data to be written overlaps already ingested data.")
+                elif overwrite_setting == 'ignore':
+                    pass
+                else:
+                    raise ValueError(f"Overwrite setting {overwrite_setting} not recognized.")
 
         # check if the write data will make at least one full block and if there will be a small block at the end
         num_full_blocks = value_data.size // self.block.block_size
@@ -829,7 +833,7 @@ class AtriumSDK:
             _LOGGER.debug(
                 f"{measure_id}, {device_id}): overwrite_file_dict: {overwrite_file_dict}\n "
                 f"old_block_ids: {old_block_ids}\n old_file_ids: {old_file_ids}\n")
-            self.sql_handler.update_tsc_file_data(overwrite_file_dict, old_block_ids, old_file_ids)
+            self.sql_handler.update_tsc_file_data(overwrite_file_dict, old_block_ids, old_file_ids, gap_tolerance)
 
             # Delete old files
             # for file_id, filename in old_file_list:
@@ -837,7 +841,7 @@ class AtriumSDK:
             #     file_path.unlink(missing_ok=True)
         else:
             # Insert SQL rows
-            self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, interval_index_mode)
+            self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, interval_index_mode, gap_tolerance)
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
 
@@ -1949,7 +1953,7 @@ class AtriumSDK:
             # If the final intervals list is not empty and the difference between the current interval's start time
             # and the previous interval's end time is less than or equal to the gap tolerance, update the end time
             # of the previous interval
-            if len(arr) > 0 and row[3] - arr[-1][-1] <= gap_tolerance_nano:
+            if arr and row[3] - arr[-1][-1] <= gap_tolerance_nano:
                 arr[-1][-1] = row[4]
             # Otherwise, add a new interval to the final intervals list
             else:
@@ -1970,7 +1974,7 @@ class AtriumSDK:
         result = self._request("GET", "intervals", params=params)
         merged_result = []
         for start, end in result:
-            if len(merged_result) > 0 and start - merged_result[-1][1] <= gap_tolerance_nano:
+            if merged_result and start - merged_result[-1][1] <= gap_tolerance_nano:
                 merged_result[-1][1] = end
             else:
                 merged_result.append([start, end])
