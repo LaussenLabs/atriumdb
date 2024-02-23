@@ -82,7 +82,7 @@ class SQLHandler(ABC):
 
     @abstractmethod
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
-                             interval_index_mode, gap_tolerance: int):
+                             interval_index_mode, gap_tolerance: int = 0):
         # Insert a file path to file index.
         # Insert block_index rows with foreign key file_id.
         # Insert interval_index rows.
@@ -90,7 +90,7 @@ class SQLHandler(ABC):
 
     @abstractmethod
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
-                             file_ids_to_delete: List[int], gap_tolerance: int):
+                             file_ids_to_delete: List[int], gap_tolerance: int = 0):
         pass
 
     @abstractmethod
@@ -191,7 +191,7 @@ class SQLHandler(ABC):
         pass
 
     def select_intervals(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
-        if device_id is not None or patient_id is not None:
+        if device_id is None and patient_id is None:
             raise ValueError("Either device_id or patient_id must be provided")
 
         interval_query = "SELECT id, measure_id, device_id, start_time_n, end_time_n FROM interval_index WHERE measure_id = ? AND device_id = ?"

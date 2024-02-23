@@ -246,7 +246,7 @@ class MariaDBHandler(SQLHandler):
         return row
 
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
-                             interval_index_mode, gap_tolerance: int):
+                             interval_index_mode, gap_tolerance: int = 0):
         # default to merge mode
         interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
 
@@ -277,7 +277,7 @@ class MariaDBHandler(SQLHandler):
                 raise ValueError(f"interval_index_mode must be one of {allowed_interval_index_modes}")
 
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
-                             file_ids_to_delete: List[int], gap_tolerance: int):
+                             file_ids_to_delete: List[int], gap_tolerance: int = 0):
         with self.maria_db_connection(begin=True) as (conn, cursor):
             # insert/update file data
             for file_path, (block_data, interval_data) in file_data.items():

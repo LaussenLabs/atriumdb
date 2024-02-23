@@ -1887,7 +1887,7 @@ class AtriumSDK:
         # Insert the block and interval data into the metadata table
         self.sql_handler.insert_tsc_file_data(path, block_data, interval_data, None)
 
-    def get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
+    def get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = 0,
                            start=None, end=None):
         """
         .. _get_interval_array_label:
@@ -1926,9 +1926,6 @@ class AtriumSDK:
         :returns: A 2D array representing the availability of a specified measure.
 
         """
-        # Set default value for gap_tolerance_nano if not provided
-        gap_tolerance_nano = 0 if gap_tolerance_nano is None else gap_tolerance_nano
-
         # Check if the metadata connection type is API
         if self.metadata_connection_type == "api":
             params = {'measure_id': measure_id, 'device_id': device_id, 'patient_id': patient_id, 'start_time': start,
