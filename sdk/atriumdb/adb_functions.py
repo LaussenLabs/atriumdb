@@ -49,7 +49,7 @@ def get_block_and_interval_data(measure_id, device_id, metadata, start_bytes, in
     interval_data = []
     intervals = sorted(intervals)
     for interval in intervals:
-        if len(interval_data) > 0 and int(interval[0]) - interval_data[-1]["end_time_n"] <= interval_gap_tolerance:
+        if interval_data and int(interval[0]) - interval_data[-1]["end_time_n"] <= interval_gap_tolerance:
             interval_data[-1]["end_time_n"] = int(interval[1])
         else:
             interval_data.append({

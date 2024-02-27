@@ -225,7 +225,7 @@ class SQLiteHandler(SQLHandler):
         return row
 
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
-                             interval_index_mode):
+                             interval_index_mode, gap_tolerance: int = 0):
         # default to merge
         interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
 
@@ -247,7 +247,7 @@ class SQLiteHandler(SQLHandler):
                 cursor.executemany(sqlite_insert_interval_index_query, interval_tuples)
 
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
-                             file_ids_to_delete: List[int]):
+                             file_ids_to_delete: List[int], gap_tolerance: int = 0):
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
             # insert/update file data
             for file_path, (block_data, interval_data) in file_data.items():
@@ -432,98 +432,6 @@ class SQLiteHandler(SQLHandler):
 
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
             cursor.execute(block_query, args)
-            return cursor.fetchall()
-
-    def get_device_time_ranges_by_patient(self, patient_id, end_time_n, start_time_n):
-        patient_device_query = "SELECT device_id, start_time, end_time FROM device_patient WHERE patient_id = ?"
-        args = (patient_id,)
-        if start_time_n is not None:
-            patient_device_query += " AND end_time >= ? "
-            args += (start_time_n,)
-        if end_time_n is not None:
-            patient_device_query += " AND start_time <= ? "
-            args += (end_time_n,)
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            args = (patient_id,) + ((start_time_n,) if start_time_n is not None else ()) + (
-                (end_time_n,) if end_time_n is not None else ())
-            cursor.execute(patient_device_query, args)
-            return cursor.fetchall()
-
-    # def select_intervals(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
-    #     assert device_id is not None or patient_id is not None, "Either device_id or patient_id must be provided"
-    #
-    #     if patient_id is not None:
-    #         device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, start_time_n, end_time_n)
-    #     else:
-    #         device_time_ranges = [(device_id, start_time_n, end_time_n)]
-    #
-    #     interval_query = """
-    #                     SELECT
-    #                         id, measure_id, device_id, start_time_n, end_time_n
-    #                     FROM
-    #                         interval_index
-    #                     WHERE
-    #                         measure_id = ? AND device_id = ? AND end_time_n >= ? AND start_time_n <= ?"""
-    #
-    #     block_results = []
-    #
-    #     with self.sqlite_db_connection(begin=False) as (conn, cursor):
-    #         for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
-    #             args = (measure_id, encounter_device_id, encounter_start_time, encounter_end_time)
-    #
-    #             cursor.execute(interval_query, args)
-    #             block_results.extend(cursor.fetchall())
-    #
-    #     return block_results
-
-    def select_intervals(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
-        assert device_id is not None or patient_id is not None, "Either device_id or patient_id must be provided"
-
-        # Query by patient.
-        if patient_id is not None:
-            device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
-
-            interval_query = """
-                                    SELECT
-                                        id, measure_id, device_id, start_time_n, end_time_n
-                                    FROM
-                                        interval_index
-                                    WHERE
-                                        measure_id = ? AND device_id = ? AND end_time_n >= ? AND start_time_n <= ?"""
-
-            interval_results = []
-
-            with self.sqlite_db_connection(begin=False) as (conn, cursor):
-                for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
-                    args = (measure_id, encounter_device_id, encounter_start_time, encounter_end_time)
-
-                    cursor.execute(interval_query, args)
-                    interval_results.extend(cursor.fetchall())
-
-            return interval_results
-
-        # Query by device.
-
-        interval_query = """
-                        SELECT
-                            id, measure_id, device_id, start_time_n, end_time_n
-                        FROM
-                            interval_index
-                        WHERE
-                            measure_id = ? AND device_id = ?"""
-
-        args = (measure_id, device_id)
-
-        if end_time_n is not None:
-            interval_query += " AND start_time_n <= ?"
-            args += (end_time_n,)
-
-        if start_time_n is not None:
-            interval_query += " AND end_time_n >= ?"
-            args += (start_time_n,)
-
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(interval_query, args)
             return cursor.fetchall()
 
     def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[int] = None, start_time: int = None,

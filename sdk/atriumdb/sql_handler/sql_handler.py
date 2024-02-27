@@ -98,7 +98,7 @@ class SQLHandler(ABC):
 
     @abstractmethod
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
-                             interval_index_mode):
+                             interval_index_mode, gap_tolerance: int = 0):
         # Insert a file path to file index.
         # Insert block_index rows with foreign key file_id.
         # Insert interval_index rows.
@@ -106,7 +106,7 @@ class SQLHandler(ABC):
 
     @abstractmethod
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
-                             file_ids_to_delete: List[int]):
+                             file_ids_to_delete: List[int], gap_tolerance: int = 0):
         pass
 
     @abstractmethod
@@ -183,6 +183,19 @@ class SQLHandler(ABC):
         # Insert device_encounter if it doesn't exist, return id.
         pass
 
+    def get_device_time_ranges_by_patient(self, patient_id: int, end_time_n: int, start_time_n: int):
+        patient_device_query = "SELECT device_id, start_time, end_time FROM device_patient WHERE patient_id = ?"
+        args = (patient_id,)
+
+        if start_time_n is not None:
+            patient_device_query += " AND end_time >= ? "
+            args += (start_time_n,)
+        if end_time_n is not None:
+            patient_device_query += " AND start_time <= ? "
+            args += (end_time_n,)
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(patient_device_query, args)
+            return cursor.fetchall()
     @abstractmethod
     def select_all_settings(self):
         # Select all settings from settings table.
@@ -193,10 +206,44 @@ class SQLHandler(ABC):
         # Get all matching blocks.
         pass
 
-    @abstractmethod
     def select_intervals(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
-        # Get all matching intervals.
-        pass
+        if device_id is None and patient_id is None:
+            raise ValueError("Either device_id or patient_id must be provided")
+
+        interval_query = "SELECT id, measure_id, device_id, start_time_n, end_time_n FROM interval_index WHERE measure_id = ? AND device_id = ?"
+
+        # Query by patient.
+        if patient_id is not None:
+            device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
+            # add start and end time to the query
+            interval_query += " AND end_time_n >= ? AND start_time_n <= ? ORDER BY start_time_n ASC, end_time_n ASC"
+
+            interval_results = []
+            with self.connection(begin=False) as (conn, cursor):
+                for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
+                    args = (measure_id, encounter_device_id, encounter_start_time, encounter_end_time)
+
+                    cursor.execute(interval_query, args)
+                    interval_results.extend(cursor.fetchall())
+            return interval_results
+
+        # Query by device.
+        args = (measure_id, device_id)
+
+        if end_time_n is not None:
+            interval_query += " AND start_time_n <= ?"
+            args += (end_time_n,)
+
+        if start_time_n is not None:
+            interval_query += " AND end_time_n >= ?"
+            args += (start_time_n,)
+
+        # add the ordering
+        interval_query += " ORDER BY start_time_n ASC, end_time_n ASC"
+
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(interval_query, args)
+            return cursor.fetchall()
 
     @abstractmethod
     def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[int] = None, start_time: int = None,

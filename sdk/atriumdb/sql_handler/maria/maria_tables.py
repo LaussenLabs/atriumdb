@@ -271,7 +271,8 @@ CREATE PROCEDURE IF NOT EXISTS insert_interval(
     IN p_measure_id INT UNSIGNED,
     IN p_device_id INT UNSIGNED,
     IN p_start_time_n BIGINT,
-    IN p_end_time_n BIGINT
+    IN p_end_time_n BIGINT,
+    IN p_tolerance BIGINT
 )
 BEGIN
     DECLARE overlapping_row_id INT;
@@ -279,11 +280,10 @@ BEGIN
     DECLARE existing_end_time_n BIGINT;
     DECLARE max_end_time_n BIGINT;
 
-    SELECT MAX(end_time_n) INTO max_end_time_n from interval_index
-                                               WHERE device_id = p_device_id AND measure_id = p_measure_id;
+    SELECT MAX(end_time_n) INTO max_end_time_n FROM interval_index WHERE device_id = p_device_id AND measure_id = p_measure_id;
 
     -- If new start time is greater than the max end time there will be no overlapping interval match so don't check
-    IF p_start_time_n > max_end_time_n THEN
+    IF p_start_time_n > (max_end_time_n + p_tolerance) THEN
         -- Insert the new row into the table
         INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n)
         VALUES (p_measure_id, p_device_id, p_start_time_n, p_end_time_n);
@@ -292,9 +292,7 @@ BEGIN
         SELECT id, start_time_n, end_time_n INTO overlapping_row_id, existing_start_time_n, existing_end_time_n
         FROM interval_index
         WHERE device_id = p_device_id AND measure_id = p_measure_id
-        AND ((p_start_time_n BETWEEN start_time_n AND end_time_n) OR
-             (p_end_time_n BETWEEN start_time_n AND end_time_n) OR
-             (p_end_time_n > end_time_n AND p_start_time_n < start_time_n))
+        AND p_start_time_n <= (end_time_n + p_tolerance) AND p_end_time_n >= (start_time_n - p_tolerance)
         LIMIT 1;
     
         IF overlapping_row_id IS NOT NULL THEN
