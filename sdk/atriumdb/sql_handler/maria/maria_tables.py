@@ -292,9 +292,7 @@ BEGIN
         SELECT id, start_time_n, end_time_n INTO overlapping_row_id, existing_start_time_n, existing_end_time_n
         FROM interval_index
         WHERE device_id = p_device_id AND measure_id = p_measure_id
-        AND ((p_start_time_n BETWEEN (start_time_n - p_tolerance) AND (end_time_n + p_tolerance)) OR
-             (p_end_time_n BETWEEN (start_time_n - p_tolerance) AND (end_time_n + p_tolerance)) OR
-             (p_end_time_n > end_time_n AND p_start_time_n < start_time_n))
+        AND p_start_time_n <= (end_time_n + p_tolerance) AND p_end_time_n >= (start_time_n - p_tolerance)
         LIMIT 1;
     
         IF overlapping_row_id IS NOT NULL THEN
