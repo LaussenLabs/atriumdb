@@ -366,12 +366,14 @@ We can also retrieve the annotations inserted as atriumdb labels earlier in the 
 label names inserted into the dataset:
 
 .. code-block:: python
+
     label_name_dict = sdk.get_all_label_names()
     label_names = [label_info['name'] for label_id, label_info in label_name_dict.items()]
 
 And then by calling `AtriumSDK.get_labels` to retrieve the label information:
 
 .. code-block:: python
+
     for record_name in tqdm(record_names):
        # Read the record from the MIT-BIH Arrhythmia Database
        label_data = sdk.get_labels(name_list=label_names, device_list=[record_name])

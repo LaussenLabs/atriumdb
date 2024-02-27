@@ -71,11 +71,8 @@ API Reference
 
 .. autoclass:: atriumdb.DatasetIterator
 
-   .. automethod:: __len__
-   .. automethod:: __getitem__
-   .. automethod:: get_signal_window
-   .. automethod:: get_array_matrix
-
+   .. automethod:: __next__
+   .. automethod:: __iter__
 
 
 Index

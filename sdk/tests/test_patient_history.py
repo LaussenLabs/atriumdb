@@ -113,7 +113,7 @@ def _test_patient_history(db_type, dataset_location, connection_params):
     assert patient_info['weight'] == 83.2
 
     # get all patient history for height and confirm it is in the correct order and the info is correct
-    patient_history = sdk.get_patient_history(field='height', patient_id=1)
+    patient_history = sdk.get_patient_history(patient_id=1, field='height')
     assert len(patient_history) == 3
 
     assert patient_history[0][1] == 1
@@ -134,7 +134,8 @@ def _test_patient_history(db_type, dataset_location, connection_params):
     assert patient_history[2][4] == 'cm'
 
     # get patient history with start and end time
-    patient_history = sdk.get_patient_history(field='weight', patient_id=1, start_time=1707945346000000000, end_time=1708104586074435800)
+    patient_history = sdk.get_patient_history(patient_id=1, field='weight', start_time=1707945346000000000,
+                                              end_time=1708104586074435800)
     assert len(patient_history) == 2
 
     assert patient_history[0][1] == 1
@@ -150,7 +151,7 @@ def _test_patient_history(db_type, dataset_location, connection_params):
     assert patient_history[1][5] == 1707945546000000000
 
     # get patient history without an end time
-    patient_history = sdk.get_patient_history(field='weight', patient_id=1, start_time=1707945346000000000)
+    patient_history = sdk.get_patient_history(patient_id=1, field='weight', start_time=1707945346000000000)
     assert len(patient_history) == 3
 
     assert patient_history[0][1] == 1
@@ -171,7 +172,7 @@ def _test_patient_history(db_type, dataset_location, connection_params):
     assert patient_history[2][4] == 'kg'
 
     # get patient history using mrn and without a start time
-    patient_history = sdk.get_patient_history(field='height', mrn=1234567, end_time=1708104586074435800)
+    patient_history = sdk.get_patient_history(mrn=1234567, field='height', end_time=1708104586074435800)
     assert len(patient_history) == 2
 
     assert patient_history[0][1] == 1
@@ -266,7 +267,7 @@ def _test_patient_history_api(db_type, dataset_location, connection_params):
     assert patient_info['weight'] == 83.2
 
     # get all patient history for height and confirm it is in the correct order and the info is correct
-    patient_history = api_sdk.get_patient_history(field='height', patient_id=1)
+    patient_history = api_sdk.get_patient_history(patient_id=1, field='height')
     assert len(patient_history) == 3
 
     assert patient_history[0][1] == 1
@@ -287,7 +288,8 @@ def _test_patient_history_api(db_type, dataset_location, connection_params):
     assert patient_history[2][4] == 'cm'
 
     # get patient history with start and end time
-    patient_history = api_sdk.get_patient_history(field='weight', patient_id=1, start_time=1707945346000000000, end_time=1708104586074435800)
+    patient_history = api_sdk.get_patient_history(patient_id=1, field='weight', start_time=1707945346000000000,
+                                                  end_time=1708104586074435800)
     assert len(patient_history) == 2
 
     assert patient_history[0][1] == 1
@@ -303,7 +305,7 @@ def _test_patient_history_api(db_type, dataset_location, connection_params):
     assert patient_history[1][5] == 1707945546000000000
 
     # get patient history without an end time
-    patient_history = api_sdk.get_patient_history(field='weight', patient_id=1, start_time=1707945346000000000)
+    patient_history = api_sdk.get_patient_history(patient_id=1, field='weight', start_time=1707945346000000000)
     assert len(patient_history) == 3
 
     assert patient_history[0][1] == 1
@@ -324,7 +326,7 @@ def _test_patient_history_api(db_type, dataset_location, connection_params):
     assert patient_history[2][4] == 'kg'
 
     # get patient history using mrn and without a start time
-    patient_history = api_sdk.get_patient_history(field='height', mrn=1234567, end_time=1708104586074435800)
+    patient_history = api_sdk.get_patient_history(mrn=1234567, field='height', end_time=1708104586074435800)
     assert len(patient_history) == 2
 
     assert patient_history[0][1] == 1

@@ -27,7 +27,8 @@ import pytest
 
 from atriumdb import AtriumSDK
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
-from atriumdb.transfer.adb.dataset import transfer_patients
+from atriumdb.transfer.adb.devices import transfer_devices
+from atriumdb.transfer.adb.patients import transfer_patient_info
 from tests.testing_framework import _test_for_both, create_sibling_sdk
 
 DB_NAME = "transfer-patients"
@@ -47,7 +48,10 @@ def _test_transfer_patients(db_type, dataset_location, connection_params):
     insert_random_patients(sdk_1, 100)
 
     # Test transfer_patients without deidentification
-    from_to_patient_id_dict = transfer_patients(sdk_1, sdk_2)
+    # from_to_patient_id_dict = transfer_patients(sdk_1, sdk_2)
+    device_id_map = transfer_devices(sdk_1, sdk_2)
+    from_to_patient_id_dict = transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=False)
+
 
     all_patients_1 = sdk_1.get_all_patients()
     all_patients_2 = sdk_2.get_all_patients()
@@ -58,7 +62,8 @@ def _test_transfer_patients(db_type, dataset_location, connection_params):
 
     # Test transfer_patients with deidentification
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
-    from_to_patient_id_dict_deid = transfer_patients(sdk_1, sdk_2, deidentify=True)
+    device_id_map = transfer_devices(sdk_1, sdk_2)
+    from_to_patient_id_dict_deid = transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=True)
 
     all_patients_1_deid = sdk_1.get_all_patients()
     all_patients_2_deid = sdk_2.get_all_patients()
@@ -89,7 +94,7 @@ def insert_random_patients(sdk, n):
         return random.randint(100000, 999999)
 
     def random_gender():
-        return random.choice(['M', 'F'])
+        return random.choice(['M', 'F', 'U'])
 
     def random_epoch():
         start = -2177452800_000_000_000
@@ -101,16 +106,19 @@ def insert_random_patients(sdk, n):
 
     patient_id_list = []
     for _ in range(n):
-        patient_id = sdk.sql_handler.insert_patient(mrn=random_mrn(),
-                                                    gender=random_gender(),
-                                                    dob=random_epoch(),
-                                                    first_name=names.get_first_name(),
-                                                    middle_name=random_string(1),
-                                                    last_name=names.get_last_name(),
-                                                    first_seen=random_epoch(),
-                                                    last_updated=random_epoch(),
-                                                    weight=random_height_weight(),
-                                                    height=random_height_weight())
+        patient_id = sdk.insert_patient(mrn=random_mrn(),
+                                        gender=random_gender(),
+                                        dob=random_epoch(),
+                                        first_name=names.get_first_name(),
+                                        middle_name=random_string(1),
+                                        last_name=names.get_last_name(),
+                                        first_seen=random_epoch(),
+                                        last_updated=random_epoch(),
+                                        weight=random_height_weight(),
+                                        height=random_height_weight(),
+                                        weight_units='kg',
+                                        height_units='cm')
+
         patient_id_list.append(patient_id)
         
     return patient_id_list

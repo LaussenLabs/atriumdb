@@ -58,3 +58,4 @@ class Window:
     patient_id: int
     label_time_series: np.ndarray
     label: np.ndarray
+    patient_info: dict

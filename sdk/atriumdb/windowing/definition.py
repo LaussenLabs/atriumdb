@@ -29,11 +29,12 @@ class DatasetDefinition:
 
     The ``DefinitionYAML`` class represents the definition of dataset sources
     (devices or patients), their associated time regions, and the available signals
-    over those time regions for the respective sources.
+    over those time regions for the respective sources, along with any labels
+    associated with these sources.
 
     :ivar data_dict: A dictionary containing the structured data from the YAML file
                      or passed parameters. The keys include 'measures', 'patient_ids',
-                     'mrns', 'device_ids', and 'device_tags'.
+                     'mrns', 'device_ids', 'device_tags', and 'labels'.
 
     :param filename: Path to the YAML file containing the dataset definition. If
                      provided, the contents of the file will populate `data_dict`. The
@@ -69,6 +70,12 @@ class DatasetDefinition:
                         Example: {"dev_1": "all", "dev_2b": [{'start': 123456000 * 10**9}]}
     :type device_tags: dict, optional
 
+    :param labels: List of strings, each representing a unique label associated with the dataset elements
+                   (such as patient conditions or device states). These labels can be used for classification,
+                   segmentation, or other forms of analysis.
+                   Example: ["Sinus rhythm", "Junctional ectopic tachycardia (JET)", "arrhythmia"]
+    :type labels: list, optional
+
     .. note:: For more details on the format expectations, see :ref:`definition_file_format`.
 
     **Examples**:
@@ -81,27 +88,15 @@ class DatasetDefinition:
 
     >>> dataset_definition = DatasetDefinition()
 
-    **Creating a definition with measures only**:
+    **Creating a definition with measures and labels**:
 
     >>> measures = ["measure_tag_1", {"tag": "measure_tag_2", "freq_hz": 62.5, "units": "measure_units_2"}]
-    >>> dataset_definition = DatasetDefinition(measures=measures)
+    >>> labels = ["label1", "label2"]
+    >>> dataset_definition = DatasetDefinition(measures=measures, labels=labels)
 
-    **Creating a definition with both measures and regions** (for information on time specifications see
-    :ref:`definition_file_format`):
+    **Adding a label to the definition**:
 
-    >>> device_tags = {
-    >>>     "tag_1": [{'start': 1693364515_000_000_000, 'end': 1693464515_000_000_000}],
-    >>>     "tag_2": [{'time0': 1693364515_000_000_000, 'pre': 5000_000_000_000, 'post': 6000_000_000_000}]
-    >>> }
-    >>> dataset_definition = DatasetDefinition(measures=measures, device_tags=device_tags)
-
-    **Adding a measure to the definition**:
-
-    >>> dataset_definition.add_measure(measure_tag="ART_BLD_PRESS", freq=250, units="mmHG")
-
-    **Adding a region to the definition**:
-
-    >>> dataset_definition.add_region(patient_id=12345, start=1693364515_000_000_000, end=1693464515_000_000_000)
+    >>> dataset_definition.add_label("new_label")
 
     **Saving the definition to a YAML file**:
 
@@ -128,7 +123,7 @@ class DatasetDefinition:
     @classmethod
     def build_from_intervals(cls, sdk, build_from_signal_type, measures=None, labels=None, patient_id_list=None,
                              mrn_list=None, device_id_list=None, device_tag_list=None, start_time=None, end_time=None,
-                             gap_tolerance=None):
+                             gap_tolerance=None, merge_strategy=None):
         """
         Class method that builds a DatasetDefinition object using signal-based intervals.
 
@@ -145,6 +140,9 @@ class DatasetDefinition:
         :param int gap_tolerance: The maximum allowable gap size in the data such that the output considers a
             region continuous. Put another way, the minimum gap size, such that the output of this method will add
             a new row.
+        :param merge_strategy: Strategy to merge intervals. 'union' (default) for returning all intervals with at
+            least one specified measure or label, 'intersection' for returning all intervals with every specified
+            measure or label.
         :return: DatasetDefinition object
         """
         # Validate build_from_signal_type
@@ -152,11 +150,22 @@ class DatasetDefinition:
             raise ValueError("build_from_signal_type must be either 'measures' or 'labels'")
 
         # Build the source intervals using the build_source_intervals function
-        source_intervals = build_source_intervals(sdk, measures=measures, labels=labels,
+        if build_from_signal_type == "measures":
+            assert measures, "If you are building on measures, you must provide measures"
+            build_measures = measures
+            build_labels = None
+        else:
+            # "labels"
+            assert labels, "If you are building on labels, you must provide labels"
+            build_measures = None
+            build_labels = labels
+
+        source_intervals = build_source_intervals(sdk, measures=build_measures, labels=build_labels,
                                                   patient_id_list=patient_id_list,
                                                   mrn_list=mrn_list, device_id_list=device_id_list,
                                                   device_tag_list=device_tag_list, start_time=start_time,
-                                                  end_time=end_time, gap_tolerance=gap_tolerance)
+                                                  end_time=end_time, gap_tolerance=gap_tolerance,
+                                                  merge_strategy=merge_strategy)
 
         # Create a DatasetDefinition instance
         kwargs = {
@@ -235,7 +244,7 @@ class DatasetDefinition:
         if times == "all":
             return
 
-        allowed_keys = ['start', 'end', 'time0', 'pre', 'post']
+        allowed_keys = ['start', 'end', 'time0', 'pre', 'post', 'files']
 
         for time_dict in times:
             if 'start' in time_dict and 'end' in time_dict and time_dict['start'] >= time_dict['end']:
@@ -243,6 +252,8 @@ class DatasetDefinition:
                                  f"end time {time_dict['end']}")
 
             for key, value in time_dict.items():
+                if key == 'files':
+                    continue
                 if key not in allowed_keys:
                     raise ValueError(f"{source_type} {source_id}: Invalid time key: {key}. "
                                      f"Allowed keys are: {', '.join(allowed_keys)}")
@@ -416,4 +427,4 @@ class DatasetDefinition:
 
         # Save the dataset definition to a YAML file
         with open(filepath, 'w') as file:
-            yaml.dump(self.data_dict, file)
+            yaml.dump(self.data_dict, file, sort_keys=False)

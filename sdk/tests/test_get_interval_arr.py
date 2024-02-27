@@ -36,9 +36,11 @@ def _test_get_interval_arr(db_type, dataset_location, connection_params):
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     # Write and insert data
-    device_id = sdk.insert_device("device_tag_1")
+    device_tag = "device_tag_1"
+    device_id = sdk.insert_device(device_tag)
     freq_hz = 1
-    measure_id = sdk.insert_measure("measure_tag_1", freq_hz)
+    measure_tag = "measure_tag_1"
+    measure_id = sdk.insert_measure(measure_tag, freq_hz)
 
     # Insert random patients
     num_patients = 5
@@ -81,7 +83,7 @@ def _test_get_interval_arr(db_type, dataset_location, connection_params):
     # Test get_interval_array based on device
     start_time_nano = start_time_s * (10 ** 9)
     end_time_nano = end_time_s * (10 ** 9)
-    interval_arr_device = sdk.get_interval_array(measure_id=measure_id, device_id=device_id, start=start_time_nano,
+    interval_arr_device = sdk.get_interval_array(measure_id=measure_id, device_tag=device_tag, start=start_time_nano,
                                                  end=end_time_nano)
 
     assert interval_arr_device.shape[0] > 0, "No intervals found for the device"

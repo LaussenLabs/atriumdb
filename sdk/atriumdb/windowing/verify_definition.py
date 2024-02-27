@@ -27,7 +27,44 @@ from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.windowing.map_definition_sources import map_validated_sources
 
 
-def verify_definition(definition, sdk, gap_tolerance=None):
+def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rule="best"):
+    """
+    Verifies and validates a dataset definition against the given AtriumSDK, including measures, label sets,
+    and sources.
+
+    Parameters:
+    - definition (str | DatasetDefinition): The dataset definition to be verified. This can be either a filename
+      (str) pointing to a dataset definition file or an instance of DatasetDefinition.
+    - sdk: An AtriumSDK object pointing at the dataset to validate the requested definition against.
+    - gap_tolerance (int, optional): The minimum allowed gap (in nanoseconds) in any generated time ranges
+        (time ranges are explained below).
+    - measure_tag_match_rule (str, optional): "best" or "all" as a strategy for dealing with measure tags where there
+        may be multiple measures with the given tag.
+
+    Returns:
+    - tuple: A tuple containing three elements:
+        1. validated_measure_list (list of dicts): A list of dictionaries, each representing a validated measure.
+           Each dictionary includes:
+           - 'id': The unique identifier of the measure.
+           - 'tag': A string tag associated with the measure.
+           - 'freq_nhz': The frequency of the measure in nanohertz (optional).
+           - 'units': The units of the measure (optional).
+        2. validated_label_set_list (list of int): A list of label set IDs that have been validated against
+            the AtriumSDK. Each element is an integer representing the unique identifier of a label set.
+        3. mapped_sources (dict): A dictionary representing the validated and mapped sources with the following keys:
+           - 'device_patient_tuples': A dictionary where each key is a tuple (device_id, patient_id) and each value
+             is a list of time ranges (start_time, end_time) for which the device-patient tuple has data. Both
+             start_time and end_time are integers, representing nanosecond precision timestamps since the Unix epoch.
+           - 'patient_ids' (optional): A dictionary present only if there are unmatched patient IDs. Each key is a
+             patient ID, and each value is a list of time ranges where data could not be matched to devices.
+           - 'device_ids' (optional): A dictionary present only if there are unmatched device IDs. Each key is a
+             device ID, and each value is a list of time ranges where data could not be matched to patients.
+
+    Raises:
+    - ValueError: If the input 'definition' is neither a filename (str) nor an instance of DatasetDefinition, or
+      if specified measures or label sets are not found in the AtriumSDK.
+
+    """
     gap_tolerance = 60_000_000_000 if gap_tolerance is None else gap_tolerance  # 1 minute nano default
     # If the input is a string, it is assumed to be a filename
     if isinstance(definition, str):
@@ -38,7 +75,7 @@ def verify_definition(definition, sdk, gap_tolerance=None):
         raise ValueError("Input must be either a filename or an instance of DatasetDefinition.")
 
     # Validate measures
-    validated_measure_list = _validate_measures(definition, sdk)
+    validated_measure_list = _validate_measures(definition, sdk, measure_tag_match_rule=measure_tag_match_rule)
 
     # Validate label sets
     validated_label_set_list = _validate_label_sets(definition, sdk)
@@ -51,7 +88,7 @@ def verify_definition(definition, sdk, gap_tolerance=None):
     return validated_measure_list, validated_label_set_list, mapped_sources
 
 
-def _validate_measures(definition: DatasetDefinition, sdk):
+def _validate_measures(definition: DatasetDefinition, sdk, measure_tag_match_rule="best"):
     assert "measures" in definition.data_dict, "definition must have some specified measures"
 
     measures = definition.data_dict["measures"]
@@ -59,20 +96,21 @@ def _validate_measures(definition: DatasetDefinition, sdk):
     validated_measure_list = []
 
     for measure_spec in measures:
-        measure_id = get_measure_id_from_generic_measure(sdk, measure_spec)
+        measure_ids = get_measure_id_from_generic_measure(sdk, measure_spec, measure_tag_match_rule=measure_tag_match_rule)
 
-        if measure_id is None:
-            raise ValueError(f"Measure {measure_spec} not found in SDK. Must use AtriumSDK.insert_measure "
-                             f"to insert the measure")
+        for measure_id in measure_ids:
+            if measure_id is None:
+                raise ValueError(f"Measure {measure_spec} not found in AtriumSDK. Must use AtriumSDK.insert_measure "
+                                 f"to insert the measure")
 
-        measure_info = sdk.get_measure_info(measure_id)
-        validated_measure_info = {
-            'id': measure_id,
-            'tag': measure_info['tag'],
-            'freq_nhz': measure_info.get('freq_nhz'),
-            'units': measure_info.get('unit')
-        }
-        validated_measure_list.append(validated_measure_info)
+            measure_info = sdk.get_measure_info(measure_id)
+            validated_measure_info = {
+                'id': measure_id,
+                'tag': measure_info['tag'],
+                'freq_nhz': measure_info.get('freq_nhz'),
+                'units': measure_info.get('unit')
+            }
+            validated_measure_list.append(validated_measure_info)
 
     return validated_measure_list
 
@@ -92,9 +130,11 @@ def _validate_label_sets(definition: DatasetDefinition, sdk):
 
     for label in labels:
         if label not in all_sdk_label_set_name_to_id_dict:
-            raise ValueError(f"Label set {label} not found in SDK. Must use AtriumSDK.insert_label with a valid label if you "
-                             f"want use the label set {label}. If you don't have any valid labels, but still want"
-                             f"to include the label set use: AtriumSDK.sql_handler.insert_label_set(name) to introduce a new label set.")
+            raise ValueError(
+                f"Label set {label} not found in AtriumSDK. Must use AtriumSDK.insert_label with a valid label if you "
+                f"want use the label set {label}. If you don't have any valid labels, but still want"
+                f"to include the label set use: AtriumSDK.sql_handler.insert_label_set(name) to introduce a new "
+                f"label set.")
         validated_label_set_list.append(all_sdk_label_set_name_to_id_dict[label])
 
     return validated_label_set_list
@@ -224,4 +264,3 @@ def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, 
         interval_list.append([start, end])
 
     return interval_list
-

@@ -29,7 +29,6 @@ def test_iterator():
 
 
 def _test_iterator(db_type, dataset_location, connection_params):
-    print()  # I use this convention to gain an extra line to separate test information from future prints.
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
@@ -59,9 +58,6 @@ def _test_iterator(db_type, dataset_location, connection_params):
                 assert isinstance(signal_dict['times'], np.ndarray)
                 assert isinstance(signal_dict['values'], np.ndarray)
 
-            # Old matrix
-            assert isinstance(iterator.get_array_matrix(window_i), np.ndarray)
-
             # Labels
             assert isinstance(window.label_time_series, np.ndarray)
             assert isinstance(window.label, np.ndarray)
@@ -84,7 +80,7 @@ def _test_iterator(db_type, dataset_location, connection_params):
         partial_measure_id, partial_device_id, times, values, partial_freq_nano, scale_m=scale_m, scale_b=scale_b)
 
     # Add a patient
-    patient_id = sdk.sql_handler.insert_patient()
+    patient_id = sdk.insert_patient()
 
     # Only map half the data
     half_time = int(times[(num_values // 2) + 1])

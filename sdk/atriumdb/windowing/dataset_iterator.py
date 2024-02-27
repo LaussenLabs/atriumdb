@@ -18,12 +18,13 @@
 
 from bisect import bisect_right
 import warnings
+import random
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
 from atriumdb.windowing.window import Window
-from atriumdb.windowing.windowing_functions import get_threshold_labels
+from atriumdb.windowing.windowing_functions import get_threshold_labels, find_closest_measurement
 
 
 class DatasetIterator:
@@ -50,16 +51,29 @@ class DatasetIterator:
     :param time_units: If you would like the window_duration and window_slide to be specified in units other than
                             nanoseconds you can choose from one of ["s", "ms", "us", "ns"].
     :type time_units: str
+    :param shuffle: If True, shuffle the order of windows before iterating. If an integer, it will initialize
+                    a seeded random number generator for reproducible shuffling. If False or None, no shuffling occurs.
+    :type shuffle: Union[bool, None, int]
+    :param max_cache_duration: If specified, no single cache will have a time range larger than this duration.
+                               The time range will be split accordingly. The duration must be larger than window_duration_ns.
+    :type max_cache_duration: int, optional
+    :param list patient_history_fields: A list of patient_history fields you would like returned in the Window object.
     """
 
     def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
-                 label_threshold=0.5, time_units=None):
+                 label_threshold=0.5, time_units=None, shuffle=False, max_cache_duration=None,
+                 patient_history_fields: list = None):
         # AtriumSDK object
         self.sdk = sdk
 
+        # Initialize random number generator if shuffle is specified with a seed
+        self.random_gen = random.Random(shuffle) if isinstance(shuffle, int) else random.Random() if shuffle else None
+
         # Store the label_threshold
         self.label_threshold = label_threshold
+
+        self.patient_history_fields = patient_history_fields
 
         self.time_units = "ns" if time_units is None else time_units
         self.time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
@@ -73,6 +87,13 @@ class DatasetIterator:
         # Dictionary containing sources. Each source type contains identifiers (device_id/patient_id)
         # and have associated time ranges (or "all").
         self.sources = validated_sources
+        self.max_cache_duration = max_cache_duration
+        if max_cache_duration is not None:
+            assert max_cache_duration >= window_duration_ns, \
+                "max_cache_duration must be greater than window_duration_ns"
+            self._split_time_ranges(max_cache_duration)
+
+        self.shuffle = shuffle
 
         # Duration of each window in nanoseconds. Represents the time span of each data segment.
         self.window_duration_ns = int(window_duration_ns)
@@ -116,12 +137,13 @@ class DatasetIterator:
 
         # Lists containing the starting index for each batch and details about each batch respectively.
         # Also, the total length (number of windows) in the dataset.
-        self.batch_first_index, self.batch_info, self._length = self._extract_batch_info()
+        self.batch_info, self.batch_first_index, self._length = self._extract_cache_info()
 
         # Variables to store the start and end indices of the current batch.
         # initialized to -1 so that the first request will always trigger a batch load.
         self.current_batch_start_index = -1
         self.current_batch_end_index = -1
+        self.next_cache_index = 0
 
         # The current batch's matrix containing the batch's data for windowing.
         self.batch_matrix = None
@@ -148,101 +170,247 @@ class DatasetIterator:
         self.batch_label_time_series = None
         self.batch_label_thresholds = None
 
-    def _extract_batch_info(self):
-        # Initialize empty lists to store batch details and starting window indices
-        batch_info = []
-        batch_first_index = []
+        # Window Cache
+        self.window_cache = []
+        self.matrix_cache = []
+        self.cache_window_i = 0
 
-        # A global index of windows
-        current_index = 0
-
-        # For each source type
+    def _split_time_ranges(self, max_duration):
         for source_type, sources in self.sources.items():
-
-            # For each source identifier of that type
             for source_id, time_ranges in sources.items():
+                new_time_ranges = []
+                for start, end in time_ranges:
+                    while start + max_duration < end:
+                        new_time_ranges.append([start, start + max_duration])
+                        start += max_duration
+                    new_time_ranges.append([start, end])
+                self.sources[source_type][source_id] = new_time_ranges
 
-                # For all time ranges in that source
+    def _extract_cache_info(self):
+        # Flattening the nested dictionary/list structure
+        flattened_sources = []
+        for source_type, sources in self.sources.items():
+            for source_id, time_ranges in sources.items():
                 for range_start_time, range_end_time in time_ranges:
-                    cur_window_start_time = range_start_time
-                    true_range_end_time = range_end_time
+                    flattened_sources.append([source_type, source_id, range_start_time, range_end_time])
 
-                    # Adjust the range_end_time to ensure it's aligned to the window_slide_ns
-                    total_range_duration = max(range_end_time - cur_window_start_time, self.window_duration_ns)
-                    remainder = (total_range_duration - self.window_duration_ns) % self.window_slide_ns
-                    if remainder != 0:
-                        range_end_time += self.window_slide_ns - remainder
+        # Shuffling if random_gen is not None
+        if self.random_gen is not None:
+            self.random_gen.shuffle(flattened_sources)
 
-                    # Initialize the batch starting time and the starting index of this batch
-                    batch_start_time = cur_window_start_time
-                    batch_index_start = current_index
+        cache_info = []  # List to hold all batches
+        starting_window_index_per_batch = [0]  # Starts with 0 to indicate the first window starts at index 0
+        total_number_of_windows = 0  # A counter for the total number of windows across all batches
 
-                    # Keep adding windows to the batch until the end of the time range is reached
-                    while cur_window_start_time + self.window_duration_ns <= range_end_time:
+        current_batch = []
+        current_batch_num_windows = 0
 
-                        # If the batch reaches its maximum size, finalize this batch and start a new one
-                        if self.max_batch_size and (current_index - batch_index_start) >= self.max_batch_size:
-                            batch_info.append(
-                                [
-                                    source_type,
-                                    source_id,
-                                    batch_start_time,
-                                    cur_window_start_time + self.window_duration_ns,
-                                    range_start_time,
-                                    true_range_end_time,
-                                ])
+        for source in flattened_sources:
+            source_type, source_id, range_start_time, range_end_time = source
+            num_time_range_windows = 0
+            time_range_info_start = cur_window_start = range_start_time
+            time_range_info_end = cur_window_end = cur_window_start + self.window_duration_ns
 
-                            batch_first_index.append(batch_index_start)
+            # While the next window is valid
+            while cur_window_start < range_end_time:
 
-                            # Reset batch start time and index to current values for the new batch
-                            batch_start_time = cur_window_start_time
-                            batch_index_start = current_index
+                # Increment Window Counters
+                num_time_range_windows += 1
+                current_batch_num_windows += 1
+                total_number_of_windows += 1
 
-                        # Move to the next window by sliding forward
-                        cur_window_start_time += self.window_slide_ns
-                        # Increment the global window index
-                        current_index += 1
+                # Update the valid end_time
+                time_range_info_end = cur_window_end
 
-                    # After exiting the while loop, if there are remaining windows that haven't been batched,
-                    # create a batch for them.
-                    if (current_index - batch_index_start) > 0:
-                        batch_info.append(
-                            [
-                                source_type,
-                                source_id,
-                                batch_start_time,
-                                cur_window_start_time + self.window_duration_ns,
-                                range_start_time,
-                                true_range_end_time,
-                            ])
-                        batch_first_index.append(batch_index_start)
+                # Check if we've gone over.
+                if current_batch_num_windows >= self.max_batch_size:
+                    # Add current time_range_info to the batch
+                    if num_time_range_windows > 0:
+                        time_range_info = [
+                            source_type,
+                            source_id,
+                            time_range_info_start,
+                            time_range_info_end,
+                            time_range_info_start,
+                            min(range_end_time, time_range_info_end),
+                            num_time_range_windows,
+                        ]
+                        current_batch.append(time_range_info)
 
-        # Append the final window count to the batch_first_index list for future batch size math.
-        batch_first_index.append(current_index)
+                    # Add batch to cache list
+                    cache_info.append(current_batch)
 
-        # Return the lists containing batch start indices, batch details, and the total number of windows
-        return batch_first_index, batch_info, current_index
+                    # Reset Batch
+                    current_batch = []
+                    current_batch_num_windows = 0
+                    starting_window_index_per_batch.append(total_number_of_windows)
+
+                    # Separate Time Range
+                    time_range_info_start = cur_window_start + self.window_slide_ns
+                    num_time_range_windows = 0
+
+                # Locate next possible window
+                cur_window_start += self.window_slide_ns
+                cur_window_end += self.window_slide_ns
+
+            # Once all the windows have been accounted for, add them to the batch
+            if num_time_range_windows > 0:
+                time_range_info = [
+                    source_type,
+                    source_id,
+                    time_range_info_start,
+                    time_range_info_end,
+                    time_range_info_start,
+                    min(range_end_time, time_range_info_end),
+                    num_time_range_windows,
+                ]
+                current_batch.append(time_range_info)
+
+        # Add final batch to cache list
+        cache_info.append(current_batch)
+        starting_window_index_per_batch.append(total_number_of_windows)
+
+        return cache_info, starting_window_index_per_batch, total_number_of_windows
 
     def _load_batch_matrix(self, idx: int):
-        batch_index = bisect_right(self.batch_first_index, idx) - 1
-        if batch_index < 0 or len(self.batch_info) <= batch_index:
-            raise ValueError(f"index {idx} outside of batched data.")
+        batch_index, batch_start_index, batch_end_index, batch_num_windows, batch_size = \
+            self._calculate_batch_size(idx)
 
-        batch_start_index = self.batch_first_index[batch_index]
-        batch_end_index = self.batch_first_index[batch_index + 1]
+        window_cache = []
+        matrix_cache = []
 
-        batch_num_windows = batch_end_index - batch_start_index
-        batch_size = self.row_size + (batch_num_windows - 1) * self.slide_size
+        num_filtered_windows = 0
+        # batch_data = [self.batch_info[batch_index]]
+        batch_data = self.batch_info[batch_index]
+        patient_info_cache = {}
+        patient_history_cache = {}
 
-        # Get the matrix
-        source_type, source_id, batch_start_time, batch_end_time, range_start_time, range_end_time = \
-            self.batch_info[batch_index]
+        for source_index, (source_type, source_identifier, source_batch_start_time, source_batch_end_time, range_start_time, range_end_time, range_num_windows) in enumerate(batch_data):
+            range_size = self.row_size + (range_num_windows - 1) * self.slide_size
+            # Pre load source matrix and associated times
+            source_matrix = np.full((len(self.measures), range_size), np.nan)
 
-        batch_matrix = np.full((len(self.measures), batch_size), np.nan)
+            quantized_end_time = source_batch_start_time + (range_size * self.row_period_ns)
+            source_time_array = np.arange(source_batch_start_time, quantized_end_time, self.row_period_ns)
 
-        quantized_end_time = batch_start_time + (batch_size * self.row_period_ns)
-        batch_time_array = np.arange(batch_start_time, quantized_end_time, self.row_period_ns)
+            device_id, patient_id, query_patient_id = self.unpack_source_info(source_identifier, source_type)
 
+            self._load_patient_cache(patient_id, patient_info_cache, patient_history_cache)
+
+            source_batch_data_dictionary = self._query_source_data(
+                device_id, query_patient_id, source_batch_start_time, source_batch_end_time, range_start_time,
+                range_end_time, range_num_windows, range_size, source_matrix)
+
+            windowed_views = sliding_window_view(
+                source_matrix, (len(self.measures), self.row_size), axis=None)
+
+            windowed_times = sliding_window_view(source_time_array, self.row_size)
+
+            sliced_views = windowed_views[0][::self.slide_size]
+            sliced_times = windowed_times[::self.slide_size]
+
+            sliced_labels, threshold_labels = self._get_source_label_data(
+                device_id, query_patient_id, source_batch_start_time, source_batch_end_time, source_time_array)
+
+            for window_i in range(len(sliced_views)):
+                signal_dictionary = {}
+                for measure in self.measures:
+                    measure_id = measure['id']
+                    measure_tag = measure['tag']
+                    measure_freq_nhz = measure['freq_nhz']
+                    measure_freq_hz = float(measure_freq_nhz / (10 ** 9))
+                    measure_units = measure['units']
+
+                    window_times = source_batch_data_dictionary[measure_id][0][window_i]
+
+                    window_values = source_batch_data_dictionary[measure_id][1][window_i]
+                    measure_expected_count = source_batch_data_dictionary[measure_id][2]
+
+                    signal_dictionary[(measure_tag, measure_freq_hz, measure_units)] = \
+                        {
+                            'times': np.copy(window_times),
+                            'values': np.copy(window_values),
+                            'expected_count': measure_expected_count,
+                            'actual_count': np.sum(~np.isnan(window_values)),
+                            'measure_id': measure_id,
+                        }
+
+                label_time_series = np.copy(sliced_labels[window_i]) if \
+                    sliced_labels is not None else None
+
+                window_classification = threshold_labels[window_i] if \
+                    threshold_labels is not None else None
+
+                window_start_time = int(sliced_times[window_i][0])
+
+                # Get patient info
+                window_patient_info = self._get_patient_info_from_cache(
+                    patient_id, window_start_time, patient_info_cache, patient_history_cache)
+
+                result_window = Window(
+                    signals=signal_dictionary,
+                    start_time=window_start_time,
+                    device_id=device_id,
+                    patient_id=patient_id,
+                    label_time_series=label_time_series,
+                    label=window_classification,
+                    patient_info=window_patient_info
+                )
+
+                window_cache.append(result_window)
+                matrix_cache.append(np.copy(sliced_views[window_i]))
+
+        if self.random_gen is not None:
+            self.random_gen.shuffle(window_cache)
+            self.random_gen.shuffle(matrix_cache)
+
+        self.window_cache = window_cache
+        self.matrix_cache = matrix_cache
+
+        self.current_batch_start_index = batch_start_index
+        self.current_batch_end_index = batch_end_index
+
+    def _load_patient_cache(self, patient_id, patient_info_cache, patient_history_cache):
+        if patient_id is None:
+            return
+        # Check if patient id is in the info cache.
+        if patient_id not in patient_info_cache:
+            patient_info_cache[patient_id] = self.sdk.get_patient_info(patient_id=patient_id)
+            if patient_info_cache[patient_id] is None:
+                patient_info_cache[patient_id] = {}
+            else:
+                # Delete Height And Weight From Static Info
+                if 'height' in patient_info_cache[patient_id]:
+                    del patient_info_cache[patient_id]['height']
+
+                if 'weight' in patient_info_cache[patient_id]:
+                    del patient_info_cache[patient_id]['weight']
+
+        if self.patient_history_fields and patient_id not in patient_history_cache:
+            patient_history_cache[patient_id] = {}
+            for field in ['height', 'weight']:
+                if field not in self.patient_history_fields:
+                    continue
+                patient_history_cache[patient_id][field] = self.sdk.get_patient_history(
+                    patient_id=patient_id, field=field)
+
+    def _get_patient_info_from_cache(self, patient_id, window_start_time, patient_info_cache, patient_history_cache):
+        window_patient_info = patient_info_cache.get(patient_id, {})
+        if self.patient_history_fields:
+            for field, history_timeseries in patient_history_cache.get(patient_id, {}).items():
+                best_match = find_closest_measurement(window_start_time, history_timeseries)
+                if best_match is None:
+                    continue
+
+                _, _, _, value, units, time = best_match
+                window_patient_info[field] = {
+                    'value': value,
+                    'units': units,
+                    'time': time,
+                }
+        return window_patient_info
+
+    def unpack_source_info(self, source_id, source_type):
         if source_type == "device_ids":
             device_id = source_id
             patient_id = None
@@ -254,16 +422,41 @@ class DatasetIterator:
 
         else:
             raise ValueError(f"Source type must be either device_ids or patient_ids, not {source_type}")
-
-        # Save the source id info for the batch
-        self.current_patient_id = patient_id
-        self.current_device_id = device_id
-
         # only query by patient if device_id isn't available.
         query_patient_id = patient_id if device_id is None else None
+        return device_id, patient_id, query_patient_id
 
+    def _get_source_label_data(self, device_id, query_patient_id, batch_start_time, batch_end_time, batch_time_array):
+        sliced_labels, threshold_labels = None, None
+        # If labels exist, calculate them
+        if len(self.label_sets) > 0:
+            # Preallocate label matrix
+            label_matrix = np.zeros((len(self.label_sets), len(batch_time_array)), dtype=np.int8)
+
+            # Populate label matrix
+            for idx, label_set_id in enumerate(self.label_sets):
+                self.sdk.get_label_time_series(
+                    label_name_id=label_set_id,
+                    device_id=device_id if device_id else None,
+                    patient_id=query_patient_id if query_patient_id else None,
+                    start_time=batch_start_time,
+                    end_time=batch_end_time,
+                    timestamp_array=batch_time_array,
+                    out=label_matrix[idx]
+                )
+
+            # Create label windows
+            windowed_label_views = sliding_window_view(
+                label_matrix, (len(self.label_sets), self.row_size), axis=None)
+            sliced_labels = windowed_label_views[0][::self.slide_size]
+
+            threshold_labels = get_threshold_labels(sliced_labels, label_threshold=self.label_threshold)
+        return sliced_labels, threshold_labels
+
+    def _query_source_data(self, device_id, query_patient_id, batch_start_time, batch_end_time, range_start_time,
+                           range_end_time, batch_num_windows, batch_size, batch_matrix):
         # Reset and populate the batch data signal dictionary
-        self.batch_data_dictionary.clear()
+        source_batch_data_dictionary = {}
         for i, measure in enumerate(self.measures):
             freq_nhz = measure['freq_nhz']
             period_ns = int(1e18 // freq_nhz)
@@ -320,184 +513,23 @@ class DatasetIterator:
             sliced_windowed_measure_values = windowed_measure_values[::measure_slide_size]
 
             # Store the measure's time and value arrays in the batch data dictionary
-            self.batch_data_dictionary[measure_id] = \
+            source_batch_data_dictionary[measure_id] = \
                 (sliced_windowed_measure_times, sliced_windowed_measure_values, measure_window_size)
+        return source_batch_data_dictionary
 
-        windowed_views = sliding_window_view(
-            batch_matrix, (len(self.measures), self.row_size), axis=None)
-
-        windowed_times = sliding_window_view(batch_time_array, self.row_size)
-
-        sliced_views = windowed_views[0][::self.slide_size]
-        sliced_times = windowed_times[::self.slide_size]
-
-        # If labels exist, calculate them
-        if len(self.label_sets) > 0:
-            # Preallocate label matrix
-            label_matrix = np.zeros((len(self.label_sets), len(batch_time_array)), dtype=np.int8)
-
-            # Populate label matrix
-            for idx, label_set_id in enumerate(self.label_sets):
-                self.sdk.get_label_time_series(
-                    label_name_id=label_set_id,
-                    device_id=device_id if device_id else None,
-                    patient_id=query_patient_id if query_patient_id else None,
-                    start_time=batch_start_time,
-                    end_time=batch_end_time,
-                    timestamp_array=batch_time_array,
-                    out=label_matrix[idx]
-                )
-
-            # Create label windows
-            windowed_label_views = sliding_window_view(
-                label_matrix, (len(self.label_sets), self.row_size), axis=None)
-            sliced_labels = windowed_label_views[0][::self.slide_size]
-
-            threshold_labels = get_threshold_labels(sliced_labels, label_threshold=self.label_threshold)
-
-            self.batch_label_time_series = sliced_labels
-            self.batch_label_thresholds = threshold_labels
-
-        self.current_batch_start_index = batch_start_index
-        self.current_batch_end_index = batch_end_index
-        self.batch_matrix = sliced_views
-        self.batch_times = sliced_times
-
-        self.current_batch_start_time = batch_start_time
+    def _calculate_batch_size(self, idx):
+        batch_index = bisect_right(self.batch_first_index, idx) - 1
+        if batch_index < 0 or len(self.batch_info) <= batch_index:
+            raise ValueError(f"index {idx} outside of batched data.")
+        batch_start_index = self.batch_first_index[batch_index]
+        batch_end_index = self.batch_first_index[batch_index + 1]
+        batch_num_windows = batch_end_index - batch_start_index
+        batch_size = self.row_size + (batch_num_windows - 1) * self.slide_size
+        return batch_index, batch_start_index, batch_end_index, batch_num_windows, batch_size
 
     def get_current_window_start(self):
         return self.current_batch_start_time + \
                ((self.current_index - self.current_batch_start_index) * self.window_slide_ns)
-
-    def __len__(self) -> int:
-        """
-        Get the total number of windows in the dataset.
-
-        :return: Total number of windows in the dataset
-        :rtype: int
-        """
-        return self._length
-
-    def get_array_matrix(self, idx: int) -> np.ndarray:
-        """
-        Fetch the window data (numpy matrix) for a given index. By nature of being a matrix, the returned array will
-        have equal numbers of values for each row (signal), and therefore gaps are filled with numpy.nan values in
-        rows with lower sample frequencies.
-
-        :param idx: Index of the desired window
-        :type idx: int
-        :return: Array of data corresponding to the given index
-        :rtype: np.ndarray
-        :raises IndexError: If the index is out of bounds
-        """
-        if idx < 0:
-            idx = self._length - idx
-
-        if idx < 0 or self._length <= idx:
-            raise IndexError(f"Index {idx} out of bounds for iterator of length {self._length}")
-
-        if idx < self.current_batch_start_index or self.current_batch_end_index <= idx:
-            self._load_batch_matrix(idx)
-
-        self.current_index = idx
-
-        return np.copy(self.batch_matrix[idx - self.current_batch_start_index])
-
-    def get_signal_window(self, idx: int) -> dict:
-        """
-        Fetch the window data (dictionary of signals) for a given index.
-
-        :param idx: Index of the desired window
-        :type idx: int
-        :return: Array of data corresponding to the given index
-        :rtype: dict
-        :raises IndexError: If the index is out of bounds
-        """
-        if idx < 0:
-            idx = self._length - idx
-
-        if idx < 0 or self._length <= idx:
-            raise IndexError(f"Index {idx} out of bounds for iterator of length {self._length}")
-
-        if idx < self.current_batch_start_index or self.current_batch_end_index <= idx:
-            self._load_batch_matrix(idx)
-
-        self.current_index = idx
-        signal_dictionary = {}
-        for measure in self.measures:
-            measure_id = measure['id']
-            measure_tag = measure['tag']
-            measure_freq_nhz = measure['freq_nhz']
-            measure_units = measure['units']
-
-            window_times = self.batch_data_dictionary[measure_id][0][idx - self.current_batch_start_index]
-
-            window_values = self.batch_data_dictionary[measure_id][1][idx - self.current_batch_start_index]
-            measure_expected_count = self.batch_data_dictionary[measure_id][2]
-
-            signal_dictionary[(measure_tag, measure_freq_nhz, measure_units)] = \
-                {
-                    'times': np.copy(window_times),
-                    'values': np.copy(window_values),
-                    'expected_count': measure_expected_count,
-                    'actual_count': np.sum(~np.isnan(window_values)),
-                    'measure_id': measure_id,
-                }
-
-        return signal_dictionary
-
-    def __getitem__(self, idx: int) -> Window:
-        """
-        Fetches a Window object corresponding to the given index, encapsulating multiple signals of varying
-        frequencies along with their associated metadata. The Window object returned will have its `signals` attribute
-        populated with a dictionary, where each key is a tuple describing the measure tag, the frequency of the
-        measure in Hz, and the units of the measure. The value corresponding to each key is another dictionary
-        containing the actual data points, expected count, actual count of non-NaN data points, measure ID, and
-        the timestamps associated with each data point of the signal.
-
-        :param idx: The index of the desired window. This index must be within the bounds of the available data
-            windows. Negative indexing is supported, `-idx = len(iterator) - idx`.
-        :type idx: int
-        :return: A Window object encapsulating the signals and associated metadata for the specified index. The
-            structure of the Window object and the included signals dictionary is described in the Window Format section
-            of the documentation.
-        :rtype: Window
-        :raises IndexError: Raised if the index is out of bounds.
-
-        :Example:
-
-        .. code-block:: python
-
-            window_obj = dataset_iterator[5]
-            signals_dict = window_obj.signals
-
-            for measure_info, signal_data in signals_dict.items():
-                print(f"Measure Info: {measure_info}")
-                print(f"Times: {signal_data['times']}")
-                print(f"Values: {signal_data['values']}")
-                print(f"Expected Count: {signal_data['expected_count']}")
-                print(f"Actual Count: {signal_data['actual_count']}")
-                print(f"Measure ID: {signal_data['measure_id']}")
-
-        """
-        signal_dictionary = self.get_signal_window(idx)
-
-        label_time_series = np.copy(self.batch_label_time_series[idx - self.current_batch_start_index]) if \
-            self.batch_label_time_series is not None else None
-
-        window_classification = self.batch_label_thresholds[idx - self.current_batch_start_index] if \
-            self.batch_label_thresholds is not None else None
-
-        result_window = Window(
-            signals=signal_dictionary,
-            start_time=self.get_current_window_start(),
-            device_id=self.current_device_id,
-            patient_id=self.current_patient_id,
-            label_time_series=label_time_series,
-            label=window_classification,
-        )
-
-        return result_window
 
     def __next__(self) -> Window:
         """
@@ -530,5 +562,52 @@ class DatasetIterator:
                 print(f"Measure ID: {signal_data['measure_id']}")
 
         """
-        idx = 0 if self.current_index is None else self.current_index + 1
-        return self.__getitem__(idx)
+        while self.cache_window_i >= len(self.window_cache):
+            if self.next_cache_index >= len(self.batch_info):
+                # Reset iterator
+                self.current_batch_start_index = -1
+                self.current_batch_end_index = -1
+                self.next_cache_index = 0
+
+                # Attribute to store the batch label information.
+                self.batch_label_time_series = None
+                self.batch_label_thresholds = None
+
+                # Window Cache
+                self.window_cache = []
+                self.matrix_cache = []
+                self.cache_window_i = 0
+                raise StopIteration
+            self._load_batch_matrix(self.batch_first_index[self.next_cache_index])
+            self.cache_window_i = 0
+            self.next_cache_index += 1
+
+        window = self.window_cache[self.cache_window_i]
+        self.cache_window_i += 1
+        return window
+
+    def __iter__(self):
+        """
+        Returns the iterator object itself. This method is required to make the class iterable.
+
+        By implementing this method, the DatasetIterator class can be used in loop constructs like for-loops.
+        This is useful for iterating over the dataset in a convenient and Pythonic way.
+
+        The __iter__ method is part of the iterator protocol in Python, which requires __iter__ and __next__
+        methods to be defined for an object to be considered an iterator. When used in a for-loop, Python
+        automatically calls the __iter__ method to obtain an iterator and then repeatedly calls the __next__
+        method to retrieve successive items from the iterator.
+
+        :return: Returns the iterator object (self).
+        :rtype: DatasetIterator
+
+        :Example:
+
+        .. code-block:: python
+
+            dataset_iterator = DatasetIterator(...)  # Assuming proper initialization
+            for window in dataset_iterator:
+                # Process each window here
+                ...
+        """
+        return self
