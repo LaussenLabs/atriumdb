@@ -46,10 +46,16 @@ class SQLHandler(ABC):
         pass
 
     def select_patient_history(self, patient_id, field, start_time, end_time):
-        # find the patient history that is closest to the timestamp
-        query = "SELECT id, patient_id, field, value, units, time FROM patient_history WHERE patient_id = ? and field = ? and time BETWEEN ? AND ? ORDER BY time"
+        # Dynamically construct the query based on whether `field` is None
+        if field is None:
+            query = "SELECT id, patient_id, field, value, units, time FROM patient_history WHERE patient_id = ? AND time BETWEEN ? AND ? ORDER BY time"
+            query_params = (patient_id, start_time, end_time)
+        else:
+            query = "SELECT id, patient_id, field, value, units, time FROM patient_history WHERE patient_id = ? AND field = ? AND time BETWEEN ? AND ? ORDER BY time"
+            query_params = (patient_id, field, start_time, end_time)
+
         with self.connection(begin=False) as (conn, cursor):
-            cursor.execute(query, (patient_id, field, start_time, end_time))
+            cursor.execute(query, query_params)
             return cursor.fetchall()
 
     def select_closest_patient_history(self, patient_id, field, time):
@@ -58,6 +64,16 @@ class SQLHandler(ABC):
         with self.connection(begin=False) as (conn, cursor):
             cursor.execute(query, (patient_id, field, time))
             return cursor.fetchone()
+
+    def select_unique_history_fields(self):
+        query = "SELECT DISTINCT field FROM patient_history"
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(query)
+            # Fetch all results
+            results = cursor.fetchall()
+            # Extract field values from the results
+            fields = [row[0] for row in results]
+        return fields
 
     @abstractmethod
     def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None,

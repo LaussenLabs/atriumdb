@@ -33,7 +33,7 @@ from atriumdb.adb_functions import parse_metadata_uri
 from atriumdb.cli.sdk import get_sdk_from_env_vars, create_sdk_from_env_vars
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.transfer.cohort.cohort_yaml import parse_atrium_cohort_yaml
-from atriumdb.transfer.adb.dataset import old_transfer_data, transfer_data
+from atriumdb.transfer.adb.dataset import transfer_data
 from atriumdb.transfer.formats.dataset import export_dataset, import_dataset
 from atriumdb.transfer.formats.export_data import export_data_from_sdk
 from atriumdb.transfer.formats.import_data import import_data_to_sdk
@@ -249,26 +249,38 @@ def config(ctx):
 @click.command()
 @click.pass_context
 @click.argument('definition_filename', type=click.Path(exists=True))
-@click.option("--gap-tolerance", type=int, default=300,
-              help="Number of seconds defining the minimum gap between different sections of data. Large numbers will "
+@click.option("--gap-tolerance", type=int, default=None,
+              help="The time (in --time-units units) defining the minimum gap between different sections of data. Large numbers will "
                    "increase efficiency by performing large queries, but may take in extra unwanted data. Leaving the "
                    "option as the default 5 minutes strikes a good balance.")
-@click.option("--deidentify", type=bool, default=False)
+@click.option("--deidentify", type=click.Choice(['True', 'False', 'filename']), default='False',
+              help="Whether to deidentify patient data. Can also specify a filename for custom ID mapping.")
 @click.option("--patient-cols", type=str, multiple=True, default=None,
               help="List patient columns to transfer, valid options are: "
                    "mrn, gender, dob, first_name, middle_name, last_name, first_seen, "
                    "last_updated, source_id, weight, height")
 @click.option("--block-size", type=int, default=None, help="The target number of values per compression block.")
+@click.option("--include-labels", is_flag=True, default=True,
+              help="Whether to include labels in the data transfer.")
+@click.option("--measure-tag-match-rule", type=click.Choice(['all', 'best']), default=None,
+              help="Determines how to match the measures by tags.")
+@click.option("--time-shift", type=int, default=None,
+              help="Amount of time (in the specified units) by which to shift all timestamps in the data.")
+@click.option("--time-units", type=click.Choice(['ns', 'us', 'ms', 's']), default='s',
+              help="Units for time-related parameters like gap-tolerance and time-shift. Defaults to seconds ('s').")
+@click.option("--export-format", type=click.Choice(['tsc', 'csv', 'npz', 'wfdb']), default='tsc',
+              help="The format used for exporting data. Default is 'tsc'.")
 @click.option("--dataset-location-out", type=click.Path(), help="Path to export directory",
               envvar='ATRIUMDB_EXPORT_DATASET_LOCATION')
-@click.option("--metadata-uri-out", type=str, help="The URI of a metadata server",
+@click.option("--metadata-uri-out", type=str, help="When exporting in tsc format with a mariadb supported dataset, The URI of a metadata server",
               envvar='ATRIUMDB_METADATA_URI_OUT')
 @click.option("--database-type-out", type=str, help="The metadata database type",
               envvar='ATRIUMDB_DATABASE_TYPE_OUT')
-def export(ctx, definition_filename, gap_tolerance, deidentify, patient_cols, block_size,
-           dataset_location_out, metadata_uri_out, database_type_out):
+def export(ctx, definition_filename, gap_tolerance, deidentify, patient_cols, block_size, include_labels, measure_tag_match_rule,
+           time_shift, time_units, export_format, dataset_location_out, metadata_uri_out, database_type_out):
 
-    patient_cols = list(patient_cols) if patient_cols else None
+    patient_info_to_transfer = list(patient_cols) if patient_cols else None
+    deidentify = deidentify if deidentify.lower() in ['true', 'false'] else Path(deidentify)
 
     endpoint_url = ctx.obj["endpoint_url"]
     api_token = ctx.obj["api_token"]
@@ -284,111 +296,9 @@ def export(ctx, definition_filename, gap_tolerance, deidentify, patient_cols, bl
 
     definition = DatasetDefinition(filename=definition_filename)
 
-    transfer_data(src_sdk, dest_sdk, definition, gap_tolerance=gap_tolerance * (10 ** 9),
-                  deidentify=deidentify, patient_info_to_transfer=patient_cols)
-
-
-@click.command()
-@click.pass_context
-@click.option("--format", "export_format", default="adb", help="Format of the exported data",
-              type=click.Choice(["adb", "csv", "parquet", "numpy", "wfdb"]))
-@click.option("--packaging-type", default="files", help="Type of packaging for the exported data",
-              type=click.Choice(["files", "tar", "gzip"]))
-@click.option("--cohort-file", type=click.Path(), help="Cohort file for automatically configuring export parameters")
-@click.option("--measure-ids", type=int, multiple=True, default=None, help="List of measure ids to export")
-@click.option("--measures", type=str, multiple=True, default=None, help="List of measure tags to export")
-@click.option("--device-ids", type=int, multiple=True, default=None, help="List of device ids to export")
-@click.option("--devices", type=str, multiple=True, default=None, help="List of device tags to export")
-@click.option("--patient-ids", type=int, multiple=True, default=None, help="List of patient ids to export")
-@click.option("--mrns", type=str, multiple=True, default=None, help="List of MRNs to export")
-@click.option("--start-time", type=int, help="Start time for exporting data")
-@click.option("--end-time", type=int, help="End time for exporting data")
-@click.option("--dataset-location-out", type=click.Path(), help="Path to export directory",
-              envvar='ATRIUMDB_EXPORT_DATASET_LOCATION')
-@click.option("--metadata-uri-out", type=str, help="The URI of a metadata server",
-              envvar='ATRIUMDB_METADATA_URI_OUT')
-@click.option("--database-type-out", type=str, help="The metadata database type",
-              envvar='ATRIUMDB_DATABASE_TYPE_OUT')
-@click.option("--by-patient", type=bool, default=False, help="Whether or not to include patient mapping")
-def old_export(ctx, export_format, packaging_type, cohort_file, measure_ids, measures, device_ids, devices, patient_ids,
-               mrns, start_time, end_time, dataset_location_out, metadata_uri_out, database_type_out, by_patient):
-    measure_ids = None if measure_ids is not None and len(measure_ids) == 0 else list(measure_ids)
-    measures = None if measures is not None and len(measures) == 0 else list(measures)
-    device_ids = None if device_ids is not None and len(device_ids) == 0 else list(device_ids)
-    devices = None if devices is not None and len(devices) == 0 else list(devices)
-    patient_ids = None if patient_ids is not None and len(patient_ids) == 0 else list(patient_ids)
-    mrns = None if mrns is not None and len(mrns) == 0 else list(mrns)
-
-    endpoint_url = ctx.obj["endpoint_url"]
-    api_token = ctx.obj["api_token"]
-    dataset_location = ctx.obj["dataset_location"]
-    metadata_uri = ctx.obj["metadata_uri"]
-    database_type = ctx.obj["database_type"]
-
-    # If format is not adb, do something else
-    implemented_formats = ["adb", "csv"]
-    if export_format not in implemented_formats:
-        raise NotImplementedError(f"Only {implemented_formats} formats are currently supported for export")
-
-    from_sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
-
-    # If a cohort file is specified, parse it and use its parameters for transfer_data
-    if cohort_file:
-        if cohort_file.endswith((".yml", ".yaml")):
-            cohort_params = parse_atrium_cohort_yaml(cohort_file)
-            measures = cohort_params["measures"]
-            measure_ids = cohort_params["measure_ids"]
-            devices = cohort_params["devices"]
-            device_ids = cohort_params["device_ids"]
-            patient_ids = cohort_params["patient_ids"]
-            mrns = cohort_params["mrns"]
-            start_time = cohort_params["start_epoch_s"]
-            end_time = cohort_params["end_epoch_s"]
-
-        else:
-            raise ValueError("Unsupported cohort file format")
-
-    if measures is not None:
-        measure_ids = [] if measure_ids is None else measure_ids
-
-        match_measure_ids = []
-        for measure_tag in measures:
-            match_dict = from_sdk.search_measures(tag_match=measure_tag)
-            match_measure_ids.extend(list(match_dict.keys()))
-
-        measure_ids.extend(match_measure_ids)
-        measure_ids = list(set(measure_ids))
-
-    if devices is not None:
-        device_ids = [] if device_ids is None else device_ids
-
-        match_device_ids = []
-        for device_tag in devices:
-            match_dict = from_sdk.search_devices(tag_match=device_tag)
-            match_device_ids.extend(list(match_dict.keys()))
-
-        device_ids.extend(match_device_ids)
-        device_ids = list(set(device_ids))
-
-    if export_format == "adb":
-        assert dataset_location_out is not None, "dataset-location-out option or ATRIUMDB_EXPORT_DATASET_LOCATION " \
-                                                 "envvar must be specified."
-
-        # Transfer the data using the specified parameters
-        to_sdk = get_sdk_from_cli_params(dataset_location_out, metadata_uri_out, database_type_out, None,
-                                         None)
-
-        old_transfer_data(from_sdk=from_sdk, to_sdk=to_sdk, measure_id_list=measure_ids, device_id_list=device_ids,
-                          patient_id_list=patient_ids, mrn_list=mrns, start=start_time, end=end_time)
-
-    else:
-        assert dataset_location_out is not None, "dataset-location-out option or ATRIUMDB_EXPORT_DATASET_LOCATION " \
-                                                 "envvar must be specified."
-
-        dataset_dir = Path(dataset_location_out) / f"{export_format}_export"
-        export_dataset(sdk=from_sdk, directory=dataset_dir, data_format=export_format, device_id_list=device_ids,
-                       patient_id_list=patient_ids, mrn_list=mrns, start=start_time, end=end_time,
-                       by_patient=by_patient, measure_id_list=measure_ids)
+    transfer_data(src_sdk, dest_sdk, definition, export_format=export_format, gap_tolerance=gap_tolerance,
+                  deidentify=deidentify, patient_info_to_transfer=patient_info_to_transfer, include_labels=include_labels,
+                  measure_tag_match_rule=measure_tag_match_rule, time_shift=time_shift, time_units=time_units)
 
 
 def get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, api_url, api_token):
@@ -400,58 +310,6 @@ def get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, api_u
     sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type=database_type,
                     connection_params=connection_params, api_url=api_url, token=api_token)
     return sdk
-
-
-@click.command(name="import")
-@click.pass_context
-@click.option("--format", "import_format", default="adb", help="Format of the imported data",
-              type=click.Choice(["adb", "csv", "parquet", "numpy", "wfdb"]))
-@click.option("--packaging-type", default="files", help="Type of packaging for the imported data",
-              type=click.Choice(["files", "tar", "gzip"]))
-@click.option("--dataset-location-in", type=click.Path(), help="Path to import directory",
-              envvar='ATRIUMDB_IMPORT_DATASET_LOCATION')
-@click.option("--metadata-uri-in", type=str, help="The URI of a metadata server to import from",
-              envvar='ATRIUMDB_IMPORT_METADATA_URI', default=None)
-@click.option("--endpoint-url-in", type=str,
-              help="The endpoint to connect to for a remote AtriumDB server to import from",
-              envvar='ATRIUMDB_IMPORT_ENDPOINT_URL', default=None)
-@click.option("--measure-ids", type=int, multiple=True, default=None, help="List of measure ids to import")
-@click.option("--measures", type=str, multiple=True, default=None, help="List of measure tags to import")
-@click.option("--device-ids", type=int, multiple=True, default=None, help="List of device ids to import")
-@click.option("--devices", type=str, multiple=True, default=None, help="List of device tags to import")
-@click.option("--patient-ids", type=int, multiple=True, default=None, help="List of patient ids to import")
-@click.option("--mrns", type=str, multiple=True, default=None, help="List of MRNs to import")
-@click.option("--start-time", type=int, help="Start time for importing data")
-@click.option("--end-time", type=int, help="End time for importing data")
-def import_(ctx, import_format, packaging_type, dataset_location_in, metadata_uri_in, endpoint_url_in, measure_ids,
-            measures, device_ids, devices, patient_ids, mrns, start_time, end_time):
-    measure_ids = None if measure_ids is not None and len(measure_ids) == 0 else list(measure_ids)
-    measures = None if measures is not None and len(measures) == 0 else list(measures)
-    device_ids = None if device_ids is not None and len(device_ids) == 0 else list(device_ids)
-    devices = None if devices is not None and len(devices) == 0 else list(devices)
-    patient_ids = None if patient_ids is not None and len(patient_ids) == 0 else list(patient_ids)
-    mrns = None if mrns is not None and len(mrns) == 0 else list(mrns)
-
-    endpoint_url = ctx.obj["endpoint_url"]
-    api_token = ctx.obj["api_token"]
-    dataset_location = ctx.obj["dataset_location"]
-    metadata_uri = ctx.obj["metadata_uri"]
-    database_type = ctx.obj["database_type"]
-
-    implemented_formats = ["csv", "parquet"]
-
-    if import_format not in implemented_formats:
-        raise NotImplementedError(f"Only {implemented_formats} formats are currently supported for import")
-
-    if dataset_location_in is None:
-        raise ValueError("dataset-location-in option or ATRIUMDB_IMPORT_DATASET_LOCATION envvar must be specified.")
-
-    if not Path(dataset_location_in).is_dir():
-        raise ValueError(f"{dataset_location_in} is not a valid directory.")
-
-    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, None, None)
-
-    import_dataset(sdk, directory=dataset_location_in, data_format=import_format)
 
 
 @click.group(name='measure')
@@ -572,8 +430,6 @@ def patient_ls(ctx, skip, limit, age_years_min, age_years_max, gender, source_id
 
 
 cli.add_command(export)
-cli.add_command(old_export)
-cli.add_command(import_)
 cli.add_command(atriumdb_patient)
 cli.add_command(atriumdb_measure)
 cli.add_command(atriumdb_device)

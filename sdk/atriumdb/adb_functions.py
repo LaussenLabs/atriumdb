@@ -386,45 +386,44 @@ def convert_gap_data_to_timestamps(headers, r_times, r_values, start_time_n=None
     return full_timestamps, r_values
 
 
-def get_measure_id_from_generic_measure(sdk, measure):
-    measure_id = None
+def get_measure_id_from_generic_measure(sdk, measure, measure_tag_match_rule="best"):
+    measure_ids = []
+
     if isinstance(measure, int):
-        measure_id = measure
-
+        measure_ids.append(measure)
     elif isinstance(measure, str):
-        # Assume measure_spec is a measure_tag
-        search_result = sdk.search_measures(tag_match=measure)
-        search_result = {measure_id: measure_info for measure_id, measure_info in search_result.items()
-                         if measure_info['tag'] == measure}
-
-        if len(search_result) == 0:
-            raise ValueError(
-                f"Measure {measure} not found in SDK. Must use AtriumSDK.insert_measure if you "
-                f"want the iterator to output the measure")
-
-        elif len(search_result) != 1:
-            raise ValueError(f"Measure Tag {measure} has more than one matching measure.")
-
-        measure_info = list(search_result.values())[0]
-        measure_id = int(measure_info.get('id'))
-
+        matching_ids = sdk.get_measure_id_list_from_tag(measure, approx=True)
+        if measure_tag_match_rule == "best":
+            measure_ids.append(matching_ids[0])
+        elif measure_tag_match_rule == "all":
+            measure_ids.extend(matching_ids)
     elif isinstance(measure, dict):
-        if "freq_nhz" in measure:
-            measure_id = sdk.get_measure_id(
-                measure['tag'],
-                measure.get('freq_nhz'),
-                measure.get('units'),
-            )
+        assert 'tag' in measure, "tag not in measure dictionary"
+        freq = measure.get('freq_nhz') or measure.get('freq_hz')
+        units = measure.get('units')
+        freq_units = "nHz" if 'freq_nhz' in measure else "Hz" if 'freq_hz' in measure else None
+
+        if freq and units:
+            # Use sdk.get_measure_id for a unique match when both freq and units are specified
+            measure_id = sdk.get_measure_id(measure['tag'], freq=freq, units=units, freq_units=freq_units)
+            if measure_id is not None:
+                measure_ids.append(measure_id)
+            else:
+                raise ValueError(f"No unique measure found for {measure['tag']} with specified frequency and units.")
         else:
-            measure_id = sdk.get_measure_id(
-                measure['tag'],
-                measure.get('freq_hz'),
-                measure.get('units'),
-                freq_units="Hz"
-            )
+            # Use get_measure_id_list_from_tag when either freq or units is not specified
+            matching_ids = sdk.get_measure_id_list_from_tag(measure['tag'], approx=True)
+            if measure_tag_match_rule == "best":
+                measure_ids.append(matching_ids[0])
+            elif measure_tag_match_rule == "all":
+                measure_ids.extend(matching_ids)
     else:
         raise ValueError(f"measure type {type(measure)} not supported.")
-    return measure_id
+
+    if not measure_ids:
+        raise ValueError(f"Measure {measure} not found or multiple matches found without a clear selection rule.")
+
+    return measure_ids
 
 
 def collect_all_descendant_ids(label_set_ids, sql_handler):

@@ -14,16 +14,8 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-from click.testing import CliRunner
-
-from atriumdb.cli.hello import hello
+import numpy as np
 
 
-def test_hello_cli():
-    runner = CliRunner()
-    result = runner.invoke(hello)
-
-    print()
-    print(result.output)
-    assert result.output == "Hello, World!\n"
+def _write_numpy(file_path, times, values, measure_tag):
+    np.savez_compressed(file_path, **{"Nanosecond Epoch": times, measure_tag: values})

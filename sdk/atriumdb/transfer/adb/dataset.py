@@ -17,13 +17,19 @@
 
 import random
 import time
+from pathlib import Path
 from typing import List
 
 import numpy as np
 from tqdm import tqdm
 
+from atriumdb.transfer.adb.csv import _write_csv
+from atriumdb.transfer.adb.definition import create_dataset_definition_from_verified_data
 from atriumdb.transfer.adb.labels import transfer_label_sets
+from atriumdb.transfer.adb.numpy import _write_numpy
 from atriumdb.transfer.adb.patients import transfer_patient_info
+from atriumdb.transfer.adb.tsc import _ingest_data_tsc
+from atriumdb.transfer.adb.wfdb import _ingest_data_wfdb
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.atrium_sdk import AtriumSDK
 from atriumdb.adb_functions import convert_value_to_nanoseconds
@@ -31,34 +37,102 @@ from atriumdb.transfer.adb.devices import transfer_devices
 from atriumdb.transfer.adb.measures import transfer_measures
 from atriumdb.windowing.verify_definition import verify_definition
 
-MIN_TRANSFER_TIME = -(2**63)
-MAX_TRANSFER_TIME = (2**63) - 1
-DEFAULT_GAP_TOLERANCE = 30 * 24 * 60 * 60 * 1_000_000_000  # 1 month in nanoseconds.
+MIN_TRANSFER_TIME = -(2 ** 63)
+MAX_TRANSFER_TIME = (2 ** 63) - 1
+DEFAULT_GAP_TOLERANCE = 5 * 60 * 1_000_000_000  # 5 minutes in nanoseconds
+time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 
 
-def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDefinition, gap_tolerance=None,
-                  deidentify=True, patient_info_to_transfer=None, include_labels=True):
+def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDefinition, export_format='tsc',
+                  gap_tolerance=None, deidentify=True, patient_info_to_transfer=None, include_labels=True,
+                  measure_tag_match_rule=None, deidentification_functions=None, time_shift=None, time_units=None):
+    """
+    Transfers data from a source AtriumSDK instance to a destination AtriumSDK instance based on a specified dataset definition.
+    This includes transferring measures, devices, patient information, and labels with options for data de-identification,
+    time shifting, and custom gap tolerance.
+
+    :param AtriumSDK src_sdk: The source SDK instance from which data will be transferred.
+    :param AtriumSDK dest_sdk: The destination SDK instance to which data will be transferred.
+    :param DatasetDefinition definition: Specifies the structure and contents of the dataset to be transferred.
+    :param str export_format: The format used for exporting data ('tsc' by default). Supported formats include 'tsc', 'csv', 'npz', and 'wfdb'.
+    :param Optional[int] gap_tolerance: A tolerance period for gaps in data, specified in `time_units` (defaults to 5 minutes if not specified).
+        Helps to optimize the waveform transfer by transferring large chunks at a time.
+    :param bool deidentify: If True or a filename, scrambles patient_ids during the transfer. patient IDs are replaced with randomly generated IDs or according to provided de-identification csv
+        with source ids as column 1 and destination ids as column 2. The the file doesn't exist, then a new one is created with randomly assigned ids.
+    :param Optional[list] patient_info_to_transfer: Specific patient information fields to transfer. If not provided or set to None, all available information will be considered.
+    :param bool include_labels: Specifies whether labels should be included in the transfer process.
+    :param Optional[str] measure_tag_match_rule: Determines how to match the measures by tags. One of ['all', 'best'].
+    :param Optional[dict] deidentification_functions: Custom functions for de-identifying specific patient information fields.
+        A dictionary where keys are the patient_info or patient_history field to be altered and values are the functions that alter them.
+        Example: `{'height': lambda x: x + random.uniform(-1.5, 1.5)}`
+    :param Optional[int] time_shift: An amount of time by which to shift all timestamps in the transferred data, specified in `time_units`.
+    :param Optional[str] time_units: Units for `gap_tolerance` and `time_shift`. Supported units are 'ns' (nanoseconds), 's' (seconds), 'ms' (milliseconds), and 'us' (microseconds). Defaults to 'ns'.
+
+    Examples:
+    ---------
+    Create a dataset definition with specific measures and labels:
+
+    >>> measures = [{"tag": "ECG", "freq_hz": 300, "units": "mV"}]
+    >>> labels = ["Sinus rhythm", "Atrial fibrillation"]
+    >>> my_definition = DatasetDefinition(measures=measures, labels=labels)
+
+    Transfer all available data with default parameters, de-identifying patient information:
+
+    >>> transfer_data(src_sdk=my_src_sdk, dest_sdk=my_dest_sdk, definition=my_definition, deidentify=True)
+
+    Transfer data with a specific gap tolerance of one day and without including labels:
+
+    >>> gap_tolerance = 24*60*60  # 24 hours in seconds
+    >>> my_definition = DatasetDefinition(measures=measures, labels=[])
+    >>> transfer_data(src_sdk=my_src_sdk, dest_sdk=my_dest_sdk, definition=my_definition, gap_tolerance=gap_tolerance, time_units='s', include_labels=False)
+
+    Transfer data with a two-hour time shift applied to the entire dataset, and use custom de-identification functions:
+
+    >>> time_shift = 2*60*60  # 2 hours in seconds
+    >>> my_deid_funcs = {'height': lambda x: x + random.uniform(-1.5, 1.5)}
+    >>> my_definition = DatasetDefinition(measures=measures, labels=labels)
+    >>> transfer_data(src_sdk=my_src_sdk, dest_sdk=my_dest_sdk, definition=my_definition, time_shift=time_shift, time_units='s', deidentify=True, deidentification_functions=my_deid_funcs)
+
+    """
+
+    time_units = "ns" if time_units is None else time_units
+
+    if time_units not in time_unit_options.keys():
+        raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
+
+    # convert time values to nanoseconds
+    if gap_tolerance is not None:
+        gap_tolerance = int(gap_tolerance * time_unit_options[time_units])
+
+    if time_shift is not None:
+        time_shift = int(time_shift * time_unit_options[time_units])
+
     # Gap tolerance is used to construct the time ranges when the validator is asked to construct it itself.
     # Using a large value helps optimize the waveform transfer by transferring large chunks at a time.
     gap_tolerance = DEFAULT_GAP_TOLERANCE if gap_tolerance is None else gap_tolerance
+    measure_tag_match_rule = "all" if measure_tag_match_rule is None else measure_tag_match_rule
 
     validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
-        definition, src_sdk, gap_tolerance=gap_tolerance)
+        definition, src_sdk, gap_tolerance=gap_tolerance, measure_tag_match_rule=measure_tag_match_rule)
 
     src_measure_id_list = [measure_info["id"] for measure_info in validated_measure_list]
     src_device_id_list, src_patient_id_list = extract_src_device_and_patient_id_list(validated_sources)
 
-    measure_id_map = transfer_measures(src_sdk, dest_sdk, measure_id_list=src_measure_id_list)
+    measure_id_map = transfer_measures(src_sdk, dest_sdk, measure_id_list=src_measure_id_list,
+                                       measure_tag_match_rule=measure_tag_match_rule)
     device_id_map = transfer_devices(src_sdk, dest_sdk, device_id_list=src_device_id_list)
     patient_id_map = transfer_patient_info(
         src_sdk, dest_sdk, patient_id_list=src_patient_id_list, deidentify=deidentify,
-        patient_info_to_transfer=patient_info_to_transfer, start_time_nano=None, end_time_nano=None)
+        patient_info_to_transfer=patient_info_to_transfer, start_time_nano=None, end_time_nano=None,
+        deidentification_functions=deidentification_functions, time_shift_nano=time_shift)
 
     if include_labels:
         label_set_id_map = transfer_label_sets(src_sdk, dest_sdk, label_set_id_list=validated_label_set_list)
     else:
         label_set_id_map = {}
 
+    # Keep track of all files created
+    file_path_dicts = {}
     # Transfer Waveforms and Labels
     for source_type, sources in validated_sources.items():
         # For each source identifier of that type
@@ -70,7 +144,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
             # Simple for now. Optimized by a large gap_tolerance.
             # Might want to aggregate reads and writes in the future.
-            for start_time_nano, end_time_nano in time_ranges:
+            for start_time_nano, end_time_nano in tqdm(time_ranges, desc=f"{source_type}: {source_id}"):
+                file_path_dicts[(source_type, source_id, start_time_nano, end_time_nano)] = {}
                 for src_measure_id, dest_measure_id in measure_id_map.items():
                     # Insert Waveforms
                     headers, times, values = src_sdk.get_data(
@@ -80,7 +155,15 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                     if values.size == 0:
                         continue
 
-                    ingest_data(dest_sdk, dest_measure_id, dest_device_id, headers, times, values)
+                    if time_shift is not None:
+                        times += time_shift
+
+                    file_path = ingest_data(
+                        dest_sdk, dest_measure_id, dest_device_id, headers, times, values, export_format=export_format)
+
+                    if file_path is not None:
+                        file_path_dicts[(source_type, source_id, start_time_nano, end_time_nano)][
+                            dest_measure_id] = file_path
 
                 if not include_labels:
                     continue
@@ -92,7 +175,21 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                     label_name_id_list=list(label_set_id_map.keys()), device_list=[src_device_id],
                     start_time=start_time_nano, end_time=end_time_nano)
 
+                if time_shift is not None:
+                    for label_dict in labels:
+                        label_dict['start_time_n'] += time_shift
+                        label_dict['end_time_n'] += time_shift
+
                 insert_labels(dest_sdk, labels, device_id_map)
+
+    # Create new definition file
+    export_definition = create_dataset_definition_from_verified_data(
+        src_sdk, validated_measure_list, validated_sources, validated_label_set_list=validated_label_set_list,
+        prefer_patient=True, patient_id_map=patient_id_map, file_path_dicts=file_path_dicts, time_shift_nano=time_shift)
+
+    definition_path = Path(dest_sdk.dataset_location) / "meta" / "definition.yaml"
+    definition_path.parent.mkdir(parents=True, exist_ok=True)
+    export_definition.save(definition_path, force=True)
 
 
 def insert_labels(dest_sdk, labels, device_id_map):
@@ -151,202 +248,32 @@ def extract_src_device_and_patient_id_list(validated_sources):
     return src_device_id_list, src_patient_id_list
 
 
-def old_transfer_data(from_sdk: AtriumSDK, to_sdk: AtriumSDK, measure_id_list: List[int] = None,
-                      device_id_list: List[int] = None, patient_id_list: List[int] = None, mrn_list: List[int] = None,
-                      start: int = None, end: int = None, time_units: str = None, batch_size=None,
-                      include_patient_context=False, deidentify=None, time_shift=None):
-    """
-    Transfers data from one dataset to another. If measure_id_list, device_id_list, patient_id_list, mrn_list, start,
-    end are all None, then all data is transferred, otherwise these parameters serve to limit the data transferred.
-    """
+def ingest_data(to_sdk, measure_id, device_id, headers, times, values, export_format='tsc'):
+    # Determine the file path based on the format
+    base_path = Path(to_sdk.dataset_location) / export_format / str(device_id) / str(measure_id)
+    base_path.mkdir(parents=True, exist_ok=True)
+    file_name = f"{int(times[0])}_{int(times[-1])}"
+    file_path = None
+    measure_info = to_sdk.get_measure_info(measure_id)
+    measure_tag = measure_info['tag']
+    freq_hz = measure_info['freq_nhz'] / (10 ** 9)
+    measure_units = measure_info['unit']
 
-    batch_size = 40 if batch_size is None else batch_size
-    time_units = 'ns' if time_units is None else time_units
-
-    if start is not None:
-        start = convert_value_to_nanoseconds(start, time_units)
-
-    if end is not None:
-        end = convert_value_to_nanoseconds(end, time_units)
-
-    # Transfer measures
-    transfer_measures(from_sdk, to_sdk, measure_id_list=measure_id_list)
-
-    if include_patient_context:
-        device_patient_list = from_sdk.get_device_patient_data(
-            device_id_list=device_id_list, patient_id_list=patient_id_list, mrn_list=mrn_list,
-            start_time=start, end_time=end)
-
-        device_id_list = list(set([row[0] for row in device_patient_list]))
-
-        # Transfer devices
-        transfer_devices(from_sdk, to_sdk, device_id_list=device_id_list)
-
-        # Transfer patients
-        patient_id_map = transfer_patients(
-            from_sdk, to_sdk, patient_id_list=patient_id_list, mrn_list=mrn_list, deidentify=deidentify)
-
-        patient_id_idx = 1
-        if deidentify:
-            for i in range(len(device_patient_list)):
-                device_patient_list[i] = list(device_patient_list[i])
-                device_patient_list[i][patient_id_idx] = patient_id_map[device_patient_list[i][patient_id_idx]]
-
-        start_time_idx = 2
-        end_time_idx = 3
-        if isinstance(time_shift, int):
-            for i in range(len(device_patient_list)):
-                device_patient_list[i] = list(device_patient_list[i])
-                device_patient_list[i][start_time_idx] -= time_shift
-                device_patient_list[i][end_time_idx] -= time_shift
-
-        # Transfer device_patients
-        to_sdk.insert_device_patient_data(device_patient_data=device_patient_list)
-
-        for measure_id, measure_info in tqdm(from_sdk.get_all_measures().items()):
-            to_measure_id = to_sdk.get_measure_id(measure_tag=measure_info['tag'],
-                                                  freq=measure_info['freq_nhz'],
-                                                  units=measure_info['unit'], )
-            if measure_id_list is not None and measure_id not in measure_id_list:
-                continue
-
-            for from_device_id, patient_id, start_time, end_time in tqdm(device_patient_list, leave=False):
-                if end_time is None:
-                    continue
-                # un-time-shift start, end
-                if isinstance(time_shift, int):
-                    start_time += time_shift
-                    end_time += time_shift
-                device_info = from_sdk.get_device_info(from_device_id)
-                to_device_id = to_sdk.get_device_id(device_tag=device_info['tag'])
-                try:
-                    headers, times, values = from_sdk.get_data(measure_id, start_time, end_time,
-                                                               device_id=from_device_id, analog=False)
-                except Exception as e:
-                    print(e)
-                    continue
-
-                if len(headers) == 0:
-                    continue
-
-                if isinstance(time_shift, int):
-                    shift_times(times, time_shift)
-
-                ingest_data(to_sdk, to_measure_id, to_device_id, headers, times, values)
-
+    if export_format == 'tsc':
+        _ingest_data_tsc(to_sdk, measure_id, device_id, headers, times, values)
+    elif export_format == 'csv':
+        file_path = base_path / f"{file_name}.csv"
+        _write_csv(file_path, times, values, measure_tag)
+    elif export_format == 'npz':
+        file_path = base_path / f"{file_name}.npz"
+        _write_numpy(file_path, times, values, measure_tag)
+    elif export_format == 'wfdb':
+        file_path = base_path / file_name  # WFDB format uses multiple files with the same base name
+        file_path = file_path.parent / file_path.stem
+        _ingest_data_wfdb(headers, times, values, file_path, measure_tag, freq_hz, measure_units)
     else:
-        # Transfer devices
-        transfer_devices(from_sdk, to_sdk, device_id_list=device_id_list)
-        for measure_id, measure_info in tqdm(from_sdk.get_all_measures().items()):
-            to_measure_id = to_sdk.get_measure_id(measure_tag=measure_info['tag'],
-                                                  freq=measure_info['freq_nhz'],
-                                                  units=measure_info['unit'],)
+        raise ValueError(f"Unsupported format {export_format}")
 
-            if measure_id_list is not None and measure_id not in measure_id_list:
-                print("continue")
-                continue
-
-            for from_device_id, device_info in tqdm(from_sdk.get_all_devices().items(), leave=False):
-                to_device_id = to_sdk.get_device_id(device_tag=device_info['tag'])
-                if device_id_list is not None and from_device_id not in device_id_list:
-                    continue
-
-                block_list = from_sdk.get_block_id_list(int(measure_id), start_time_n=start,
-                                                        end_time_n=end, device_id=from_device_id)
-
-                if len(block_list) == 0:
-                    continue
-
-                file_id_list = list(set([row[3] for row in block_list]))
-                filename_dict = from_sdk.get_filename_dict(file_id_list)
-
-                start_block = 0
-                while start_block < len(block_list):
-                    block_batch = block_list[start_block:start_block+batch_size]
-                    try:
-                        headers, times, values = from_sdk.get_data_from_blocks(block_batch, filename_dict, measure_id,
-                                                                               MIN_TRANSFER_TIME, MAX_TRANSFER_TIME,
-                                                                               analog=False)
-                    except Exception as e:
-                        print(e)
-                        start_block += batch_size
-                        raise e
-
-                    if isinstance(time_shift, int):
-                        shift_times(times, time_shift)
-
-                    ingest_data(to_sdk, to_measure_id, to_device_id, headers, times, values)
-                    start_block += batch_size
-
-
-def ingest_data(to_sdk, measure_id, device_id, headers, times, values):
-    try:
-        if all([h.scale_m == headers[0].scale_m and
-                h.scale_b == headers[0].scale_b and
-                h.freq_nhz == headers[0].freq_nhz for h in headers]):
-
-            to_sdk.write_data(measure_id, device_id, times, values, headers[0].freq_nhz, int(times[0]),
-                              raw_time_type=headers[0].t_raw_type, raw_value_type=headers[0].v_raw_type,
-                              encoded_time_type=headers[0].t_encoded_type, encoded_value_type=headers[0].v_encoded_type,
-                              scale_m=headers[0].scale_m, scale_b=headers[0].scale_b, interval_index_mode="fast")
-        else:
-            print("Differently configured headers detected.")
-            val_index = 0
-            for h in headers:
-                try:
-                    to_sdk.write_data(measure_id, device_id, times, values, h.freq_nhz, int(times[0]),
-                                      raw_time_type=h.t_raw_type, raw_value_type=h.v_raw_type,
-                                      encoded_time_type=h.t_encoded_type,
-                                      encoded_value_type=h.v_encoded_type,
-                                      scale_m=h.scale_m, scale_b=h.scale_b,
-                                      interval_index_mode="fast")
-                except IndexError:
-                    continue
-                val_index += h.num_vals
-    except Exception as e:
-        print(e)
-        raise e
-
-
-def transfer_patients(from_sdk, to_sdk, patient_id_list=None, mrn_list=None, deidentify=None):
-    deidentify = False if deidentify is None else deidentify
-
-    if mrn_list is not None:
-        patient_id_list = [] if patient_id_list is None else patient_id_list
-        mrn_to_patient_id_map = from_sdk.get_mrn_to_patient_id_map(mrn_list)
-        patient_id_list.extend([mrn_to_patient_id_map[mrn] for mrn in mrn_list if mrn in mrn_to_patient_id_map])
-
-    from_patients = from_sdk.get_all_patients()
-
-    from_patients_items = list(from_patients.items())
-    if deidentify:
-        random.shuffle(from_patients_items)
-
-    from_to_patient_id_dict = {}
-    for from_patient_id, patient_info in from_patients_items:
-        if patient_id_list is not None and from_patient_id not in patient_id_list:
-            continue
-
-        if deidentify:
-            to_patient_id = to_sdk.sql_handler.insert_patient()
-        else:
-            to_patient_id = to_sdk.sql_handler.insert_patient(patient_id=patient_info['id'],
-                                                              mrn=patient_info['mrn'],
-                                                              gender=patient_info['gender'],
-                                                              dob=patient_info['dob'],
-                                                              first_name=patient_info['first_name'],
-                                                              middle_name=patient_info['middle_name'],
-                                                              last_name=patient_info['last_name'],
-                                                              first_seen=patient_info['first_seen'],
-                                                              last_updated=patient_info['last_updated'],
-                                                              source_id=patient_info['source_id'],
-                                                              weight=patient_info['weight'],
-                                                              height=patient_info['height'])
-
-        from_to_patient_id_dict[from_patient_id] = to_patient_id
-
-    return from_to_patient_id_dict
-
-
-def shift_times(times: np.ndarray, shift_amount: int):
-    times -= shift_amount
+    # Return the relative path to to_sdk.dataset_location
+    relative_path = str(file_path.relative_to(to_sdk.dataset_location)) if file_path is not None else None
+    return relative_path

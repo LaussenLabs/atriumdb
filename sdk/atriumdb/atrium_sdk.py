@@ -22,7 +22,8 @@ import threading
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
     find_intervals, merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, \
-    convert_from_nanohz, time_unit_options, ALLOWED_TIME_TYPES, collect_all_descendant_ids
+    convert_from_nanohz, time_unit_options, ALLOWED_TIME_TYPES, collect_all_descendant_ids, \
+    get_measure_id_from_generic_measure
 from atriumdb.block import Block, convert_gap_array_to_intervals, \
     convert_intervals_to_gap_array
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
@@ -47,6 +48,8 @@ from typing import Union, List, Tuple, Optional
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 from atriumdb.windowing.dataset_iterator import DatasetIterator
+from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
+from atriumdb.windowing.random_access_iterator import RandomAccessDatasetIterator
 from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.window import CommonWindowFormat, Signal
 from atriumdb.windowing.window_config import WindowConfig
@@ -1335,53 +1338,40 @@ class AtriumSDK:
 
         return {'block_list': block_list, 'filename_dict': filename_dict}
 
-    def get_data(self, measure_id: int, start_time_n: int = None, end_time_n: int = None, device_id: int = None,
-                 patient_id=None, time_type=1, analog=True, block_info=None, time_units: str = None, sort=True,
-                 allow_duplicates=True):
+    def get_data(self, measure_id: int = None, start_time_n: int = None, end_time_n: int = None,
+                 device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
+                 time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
+                 freq: Union[int, float] = None, units: str = None, freq_units: str = None,
+                 device_tag: str = None, mrn: str = None):
         """
-        .. _get_data_label:
+        The method for querying data from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
+        time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
 
-        The method for querying data from the dataset, indexed by signal type (measure_id),
-        time (start_time_n and end_time_n) and data source (device_id and patient_id)
+        If measure_id is None, measure_tag along with freq and units must not be None, and vice versa.
+        Similarly, if device_id is None, device_tag must not be None, and if patient_id is None, mrn must not be None.
 
-        >>> start_epoch_s = 1669668855
-        >>> end_epoch_s = start_epoch_s + 3600  # 1 hour after start.
-        >>> start_epoch_nano = start_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
-        >>> end_epoch_nano = end_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
-        >>> _, r_times, r_values = sdk.get_data(measure_id=1,start_time_n=start_epoch_s,end_time_n=end_epoch_nano,device_id=4)
-        >>> r_times
-        ... array([1669668855000000000, 1669668856000000000, 1669668857000000000, ...,
-        ... 1669672452000000000, 1669672453000000000, 1669672454000000000],
-        ... dtype=int64)
-        >>> r_values
-        ... array([ 0.32731968,  0.79003189,  0.99659552, ..., -0.59080797, -0.93542358, -0.97675089])
-
-        :param int measure_id: The measure identifier corresponding to the measures table in the linked relational database.
+        :param int measure_id: The measure identifier. If None, measure_tag must be provided.
         :param int start_time_n: The start epoch in nanoseconds of the data you would like to query.
-        :param int end_time_n: The end epoch in nanoseconds of the data you would like to query. The end time is not
-            inclusive so if you want the end time to be included you have to add one sample period to it.
-        :param int device_id: The device identifier corresponding to the devices table in the linked relational database.
-        :param int patient_id: The patient identifier corresponding to the encounter table in the linked relational database.
-        :param int time_type: The time type returned to you. Time_type=1 is time stamps, which is what most people will
-            want. Time_type=2 is gap array and should only be used by advanced users. Note that sorting will not work for
-            time type 2 and you may receive more values than you asked for because of this.
-        :param bool analog: Automatically convert value return type to analog signal.
-        :param block_info: Parameter to pass in your own block_info list to skip the need to check the metadata table.
-        :param sqlalchemy.engine.Connection connection: You can pass in an sqlalchemy connection object from the
-            relational database if you already have one open.
-        :param str time_units: If you would like the time array returned in units other than nanoseconds you can
-            choose from one of ["s", "ms", "us", "ns"].
-        :param bool sort: Whether to sort the returned data by time. If false you may receive more data than just
-            [start_time_n:end_time_n).
-        :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
-            nothing if sort is false. Most data won't have duplicates and making this false will slow down data retreival
-            so only use if you absolutly can't have duplicate times.
-        :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
-        :returns: A list of the block header python objects.\n
-            A numpy 1D array representing the time data (usually an array of timestamps).\n
-            A numpy 1D array representing the value data.
-        """
+        :param int end_time_n: The end epoch in nanoseconds. The end time is not inclusive.
+        :param int device_id: The device identifier. If None, device_tag must be provided.
+        :param int patient_id: The patient identifier. If None, mrn must be provided.
+        :param int time_type: The type of time returned. Time_type=1 for timestamps.
+        :param bool analog: Convert value return type to analog signal.
+        :param block_info: Custom block_info list to skip metadata table check.
+        :param str time_units: Unit for the time array returned. Options: ["s", "ms", "us", "ns"].
+        :param bool sort: Whether to sort the returned data by time.
+        :param bool allow_duplicates: Allow duplicate times in returned data. Affects performance if false.
+        :param str measure_tag: A short string identifying the signal. Required if measure_id is None.
+        :param freq: The sample frequency of the signal. Helpful with measure_tag.
+        :param str units: The units of the signal. Helpful with measure_tag.
+        :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz",
+            "Hz", "kHz", "MHz"] default "nHz".
+        :param str device_tag: A string identifying the device. Exclusive with device_id.
+        :param str mrn: Medical record number for the patient. Exclusive with patient_id.
 
+        :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
+        :returns: List of Block header objects, 1D numpy array for time data, 1D numpy array for value data.
+        """
         # check that a correct unit type was entered
         time_units = "ns" if time_units is None else time_units
         time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
@@ -1396,66 +1386,79 @@ class AtriumSDK:
         start_time_n = int(start_time_n * time_unit_options[time_units])
         end_time_n = int(end_time_n * time_unit_options[time_units])
 
+        if device_id is None and device_tag is not None:
+            device_id = self.get_device_id(device_tag)
+
+        if patient_id is None and mrn is not None:
+            patient_id = self.get_patient_id(mrn)
+
         _LOGGER.debug("\n")
         start_bench_total = time.perf_counter()
 
         # If the data is from the api.
         if self.mode == "api":
+            if measure_id is None:
+                assert measure_tag is not None and freq is not None and units is not None, \
+                    "Must provide measure_id or all of measure_tag, freq, units"
+                measure_id = self.get_measure_id(measure_tag, freq, units, freq_units)
             return self._get_data_api(measure_id, start_time_n, end_time_n, device_id=device_id, patient_id=patient_id,
                                      time_type=time_type, analog=analog, sort=sort, allow_duplicates=allow_duplicates)
 
-        # If the dataset is in a local directory.
-        elif self.mode == "local":
-            # If we don't already have the blocks
-            if block_info is None:
-                # Select all blocks from the block_index (sql table) that match params.
-                start_bench = time.perf_counter()
-                block_list = self.get_block_id_list(int(measure_id), start_time_n=int(start_time_n),
-                                                    end_time_n=int(end_time_n), device_id=device_id,
-                                                    patient_id=patient_id)
+        # Check the measure
+        if measure_id is None:
+            assert measure_tag is not None, "One of measure_id, measure_tag must be specified."
+            measure_id = self.get_best_measure_id(measure_tag, freq, units, freq_units)
 
-                # Concatenate continuous byte intervals to cut down on total number of reads.
-                read_list = condense_byte_read_list(block_list)
+        # If we don't already have the blocks
+        if block_info is None:
+            # Select all blocks from the block_index (sql table) that match params.
+            start_bench = time.perf_counter()
+            block_list = self.get_block_id_list(int(measure_id), start_time_n=int(start_time_n),
+                                                end_time_n=int(end_time_n), device_id=device_id,
+                                                patient_id=patient_id)
 
-                # if no matching block ids
-                if len(read_list) == 0:
-                    return [], np.array([]), np.array([])
+            # Concatenate continuous byte intervals to cut down on total number of reads.
+            read_list = condense_byte_read_list(block_list)
 
-                # Map file_ids to filenames and return a dictionary.
-                file_id_list = [row[2] for row in read_list]
-                filename_dict = self.get_filename_dict(file_id_list)
-                end_bench = time.perf_counter()
-                # print(f"DB query took {round((end_bench - start_bench) * 1000, 4)} ms")
-                _LOGGER.debug(f"get filename dictionary  {(end_bench - start_bench) * 1000} ms")
+            # if no matching block ids
+            if len(read_list) == 0:
+                return [], np.array([]), np.array([])
 
-            # If we already have the blocks
-            else:
-                block_list = block_info['block_list']
-                filename_dict = block_info['filename_dict']
+            # Map file_ids to filenames and return a dictionary.
+            file_id_list = [row[2] for row in read_list]
+            filename_dict = self.get_filename_dict(file_id_list)
+            end_bench = time.perf_counter()
+            # print(f"DB query took {round((end_bench - start_bench) * 1000, 4)} ms")
+            _LOGGER.debug(f"get filename dictionary  {(end_bench - start_bench) * 1000} ms")
 
-                # if no matching block ids
-                if len(block_list) == 0:
-                    return [], np.array([]), np.array([])
+        # If we already have the blocks
+        else:
+            block_list = block_info['block_list']
+            filename_dict = block_info['filename_dict']
 
-            # Read and decode the blocks.
-            headers, r_times, r_values = self.get_data_from_blocks(block_list, filename_dict, measure_id, start_time_n,
-                                                                   end_time_n, analog, time_type, sort=False,
-                                                                   allow_duplicates=allow_duplicates)
+            # if no matching block ids
+            if len(block_list) == 0:
+                return [], np.array([]), np.array([])
 
-            # Sort the data based on the timestamps if sort is true
-            if sort and time_type == 1:
-                r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
+        # Read and decode the blocks.
+        headers, r_times, r_values = self.get_data_from_blocks(block_list, filename_dict, measure_id, start_time_n,
+                                                               end_time_n, analog, time_type, sort=False,
+                                                               allow_duplicates=allow_duplicates)
 
-            end_bench_total = time.perf_counter()
-            _LOGGER.debug(
-                f"Total get data call took {round(end_bench_total - start_bench_total, 2)}: {r_values.size} values")
-            _LOGGER.debug(f"{round(r_values.size / (end_bench_total - start_bench_total), 2)} values per second.")
+        # Sort the data based on the timestamps if sort is true
+        if sort and time_type == 1:
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
-            # convert time data from nanoseconds to unit of choice
-            if time_units != 'ns':
-                r_times = r_times / time_unit_options[time_units]
+        end_bench_total = time.perf_counter()
+        _LOGGER.debug(
+            f"Total get data call took {round(end_bench_total - start_bench_total, 2)}: {r_values.size} values")
+        _LOGGER.debug(f"{round(r_values.size / (end_bench_total - start_bench_total), 2)} values per second.")
 
-            return headers, r_times, r_values
+        # convert time data from nanoseconds to unit of choice
+        if time_units != 'ns':
+            r_times = r_times / time_unit_options[time_units]
+
+        return headers, r_times, r_values
 
     def get_windows(self, window_config: WindowConfig, start_time_inclusive, end_time_exclusive, device_tag=None,
                     device_id=None, patient_id=None, batch_duration=None, time_units=None, freq_units=None):
@@ -1515,8 +1518,10 @@ class AtriumSDK:
                                                      start_time_inclusive_ns, end_time_exclusive_ns,
                                                      measure_info_to_id_dictionary, triplet_to_expected_count_period)
 
-    def get_iterator(self, definition: Union[DatasetDefinition, str], window_duration, window_slide, gap_tolerance=None,
-                     num_windows_prefetch=None, time_units: str = None, label_threshold=0.5) -> DatasetIterator:
+    def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None,
+                     num_windows_prefetch=None, time_units: str = None, label_threshold=0.5,
+                     iterator_type=None, window_filter_fn=None, shuffle=False,
+                     cached_windows_per_source=None, patient_history_fields=None) -> DatasetIterator:
         """
         Constructs and returns a `DatasetIterator` object that allows iteration over the dataset according to
         the specified definition.
@@ -1524,6 +1529,13 @@ class AtriumSDK:
         The method first verifies the provided definition against the dataset of the calling class object.
         If certain parts of the cohort definition aren't present within the dataset, the method will truncate the
         requested cohort to fit the dataset and issue warnings about the dropped data.
+
+        When using a Pytorch DataLoader, ensure that `get_iterator`'s `num_windows_prefetch` is greater than the DataLoader
+        `batch_size` * `num_workers` * `prefetch_factor`. If you do this, then the Dataloader will correctly cooperate
+        with the Iterator's cache functionality.
+
+        Additionally, when shuffling we recommend you set `cached_windows_per_source = num_windows_prefetch // 100`
+        for balanced randomness vs performance.
 
         :param definition: A DefinitionYAML object or string representation specifying the measures and
                            patients or devices over particular time intervals.
@@ -1545,6 +1557,24 @@ class AtriumSDK:
         :param label_threshold: The percentage of the window that must contain a label before the entire window is
             marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
         :type label_threshold: float
+        :param iterator_type: Specify the type of iterator. If set to 'random_access', a RandomAccessDatasetIterator
+          will be returned, allowing indexed access to dataset windows. If set to 'filtered',
+          a FilteredDatasetIterator will be returned with additional filtering functionality based on
+          the `window_filter_fn`. By default or if set to None, a standard DatasetIterator is returned.
+        :type iterator_type: str, optional
+        :param window_filter_fn: If provided, only windows for which this function returns True will be included in the
+             iteration. This function should accept a window as its argument. This is only applicable
+             if `iterator_type` is set to 'filtered'.
+        :type window_filter_fn: callable, optional
+        :param shuffle: If True, the order of windows will be randomized before iteration. If set to an integer, this
+            value will seed the random number generator for reproducible shuffling. If False, windows are
+            returned in their original order.
+        :type shuffle: Union[bool, int], optional
+        :param cached_windows_per_source: The maximum number of windows to cache for a single source before moving
+            on to a new source, helpful for adding more randomness to the shuffle. Making it too small heavily decreases
+            efficiency, making it too large will make the windows less random when shuffled.
+        :type cached_windows_per_source: int, optional
+        :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
 
         :return: DatasetIterator object to easily iterate over the specified data.
         :rtype: DatasetIterator
@@ -1592,12 +1622,38 @@ class AtriumSDK:
         if gap_tolerance is not None:
             gap_tolerance = int(gap_tolerance * time_unit_options[time_units])
 
+        max_cache_duration_per_source = None
+        if cached_windows_per_source is not None:
+            assert isinstance(cached_windows_per_source, int), "cached_windows_per_source must be of type int."
+            assert cached_windows_per_source > 0, "cached_windows_per_source must be at least 1."
+            max_cache_duration_per_source = window_duration + (window_slide * (cached_windows_per_source - 1))
+
         validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
             definition, self, gap_tolerance=gap_tolerance)
 
-        return DatasetIterator(
-            self, validated_measure_list, validated_label_set_list, validated_sources, window_duration, window_slide,
-            num_windows_prefetch=num_windows_prefetch, time_units=time_units, label_threshold=label_threshold)
+        # Create appropriate iterator object based on iterator_type
+        if iterator_type == 'random_access':
+            iterator = RandomAccessDatasetIterator(
+                self, validated_measure_list, validated_label_set_list, validated_sources,
+                window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
+                label_threshold=label_threshold, time_units=time_units, max_cache_duration=max_cache_duration_per_source,
+                shuffle=shuffle, patient_history_fields=patient_history_fields)
+        elif iterator_type == 'filtered':
+            if window_filter_fn is None:
+                raise ValueError("window_filter_fn must be provided when iterator_type is 'filtered'")
+            iterator = FilteredDatasetIterator(
+                self, validated_measure_list, validated_label_set_list, validated_sources,
+                window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
+                label_threshold=label_threshold, time_units=time_units, window_filter_fn=window_filter_fn,
+                max_cache_duration=max_cache_duration_per_source, shuffle=shuffle, patient_history_fields=patient_history_fields)
+        else:
+            iterator = DatasetIterator(
+                self, validated_measure_list, validated_label_set_list, validated_sources,
+                window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
+                label_threshold=label_threshold, time_units=time_units, shuffle=shuffle,
+                max_cache_duration=max_cache_duration_per_source, patient_history_fields=patient_history_fields)
+
+        return iterator
 
     def _generate_device_windows(self, window_config, device_id, device_tag, batch_duration_ns, start_time_inclusive_ns,
                                  end_time_exclusive_ns, measure_info_to_id_dictionary,
@@ -1883,8 +1939,9 @@ class AtriumSDK:
         # Insert the block and interval data into the metadata table
         self.sql_handler.insert_tsc_file_data(path, block_data, interval_data, None)
 
-    def get_interval_array(self, measure_id, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
-                           start=None, end=None):
+    def get_interval_array(self, measure_id=None, device_id=None, patient_id=None,
+                           gap_tolerance_nano=None, start=None, end=None, measure_tag=None,
+                           freq=None, units=None, freq_units=None, device_tag=None, mrn=None):
         """
         .. _get_interval_array_label:
 
@@ -1918,18 +1975,41 @@ class AtriumSDK:
             a new row.
         :param int start: The minimum time epoch for which to include intervals.
         :param int end: The maximum time epoch for which to include intervals.
+        :param str measure_tag: A short string identifying the signal. Required if measure_id is None.
+        :param freq: The sample frequency of the signal. Helpful with measure_tag.
+        :param str units: The units of the signal. Helpful with measure_tag.
+        :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz",
+            "Hz", "kHz", "MHz"] default "nHz".
+        :param str device_tag: A string identifying the device. Exclusive with device_id.
+        :param str mrn: Medical record number for the patient. Exclusive with patient_id.
         :rtype: numpy.ndarray
         :returns: A 2D array representing the availability of a specified measure.
 
         """
+
+        if device_id is None and device_tag is not None:
+            device_id = self.get_device_id(device_tag)
+
+        if patient_id is None and mrn is not None:
+            patient_id = self.get_patient_id(mrn)
+
         # Check if the metadata connection type is API
         if self.metadata_connection_type == "api":
+            if measure_id is None:
+                assert measure_tag is not None and freq is not None and units is not None, \
+                    "Must provide measure_id or all of measure_tag, freq, units"
+                measure_id = self.get_measure_id(measure_tag, freq, units, freq_units)
             return self._api_get_interval_array(
                 measure_id,
                 device_id=device_id,
                 patient_id=patient_id,
                 gap_tolerance_nano=gap_tolerance_nano,
                 start=start, end=end)
+
+        # Check the measure
+        if measure_id is None:
+            assert measure_tag is not None, "One of measure_id, measure_tag must be specified."
+            measure_id = self.get_best_measure_id(measure_tag, freq, units, freq_units)
 
         # Set default value for gap_tolerance_nano if not provided
         gap_tolerance_nano = 0 if gap_tolerance_nano is None else gap_tolerance_nano
@@ -1976,6 +2056,21 @@ class AtriumSDK:
                 merged_result.append([start, end])
 
         return np.array(result, dtype=np.int64)
+
+    def get_best_measure_id(self, measure_tag, freq, units, freq_units):
+        measure_dict = {'tag': measure_tag}
+        if freq is not None:
+            freq_units = "nHz" if freq_units is None else freq_units
+            if freq and freq_units and freq_units != "nHz":
+                freq = convert_to_nanohz(freq, freq_units)
+            measure_dict['freq_nhz'] = freq
+        if units is not None:
+            measure_dict['units'] = units
+        measure_id_list = get_measure_id_from_generic_measure(self, measure_dict, measure_tag_match_rule="best")
+        if len(measure_id_list) == 0:
+            raise ValueError(f"No matching measure found for: {measure_dict}")
+        new_measure_id = measure_id_list[0]
+        return new_measure_id
 
     def get_combined_intervals(self, measure_id_list, device_id=None, patient_id=None, gap_tolerance_nano: int = None,
                                start=None, end=None):
@@ -2582,7 +2677,7 @@ class AtriumSDK:
             if measure_info is not None:
                 if measure_info['tag'] == measure_tag and \
                         measure_info['freq_nhz'] == freq and \
-                        measure_info['units'] == units:
+                        measure_info['unit'] == units:
                     return measure_id
                 raise ValueError(f"Inserted measure_id {measure_id} already exists with data: {measure_info}")
 
@@ -2841,26 +2936,46 @@ class AtriumSDK:
         # Return the measure ID
         return measure_id
 
-    def get_measure_id_list_from_tag(self, measure_tag: str, approx=True):
+    def get_measure_id_list_from_tag(self, measure_tag: str, approx=True, freq=None, units=None, freq_units=None):
         """
         Returns a list of matching measure_ids for a given tag in DESC order by number of stored blocks.
-        Helpful for finding all ids or the most prevalent id for a given tag.
+        Helpful for finding all ids or the most prevalent id for a given tag. Optionally filters by frequency and units.
 
         :param str measure_tag: The tag of the measure.
         :param bool approx: If True, approximates the result based on first 100,000 rows of the block table.
             If False, queries the entire block table.
+        :param freq: Optional frequency to filter measures.
+        :param units: Optional units of the measure to filter by.
+        :param freq_units: Units of the provided frequency. Converts frequency to nanohertz if not already.
         :return: A list of measure_ids
         """
+        # Convert frequency to nanohertz if necessary
+        if freq and freq_units and freq_units != "nHz":
+            freq = convert_to_nanohz(freq, freq_units)
+
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this function.")
 
-        if measure_tag in self._measure_tag_to_ordered_id:
-            return self._measure_tag_to_ordered_id[measure_tag]
+        # Get initial list of measure IDs from tag
+        measure_ids = self._measure_tag_to_ordered_id.get(measure_tag, [])
+        if not measure_ids:
+            # Reload the cache if not found
+            self._measure_tag_to_ordered_id = self.sql_handler.get_tag_to_measure_ids_dict(approx=approx)
+            measure_ids = self._measure_tag_to_ordered_id.get(measure_tag, [])
 
-        # Reload the cache
-        self._measure_tag_to_ordered_id = self.sql_handler.get_tag_to_measure_ids_dict(approx=approx)
+        # Filter measure_ids by frequency and units if necessary
+        if freq is not None or units is not None:
+            filtered_measure_ids = []
+            for measure_id in measure_ids:
+                measure_info = self.get_measure_info(measure_id)
+                if freq is not None and measure_info.get('freq_nhz') != freq:
+                    continue
+                if units is not None and measure_info.get('unit') != units:
+                    continue
+                filtered_measure_ids.append(measure_id)
+            measure_ids = filtered_measure_ids
 
-        return self._measure_tag_to_ordered_id.get(measure_tag, [])
+        return measure_ids
 
     def get_measure_info(self, measure_id: int):
         """
@@ -3033,14 +3148,16 @@ class AtriumSDK:
                 patient_info['weight'], patient_info['weight_units'], patient_info['weight_time'] = weight[3], weight[4], weight[5]
         return patient_info
 
-    def get_patient_history(self, field: str, patient_id: int = None, mrn: int = None, start_time: int = None, end_time: int = None, time_units: str = None):
+    def get_patient_history(self, patient_id: int = None, mrn: int = None, field: str = None, start_time: int = None,
+                            end_time: int = None, time_units: str = None):
         """
         Retrieve a list of a patients historical measurements using either their numeric patient id or medical record number (MRN).
         If start_time and end_time are left empty it will give all the patient's history. The results are returned in ascending order by time.
 
-        :param str field: Which part of the patients history do you want. Valid options are 'height' or 'weight'.
         :param int patient_id: The numeric identifier for the patient.
         :param int mrn: The medical record number for the patient.
+        :param str field: Which part of the patients history do you want, None will get you all the fields.
+            Valid options are 'height', 'weight' or None.
         :param int start_time: The starting epoch time for the range of time you want the patient's history. If none it will get all history before the end_time.
         :param int end_time: The end epoch time for the range of time you want the patient's history. If none it will get all history after the start_time.
         :param str time_units: (Optional) Units for the time. Valid options are 'ns', 's', 'ms', and 'us'. Default is nanoseconds.
@@ -3057,7 +3174,7 @@ class AtriumSDK:
         if patient_id is not None and mrn is not None:
             raise ValueError("Only one of patient_id or mrn should be provided.")
         # check to make sure a proper field was entered
-        if field not in ('height', 'weight'):
+        if field not in ('height', 'weight', None):
             raise ValueError("Invalid field. Expected either 'height' or 'weight'")
         # check that start_time is not greater than end time
         if start_time is not None and end_time is not None and start_time >= end_time:
@@ -3137,6 +3254,17 @@ class AtriumSDK:
             patient_id = self.get_patient_id(int(mrn))
 
         return self.sql_handler.insert_patient_history(patient_id, field, value, units, time)
+
+    def get_patient_history_fields(self):
+        """
+        Returns a list of all strings in the field column of patient history.
+
+        :return: A list of strings of all history fields
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for this method.")
+
+        return self.sql_handler.select_unique_history_fields()
 
     def _api_get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None,
                             freq_units: str = None):
@@ -3841,17 +3969,16 @@ class AtriumSDK:
         :param str name: The name of the label set to insert.
         :param int label_name_id: (Optional) The desired id of the label name to insert.
         :param int | str parent: (Optional) The parent label in the heirarchical tree diagram. If you use an integer it
-        will assume this is the parent label name id and if you use a string it will assume it's the parent label name.
+            will assume this is the parent label name id and if you use a string it will assume it's the parent label name.
         :return: The ID of the label set.
         :rtype: int
-
         :raises ValueError: If the label name is empty.
 
-        :example:
         >>> sdk = AtriumSDK()
         >>> label_name_id = sdk.insert_label_name("Example Label name")
         >>> print(label_name_id)
         1
+
         """
         if not name:
             raise ValueError("The label name cannot be empty.")
@@ -3892,11 +4019,9 @@ class AtriumSDK:
 
         :param int label_name_id: The identifier of the label name.
         :param str name: The name of the label.
-
         :return: A list of dictionaries, each representing a child label set.
         :rtype: list
 
-        :example:
         >>> sdk = AtriumSDK()
         >>> children_by_id = sdk.get_label_name_children(label_set_id=1)
         >>> for child in children_by_id:
@@ -3929,7 +4054,6 @@ class AtriumSDK:
         :return: A dictionary representing the parent label set.
         :rtype: dict
 
-        :example:
         >>> sdk = AtriumSDK()
         >>> parent_by_id = sdk.get_label_name_parent(label_set_id=2)
         >>> print(parent_by_id)
@@ -4294,33 +4418,44 @@ class AtriumSDK:
         """
         Retrieve labels from the database based on specified criteria.
 
-        :param List[int] label_name_id_list: List of label set IDs to filter by.
-        :param List[str] name_list: List of label names to filter by. Mutually exclusive with `label_name_id_list`.
-        :param List[Union[int, str]] device_list: List of device IDs or device tags to filter by.
-        :param int start_time: Start time filter for the labels.
-        :param int end_time: End time filter for the labels.
-        :param str time_units: Units for the `start_time` and `end_time` filters. Valid options are 'ns', 's', 'ms', and 'us'.
-        :param List[int] patient_id_list: List of patient IDs to filter by.
-        :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter by.
-        :param bool include_descendants: Returns all labels of descendant label_name, using requested_name_id and
-            requested_name to represent the label name of the requested parent.
-        :param int limit: Maximum number of rows to return.
-        :param int offset: Offset this number of rows before starting to return labels. Used in combination with limit.
+        :param label_name_id_list: List of label set IDs to filter by.
+        :type label_name_id_list: List[int], optional
+        :param name_list: List of label names to filter by. Mutually exclusive with `label_name_id_list`.
+        :type name_list: List[str], optional
+        :param device_list: List of device IDs or device tags to filter by.
+        :type device_list: List[Union[int, str]], optional
+        :param start_time: Start time filter for the labels.
+        :type start_time: int, optional
+        :param end_time: End time filter for the labels.
+        :type end_time: int, optional
+        :param time_units: Units for the `start_time` and `end_time` filters. Valid options are 'ns', 's', 'ms', and 'us'.
+        :type time_units: str, optional
+        :param patient_id_list: List of patient IDs to filter by.
+        :type patient_id_list: List[int], optional
+        :param label_source_list: List of label source names or IDs to filter by.
+        :type label_source_list: List[Union[str, int]], optional
+        :param include_descendants: Returns all labels of descendant label_name, using requested_name_id and
+                                    requested_name to represent the label name of the requested parent.
+        :type include_descendants: bool
+        :param limit: Maximum number of rows to return.
+        :type limit: int, optional
+        :param offset: Offset this number of rows before starting to return labels. Used in combination with limit.
+        :type offset: int
 
-        :return: A list of matching labels from the database. Each label is represented as a dictionary containing:
-                 label_entry_id, label_name_id, label_name, device_id, device_tag, start_time_n, end_time_n,
-                 label_source_id, label_source_name
+        :return: A list of matching labels from the database. Each label is represented as a dictionary containing label details.
         :rtype: List[Dict]
 
-        Example:
+        Example::
+
             Given an input filtering by a particular device ID, the output could look like:
+
             [
                 {
                     'label_entry_id': 1,
                     'label_name_id': 10,
                     'label_name': 'example_name_1',
                     'requested_name_id': 10,
-                    'requested_name': example_name_1,
+                    'requested_name': 'example_name_1',
                     'device_id': 1001,
                     'device_tag': 'tag_1',
                     'patient_id': 12345,
@@ -4333,13 +4468,12 @@ class AtriumSDK:
                 ...
             ]
 
-        .. note::
+        Note:
             - This method currently only supports database connection mode and not API mode.
             - Either `device_list` or `patient_id_list` should be provided, but not both.
             - Either `label_name_id_list` or `name_list` should be provided, but not both.
 
         """
-
         # Ensure either label_name_id_list or name_list is provided, but not both
         if label_name_id_list and name_list:
             raise ValueError("Only one of label_name_id_list or name_list should be provided.")
@@ -4536,7 +4670,7 @@ class AtriumSDK:
             raise ValueError("Either label_name or label_name_id should be provided, but not both.")
 
         # Check for the XOR condition for device_tag and device_id
-        if (device_tag is not None) == (device_id is not None):
+        if (device_tag is not None) and (device_id is not None):
             raise ValueError("Either device_tag or device_id should be provided, but not both.")
 
         # Check for device_id/device_tag or patient_id

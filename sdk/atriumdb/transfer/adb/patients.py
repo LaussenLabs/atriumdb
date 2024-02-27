@@ -17,15 +17,17 @@
 
 
 import csv
+import time
 from pathlib import Path
 from typing import Dict, Union
 import random
 
 
 def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None, deidentify=True,
-                          patient_info_to_transfer=None, start_time_nano=None, end_time_nano=None):
+                          patient_info_to_transfer=None, start_time_nano=None, end_time_nano=None,
+                          deidentification_functions=None, time_shift_nano=None):
     """
-    Transfers patient information, mappings between patients and devices, and (TODO: patient history records) from one
+    Transfers patient information, mappings between patients and devices, and patient history records from one
     AtriumSDK instance to another. Depending on the `deidentify` parameter, it may also anonymize
     patient IDs in the transfer process.
 
@@ -41,6 +43,8 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
     If None or "all", transfer all patient info.
    :param int start_time_nano: (Optional) The start time in nanoseconds for patient-device history records.
    :param int end_time_nano: (Optional) The end time in nanoseconds for patient-device history records.
+   :param deidentification_functions: (Optional) A dictionary mapping patient info keys to deidentification functions.
+   :param int time_shift_nano: (Optional) The number of nanoseconds to shift the times of the data.
 
    :raises ValueError: If both `patient_id_list` and `mrn_list` are None, or if the provided
     `patient_info_to_transfer` contains invalid keys.
@@ -79,14 +83,16 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
 
     patient_id_map = create_patient_id_map(patient_id_list, deidentify)
 
-    transfer_patient_table(src_sdk, dest_sdk, patient_id_list, patient_id_map, patient_info_to_transfer)
+    transfer_patient_table(src_sdk, dest_sdk, patient_id_list, patient_id_map, patient_info_to_transfer,
+                           deidentification_functions, time_shift_nano, deidentify)
 
-    transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_time_nano, end_time_nano)
+    transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_time_nano, end_time_nano, time_shift_nano)
 
     return patient_id_map
 
 
-def transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_time_nano, end_time_nano):
+def transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_time_nano, end_time_nano,
+                                    time_shift_nano=None):
     dest_device_dict = dest_sdk.get_all_devices()
 
     src_to_dest_dev_ids_dict = {src_sdk.get_device_id(device_info['tag']): dest_dev_id for dest_dev_id, device_info in
@@ -98,23 +104,29 @@ def transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_tim
 
     dest_device_patient_list = []
     for device_id, patient_id, start_time, end_time in device_patient_list:
+        end_time = int(time.time_ns()) if end_time is None else end_time
+        if time_shift_nano is not None:
+            start_time += time_shift_nano
+            end_time += time_shift_nano
+
         dest_device_patient_list.append(
             [src_to_dest_dev_ids_dict[device_id], patient_id_map[patient_id], start_time, end_time])
 
-    dest_sdk.insert_device_patient_data(device_patient_data=dest_device_patient_list)
+    if len(dest_device_patient_list) > 0:
+        dest_sdk.insert_device_patient_data(device_patient_data=dest_device_patient_list)
 
 
 def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list):
     if patient_id_list is None and mrn_list is None:
         raise ValueError("Either patient_id_list or mrn_list must be specified.")
     if patient_id_list == "all":
-        patient_id_list = list(from_sdk.get_all_patients.keys())
+        patient_id_list = list(from_sdk.get_all_patients().keys())
     patient_id_list = [] if patient_id_list is None else patient_id_list
     assert isinstance(patient_id_list, list), "patient_id_list must be a list of patient ids or the string \"all\""
     if mrn_list is not None:
         patient_id_from_mrn_list = []
         if mrn_list == "all":
-            patient_id_from_mrn_list = list(from_sdk.get_all_patients.keys())
+            patient_id_from_mrn_list = list(from_sdk.get_all_patients().keys())
         elif isinstance(mrn_list, list):
             mrn_to_patient_id_map = from_sdk.get_mrn_to_patient_id_map(mrn_list)
             patient_id_list.extend([mrn_to_patient_id_map[mrn] for mrn in mrn_list if mrn in mrn_to_patient_id_map])
@@ -182,7 +194,8 @@ def generate_patient_ids(number_of_patients):
     return random.sample(range(10000, 10000 + 2 * number_of_patients), number_of_patients)
 
 
-def transfer_patient_table(from_sdk, to_sdk, patient_id_list, patient_id_map, patient_info_to_transfer=None):
+def transfer_patient_table(from_sdk, to_sdk, patient_id_list, patient_id_map, patient_info_to_transfer=None,
+                           deidentification_functions=None, time_shift_nano=None, deidentify=False):
     """
     Transfers patient information from one SDK to another.
 
@@ -191,8 +204,12 @@ def transfer_patient_table(from_sdk, to_sdk, patient_id_list, patient_id_map, pa
     :param patient_id_list: List of patient IDs to transfer.
     :param patient_id_map: A mapping of old patient IDs to new patient IDs.
     :param patient_info_to_transfer: List of patient info keys to transfer. If None, all info is transferred.
+    :param deidentification_functions: A dictionary mapping patient info keys to deidentification functions.
+    :param time_shift_nano: The number of nanoseconds to shift the times of the data.
+    :param deidentify: Whether or not to transfer information by default.
     """
 
+    deidentification_functions = {} if deidentification_functions is None else deidentification_functions
     # Retrieve all patients from the from_sdk
     all_patients = from_sdk.get_all_patients()
 
@@ -207,20 +224,54 @@ def transfer_patient_table(from_sdk, to_sdk, patient_id_list, patient_id_map, pa
         patient_info = all_patients.get(patient_id)
 
         # If patient info exists, proceed with transfer
-        if patient_info:
-            # Use patient_id_map to get the new patient ID (if deidentified)
-            new_patient_id = patient_id_map.get(patient_id, patient_id)
-
-            # Filter patient info if patient_info_to_transfer is specified
-            if patient_info_to_transfer and patient_info_to_transfer != "all":
-                patient_info = {key: patient_info[key] for key in patient_info_to_transfer if key in patient_info}
-            if "id" in patient_info:
-                del patient_info["id"]
-
-            # Insert patient info into to_sdk
-            to_sdk.insert_patient(patient_id=new_patient_id, **patient_info)
-        else:
+        if not patient_info:
             print(f"Warning: Patient ID {patient_id} not found in from_sdk.")
+            continue
+
+        # Use patient_id_map to get the new patient ID (if deidentified)
+        new_patient_id = patient_id_map.get(patient_id, patient_id)
+        dest_patient_info = {}
+        for key, value in patient_info.items():
+            # Remove unwanted / dynamic keys
+            if key in ["id", 'weight', 'height', 'height_units', 'height_time', 'weight_units', 'weight_time']:
+                continue
+
+            if deidentify and (not isinstance(patient_info_to_transfer, list) or key not in patient_info_to_transfer):
+                continue
+            if patient_info_to_transfer is not None and patient_info_to_transfer != "all" and key not in patient_info_to_transfer:
+                continue
+
+            # Time shift time values
+            if time_shift_nano is not None and key in ['dob', 'first_seen', 'last_updated']:
+                value += time_shift_nano
+
+            if key in deidentification_functions:
+                value = deidentification_functions[key](value)
+
+            dest_patient_info[key] = value
+
+        # Insert patient info into to_sdk
+        to_sdk.insert_patient(patient_id=new_patient_id, **dest_patient_info)
+
+        # Transfer Patient History
+        patient_history_list = []
+        for field in ['height', 'weight']:
+            if deidentify and (not isinstance(patient_info_to_transfer, list) or field not in patient_info_to_transfer):
+                continue
+
+            if patient_info_to_transfer is not None and patient_info_to_transfer != "all" and field not in patient_info_to_transfer:
+                continue
+
+            patient_history_list.extend(from_sdk.get_patient_history(patient_id=patient_id, field=field))
+
+        for _, query_patient_id, field, value, units, measurement_time in patient_history_list:
+            if field in deidentification_functions:
+                value = deidentification_functions[field](value)
+
+            if time_shift_nano is not None:
+                measurement_time += time_shift_nano
+
+            to_sdk.insert_patient_history(field, value, units, measurement_time, patient_id=new_patient_id)
 
 
 def validate_patient_info_to_transfer(patient_info_to_transfer, all_patients):

@@ -14,16 +14,12 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-from click.testing import CliRunner
-
-from atriumdb.cli.hello import hello
+import csv
 
 
-def test_hello_cli():
-    runner = CliRunner()
-    result = runner.invoke(hello)
-
-    print()
-    print(result.output)
-    assert result.output == "Hello, World!\n"
+def _write_csv(file_path, times, values, measure_tag):
+    with open(file_path, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["Nanosecond Epoch", measure_tag])
+        for time, value in zip(times, values):
+            writer.writerow([time, value])

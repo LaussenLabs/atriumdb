@@ -132,7 +132,8 @@ Window Format
 
 The ``Window`` class represents a data structure for windowed data output by the
 `DatasetIterator Class <contents.html#atriumdb.DatasetIterator>`_, it includes the raw
-data organized into signal dictionaries, along with associated metadata.
+data organized into signal dictionaries, along with associated metadata, and additional
+information related to patient and analysis results.
 
 **Attributes**:
 
@@ -160,10 +161,22 @@ data organized into signal dictionaries, along with associated metadata.
     The starting time, as a nanosecond epoch, of the window.
 
 - ``device_id`` : ``int``
-    An identifier representing the device from which the data was captured. It will be ``None`` if the data was retrieved based on a patient ID.
+    An identifier representing the device from which the data was captured.
 
 - ``patient_id`` : ``int``
-    An identifier representing the patient associated with the data. It will be ``None`` if the data was retrieved based on a device ID.
+    An identifier representing the patient associated with the data.
+
+- ``label_time_series`` : ``np.ndarray``
+    A 1D numpy array representing the labels for each data point in the window, typically used in supervised learning scenarios.
+
+- ``label`` : ``np.ndarray``
+    A 1D numpy array representing the aggregated or final label for the window, used for classification or regression outputs.
+
+- ``patient_info`` : ``dict``
+    A dictionary containing static patient meta information (such as id, mrn, gender, dob, etc.) returned by
+    `AtriumSDK.get_patient_info`, as well as any dynamic fields requested in the `patient_history_fields` of `AtriumSDK.get_iterator`.
+    This may include historical measurements like height and weight, along with their units and the timestamps they were recorded.
+
 
 Example of the ``signals`` dictionary:
 
@@ -183,6 +196,33 @@ Example of the ``signals`` dictionary:
             'expected_count': 10,
             'actual_count': 9,
             'measure_id': 456,
+        }
+    }
+
+Example of the ``patient_info`` dictionary:
+
+.. code-block:: python
+
+    {
+        'id': 1,
+        'mrn': 123456,
+        'gender': 'M',
+        'dob': 946684800000000000,  # Nanoseconds since epoch for date of birth
+        'first_name': 'John',
+        'middle_name': 'A',
+        'last_name': 'Doe',
+        'first_seen': 1609459200000000000,  # Nanoseconds since epoch
+        'last_updated': 1609545600000000000,  # Nanoseconds since epoch
+        'source_id': 1,
+        'height': {  # Dynamic field example
+            'value': 50.0,
+            'units': 'cm',
+            'time': 1609544500000000000,  # Nanoseconds since epoch
+        },
+        'weight': {  # Dynamic field example
+            'value': 10.1,
+            'units': 'kg',
+            'time': 1609545500000000000,  # Nanoseconds since epoch
         }
     }
 

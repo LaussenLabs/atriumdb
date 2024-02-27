@@ -14,16 +14,17 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-from click.testing import CliRunner
-
-from atriumdb.cli.hello import hello
+import wfdb
+import numpy as np
 
 
-def test_hello_cli():
-    runner = CliRunner()
-    result = runner.invoke(hello)
+def _ingest_data_wfdb(headers, times, values, file_path, measure_tag, freq_hz, measure_units):
+    # Convert values to the required format
+    values = values.astype(np.float64).reshape(-1, 1)
 
-    print()
-    print(result.output)
-    assert result.output == "Hello, World!\n"
+    # Get the filename (including its extension) and the parent directory
+    file_name = file_path.stem
+    write_dir = file_path.parent
+
+    wfdb.wrsamp(file_name, fs=freq_hz, units=[measure_units], sig_name=[measure_tag], p_signal=values,
+                write_dir=str(write_dir))
