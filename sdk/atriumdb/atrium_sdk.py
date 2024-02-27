@@ -22,7 +22,7 @@ import threading
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
     find_intervals, merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, \
-    convert_from_nanohz, time_unit_options, ALLOWED_TIME_TYPES, collect_all_descendant_ids, \
+    convert_from_nanohz, ALLOWED_TIME_TYPES, collect_all_descendant_ids, \
     get_measure_id_from_generic_measure
 from atriumdb.block import Block, convert_gap_array_to_intervals, \
     convert_intervals_to_gap_array
@@ -77,7 +77,7 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_META_CONNECTION_TYPE = 'sqlite'
-
+time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 
 # _LOGGER.basicConfig(
 #     level=_LOGGER.debug,
@@ -1346,7 +1346,7 @@ class AtriumSDK:
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
                  freq: Union[int, float] = None, units: str = None, freq_units: str = None,
-                 device_tag: str = None, mrn: str = None):
+                 device_tag: str = None, mrn: int = None):
         """
         The method for querying data from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
         time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
@@ -1371,14 +1371,13 @@ class AtriumSDK:
         :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz",
             "Hz", "kHz", "MHz"] default "nHz".
         :param str device_tag: A string identifying the device. Exclusive with device_id.
-        :param str mrn: Medical record number for the patient. Exclusive with patient_id.
+        :param int mrn: Medical record number for the patient. Exclusive with patient_id.
 
         :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
         :returns: List of Block header objects, 1D numpy array for time data, 1D numpy array for value data.
         """
         # check that a correct unit type was entered
         time_units = "ns" if time_units is None else time_units
-        time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 
         if time_units not in time_unit_options.keys():
             raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
@@ -1615,8 +1614,6 @@ class AtriumSDK:
         """
         # check that a correct unit type was entered
         time_units = "ns" if time_units is None else time_units
-        time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
-
         if time_units not in time_unit_options.keys():
             raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
 
@@ -1895,22 +1892,14 @@ class AtriumSDK:
         # Read the data from the files using the read list
         encoded_bytes = self.file_api.read_file_list(read_list, filename_dict)
 
-        # End performance benchmark
-        end_bench = time.perf_counter()
-        # print(f"read from disk took {round((end_bench - start_bench) * 1000, 4)} ms")
-
-        # Log the time taken to read data from disk
-        _LOGGER.debug(f"read from disk {(end_bench - start_bench) * 1000} ms")
+        _LOGGER.debug(f"read from disk {round((time.perf_counter() - start_bench) * 1000, 4)} ms")
 
         # Extract the number of bytes for each block
         num_bytes_list = [row[5] for row in block_list]
 
         # Decode the data and separate it into headers, times, and values
-        # start_bench = time.perf_counter()
         r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
                                                               time_type=time_type)
-        # end_bench = time.perf_counter()
-        # print(f"decode bytes took {round((end_bench - start_bench) * 1000, 4)} ms")
 
         # Sort the data based on the timestamps if sort is true
         if sort and time_type == 1:
@@ -2012,9 +2001,6 @@ class AtriumSDK:
         if measure_id is None:
             assert measure_tag is not None, "One of measure_id, measure_tag must be specified."
             measure_id = self.get_best_measure_id(measure_tag, freq, units, freq_units)
-
-        # Set default value for gap_tolerance_nano if not provided
-        gap_tolerance_nano = 0 if gap_tolerance_nano is None else gap_tolerance_nano
 
         # Query the database for intervals based on the given parameters
         interval_result = self.sql_handler.select_intervals(
@@ -2464,105 +2450,6 @@ class AtriumSDK:
     def get_all_patient_ids(self, start=None, end=None):
         # Return just the ids from the patient table.
         return [row[0] for row in self.sql_handler.select_all_patients_in_list()]
-
-    def get_available_measures(self, device_id=None, patient_id=None, start=None, end=None):
-        # Might Delete
-        pass
-
-    def get_available_devices(self, measure_id, start=None, end=None):
-        # Might Delete
-        pass
-
-    def get_random_window(self, time_intervals, time_window_size_nano=30_000_000_000):
-        # Might Delete
-        # Get large enough interval
-        start, end = random.choice(time_intervals)
-
-        i = 0
-        while end - start < time_window_size_nano:
-            start, end = random.choice(time_intervals)
-            i += 1
-            if i > 9:
-                return None, None
-
-        # return a random interval, time_window_size_nano long in between start and end.
-
-        # Generate random start
-        start = random.randint(start, end - time_window_size_nano)
-
-        # Calculate end
-        end = start + time_window_size_nano
-
-        return start, end
-
-    def get_random_data(self, measure_id=None, device_list=None, start=None, end=None,
-                        time_window_size_nano=30_000_000_000, gap_tolerance_nano=0):
-        # Might Delete
-        if device_list is None:
-            device_list = self.get_available_devices(measure_id, start=start, end=end)
-
-        if len(device_list) == 0:
-            return np.array([]), np.array([])
-
-        try_start, try_end = 0, 0
-        i = 0
-        device_id = None
-        while try_end - try_start < time_window_size_nano:
-            device_id = random.choice(device_list)
-            interval_array = \
-                self.get_interval_array(measure_id, device_id, gap_tolerance_nano=gap_tolerance_nano, start=start,
-                                        end=end)
-
-            interval_array = interval_array[(interval_array.T[1] - interval_array.T[0]) > time_window_size_nano]
-
-            if len(interval_array) == 0:
-                continue
-
-            try_start, try_end = random.choice(interval_array)
-            i += 1
-
-            if i > 9:
-                return np.array([]), np.array([])
-
-        # Generate random start
-        try_start = random.randint(try_start, try_end - time_window_size_nano)
-
-        # Calculate end
-        try_end = try_start + time_window_size_nano
-
-        headers, r_times, r_values = self.get_data(measure_id, try_start, try_end, device_id)
-        info = {'start': try_start, 'end': try_end, 'device_id': device_id}
-        return info, r_times, r_values
-
-    def create_derived_variable(self, function_list, args_list, kwargs_list,
-                                dest_sdk=None, dest_measure_id_list=None, dest_device_id_list=None,
-                                measure_id=None, device_id=None, start=None, end=None):
-        # Might Delete
-        for var in [measure_id, device_id, start, end]:
-            if var is None:
-                raise ValueError("[measure_id, device_id, start, end] must all be specified")
-
-        dest_measure_id_list = [None for _ in range(len(function_list))] if \
-            dest_measure_id_list is None else dest_measure_id_list
-        dest_device_id_list = [None for _ in range(len(function_list))] if \
-            dest_device_id_list is None else dest_device_id_list
-
-        # TODO removed return_intervals=True from here check effect
-        headers, intervals, values = self.get_data(measure_id, start, end, device_id, time_type=True, analog=False)
-
-        results = []
-
-        for func, args, kwargs, dest_measure_id, dest_device_id in \
-                zip(function_list, args_list, kwargs_list, dest_measure_id_list, dest_device_id_list):
-            res = func(values, *args, **kwargs)
-            results.append((intervals, res))
-            if dest_sdk is not None:
-                dest_measure_id = measure_id if dest_measure_id is None else dest_measure_id
-                dest_device_id = device_id if dest_device_id is None else dest_device_id
-
-                dest_sdk.auto_write_interval_data(dest_measure_id, dest_device_id, intervals, values, None, None, None)
-
-        return results
 
     def auto_write_interval_data(self, measure_id, device_id, intervals, values, freq_nhz, scale_b, scale_m):
         # Might Delete
@@ -3066,7 +2953,6 @@ class AtriumSDK:
         """
         # Handle time units and conversion to nanoseconds
         if time_units and time:
-            time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
             if time_units not in time_unit_options.keys():
                 raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
             time *= time_unit_options[time_units]
@@ -3161,7 +3047,6 @@ class AtriumSDK:
 
         # Handle time units and conversion to nanoseconds
         if time_units:
-            time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
             if time_units not in time_unit_options.keys():
                 raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
             if start_time is not None:
@@ -3216,7 +3101,6 @@ class AtriumSDK:
 
         # Handle time units and conversion to nanoseconds
         if time_units:
-            time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
             if time_units not in time_unit_options.keys():
                 raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
             time *= time_unit_options[time_units]
@@ -4205,7 +4089,6 @@ class AtriumSDK:
 
         # Convert time using the provided time units
         time_units = "ns" if time_units is None else time_units
-        time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
         if time_units not in time_unit_options.keys():
             raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
 
@@ -4276,7 +4159,6 @@ class AtriumSDK:
         if source_type not in valid_source_types:
             raise ValueError(f"Invalid source type. Expected one of: {', '.join(valid_source_types)}")
 
-        time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
         formatted_labels = []
 
         for label in labels:
@@ -4451,7 +4333,6 @@ class AtriumSDK:
 
         # Convert time using the provided time units, if specified
         if time_units:
-            time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
             if time_units not in time_unit_options.keys():
                 raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
 
@@ -4658,7 +4539,6 @@ class AtriumSDK:
 
         # Handle time units and conversion to nanoseconds
         if time_units:
-            time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
             if time_units not in time_unit_options.keys():
                 raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
 
