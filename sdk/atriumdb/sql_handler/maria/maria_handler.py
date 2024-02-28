@@ -26,16 +26,13 @@ from mariadb import ProgrammingError
 
 from atriumdb.adb_functions import allowed_interval_index_modes
 from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from_triplet_query, \
-    maria_select_measure_from_id, \
-    maria_insert_ignore_measure_query, maria_insert_ignore_device_query, maria_select_device_from_tag_query, \
+    maria_select_measure_from_id, maria_select_device_from_tag_query, \
     maria_select_device_from_id_query, maria_insert_file_index_query, maria_insert_block_query, \
     maria_select_file_by_id, maria_select_file_by_values, maria_select_block_by_id, \
     maria_select_block_by_values, maria_select_interval_by_id, maria_select_interval_by_values, \
     mariadb_setting_insert_query, mariadb_setting_select_query, maria_select_all_query, \
     maria_insert_ignore_device_encounter_query, maria_insert_ignore_encounter_query, maria_insert_ignore_patient_query, \
-    maria_insert_ignore_bed_query, maria_insert_ignore_unit_query, maria_insert_ignore_institution_query, \
-    maria_insert_ignore_source_query, maria_select_blocks_from_file, maria_delete_block_query, maria_delete_file_query, \
-    maria_interval_exists_query, maria_insert_interval_index_query
+    maria_select_blocks_from_file, maria_delete_block_query, maria_insert_interval_index_query
 from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query, \
     maria_file_index_create_query, maria_block_index_create_query, maria_interval_index_create_query, \
     maria_settings_create_query, maria_device_encounter_create_query, maria_source_create_query, \
@@ -173,12 +170,6 @@ class MariaDBHandler(SQLHandler):
         conn.commit()
         cursor.close()
         conn.close()
-
-    def interval_exists(self, measure_id, device_id, start_time_nano):
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_interval_exists_query, (measure_id, device_id, start_time_nano))
-            result = cursor.fetchone()
-        return result[0]
 
     def select_all_devices(self):
         with self.maria_db_connection() as (conn, cursor):

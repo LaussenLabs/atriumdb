@@ -386,6 +386,22 @@ def convert_gap_data_to_timestamps(headers, r_times, r_values, start_time_n=None
     return full_timestamps, r_values
 
 
+def get_best_measure_id(sdk, measure_tag, freq, units, freq_units):
+    measure_dict = {'tag': measure_tag}
+    if freq is not None:
+        freq_units = "nHz" if freq_units is None else freq_units
+        if freq and freq_units and freq_units != "nHz":
+            freq = convert_to_nanohz(freq, freq_units)
+        measure_dict['freq_nhz'] = freq
+    if units is not None:
+        measure_dict['units'] = units
+    measure_id_list = get_measure_id_from_generic_measure(sdk, measure_dict, measure_tag_match_rule="best")
+    if len(measure_id_list) == 0:
+        raise ValueError(f"No matching measure found for: {measure_dict}")
+    new_measure_id = measure_id_list[0]
+    return new_measure_id
+
+
 def get_measure_id_from_generic_measure(sdk, measure, measure_tag_match_rule="best"):
     measure_ids = []
 

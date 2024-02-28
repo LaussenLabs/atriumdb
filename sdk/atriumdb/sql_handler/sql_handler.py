@@ -30,10 +30,6 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def interval_exists(self, measure_id, device_id, start_time_nano):
-        pass
-
-    @abstractmethod
     def select_all_devices(self):
         pass
 

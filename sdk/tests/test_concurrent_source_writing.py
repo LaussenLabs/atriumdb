@@ -16,6 +16,7 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from atriumdb.atrium_sdk import AtriumSDK
+from atriumdb.adb_functions import convert_from_nanohz
 from pathlib import Path
 import shutil
 import random
@@ -93,7 +94,7 @@ def _check_source_equality(sdk, test_device_list, test_measure_list):
     read_measure_list = []
     for measure_id in sdk.get_all_measures():
         measure_info_dict = sdk.get_measure_info(measure_id)
-        read_measure_list.append((measure_info_dict['tag'], sdk.get_freq(measure_id, freq_units="Hz")))
+        read_measure_list.append((measure_info_dict['tag'], convert_from_nanohz(measure_info_dict['freq_nhz'], freq_units="Hz")))
     read_device_list = []
     for device_id in sdk.get_all_devices():
         device_info_dict = sdk.get_device_info(device_id)
