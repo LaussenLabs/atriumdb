@@ -117,12 +117,6 @@ def find_intervals(freq_nhz, raw_time_type, time_data, data_start_time, num_valu
     return intervals
 
 
-def merge_interval_lists(list_a, list_b):
-    return np.array([[max(first[0], second[0]), min(first[1], second[1])]
-                     for first in list_a for second in list_b
-                     if max(first[0], second[0]) <= min(first[1], second[1])])
-
-
 # if you want to just use this to sort data will have to add default vals for start/end time and skip bisect
 def sort_data(times, values, headers, start_time, end_time, allow_duplicates=True):
     start_bench = time.perf_counter()
