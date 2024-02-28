@@ -21,7 +21,7 @@ def _ingest_data_wfdb(headers, times, values, file_path, measure_tag, freq_hz, m
     try:
         import wfdb
     except ImportError as e:
-        raise ImportError("the package wfdb is required for exporting in WFDB format export. "
+        raise ImportError("the package wfdb is required for exporting in WFDB format. "
                           "Please install wfdb to proceed.") from e
     # Convert values to the required format
     values = values.astype(np.float64).reshape(-1, 1)
