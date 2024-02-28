@@ -21,7 +21,7 @@ import numpy as np
 import threading
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
-    find_intervals, merge_interval_lists, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, \
+    find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, \
     convert_from_nanohz, ALLOWED_TIME_TYPES, collect_all_descendant_ids, get_best_measure_id
 from atriumdb.block import Block, convert_intervals_to_gap_array
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
