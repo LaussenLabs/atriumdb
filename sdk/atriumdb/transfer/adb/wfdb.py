@@ -14,11 +14,15 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import wfdb
 import numpy as np
 
 
 def _ingest_data_wfdb(headers, times, values, file_path, measure_tag, freq_hz, measure_units):
+    try:
+        import wfdb
+    except ImportError as e:
+        raise ImportError("the package wfdb is required for exporting in WFDB format export. "
+                          "Please install wfdb to proceed.") from e
     # Convert values to the required format
     values = values.astype(np.float64).reshape(-1, 1)
 
