@@ -12,7 +12,7 @@ data using the atriumdb library. In this example we will pull data from the MIT-
 Prerequisites
 -------------
 
-- Python 3.8 or higher
+- Python 3.10 or higher
 - atriumdb library
 - wfdb library
 - matplotlib library

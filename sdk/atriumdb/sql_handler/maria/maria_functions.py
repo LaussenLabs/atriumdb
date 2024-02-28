@@ -47,10 +47,6 @@ maria_select_interval_by_id = "SELECT id, measure_id, device_id, start_time_n, e
 maria_select_interval_by_values = """SELECT id, measure_id, device_id, start_time_n, end_time_n FROM interval_index 
 WHERE measure_id = ? AND device_id = ? AND start_time_n = ? AND end_time_n = ?;
 """
-
-maria_interval_exists_query = """SELECT EXISTS(
-SELECT id FROM interval_index WHERE measure_id = ? AND device_id = ? AND start_time_n = ?)"""
-
 mariadb_setting_insert_query = "INSERT IGNORE INTO setting (name, value) VALUES (?, ?)"
 mariadb_setting_select_query = "SELECT name, value FROM setting WHERE name = ?"
 maria_select_all_query = "SELECT name, value FROM setting"

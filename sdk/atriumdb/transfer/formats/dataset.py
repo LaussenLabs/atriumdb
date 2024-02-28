@@ -76,7 +76,7 @@ def export_dataset(sdk: AtriumSDK, directory: Union[str, PurePath], data_format=
             patient_id_list = list(set(patient_id_list))
 
         for measure_id in measure_id_list or sdk.get_all_measures().keys():
-            for patient_id in patient_id_list or sdk.get_all_patient_ids():
+            for patient_id in patient_id_list or sdk.get_all_patients().keys():
                 device_patient_list = sdk.get_device_patient_data(
                     device_id_list=device_id_list, patient_id_list=[patient_id], mrn_list=mrn_list,
                     start_time=start, end_time=end)

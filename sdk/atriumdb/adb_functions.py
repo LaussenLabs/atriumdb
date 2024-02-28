@@ -117,12 +117,6 @@ def find_intervals(freq_nhz, raw_time_type, time_data, data_start_time, num_valu
     return intervals
 
 
-def merge_interval_lists(list_a, list_b):
-    return np.array([[max(first[0], second[0]), min(first[1], second[1])]
-                     for first in list_a for second in list_b
-                     if max(first[0], second[0]) <= min(first[1], second[1])])
-
-
 # if you want to just use this to sort data will have to add default vals for start/end time and skip bisect
 def sort_data(times, values, headers, start_time, end_time, allow_duplicates=True):
     start_bench = time.perf_counter()
@@ -384,6 +378,22 @@ def convert_gap_data_to_timestamps(headers, r_times, r_values, start_time_n=None
         r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
     return full_timestamps, r_values
+
+
+def get_best_measure_id(sdk, measure_tag, freq, units, freq_units):
+    measure_dict = {'tag': measure_tag}
+    if freq is not None:
+        freq_units = "nHz" if freq_units is None else freq_units
+        if freq and freq_units and freq_units != "nHz":
+            freq = convert_to_nanohz(freq, freq_units)
+        measure_dict['freq_nhz'] = freq
+    if units is not None:
+        measure_dict['units'] = units
+    measure_id_list = get_measure_id_from_generic_measure(sdk, measure_dict, measure_tag_match_rule="best")
+    if len(measure_id_list) == 0:
+        raise ValueError(f"No matching measure found for: {measure_dict}")
+    new_measure_id = measure_id_list[0]
+    return new_measure_id
 
 
 def get_measure_id_from_generic_measure(sdk, measure, measure_tag_match_rule="best"):
