@@ -19,44 +19,53 @@ API Reference
    .. automethod:: __init__
    .. automethod:: create_dataset
 
-   .. automethod:: insert_measure
+   .. automethod:: get_data
+   .. automethod:: write_data_easy
+   .. automethod:: write_data
+
    .. automethod:: get_measure_id
    .. automethod:: get_measure_info
    .. automethod:: search_measures
    .. automethod:: get_all_measures
+   .. automethod:: insert_measure
 
-   .. automethod:: insert_device
    .. automethod:: get_device_id
    .. automethod:: get_device_info
    .. automethod:: search_devices
    .. automethod:: get_all_devices
-   .. automethod:: get_device_patient_data
-   .. automethod:: insert_device_patient_data
+   .. automethod:: insert_device
 
    .. automethod:: insert_patient
    .. automethod:: get_patient_info
    .. automethod:: get_all_patients
    .. automethod:: get_mrn_to_patient_id_map
    .. automethod:: get_patient_id_to_mrn_map
+   .. automethod:: get_patient_id
+   .. automethod:: get_mrn
 
-   .. automethod:: get_interval_array
+   .. automethod:: get_device_patient_data
+   .. automethod:: insert_device_patient_data
+   .. automethod:: convert_patient_to_device_id
+   .. automethod:: convert_device_to_patient_id
 
-   .. automethod:: write_data
-   .. automethod:: write_data_easy
-
-   .. automethod:: get_data
-   .. automethod:: get_iterator
-
-   .. automethod:: get_all_label_names
-   .. automethod:: get_label_name_id
-   .. automethod:: get_label_name_info
-   .. automethod:: insert_label_name
-   .. automethod:: get_label_name_children
-   .. automethod:: get_label_name_parent
+   .. automethod:: get_labels
    .. automethod:: insert_label
    .. automethod:: insert_labels
    .. automethod:: delete_labels
-   .. automethod:: get_labels
+   .. automethod:: get_label_name_id
+   .. automethod:: get_label_name_info
+   .. automethod:: get_all_label_names
+   .. automethod:: get_label_name_children
+   .. automethod:: get_label_name_parent
+   .. automethod:: insert_label_name
+   .. automethod:: get_all_label_name_descendents
+
+   .. automethod:: get_label_source_id
+   .. automethod:: get_label_source_info
+   .. automethod:: insert_label_source
+
+   .. automethod:: get_iterator
+   .. automethod:: get_interval_array
 
 .. autoclass:: atriumdb.DatasetDefinition
 
