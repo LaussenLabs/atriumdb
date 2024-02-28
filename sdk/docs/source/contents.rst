@@ -32,15 +32,12 @@ API Reference
    .. automethod:: get_all_devices
    .. automethod:: get_device_patient_data
    .. automethod:: insert_device_patient_data
-   .. automethod:: measure_device_start_time_exists
 
    .. automethod:: insert_patient
    .. automethod:: get_patient_info
    .. automethod:: get_all_patients
    .. automethod:: get_mrn_to_patient_id_map
    .. automethod:: get_patient_id_to_mrn_map
-
-   .. automethod:: get_all_patient_encounter_data
 
    .. automethod:: get_interval_array
 
