@@ -55,6 +55,19 @@ def _transfer_measure(to_sdk, measure_info):
     units = measure_info['unit']
     measure_name = measure_info['name']
     from_measure_id = measure_info['id']
+
+    # Check if measure_id already exists
+    check_measure_info = to_sdk.get_measure_info(from_measure_id)
+    if check_measure_info is not None:
+        # if its the same measure, return the id without inserting
+        if check_measure_info['tag'] == measure_tag and \
+                check_measure_info['freq_nhz'] == freq and \
+                check_measure_info['unit'] == units:
+            return from_measure_id
+        else:
+            # The measure_id is taken but its a different measure so ask for a new id when inserting
+            from_measure_id = None
+
     to_measure_id = to_sdk.insert_measure(
         measure_tag=measure_tag, freq=freq, units=units, measure_name=measure_name, measure_id=from_measure_id)
     return to_measure_id

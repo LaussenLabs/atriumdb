@@ -1937,6 +1937,16 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
 
+        if patient_id is not None:
+            patient_info = self.get_patient_info(patient_id)
+            if patient_info is not None:
+                return patient_id
+
+        if mrn is not None:
+            mrn_patient_id = self.get_patient_id(mrn)
+            if mrn_patient_id is not None:
+                return mrn_patient_id
+
         # Insert the patient with null for height and weight since it will be updated by
         patient_id = self.sql_handler.insert_patient(patient_id, mrn, gender, dob, first_name, middle_name, last_name,
                                                  first_seen, last_updated, source_id)
