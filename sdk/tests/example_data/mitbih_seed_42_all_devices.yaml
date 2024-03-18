@@ -1,3 +1,15 @@
+measures:
+- tag: MLII
+  freq_nhz: 500000000000
+  units: mV
+- tag: V5
+  freq_nhz: 500000000000
+  units: mV
+- tag: V1
+  freq_nhz: 500000000000
+  units: mV
+patient_ids: {}
+mrns: {}
 device_ids:
   1: all
   2: all
@@ -14,25 +26,9 @@ labels:
 - Premature Ventricular Contraction
 - Normal Sinus Rhythm
 - Ventricular Fibrillation
-- Premature Atrial Contraction
-- Atrial Flutter
 - Supraventricular Tachycardia
 - Third Degree Heart Block
 - Second Degree Heart Block
 - Junctional Rhythm
+- Atrial Flutter
 - Bundle Branch Block
-- Pause
-- First Degree Heart Block
-- Atrial Fibrillation
-measures:
-- freq_nhz: 500000000000
-  tag: MLII
-  units: mV
-- freq_nhz: 500000000000
-  tag: V5
-  units: mV
-- freq_nhz: 500000000000
-  tag: V1
-  units: mV
-mrns: {}
-patient_ids: {}

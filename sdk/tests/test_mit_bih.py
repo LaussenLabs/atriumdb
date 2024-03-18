@@ -26,7 +26,7 @@ from tests.testing_framework import _test_for_both
 
 DB_NAME = 'atrium-mit-bih'
 
-MAX_RECORDS = 1
+MAX_RECORDS = 4
 SEED = 42
 LABEL_SET_LIST = [
     "Normal Sinus Rhythm",
@@ -221,12 +221,23 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
     if random.random() < 0.5:
         # Time type 1
         raw_t_t = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
-        encoded_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
+
+        if random.random() < 0.5:
+            # Time Value pair encoding
+            encoded_t_t = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
+            sdk.block.t_compression = 3
+            sdk.block.t_compression_level = 12
+        else:
+            # Gap Array encoding
+            encoded_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
         # Call the write_data method with the determined parameters
         sdk.write_data(measure_id, device_id, time_arr, value_data, freq_nano, start_time,
                        raw_time_type=raw_t_t, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t,
                        encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b, gap_tolerance=gap_tolerance)
+
+        sdk.block.t_compression = 1
+        sdk.block.t_compression_level = 0
     else:
         # Time type 2
         raw_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO

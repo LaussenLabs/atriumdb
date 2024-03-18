@@ -334,6 +334,7 @@ class Block:
         # Calculate the start of the time bytes within the encoded bytes
         t_byte_start = np.cumsum([h.t_encoded_size if h.t_compression != 1 else 0 for h in headers], dtype=np.uint64)
         t_byte_start = np.concatenate([np.array([0], dtype=np.uint64), t_byte_start[:-1]], axis=None)
+        t_byte_start += encoded_bytes.size
         end_bench = time.perf_counter()
         logging.debug(f"arrange intra-block information {(end_bench - start_bench) * 1000} ms")
 
