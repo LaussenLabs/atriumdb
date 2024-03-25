@@ -16,10 +16,11 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from atriumdb import AtriumSDK, T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
-    V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
+    V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, create_gap_arr_fast, merge_gap_data
 import numpy as np
 import random
 
+from atriumdb.adb_functions import convert_gap_data_to_timestamps, create_timestamps_from_gap_data
 from tests.generate_wfdb import get_records
 from tests.test_transfer_info import insert_random_patients
 from tests.testing_framework import _test_for_both
@@ -156,7 +157,8 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
     num_records = 0
 
     device_patient_dict = {}
-    for (record, annotation), (d_record, d_annotation) in zip(get_records(dataset_name='mitdb'), get_records(dataset_name='mitdb', physical=False)):
+    for (record, annotation), (d_record, d_annotation) in zip(get_records(dataset_name='mitdb'),
+                                                              get_records(dataset_name='mitdb', physical=False)):
         if max_records and num_records >= max_records:
             return
         num_records += 1
@@ -185,7 +187,8 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
             segment_start = start_time + segment * segment_duration
             segment_end = segment_start + segment_duration
             label = random.choice(label_set_list)
-            sdk.insert_label(name=label, device=device_id, start_time=segment_start, end_time=segment_end, time_units='ns')
+            sdk.insert_label(name=label, device=device_id, start_time=segment_start, end_time=segment_end,
+                             time_units='ns')
 
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
@@ -198,6 +201,9 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
 
 def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p_record, d_record, signal_i):
     measure_tag, scale_b, scale_m, units, value_data = get_record_data_for_ingest(d_record, p_record, signal_i)
+
+    # Test gap creation and gap merging
+    _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_data)
 
     measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq_nano,
                                     units=units)
@@ -247,6 +253,88 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
         sdk.write_data(measure_id, device_id, gap_data_2d.flatten(), value_data, freq_nano, start_time,
                        raw_time_type=raw_t_t, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t,
                        encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b, gap_tolerance=gap_tolerance)
+
+
+def _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_data, test_riffle=False):
+    created_gap_array = create_gap_arr_fast(time_arr, 1, freq_nano)
+    assert np.array_equal(gap_data_2d.flatten(), created_gap_array)
+    # clean split
+    split_index = value_data.size // 2
+    values_1, times_1 = value_data[:split_index].copy(), time_arr[:split_index].copy()
+    values_2, times_2 = value_data[split_index:].copy(), time_arr[split_index:].copy()
+    start_1, start_2 = start_time, int(time_arr[split_index])
+    gap_array_1 = create_gap_arr_fast(times_1, 1, freq_nano)
+    gap_array_2 = create_gap_arr_fast(times_2, 1, freq_nano)
+    merged_values, merged_gap_array, merged_start_time = merge_gap_data(
+        values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
+
+    assert np.array_equal(value_data, merged_values)
+    assert np.array_equal(gap_data_2d.flatten(), merged_gap_array)
+
+    # clean split 1 value
+    split_index = value_data.size - 1
+    values_1, times_1 = value_data[:split_index].copy(), time_arr[:split_index].copy()
+    values_2, times_2 = value_data[split_index:].copy(), time_arr[split_index:].copy()
+    start_1, start_2 = start_time, int(time_arr[split_index])
+    gap_array_1 = create_gap_arr_fast(times_1, 1, freq_nano)
+    gap_array_2 = create_gap_arr_fast(times_2, 1, freq_nano)
+    merged_values, merged_gap_array, merged_start_time = merge_gap_data(
+        values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
+
+    assert np.array_equal(value_data, merged_values)
+    assert np.array_equal(gap_data_2d.flatten(), merged_gap_array)
+
+    # clean split on a gap
+    if created_gap_array.size >= 2:
+        split_index = created_gap_array[-2]
+    else:
+        split_index = value_data.size // 2
+    values_1, times_1 = value_data[:split_index].copy(), time_arr[:split_index].copy()
+    values_2, times_2 = value_data[split_index:].copy(), time_arr[split_index:].copy()
+    start_1, start_2 = start_time, int(time_arr[split_index])
+    gap_array_1 = create_gap_arr_fast(times_1, 1, freq_nano)
+    gap_array_2 = create_gap_arr_fast(times_2, 1, freq_nano)
+    merged_values, merged_gap_array, merged_start_time = merge_gap_data(
+        values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
+
+    assert np.array_equal(value_data, merged_values)
+    assert np.array_equal(gap_data_2d.flatten(), merged_gap_array)
+
+    # Take a chunk of out of the middle
+    split_index_1, split_index_2 = value_data.size // 3, 2 * value_data.size // 3
+    values_1, times_1 = value_data[split_index_1:split_index_2].copy(), time_arr[split_index_1:split_index_2].copy()
+    values_2 = np.concatenate([value_data[:split_index_1].copy(), value_data[split_index_2:].copy()],
+                              dtype=value_data.dtype)
+    times_2 = np.concatenate([time_arr[:split_index_1].copy(), time_arr[split_index_2:].copy()],
+                             dtype=time_arr.dtype)
+    start_1, start_2 = int(times_1[0]), int(times_2[0])
+    gap_array_1 = create_gap_arr_fast(times_1, 1, freq_nano)
+    gap_array_2 = create_gap_arr_fast(times_2, 1, freq_nano)
+    merged_values, merged_gap_array, merged_start_time = merge_gap_data(
+        values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
+    merged_timestamps = create_timestamps_from_gap_data(merged_values.size, merged_gap_array, start_time, freq_nano)
+    sorted_indices = np.argsort(merged_timestamps)
+    merged_timestamps = merged_timestamps[sorted_indices]
+    merged_values = merged_values[sorted_indices]
+    assert np.array_equal(value_data, merged_values)
+    assert np.array_equal(time_arr, merged_timestamps)
+
+    # Riffle Shuffle
+    # Works but takes forever
+    if test_riffle:
+        values_1, times_1 = value_data[::2].copy(), time_arr[::2].copy()
+        values_2, times_2 = value_data[1::2].copy(), time_arr[1::2].copy()
+        start_1, start_2 = int(times_1[0]), int(times_2[0])
+        gap_array_1 = create_gap_arr_fast(times_1, 1, freq_nano)
+        gap_array_2 = create_gap_arr_fast(times_2, 1, freq_nano)
+        merged_values, merged_gap_array, merged_start_time = merge_gap_data(
+            values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
+        merged_timestamps = create_timestamps_from_gap_data(merged_values.size, merged_gap_array, start_time, freq_nano)
+        sorted_indices = np.argsort(merged_timestamps)
+        merged_timestamps = merged_timestamps[sorted_indices]
+        merged_values = merged_values[sorted_indices]
+        assert np.array_equal(value_data, merged_values)
+        assert np.array_equal(time_arr, merged_timestamps)
 
 
 def get_record_data_for_ingest(d_record, p_record, signal_i):

@@ -680,7 +680,7 @@ def create_gap_arr_fast(message_time_arr, samples_per_message, freq_nhz):
     # Find the indices of the non-zero time gaps
     non_zero_inds = np.nonzero(time_gaps)[0]
     # Initialize an array to store the results
-    result_arr = np.zeros((non_zero_inds.size, 2))
+    result_arr = np.zeros((non_zero_inds.size, 2), dtype=np.int64)
     # Fill the first column of the result array with the sample indices
     result_arr.T[0] = (non_zero_inds + 1) * samples_per_message
     # Fill the second column of the result array with the non-zero time gaps

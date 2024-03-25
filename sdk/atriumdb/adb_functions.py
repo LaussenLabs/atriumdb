@@ -14,6 +14,7 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import warnings
 
 import numpy as np
 import time
@@ -463,3 +464,76 @@ def collect_all_descendant_ids(label_set_ids, sql_handler):
                 to_process.add(child_id)
 
     return all_descendants, closest_ancestor_dict
+
+
+def merge_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, start_time_2, freq_nhz):
+    if not all(isinstance(arr, np.ndarray) for arr in [values_1, gap_array_1, values_2, gap_array_2]):
+        raise ValueError(f"All input value and gap arrays must be numpy arrays.")
+
+    if not values_1.dtype == values_2.dtype:
+        raise ValueError(f"Values 1 and 2 have different dtypes {values_1.dtype}, {values_2.dtype}. Cannot merge.")
+
+    # if starts, values and gaps are equal, then just return the 1's
+    if np.array_equal(values_1, values_2) and \
+            np.array_equal(gap_array_1, gap_array_2) and \
+            start_time_1 == start_time_2:
+        return values_1, gap_array_1, start_time_1
+
+    # if start_time_2 < start_time_1, swap 1's with 2's so that 1 is always temporally first.
+    if start_time_2 < start_time_1:
+        values_1, values_2 = values_2, values_1
+        gap_array_1, gap_array_2 = gap_array_2, gap_array_1
+        start_time_1, start_time_2 = start_time_2, start_time_1
+
+    # Calculate the gap between blocks
+    end_time_1 = _calc_end_time_from_gap_data(values_1.size, gap_array_1, start_time_1, freq_nhz)
+    new_gap_index, new_gap_duration = int(values_1.size), start_time_2 - end_time_1
+
+    # Calculate positions depending on if we need to add a new gap between blocks.
+    if new_gap_duration == 0:
+        merged_gap_size = gap_array_1.size + gap_array_2.size
+        gap_array_2_index = gap_array_1.size
+    else:
+        merged_gap_size = gap_array_1.size + gap_array_2.size + 2
+        gap_array_2_index = gap_array_1.size + 2
+
+    merged_gap_array = np.empty(merged_gap_size, dtype=np.int64)
+
+    merged_gap_array[:gap_array_1.size] = gap_array_1
+    if new_gap_duration != 0:
+        merged_gap_array[gap_array_1.size:gap_array_1.size + 2] = [new_gap_index, new_gap_duration]
+
+    merged_gap_array[gap_array_2_index:] = gap_array_2
+
+    # move the gap_array_2 indices forward.
+    merged_gap_array[gap_array_2_index::2] += values_1.size
+
+    # concatenate the values.
+    merged_values = np.empty(values_1.size + values_2.size, dtype=values_1.dtype)
+    merged_values[:values_1.size] = values_1
+    merged_values[values_1.size:] = values_2
+    return merged_values, merged_gap_array, start_time_1
+
+
+def _calc_end_time_from_gap_data(values_size, gap_array, start_time, freq_nhz):
+    if (int(values_size) * (10 ** 18)) % freq_nhz != 0:
+        warnings.warn(f"Blocking starting on epoch {start_time} doesn't end on an integer number of nanoseconds, "
+                      f"merge will be approximate.")
+    sample_duration = (int(values_size) * (10 ** 18)) // freq_nhz
+    gap_total = int(np.sum(gap_array[1::2]))
+    return start_time + sample_duration + gap_total
+
+
+def create_timestamps_from_gap_data(values_size, gap_array, start_time, freq_nhz):
+    if (10 ** 18) % freq_nhz != 0:
+        raise ValueError(f"Cannot create perfect timestamps from frequency_nhz = {freq_nhz}")
+
+    period_ns = freq_nhz_to_period_ns(freq_nhz)
+    timestamps = np.arange(values_size, dtype=np.int64)
+    timestamps *= period_ns
+    timestamps += start_time
+    for i in range(gap_array.size // 2):
+        gap_index, gap_duration = gap_array[2*i], gap_array[(2*i)+1]
+        timestamps[gap_index:] += gap_duration
+
+    return timestamps
