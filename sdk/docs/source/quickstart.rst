@@ -13,7 +13,7 @@ To create a new dataset, you can use the `create_dataset` method. This method al
     from atriumdb import AtriumSDK
 
     # Create a new local dataset using SQLite
-    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", database_type="sqlite")
+    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset")
 
     # OR create a new local dataset using MariaDB
     connection_params = {
