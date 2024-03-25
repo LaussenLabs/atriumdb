@@ -14,7 +14,7 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
+import pytest
 from atriumdb import AtriumSDK
 from tests.testing_framework import _test_for_both
 
@@ -26,6 +26,11 @@ def test_create_dataset():
 
 
 def _test_create_dataset(db_type, dataset_location, connection_params):
+    with pytest.raises(ValueError):
+        # Expect an error trying to connect to a database before creating it.
+        sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type=db_type,
+                        connection_params=connection_params)
+
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
     sdk = AtriumSDK.create_dataset(

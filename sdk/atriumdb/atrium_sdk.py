@@ -176,6 +176,9 @@ class AtriumSDK:
 
             # Set the SQLite database file path and create its parent directory if it doesn't exist
             db_file = Path(dataset_location) / 'meta' / 'index.db'
+            if not db_file.exists():
+                raise ValueError(f"No Dataset found at location {dataset_location}. "
+                                 f"Use AtriumSDK.create_dataset to create a new dataset.")
             db_file.parent.mkdir(parents=True, exist_ok=True)
 
             # Initialize the SQLiteHandler with the database file path
