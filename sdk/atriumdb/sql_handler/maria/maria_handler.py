@@ -95,8 +95,22 @@ class MariaDBHandler(SQLHandler):
 
         return conn
 
+    def check_database_exists(self):
+        """Check if the specified database exists."""
+        conn = self.maria_connect_no_db()
+        cursor = conn.cursor()
+        cursor.execute(f"SHOW DATABASES LIKE '{self.database}'")
+        exists = cursor.fetchone() is not None
+        cursor.close()
+        conn.close()
+        return exists
+
     @contextmanager
     def maria_db_connection(self, begin=False):
+        if not self.check_database_exists():
+            raise ValueError(f"Database {self.database} does not exist. "
+                             f"You can create one using AtriumSDK.create_dataset.")
+
         if self.no_pool:
             conn = self.maria_connect()
         else:
