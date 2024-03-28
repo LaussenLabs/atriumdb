@@ -473,22 +473,34 @@ def merge_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, s
     if not values_1.dtype == values_2.dtype:
         raise ValueError(f"Values 1 and 2 have different dtypes {values_1.dtype}, {values_2.dtype}. Cannot merge.")
 
+    end_time_1 = _calc_end_time_from_gap_data(values_1.size, gap_array_1, start_time_1, freq_nhz)
+    end_time_2 = _calc_end_time_from_gap_data(values_2.size, gap_array_2, start_time_2, freq_nhz)
+
+    overlap = (start_time_1 < end_time_2) and (end_time_1 > start_time_2)
+
+    # If there's no overlap, you can simply concatenate the data.
+    if not overlap:
+        return _concatenate_gap_data(
+            values_1, gap_array_1, start_time_1, values_2, gap_array_2, start_time_2, freq_nhz)
+
     # if starts, values and gaps are equal, then just return the 1's
     if np.array_equal(values_1, values_2) and \
             np.array_equal(gap_array_1, gap_array_2) and \
             start_time_1 == start_time_2:
         return values_1, gap_array_1, start_time_1
 
+    pass
+
+
+def _concatenate_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, start_time_2, freq_nhz):
     # if start_time_2 < start_time_1, swap 1's with 2's so that 1 is always temporally first.
     if start_time_2 < start_time_1:
         values_1, values_2 = values_2, values_1
         gap_array_1, gap_array_2 = gap_array_2, gap_array_1
         start_time_1, start_time_2 = start_time_2, start_time_1
-
     # Calculate the gap between blocks
     end_time_1 = _calc_end_time_from_gap_data(values_1.size, gap_array_1, start_time_1, freq_nhz)
     new_gap_index, new_gap_duration = int(values_1.size), start_time_2 - end_time_1
-
     # Calculate positions depending on if we need to add a new gap between blocks.
     if new_gap_duration == 0:
         merged_gap_size = gap_array_1.size + gap_array_2.size
@@ -496,18 +508,13 @@ def merge_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, s
     else:
         merged_gap_size = gap_array_1.size + gap_array_2.size + 2
         gap_array_2_index = gap_array_1.size + 2
-
     merged_gap_array = np.empty(merged_gap_size, dtype=np.int64)
-
     merged_gap_array[:gap_array_1.size] = gap_array_1
     if new_gap_duration != 0:
         merged_gap_array[gap_array_1.size:gap_array_1.size + 2] = [new_gap_index, new_gap_duration]
-
     merged_gap_array[gap_array_2_index:] = gap_array_2
-
     # move the gap_array_2 indices forward.
     merged_gap_array[gap_array_2_index::2] += values_1.size
-
     # concatenate the values.
     merged_values = np.empty(values_1.size + values_2.size, dtype=values_1.dtype)
     merged_values[:values_1.size] = values_1
@@ -537,3 +544,38 @@ def create_timestamps_from_gap_data(values_size, gap_array, start_time, freq_nhz
         timestamps[gap_index:] += gap_duration
 
     return timestamps
+
+
+def is_gap_data_sorted(gap_data, freq_nhz):
+    period_ns = freq_nhz_to_period_ns(freq_nhz)
+    gap_durations = gap_data[1::2]
+    return np.all(gap_durations >= -period_ns)
+
+
+def create_gap_arr_from_variable_messages(time_data, message_sizes, sample_freq):
+    sample_freq = int(sample_freq)
+    result_list = []
+    current_sample = 0
+
+    for i in range(1, len(time_data)):
+        # Compute the time difference between consecutive messages
+        delta_t = time_data[i] - time_data[i - 1]
+
+        # Calculate the message period for the current message based on its size
+        current_message_size = int(message_sizes[i - 1])
+        current_message_period_ns = ((10 ** 18) * current_message_size) // sample_freq
+
+        # Check if the time difference doesn't match the expected message period
+        if delta_t != current_message_period_ns:
+            # Compute the extra duration (time gap) and the starting index of the gap
+            time_gap = delta_t - current_message_period_ns
+            gap_start_index = current_sample + current_message_size
+
+            # Add the gap information to the result list
+            result_list.extend([gap_start_index, time_gap])
+
+        # Update the current sample index for the next iteration
+        current_sample += current_message_size
+
+    # Convert the result list to a NumPy array of integers
+    return np.array(result_list, dtype=np.int64)
