@@ -721,6 +721,18 @@ def merge_sorted_messages(message_starts_1, message_sizes_1, values_1,
                 j += 1
                 continue
 
+            if merged_ends and message_starts_2[j] < merged_ends[-1] and message_ends_2[j] < merged_ends[-1]:
+                # If the new message is completely within the most recent merged message
+                # Then we simply overwrite the needed values
+                left_index_duration = message_starts_2[j] - merged_starts[-1]
+                left_index = math.ceil((left_index_duration * int(freq_nhz)) / (10 ** 18))
+
+                right_index_duration = merged_ends[-1] - message_ends_2[j]
+                right_index = merged_values[-1].size - math.ceil((right_index_duration * int(freq_nhz)) / (10 ** 18))
+                merged_values[-1][left_index:right_index] = values_2[j]
+                j += 1
+                continue
+
             while merged_ends and message_starts_2[j] < merged_ends[-1]:
                 # If there is overlap
                 duration_ns_overlap = int(merged_ends[-1] - message_starts_2[j])
@@ -795,6 +807,18 @@ def merge_sorted_messages(message_starts_1, message_sizes_1, values_1,
                 values_2[message_start_indices_2[j]:message_end_indices_2[j]]
 
             merged_values[-1] = new_merged_values
+            j += 1
+            continue
+
+        if merged_ends and message_starts_2[j] < merged_ends[-1] and message_ends_2[j] < merged_ends[-1]:
+            # If the new message is completely within the most recent merged message
+            # Then we simply overwrite the needed values
+            left_index_duration = message_starts_2[j] - merged_starts[-1]
+            left_index = math.ceil((left_index_duration * int(freq_nhz)) / (10 ** 18))
+
+            right_index_duration = merged_ends[-1] - message_ends_2[j]
+            right_index = merged_values[-1].size - math.ceil((right_index_duration * int(freq_nhz)) / (10 ** 18))
+            merged_values[-1][left_index:right_index] = values_2[j]
             j += 1
             continue
 

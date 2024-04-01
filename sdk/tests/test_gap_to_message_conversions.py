@@ -2,9 +2,26 @@ import pytest
 
 import numpy as np
 
+from atriumdb import create_gap_arr
 from atriumdb.adb_functions import create_gap_arr_from_variable_messages, reconstruct_messages, \
-    sort_message_time_values, merge_sorted_messages
+    sort_message_time_values, merge_sorted_messages, merge_gap_data
 
+
+def test_end_to_end_merging():
+    # add in a block that doesn't get merged because merge_blocks is false
+    freq_nhz = 1_000_000_000
+    times_1, values_1 = np.array([20, 21, 22, 24], dtype=np.int64) * 1_000_000_000, np.array([20, 21, 22, 24],
+                                                                                         dtype=np.int64)
+    gap_array_1 = create_gap_arr(times_1, 1, freq_nhz)
+
+    # add in a block the overlaps with the newest small block
+    times_2, values_2 = np.array([19, 21], dtype=np.int64) * 1_000_000_000, np.array([19, 21], dtype=np.int64)
+    gap_array_2 = create_gap_arr(times_2, 1, freq_nhz)
+
+    merged_values, merged_gap_array, merged_start_time = merge_gap_data(
+        values_1, gap_array_1, int(times_1[0]), values_2, gap_array_2, int(times_2[0]), freq_nhz)
+
+    assert np.array_equal(merged_values, np.array([19, 20, 21, 22, 24], dtype=np.int64))
 
 def test_gap_data_to_message_time_conversion():
     test_cases = [
