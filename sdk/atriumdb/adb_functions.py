@@ -14,6 +14,7 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import math
 import warnings
 
 import numpy as np
@@ -489,7 +490,25 @@ def merge_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, s
             start_time_1 == start_time_2:
         return values_1, gap_array_1, start_time_1
 
-    pass
+    # Convert both gap_data into messages
+    message_starts_1, message_sizes_1 = reconstruct_messages(
+        start_time_1, gap_array_1, freq_nhz, int(values_1.size))
+
+    message_starts_2, message_sizes_2 = reconstruct_messages(
+        start_time_2, gap_array_2, freq_nhz, int(values_2.size))
+
+    # Sort both message lists + values
+    sort_message_time_values(message_starts_1, message_sizes_1, values_1)
+    sort_message_time_values(message_starts_2, message_sizes_2, values_2)
+
+    # Merge lists and Overwrite 2 over 1 if overlapping
+    merged_starts, merged_sizes, merged_values = merge_sorted_messages(
+        message_starts_1, message_sizes_1, values_1, message_starts_2, message_sizes_2, values_2, freq_nhz)
+
+    # Convert back into gap data
+    merged_gap_data = create_gap_arr_from_variable_messages(merged_starts, merged_sizes, freq_nhz)
+
+    return merged_values, merged_gap_data, int(merged_starts[0])
 
 
 def _concatenate_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, start_time_2, freq_nhz):
@@ -552,17 +571,18 @@ def is_gap_data_sorted(gap_data, freq_nhz):
     return np.all(gap_durations >= -period_ns)
 
 
-def create_gap_arr_from_variable_messages(time_data, message_sizes, sample_freq):
+def create_gap_arr_from_variable_messages(message_start_epoch_array: np.ndarray, message_size_array: np.ndarray,
+                                          sample_freq):
     sample_freq = int(sample_freq)
     result_list = []
     current_sample = 0
 
-    for i in range(1, len(time_data)):
+    for i in range(1, len(message_start_epoch_array)):
         # Compute the time difference between consecutive messages
-        delta_t = time_data[i] - time_data[i - 1]
+        delta_t = message_start_epoch_array[i] - message_start_epoch_array[i - 1]
 
         # Calculate the message period for the current message based on its size
-        current_message_size = int(message_sizes[i - 1])
+        current_message_size = int(message_size_array[i - 1])
         current_message_period_ns = ((10 ** 18) * current_message_size) // sample_freq
 
         # Check if the time difference doesn't match the expected message period
@@ -579,3 +599,236 @@ def create_gap_arr_from_variable_messages(time_data, message_sizes, sample_freq)
 
     # Convert the result list to a NumPy array of integers
     return np.array(result_list, dtype=np.int64)
+
+
+def reconstruct_messages(start_time_nano_epoch, gap_data_array, sample_freq, num_values):
+    message_sizes = np.empty((gap_data_array.size // 2) + 2, dtype=np.int64)
+    message_sizes[0] = 0
+    message_sizes[-1] = num_values
+    message_sizes[1:-1] = gap_data_array[::2]
+    message_sizes = np.diff(message_sizes)
+
+    message_starts = np.empty((gap_data_array.size // 2) + 1, dtype=np.int64)
+
+    message_starts[0] = start_time_nano_epoch
+
+    if any(((10 ** 18) * m_size) % sample_freq != 0 for m_size in message_sizes[:-1]):
+        warnings.warn("Not all messages durations can be expressed as a perfect nanosecond integer, some rounding has occured")
+    message_starts[1:] = [_message_size_to_duration_ns(m_size, sample_freq) for m_size in message_sizes[:-1]]
+    message_starts[1:] += gap_data_array[1::2]
+    message_starts = np.cumsum(message_starts)
+
+    return message_starts, message_sizes
+
+
+def sort_message_time_values(message_starts: np.ndarray, message_sizes: np.ndarray, value_array: np.ndarray):
+    # The start and end index of each message within the value_array
+    message_end_indices, message_start_indices = _get_message_indices(message_sizes)
+
+    sorted_message_i_arr = np.argsort(message_starts)
+    if np.all(sorted_message_i_arr[:-1] <= sorted_message_i_arr[1:]):
+        return
+
+    message_starts[:] = message_starts[sorted_message_i_arr]
+    message_sizes[:] = message_sizes[sorted_message_i_arr]
+
+    values_copy = value_array.copy()
+
+    start_idx = 0
+    for message_i in range(message_start_indices.size):
+        sorted_left = message_start_indices[sorted_message_i_arr][message_i]
+        sorted_right = message_end_indices[sorted_message_i_arr][message_i]
+        message_size = message_sizes[message_i]
+
+        value_array[start_idx:start_idx+message_size] = values_copy[sorted_left:sorted_right]
+        start_idx += message_size
+
+
+def _get_message_indices(message_sizes):
+    message_end_indices = np.cumsum(message_sizes)
+    message_start_indices = message_end_indices - message_sizes
+    return message_end_indices, message_start_indices
+
+
+def merge_sorted_messages(message_starts_1, message_sizes_1, values_1,
+                          message_starts_2, message_sizes_2, values_2, freq_nhz):
+
+    message_ends_1 = message_starts_1 + np.array(
+        [_message_size_to_duration_ns(m_size, freq_nhz) for m_size in message_sizes_1], dtype=np.int64)
+
+    message_ends_2 = message_starts_2 + np.array(
+        [_message_size_to_duration_ns(m_size, freq_nhz) for m_size in message_sizes_2], dtype=np.int64)
+
+    message_end_indices_1, message_start_indices_1 = _get_message_indices(message_sizes_1)
+    message_end_indices_2, message_start_indices_2 = _get_message_indices(message_sizes_2)
+
+    merged_starts = []
+    merged_ends = []
+    merged_values = []
+
+    i = j = 0
+    while i < len(message_starts_1) and j < len(message_starts_2):
+        if message_starts_1[i] <= message_starts_2[j]:
+            # 1 <= 2
+            if merged_ends and message_starts_1[i] == merged_ends[-1]:
+                # If the messages link perfectly together, update the last entry
+                merged_ends[-1] = message_ends_1[i]
+                new_merged_values = np.empty(
+                    merged_values[-1].size + message_sizes_1[i],
+                    dtype=merged_values[-1].dtype)
+
+                new_merged_values[:merged_values[-1].size] = merged_values[-1]
+                new_merged_values[merged_values[-1].size:] = \
+                    values_1[message_start_indices_1[i]:message_end_indices_1[i]]
+
+                merged_values[-1] = new_merged_values
+                i += 1
+                continue
+
+            elif merged_ends and message_starts_1[i] < merged_ends[-1]:
+                # If there is overlap
+                duration_ns_overlap = int(merged_ends[-1] - message_starts_1[i])
+                num_values_overlap = math.ceil((duration_ns_overlap * int(freq_nhz)) / (10 ** 18))
+
+                # Reduce input values
+                message_start_indices_1[i] += num_values_overlap
+
+                # Add to start_time
+                message_starts_1[i] += _message_size_to_duration_ns(num_values_overlap, freq_nhz)
+
+            if message_starts_1[i] < message_ends_1[i]:
+                # If there is any message left, append it
+                merged_starts.append(message_starts_1[i])
+                merged_ends.append(message_ends_1[i])
+                merged_values.append(values_1[message_start_indices_1[i]:message_end_indices_1[i]])
+
+            i += 1
+
+        else:
+            # 2 < 1
+            if merged_ends and message_starts_2[j] == merged_ends[-1]:
+                # If the messages link perfectly together, update the last entry
+                merged_ends[-1] = message_ends_2[j]
+                new_merged_values = np.empty(
+                    merged_values[-1].size + message_sizes_2[j],
+                    dtype=merged_values[-1].dtype)
+
+                new_merged_values[:merged_values[-1].size] = merged_values[-1]
+                new_merged_values[merged_values[-1].size:] = \
+                    values_2[message_start_indices_2[j]:message_end_indices_2[j]]
+
+                merged_values[-1] = new_merged_values
+                j += 1
+                continue
+
+            while merged_ends and message_starts_2[j] < merged_ends[-1]:
+                # If there is overlap
+                duration_ns_overlap = int(merged_ends[-1] - message_starts_2[j])
+                num_values_overlap = math.ceil((duration_ns_overlap * int(freq_nhz)) / (10 ** 18))
+
+                remaining_values = merged_values[-1].size - num_values_overlap
+                if remaining_values <= 0:
+                    merged_starts.pop()
+                    merged_ends.pop()
+                    merged_values.pop()
+
+                else:
+                    # Reduce old values
+                    merged_values[-1] = merged_values[-1][:remaining_values]
+
+                    # Reduce old end_time
+                    merged_ends[-1] -= _message_size_to_duration_ns(num_values_overlap, freq_nhz)
+
+            # Once we know there is no overlap, we can safely append.
+            merged_starts.append(message_starts_2[j])
+            merged_ends.append(message_ends_2[j])
+            merged_values.append(values_2[message_start_indices_2[j]:message_end_indices_2[j]])
+            j += 1
+
+    # Add any remaining messages from 1
+    while i < len(message_starts_1):
+        if merged_ends and message_starts_1[i] == merged_ends[-1]:
+            # If the messages link perfectly together, update the last entry
+            merged_ends[-1] = message_ends_1[i]
+            new_merged_values = np.empty(
+                merged_values[-1].size + message_sizes_1[i],
+                dtype=merged_values[-1].dtype)
+
+            new_merged_values[:merged_values[-1].size] = merged_values[-1]
+            new_merged_values[merged_values[-1].size:] = \
+                values_1[message_start_indices_1[i]:message_end_indices_1[i]]
+
+            merged_values[-1] = new_merged_values
+            i += 1
+            continue
+
+        elif merged_ends and message_starts_1[i] < merged_ends[-1]:
+            # If there is overlap
+            duration_ns_overlap = int(merged_ends[-1] - message_starts_1[i])
+            num_values_overlap = math.ceil((duration_ns_overlap * int(freq_nhz)) / (10 ** 18))
+
+            # Reduce input values
+            message_start_indices_1[i] += num_values_overlap
+
+            # Add to start_time
+            message_starts_1[i] += _message_size_to_duration_ns(num_values_overlap, freq_nhz)
+
+        if message_starts_1[i] < message_ends_1[i]:
+            # If there is any message left, append it
+            merged_starts.append(message_starts_1[i])
+            merged_ends.append(message_ends_1[i])
+            merged_values.append(values_1[message_start_indices_1[i]:message_end_indices_1[i]])
+
+        i += 1
+
+    # Add any remaining messages from 2
+    while j < len(message_starts_2):
+        if merged_ends and message_starts_2[j] == merged_ends[-1]:
+            # If the messages link perfectly together, update the last entry
+            merged_ends[-1] = message_ends_2[j]
+            new_merged_values = np.empty(
+                merged_values[-1].size + message_sizes_2[j],
+                dtype=merged_values[-1].dtype)
+
+            new_merged_values[:merged_values[-1].size] = merged_values[-1]
+            new_merged_values[merged_values[-1].size:] = \
+                values_2[message_start_indices_2[j]:message_end_indices_2[j]]
+
+            merged_values[-1] = new_merged_values
+            j += 1
+            continue
+
+        while merged_ends and message_starts_2[j] < merged_ends[-1]:
+            # If there is overlap
+            duration_ns_overlap = int(merged_ends[-1] - message_starts_2[j])
+            num_values_overlap = math.ceil((duration_ns_overlap * int(freq_nhz)) / (10 ** 18))
+
+            remaining_values = merged_values[-1].size - num_values_overlap
+            if remaining_values <= 0:
+                merged_starts.pop()
+                merged_ends.pop()
+                merged_values.pop()
+
+            else:
+                # Reduce old values
+                merged_values[-1] = merged_values[-1][:remaining_values]
+
+                # Reduce old end_time
+                merged_ends[-1] -= _message_size_to_duration_ns(num_values_overlap, freq_nhz)
+
+        # Once we know there is no overlap, we can safely append.
+        merged_starts.append(message_starts_2[j])
+        merged_ends.append(message_ends_2[j])
+        merged_values.append(values_2[message_start_indices_2[j]:message_end_indices_2[j]])
+        j += 1
+
+    merged_starts = np.array(merged_starts, dtype=np.int64)
+    merged_sizes = np.array([value_arr.size for value_arr in merged_values], dtype=np.int64)
+    merged_values = np.array([], dtype=np.float64) if len(merged_values) == 0 else \
+        np.concatenate(merged_values, dtype=merged_values[0].dtype)
+
+    return merged_starts, merged_sizes, merged_values
+
+
+def _message_size_to_duration_ns(m_size, freq_nhz):
+    return ((10 ** 18) * int(m_size)) // freq_nhz
