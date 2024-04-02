@@ -497,13 +497,15 @@ def merge_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, s
     message_starts_2, message_sizes_2 = reconstruct_messages(
         start_time_2, gap_array_2, freq_nhz, int(values_2.size))
 
-    # Sort both message lists + values
+    # Sort both message lists + values, and copy values to not mess with the originals
+    values_1, values_2 = values_1.copy(), values_2.copy()
     sort_message_time_values(message_starts_1, message_sizes_1, values_1)
     sort_message_time_values(message_starts_2, message_sizes_2, values_2)
 
     # Merge lists and Overwrite 2 over 1 if overlapping
     merged_starts, merged_sizes, merged_values = merge_sorted_messages(
-        message_starts_1, message_sizes_1, values_1, message_starts_2, message_sizes_2, values_2, freq_nhz)
+        message_starts_1, message_sizes_1, values_1,
+        message_starts_2, message_sizes_2, values_2, freq_nhz)
 
     # Convert back into gap data
     merged_gap_data = create_gap_arr_from_variable_messages(merged_starts, merged_sizes, freq_nhz)
