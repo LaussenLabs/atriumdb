@@ -6,22 +6,79 @@ from atriumdb import create_gap_arr
 from atriumdb.adb_functions import create_gap_arr_from_variable_messages, reconstruct_messages, \
     sort_message_time_values, merge_sorted_messages, merge_gap_data
 
+import pytest
+import numpy as np
 
-def test_end_to_end_merging():
-    # add in a block that doesn't get merged because merge_blocks is false
+
+@pytest.mark.parametrize(
+    "times_1, values_1, times_2, values_2, expected_merged_values",
+    [
+        # Simple Test Cases
+        ([20, 21, 22, 24], [20, 21, 22, 24], [19, 21], [19, 21], [19, 20, 21, 22, 24]),
+        ([25, 26], [25, 26], [27, 28], [27, 28], [25, 26, 27, 28]),
+        ([10, 11], [10, 11], [13, 14], [13, 14], [10, 11, 13, 14]),
+        ([15, 16, 17], [15, 16, 17], [16, 17, 18], [16, 17, 18], [15, 16, 17, 18]),
+
+        # Mutually Exclusive Subsets of a range
+        ([1, 3, 5], [1, 3, 5], [2, 4], [2, 4], [1, 2, 3, 4, 5]),
+
+        # Single-Element Arrays
+        ([30], [30], [31], [31], [30, 31]),
+
+        # Consecutive Times with Repeated Elements
+        ([40, 40, 41], [40, 40, 41], [41, 42, 42], [41, 42, 42], [40, 41, 42]),
+
+        # Large Gaps Between Times
+        ([100, 200], [100, 200], [300, 400], [300, 400], [100, 200, 300, 400]),
+
+        # Reverse Ordered Times
+        ([50, 49], [50, 49], [48, 47], [48, 47], [47, 48, 49, 50]),
+
+        # Identical Times and Values
+        ([60, 61], [60, 61], [60, 61], [60, 61], [60, 61]),
+
+        # Overlapping times; values from 2 overwrite values from 1
+        ([10, 11, 12, 13], [1, 2, 3, 4], [12, 13, 14], [100, 200, 300], [1, 2, 100, 200, 300]),
+        ([20, 21, 22, 23], [5, 6, 7, 8], [21, 22], [500, 600], [5, 500, 600, 8]),
+
+        # Times from 1 inside 2; with overwriting
+        ([30, 31], [9, 10], [29, 30, 31, 32], [900, 1000, 1100, 1200], [900, 1000, 1100, 1200]),
+
+        # Times from 2 inside 1; with overwriting
+        ([40, 41, 42, 43], [11, 12, 13, 14], [41, 42], [4000, 5000], [11, 4000, 5000, 14]),
+
+        # Larger series with gaps, smaller series inside with overwriting
+        ([50, 52, 54, 56], [15, 16, 17, 18], [51, 52, 53], [7000, 8000, 9000], [15, 7000, 8000, 9000, 17, 18]),
+
+        # Weaving two arrays together
+        ([60, 63, 66, 69], [19, 20, 21, 22], [62, 63, 64, 67], [10000, 11000, 12000, 13000],
+         [19, 10000, 11000, 12000, 21, 13000, 22]),
+
+        # Edge case: Overlapping start and end times with different values
+        ([70, 71, 73], [23, 24, 25], [71, 72, 73], [14000, 15000, 16000], [23, 14000, 15000, 16000]),
+
+        # Extended case: 1 large with gaps, 2 small with mixed overlapping
+        ([80, 82, 84, 86, 88], [26, 27, 28, 29, 30], [81, 82, 85, 87], [17000, 18000, 19000, 20000],
+         [26, 17000, 18000, 28, 19000, 29, 20000, 30]),
+
+        # Case with multiple identical times, ensuring overwriting is consistent
+        ([90, 91, 91, 92], [31, 32, 33, 34], [91, 92, 93], [21000, 22000, 23000], [31, 21000, 22000, 23000]),
+    ]
+)
+def test_end_to_end_merging(times_1, values_1, times_2, values_2, expected_merged_values):
     freq_nhz = 1_000_000_000
-    times_1, values_1 = np.array([20, 21, 22, 24], dtype=np.int64) * 1_000_000_000, np.array([20, 21, 22, 24],
-                                                                                         dtype=np.int64)
+    nanoseconds_in_a_second = 1_000_000_000
+    times_1, values_1 = np.array(times_1, dtype=np.int64) * nanoseconds_in_a_second, np.array(values_1, dtype=np.int64)
     gap_array_1 = create_gap_arr(times_1, 1, freq_nhz)
 
-    # add in a block the overlaps with the newest small block
-    times_2, values_2 = np.array([19, 21], dtype=np.int64) * 1_000_000_000, np.array([19, 21], dtype=np.int64)
+    times_2, values_2 = np.array(times_2, dtype=np.int64) * nanoseconds_in_a_second, np.array(values_2, dtype=np.int64)
     gap_array_2 = create_gap_arr(times_2, 1, freq_nhz)
 
     merged_values, merged_gap_array, merged_start_time = merge_gap_data(
         values_1, gap_array_1, int(times_1[0]), values_2, gap_array_2, int(times_2[0]), freq_nhz)
 
-    assert np.array_equal(merged_values, np.array([19, 20, 21, 22, 24], dtype=np.int64))
+    assert np.array_equal(merged_values, np.array(expected_merged_values, dtype=np.int64))
+
 
 def test_gap_data_to_message_time_conversion():
     test_cases = [
