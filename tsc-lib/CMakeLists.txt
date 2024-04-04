@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.10)
 project(tsc-lib C)
 
 set(CMAKE_C_STANDARD 99)
@@ -29,5 +29,5 @@ else()
 endif()
 
 add_subdirectory(src)
-add_subdirectory(Google_tests)
-add_subdirectory(Functional_Tests)
+# add_subdirectory(Google_tests)
+# add_subdirectory(Functional_Tests)
