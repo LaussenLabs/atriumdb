@@ -22,7 +22,8 @@ $ cmake --build cmake-build-release --target clean
 ```
 
 ### Docker
-If you build using docker it will cross compile both for Linux and Windows.
+If you build using docker it will cross compile both for Linux and Windows. Make sure your current directory is atriumdb
+for $(pwd) to work otherwise use absolute path to atriumdb folder.
 
 First you build the docker image using the command:
 ```shell
