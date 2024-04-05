@@ -28,16 +28,16 @@ First you build the docker image using the command:
 ```shell
 $ docker build -t c-build tsc-lib
 ```
-Then to build the binaries for release from a windows host you use the command:
+Then to build the binaries for release from a linux host you use the command:
 ```shell
-$ docker run --name c-build-release -v "%cd%":/atriumdb --init -it c-build ./build_release.sh
+$ docker run --name c-build-release -v $(pwd):/atriumdb --init -it c-build ./build_release.sh
 ```
 If you want to build the binaries in debug mode use the command:
 ```shell
-$ docker run --name c-build-debug -v "%cd%":/atriumdb --init -it c-build ./build_debug.sh
+$ docker run --name c-build-debug -v $(pwd):/atriumdb --init -it c-build ./build_debug.sh
 ```
 NOTES: 
-- If you are using a linux host replace "%cd%" with $(pwd). 
+- If you are using a windows host and cmd to build replace $(pwd) with "%cd%". 
 - Also, if you would prefer to run build commands yourself just remove ./build_release.sh from the docker run command, 
 and it will give you a shell in the build container.
 

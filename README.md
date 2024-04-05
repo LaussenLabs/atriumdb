@@ -25,14 +25,16 @@ First you build the docker image from the Dockerfile in the tsc-lib folder using
 ```shell
 $ docker build -t c-build tsc-lib
 ```
-To build the docker container and the binaries for release you need edit the command below by changing "/path/to/atriumdb" to the path to the repository on your computer.
+
+To build the docker container and the binaries for release you need edit the command below by **CHANGING** "/path/to/atriumdb" to the path to the repository on your computer.
+
 Then run the command:
 ```shell
-$ docker run --name c-build-release -v /path/to/atriumdb:/atriumdb --init -it c-build ./build_release.sh
+$ docker run --name c-build-release -v /path/to/adb-lib-sdk:/atriumdb --init -it c-build ./build_release.sh
 ```
 If you want to build the binaries in debug mode use the command:
 ```shell
-$ docker run --name c-build-debug -v /path/to/atriumdb:/atriumdb --init -it c-build ./build_debug.sh
+$ docker run --name c-build-debug -v /path/to/adb-lib-sdk:/atriumdb --init -it c-build ./build_debug.sh
 ```
 NOTES:
 - These commands will automatically place the built binaries in the proper folder in the SDK
