@@ -92,7 +92,7 @@ class AtriumSDK:
     :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
     :param str metadata_connection_type: Specifies the type of connection to use for metadata. Options are "sqlite", "mysql", "mariadb", or "api". Default "sqlite".
     :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" connection type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
-    :param int num_threads: Specifies the number of threads to use when processing data.
+    :param int num_threads: Specifies the number of threads to use when processing data. Default is 1 but the more you give the faster it will compress/decompress data.
     :param str api_url: Specifies the URL of the server hosting the API in "api" connection type.
     :param str token: An authorization token for the API in "api" connection type.
     :param str refresh_token: A token to refresh your authorization token if it expires while you are doing something. Only for the API in "api" connection type.
@@ -130,7 +130,7 @@ class AtriumSDK:
     """
 
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
-                 connection_params: dict = None, num_threads: int = None, api_url: str = None, token: str = None,
+                 connection_params: dict = None, num_threads: int = 1, api_url: str = None, token: str = None,
                  refresh_token=None, validate_token=True, tsc_file_location: str = None, atriumdb_lib_path: str = None,
                  no_pool=False):
 
@@ -141,10 +141,6 @@ class AtriumSDK:
             metadata_connection_type is None else metadata_connection_type
 
         self.metadata_connection_type = metadata_connection_type
-
-        # Set number of threads to max available minus 2 or 1, whichever is greater, if not provided
-        if num_threads is None:
-            num_threads = max(cpu_count() - 2, 1)
 
         # Set the C DLL path based on the platform if not provided
         if atriumdb_lib_path is None:
