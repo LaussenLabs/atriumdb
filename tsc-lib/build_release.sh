@@ -4,28 +4,35 @@ cd /atriumdb/tsc-lib
 
 #****windows binary****
 #remove old build files
-rm -rf cmake-build-release/**;
+rm -rf cmake-build-release/** &&
 
-#load windows toolchain file amd setup build files
-cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_BUILD_TYPE='Release';
+cd cmake-build-release &&
 
-#build binary
-cmake --build cmake-build-release --target Block;
+# Load windows toolchain file and setup build files
+cmake .. -DCMAKE_TOOLCHAIN_FILE=../windows-TC-mingw.cmake -DCMAKE_BUILD_TYPE='Release' &&
 
-#make the directory if it doesnt exist
-mkdir -p ../sdk/bin
+# Build binary
+cmake --build . --target Block &&
 
-#copy windows binary to output directory
-cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll;
+# Make the output directory if it doesn't exist and navigate back to the parent directory
+mkdir -p ../../sdk/bin &&
+cp src/Block/libTSC.dll ../../sdk/bin/libTSC.dll &&
+
+cd .. &&
 
 #****linux binary****
-rm -rf cmake-build-release/**;
+rm -rf cmake-build-release/** &&
 
-#setup cmake flags and build files 
-cmake -Bcmake-build-release -H. -DCMAKE_BUILD_TYPE='Release';
-cmake --build cmake-build-release --target Block;
+# Create the build directory again after cleaning it and navigate into it
+mkdir -p cmake-build-release &&
+cd cmake-build-release &&
 
-#copy linux binary to output directory
-cp cmake-build-release/src/Block/libTSC.so ../sdk/bin/libTSC.so;
+# Setup cmake flags and build files for Linux
+cmake .. -DCMAKE_BUILD_TYPE='Release' &&
+cmake --build . --target Block &&
 
+# Copy linux binary to output directory
+cp src/Block/libTSC.so ../../sdk/bin/libTSC.so &&
 
+# Return to the original top directory
+cd ..

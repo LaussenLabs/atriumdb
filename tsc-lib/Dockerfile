@@ -1,5 +1,5 @@
 # dockerfile for making a build container
-FROM ubuntu:20.04
+FROM ubuntu:18.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
@@ -9,11 +9,12 @@ RUN apt-get update && apt-get install -y \
     gdb \
     libzstd-dev \
     liblz4-dev \
-    python3.10 \
+    python3 \
     mingw-w64 \
     && rm -rf /var/lib/apt/lists/*
 
 ENV TZ="America/Toronto"
+ENV MINGW_HOME=/usr
 
 COPY "/build_release.sh" .
 COPY "/build_debug.sh" .
