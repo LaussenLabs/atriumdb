@@ -25,5 +25,5 @@
 
 size_t value_delta_d64_get_size(block_metadata_t *block_metadata)
 {
-    return block_metadata->num_vals * sizeof(int64_t) * 2;
+    return 10000 + block_metadata->num_vals * sizeof(int64_t) * 4;
 }

@@ -146,7 +146,7 @@ TEST(BlockTestSuite, SimpleTest){
     decode_blocks(res_time, res_values, buffer, num_blocks, t_block_start, v_block_start, byte_start, t_byte_start, num_threads);
 
     for(i=0; i<header.num_vals; i++){
-        printf("%u ", i);
+        // printf("%u ", i);
         ASSERT_EQ(res_time[i], time_nano[i]);
         ASSERT_EQ(arr[i], res_values[i]);
     }

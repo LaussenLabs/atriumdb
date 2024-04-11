@@ -42,8 +42,7 @@ TEST(ValueTestSuite, SimpleD64Test){
     free(value_buf);
 }
 
-TEST(ValueTestSuite, ComprehensiveD64Test)
-{
+TEST(ValueTestSuite, ComprehensiveD64Test){
     int64_t num_values = 100;
     int64_t arr[num_values];
     int8_t max_order = 6;
@@ -71,7 +70,9 @@ TEST(ValueTestSuite, ComprehensiveD64Test)
         }
 
         value_buffer_size = value_encode_buffer_get_size(&header);
+        printf("value_buffer_size: %zu\n", value_buffer_size);
         value_buf = malloc(value_buffer_size);
+        printf("malloc success\n");
 
         value_encode(arr, value_buf, &header, &options);
 
