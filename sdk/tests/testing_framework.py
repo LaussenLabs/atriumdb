@@ -25,7 +25,7 @@ from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 
 
 def _test_for_both(db_name, test_function, *args):
-    load_dotenv()
+    load_dotenv(".env")
 
     # Get MariaDB connection details from .env file
     host = os.getenv("MARIA_DB_HOST")
@@ -34,7 +34,6 @@ def _test_for_both(db_name, test_function, *args):
     port = int(os.getenv("MARIA_DB_PORT"))
 
     maria_dataset_path = Path(__file__).parent / "test_datasets" / f"maria_{db_name}"
-    sqlite_dataset_path = Path(__file__).parent / "test_datasets" / f"sqlite_{db_name}"
 
     db_type = 'mariadb'
     shutil.rmtree(maria_dataset_path, ignore_errors=True)
@@ -50,6 +49,7 @@ def _test_for_both(db_name, test_function, *args):
     test_function(db_type, maria_dataset_path, connection_params, *args)
 
     db_type = 'sqlite'
+    sqlite_dataset_path = Path(__file__).parent / "test_datasets" / f"sqlite_{db_name}"
     connection_params = None
     shutil.rmtree(sqlite_dataset_path, ignore_errors=True)
     sqlite_dataset_path.unlink(missing_ok=True)

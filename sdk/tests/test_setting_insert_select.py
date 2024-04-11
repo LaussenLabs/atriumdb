@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 
-load_dotenv()
+load_dotenv(".env")
 
 # Get MariaDB connection details from .env file
 host = os.getenv("MARIA_DB_HOST")
