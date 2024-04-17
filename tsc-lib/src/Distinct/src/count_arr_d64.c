@@ -45,7 +45,7 @@ void count_arr_distinct_d64(const int64_t *arr, uint64_t arr_len, uint64_t num_d
             }
         }
         // Check to make sure I don't misunderstand my own logic. Remove once thoroughly tested.
-        if(j == num_distinct){
+        if(j >= num_distinct){
             printf("I guess j does go that high. Your Logic is Flawed Mr. Spock. "
                    "On line %d in file %s\n", __LINE__, __FILE__);
             exit(1);

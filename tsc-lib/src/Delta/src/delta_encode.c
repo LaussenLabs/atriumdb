@@ -47,7 +47,7 @@ uint8_t delta_lowest_entropy_encode_d64(const int64_t *value_arr, int64_t *delta
 
     uint16_t order, start;
     double entropy;
-    for(order=min_order; order<=(uint16_t)max_order; order++){
+    for(order=1; order<=(uint16_t)max_order; order++){
         // Perform the Delta Transform.
         start = order - 1;
         delta_transform_d64(delta_arr, start, num_values - start);
@@ -55,7 +55,7 @@ uint8_t delta_lowest_entropy_encode_d64(const int64_t *value_arr, int64_t *delta
         // Calculate the Entropy of the new array.
         entropy = entropy_get_d64(delta_arr, num_values, entropy_buffer, buffer_size);
 
-        if(entropy < min_entropy){
+        if(order >= min_order && entropy < min_entropy){
             min_entropy = entropy;
             best_order = order;
         }

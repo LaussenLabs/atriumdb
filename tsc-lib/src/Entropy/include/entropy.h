@@ -30,5 +30,6 @@
 /* Int64 */
 size_t entropy_buffer_size_d64(const int64_t *arr, uint64_t arr_len);
 double entropy_get_d64(const int64_t *arr, uint64_t arr_len, void * buffer, size_t buffer_size);
+size_t max_entropy_buffer_size(uint64_t num_values);
 
 #endif //MINIMAL_SDK_ENTROPY_H

@@ -342,7 +342,8 @@ def get_record_data_for_ingest(d_record, p_record, signal_i):
         measure_tag = p_record.sig_name[signal_i]
         units = p_record.units[signal_i]
 
-        if random.random() < 0.5:
+        # if random.random() < 0.5:
+        if False:
             # Physical
             value_data = p_record.p_signal.T[signal_i].astype(np.float64)
             scale_m = None
@@ -357,7 +358,7 @@ def get_record_data_for_ingest(d_record, p_record, signal_i):
         measure_tag = p_record.sig_name
         units = p_record.units
 
-        if random.random() < 0.5:
+        if False:
             # Physical
             value_data = p_record.p_signal.T.astype(np.float64)
             scale_m = None

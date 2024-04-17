@@ -21,6 +21,7 @@
 // Created by Will Dixon on 2021-06-13.
 //
 #include <value_p.h>
+#include <entropy.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,7 +41,7 @@ size_t value_encode_buffer_get_size(block_metadata_t *block_metadata)
 
         case V_TYPE_DELTA_INT64:
             /* Int64 Delta */
-            return value_delta_d64_get_size(block_metadata);
+            return 2 * value_delta_d64_get_size(block_metadata) + max_entropy_buffer_size(block_metadata->num_vals);
 
         case V_TYPE_XOR_DOUBLE:
             /* Int64 Delta */

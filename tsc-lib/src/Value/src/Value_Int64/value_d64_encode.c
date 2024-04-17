@@ -23,10 +23,12 @@
 #include <value_p.h>
 #include <delta.h>
 #include <size.h>
+#include <entropy.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 
 size_t value_d64_encode(const int64_t *value_data, void *encoded_value, block_metadata_t *block_metadata,
                         const block_options_t *block_options)
@@ -40,10 +42,13 @@ size_t value_d64_encode(const int64_t *value_data, void *encoded_value, block_me
         case V_TYPE_DELTA_INT64:
             /* Int64 Delta */
             block_metadata->order = delta_lowest_entropy_encode_d64(
-                    value_data, encoded_value, block_metadata->num_vals,
+                    value_data,
+                    encoded_value,
+                    block_metadata->num_vals,
                     &(((int64_t *)encoded_value)[block_metadata->num_vals]),
-                    value_delta_d64_get_size(block_metadata),
-                    block_options->delta_order_min, block_options->delta_order_max);
+                    max_entropy_buffer_size(block_metadata->num_vals),
+                    block_options->delta_order_min,
+                    block_options->delta_order_max);
 
             block_metadata->bytes_per_value = size_encode_d64(
                     encoded_value, block_metadata->num_vals, block_options->bytes_per_value_min);

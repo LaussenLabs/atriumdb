@@ -45,9 +45,15 @@ size_t block_get_buffer_size(const void *time_data, uint64_t num_blocks, const u
         time_size = time_encode_buffer_get_size(&(time_data_u8[t_block_start[i]]), &(headers[i]));
         value_size = value_encode_buffer_get_size(&(headers[i]));
         v_comp_size = get_compress_buffer_size(value_size, headers[i].v_compression);
-        t_comp_size = get_compress_buffer_size(time_size, headers[i].t_compression);  // Borrow this space.
+        t_comp_size = get_compress_buffer_size(time_size, headers[i].t_compression);
 
-        offset = sizeof(block_metadata_t);
+        time_size = (v_comp_size + 7) & ~7;
+        value_size = (t_comp_size + 7) & ~7;
+
+        v_comp_size = (v_comp_size + 7) & ~7;
+        t_comp_size = (t_comp_size + 7) & ~7;
+
+        offset = (sizeof(block_metadata_t) + 7) & ~7;
 
         // Time Byte Position
         headers[i].t_start_byte = offset;
@@ -66,7 +72,7 @@ size_t block_get_buffer_size(const void *time_data, uint64_t num_blocks, const u
         // Overall Memory Position for Block
         byte_start[i] = result;
 
-        total_size = sizeof(block_metadata_t) + time_size + value_size + t_comp_size + v_comp_size;
+        total_size = 2 * (((sizeof(block_metadata_t) + 7) & ~7) + time_size + value_size + t_comp_size + v_comp_size);
 
         result += total_size;
     }

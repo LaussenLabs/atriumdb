@@ -29,7 +29,7 @@ load_dotenv(".env")
 host = os.getenv("MARIA_DB_HOST")
 user = os.getenv("MARIA_DB_USER")
 password = os.getenv("MARIA_DB_PASSWORD")
-port = int(os.getenv("MARIA_DB_PORT"))
+port = int(os.getenv("MARIA_DB_PORT")) if os.getenv("MARIA_DB_PORT") is not None else None
 
 DB_NAME = 'tsc_insert'
 

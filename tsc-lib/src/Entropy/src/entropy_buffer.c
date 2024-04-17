@@ -32,3 +32,9 @@ size_t entropy_buffer_size_d64(const int64_t *arr, uint64_t arr_len)
     // 2 Arrays of n number of int64's
     return 2 * num_distinct_elements * sizeof(int64_t);
 }
+
+
+size_t max_entropy_buffer_size(uint64_t num_values)
+{
+    return 2 * num_values * sizeof(int64_t);
+}
