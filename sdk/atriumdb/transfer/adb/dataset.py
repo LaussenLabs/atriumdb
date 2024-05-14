@@ -28,6 +28,7 @@ from atriumdb.transfer.adb.datestring_conversion import nanoseconds_to_date_stri
 from atriumdb.transfer.adb.definition import create_dataset_definition_from_verified_data
 from atriumdb.transfer.adb.labels import transfer_label_sets
 from atriumdb.transfer.adb.numpy import _write_numpy
+from atriumdb.transfer.adb.parquet import _write_parquet
 from atriumdb.transfer.adb.patients import transfer_patient_info
 from atriumdb.transfer.adb.tsc import _ingest_data_tsc
 from atriumdb.transfer.adb.wfdb import _ingest_data_wfdb
@@ -47,7 +48,7 @@ time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDefinition, export_format='tsc',
                   gap_tolerance=None, deidentify=True, patient_info_to_transfer=None, include_labels=True,
                   measure_tag_match_rule=None, deidentification_functions=None, time_shift=None, time_units=None,
-                  export_time_format=None):
+                  export_time_format=None, parquet_engine=None, **kwargs):
     """
     Transfers data from a source AtriumSDK instance to a destination AtriumSDK instance based on a specified dataset definition.
     This includes transferring measures, devices, patient information, and labels with options for data de-identification,
@@ -56,7 +57,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     :param AtriumSDK src_sdk: The source SDK instance from which data will be transferred.
     :param AtriumSDK dest_sdk: The destination SDK instance to which data will be transferred.
     :param DatasetDefinition definition: Specifies the structure and contents of the dataset to be transferred.
-    :param str export_format: The format used for exporting data ('tsc' by default). Supported formats include 'tsc', 'csv', 'npz', and 'wfdb'.
+    :param str export_format: The format used for exporting data ('tsc' by default). Supported formats include 'tsc', 'csv', 'npz', 'parquet', and 'wfdb'.
     :param Optional[int] gap_tolerance: A tolerance period for gaps in data, specified in `time_units` (defaults to 5 minutes if not specified).
         Helps to optimize the waveform transfer by transferring large chunks at a time.
     :param bool deidentify: If True or a filename, scrambles patient_ids during the transfer. patient IDs are replaced with randomly generated IDs or according to provided de-identification csv
@@ -70,6 +71,10 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     :param Optional[int] time_shift: An amount of time by which to shift all timestamps in the transferred data, specified in `time_units`.
     :param Optional[str] time_units: Units for `gap_tolerance` and `time_shift`. Supported units are 'ns' (nanoseconds), 's' (seconds), 'ms' (milliseconds), and 'us' (microseconds). Defaults to 'ns'.
     :param Optional[str] export_time_format: The format for timestamps in the exported data. Supports 'ns', 's', 'ms', 'us', and 'date'. Defaults to 'ns'.
+    :param Optional[str] parquet_engine: Specifies the engine to use for writing Parquet files. Can be 'fastparquet' or 'pyarrow'.
+        'fastparquet' - uses fastparquet to write DataFrame directly.
+        'pyarrow' - uses pyarrow to create a Table from data and write it to a Parquet file.
+        If None, the default engine installed will be used. The specific engine affects how the Parquet files are handled and can be influenced by additional kwargs.
 
     Examples:
     ---------
@@ -164,7 +169,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                         times += time_shift
 
                     file_path = ingest_data(dest_sdk, dest_measure_id, dest_device_id, headers, times, values,
-                                            export_format=export_format, export_time_format=export_time_format)
+                                            export_format=export_format, export_time_format=export_time_format,
+                                            parquet_engine=parquet_engine, **kwargs)
 
                     if file_path is not None:
                         file_path_dicts[(source_type, source_id, start_time_nano, end_time_nano)][
@@ -253,7 +259,8 @@ def extract_src_device_and_patient_id_list(validated_sources):
     return src_device_id_list, src_patient_id_list
 
 
-def ingest_data(to_sdk, measure_id, device_id, headers, times, values, export_format='tsc', export_time_format=None):
+def ingest_data(to_sdk, measure_id, device_id, headers, times, values, export_format='tsc', export_time_format=None,
+                parquet_engine=None, **kwargs):
     # Determine the file path based on the format
     measure_info = to_sdk.get_measure_info(measure_id)
     measure_tag = measure_info['tag']
@@ -280,8 +287,10 @@ def ingest_data(to_sdk, measure_id, device_id, headers, times, values, export_fo
         _write_numpy(file_path, times, values, measure_tag)
     elif export_format == 'wfdb':
         file_path = base_path / file_name  # WFDB format uses multiple files with the same base name
-        file_path = file_path.parent / file_path.stem
         _ingest_data_wfdb(headers, times, values, file_path, measure_tag, freq_hz, measure_units)
+    elif export_format == 'parquet':
+        file_path = base_path / f"{file_name}.parquet"
+        _write_parquet(file_path, times, values, measure_tag, engine=parquet_engine, **kwargs)
     else:
         raise ValueError(f"Unsupported format {export_format}")
 
