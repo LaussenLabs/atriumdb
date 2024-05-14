@@ -3413,11 +3413,13 @@ class AtriumSDK:
             # If the final intervals list is not empty and the difference between the current interval's start time
             # and the previous interval's end time is less than or equal to the gap tolerance, update the end time
             # of the previous interval
-            if arr and row[3] - arr[-1][-1] <= gap_tolerance_nano:
-                arr[-1][-1] = row[4]
+            cur_interval_start = row[3] if start is None else max(row[3], start)
+            cur_interval_end = row[4] if end is None else min(row[4], end)
+            if arr and cur_interval_start - arr[-1][-1] <= gap_tolerance_nano:
+                arr[-1][-1] = cur_interval_end
             # Otherwise, add a new interval to the final intervals list
             else:
-                arr.append([row[3], row[4]])
+                arr.append([cur_interval_start, cur_interval_end])
 
         # Convert the final intervals list to a numpy array with int64 data type
         return np.array(arr, dtype=np.int64)
