@@ -736,6 +736,9 @@ class AtriumSDK:
             For live data ingestion, "merge" is recommended.
         :param int gap_tolerance: The maximum number of nanoseconds that can occur between two consecutive values before
             it is treated as a break in continuity or gap in the interval index.
+        :param bool merge_blocks: If your writing data that is less than an optimal block size it will find an already
+            existing block that is closest in time to the data your writing and merge your data with it. THIS IS NOT THREAD SAFE
+            and can lead to race conditions if two processes try to ingest (and merge) data for the same measure and device at the same time.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.
@@ -812,8 +815,6 @@ class AtriumSDK:
                         measure_id, device_id, time_data, time_0, raw_time_type, value_data.size, freq_nhz)
                 elif overwrite_setting == 'error':
                     raise ValueError("Data to be written overlaps already ingested data.")
-                elif overwrite_setting == 'ignore':
-                    pass
                 else:
                     raise ValueError(f"Overwrite setting {overwrite_setting} not recognized.")
 
@@ -934,8 +935,12 @@ class AtriumSDK:
             measure_id, device_id, encoded_headers, byte_start_array, write_intervals,
             interval_gap_tolerance=gap_tolerance)
 
+        # if your new data was merged with an older block add the new info to mariadb and delete the old block
+        if old_block is not None:
+            self.sql_handler.insert_merged_block_data(filename, block_data, old_block[0], interval_data, interval_index_mode, gap_tolerance)
+
         # If data was overwritten
-        if overwrite_file_dict is not None:
+        elif overwrite_file_dict is not None:
             # Add new data to SQL insertion data
             overwrite_file_dict[filename] = (block_data, interval_data)
 
@@ -953,10 +958,6 @@ class AtriumSDK:
         else:
             # Insert SQL rows
             self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, interval_index_mode, gap_tolerance)
-
-        # if a small block was merged with another delete the old block
-        if old_block is not None:
-            self.sql_handler.delete_block(old_block[0])
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
 

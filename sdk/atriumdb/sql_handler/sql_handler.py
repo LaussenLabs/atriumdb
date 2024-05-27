@@ -14,7 +14,7 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
+import time
 from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple
 
@@ -106,6 +106,11 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
+    def insert_merged_block_data(self, file_path: str, block_data: List[Dict], old_block_id: int, interval_data: List[Dict],
+                                 interval_index_mode, gap_tolerance: int = 0):
+        pass
+
+    @abstractmethod
     def select_file(self, file_id: int = None, file_path: str = None):
         # Select a file path either by its id, or by its path.
         pass
@@ -189,7 +194,7 @@ class SQLHandler(ABC):
 
     def delete_block(self, block_id: int):
         with self.connection(begin=True) as (conn, cursor):
-            # delete old block data
+            # delete block data
             cursor.execute("DELETE FROM block_index WHERE id = ?", (block_id,))
 
     @abstractmethod
@@ -249,7 +254,7 @@ class SQLHandler(ABC):
         args = (patient_id,)
 
         if start_time_n is not None:
-            patient_device_query += " AND end_time >= ? "
+            patient_device_query += " AND (end_time >= ? OR end_time is NULL) "
             args += (start_time_n,)
         if end_time_n is not None:
             patient_device_query += " AND start_time <= ? "
@@ -257,6 +262,7 @@ class SQLHandler(ABC):
         with self.connection(begin=False) as (conn, cursor):
             cursor.execute(patient_device_query, args)
             return cursor.fetchall()
+
     @abstractmethod
     def select_all_settings(self):
         # Select all settings from settings table.
@@ -282,6 +288,7 @@ class SQLHandler(ABC):
             interval_results = []
             with self.connection(begin=False) as (conn, cursor):
                 for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
+                    encounter_end_time = time.time_ns() if encounter_end_time is None else encounter_end_time
                     args = (measure_id, encounter_device_id, encounter_start_time, encounter_end_time)
 
                     cursor.execute(interval_query, args)
