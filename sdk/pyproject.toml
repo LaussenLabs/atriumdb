@@ -12,7 +12,7 @@ mypkg = ["*.so", "*.dll"]
 
 [project]
 name = "atriumdb"
-version = "2.2.2"
+version = "2.2.3"
 description = "Timeseries Database"
 readme = "README.md"
 authors = [{name = "Robert Greer, William Dixon, Spencer Vecile"}, { name = "Robert Greer", email = "robert.greer@sickkids.ca"}, { name = "William Dixon", email = "will.dixon@sickkids.ca" }, { name = "Spencer Vecile", email = "spencer.vecile@sickkids.ca"}]
@@ -72,7 +72,9 @@ all = [
     "click >= 8.1.3, < 9",
     "pandas >= 1.5, < 2",
     "tabulate >= 0.9.0, < 1",
-    "fastparquet == 2023.2.0",
+    "fastparquet >= 2023.2.0, < 2024",
+    "wfdb >= 4.1.0, < 5",
+    "pyarrow >= 16.0.0, < 17",
 ]
 
 [dev-dependencies]

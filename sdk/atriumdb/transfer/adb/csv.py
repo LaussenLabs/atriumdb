@@ -16,10 +16,32 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import csv
 
+import numpy as np
 
-def _write_csv(file_path, times, values, measure_tag):
+from atriumdb.transfer.adb.datestring_conversion import nanoseconds_to_date_string_with_tz
+
+time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
+
+
+def _write_csv(file_path, times: np.ndarray, values: np.ndarray, measure_tag, export_time_format='ns'):
+    # Determine the header based on the export_time_format
+    if export_time_format == 'date':
+        header_time = "Timestamp (Date)"
+    else:
+        header_time = f"Timestamp ({export_time_format})"
+
     with open(file_path, mode='w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["Nanosecond Epoch", measure_tag])
-        for time, value in zip(times, values):
-            writer.writerow([time, value])
+        writer.writerow([header_time, measure_tag])
+
+        # Convert times all at once if not exporting as dates
+        if export_time_format in time_unit_options:
+            conversion_factor = time_unit_options[export_time_format]
+            converted_times = times / conversion_factor
+            for time, value in zip(converted_times, values):
+                writer.writerow([time, value])
+        elif export_time_format == 'date':
+            # For dates, convert each time individually
+            for time, value in zip(times, values):
+                date_string = nanoseconds_to_date_string_with_tz(time)
+                writer.writerow([date_string, value])
