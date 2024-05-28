@@ -537,3 +537,63 @@ def create_timestamps_from_gap_data(values_size, gap_array, start_time, freq_nhz
         timestamps[gap_index:] += gap_duration
 
     return timestamps
+
+
+def get_headers(sdk, measure_id: int = None, start_time: int = None, end_time: int = None, device_id: int = None,
+                patient_id=None, time_units: str = None, mrn: int = None):
+    """
+    The method for querying block headers from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
+    time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
+
+    If measure_id is None, measure_tag along with freq and units must not be None, and vice versa.
+    Similarly, if device_id is None, device_tag must not be None, and if patient_id is None, mrn must not be None.
+
+    :param AtriumSDK sdk: The AtriumSDK object.
+    :param int measure_id: The measure identifier. If None, measure_tag must be provided.
+    :param int start_time: The start epoch in nanoseconds of the data you would like to query.
+    :param int end_time: The end epoch in nanoseconds. The end time is not inclusive.
+    :param int device_id: The device identifier. If None, device_tag must be provided.
+    :param int patient_id: The patient identifier. If None, mrn must be provided.
+    """
+
+    # check that a correct unit type was entered
+    time_units = "ns" if time_units is None else time_units
+
+    if time_units not in time_unit_options.keys():
+        raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
+
+    # convert start and end time to nanoseconds
+    start_time = int(start_time * time_unit_options[time_units])
+    end_time = int(end_time * time_unit_options[time_units])
+
+    if patient_id is None and mrn is not None:
+        patient_id = sdk.get_patient_id(mrn)
+
+    # If we don't already have the blocks
+    # Select all blocks from the block_index (sql table) that match params.
+    block_list = sdk.sql_handler.select_blocks(int(measure_id), int(start_time), int(end_time), device_id,
+                                               patient_id)
+
+    # Concatenate continuous byte intervals to cut down on total number of reads.
+    read_list = condense_byte_read_list(block_list)
+
+    # if no matching block ids
+    if len(read_list) == 0:
+        return [], np.array([]), np.array([])
+
+    # Map file_ids to filenames and return a dictionary.
+    file_id_list = [row[2] for row in read_list]
+    filename_dict = sdk.get_filename_dict(file_id_list)
+
+    # Condense the block list for optimized reading
+    read_list = condense_byte_read_list(block_list)
+
+    # Read the data from the files using the read list
+    encoded_bytes = sdk.file_api.read_file_list(read_list, filename_dict)
+
+    num_bytes_list = [row[5] for row in block_list]
+    byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
+    byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]], axis=None)
+    headers = sdk.block.decode_headers(encoded_bytes, byte_start_array)
+
+    return headers
