@@ -60,8 +60,8 @@ def _test_transfer(db_type, dataset_location, connection_params):
     measures = [measure_info['tag'] for measure_info in sdk_1.get_all_measures().values()]
     device_ids = {device_id: "all" for device_id in sdk_1.get_all_devices().keys()}
     definition = DatasetDefinition(measures=measures, device_ids=device_ids)
-    transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False,
-                  patient_info_to_transfer=None, include_labels=False)
+    transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
+                  include_labels=False)
 
     assert_mit_bih_to_dataset(sdk_2, device_patient_map=device_patient_dict, max_records=MAX_RECORDS, seed=SEED)
 
@@ -81,8 +81,8 @@ def _test_transfer_with_patient_context(db_type, dataset_location, connection_pa
     measures = [measure_info['tag'] for measure_info in sdk_1.get_all_measures().values()]
     device_ids = {device_id: "all" for device_id in sdk_1.get_all_devices().keys()}
     definition = DatasetDefinition(measures=measures, device_ids=device_ids)
-    transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False,
-                  patient_info_to_transfer=None, include_labels=False)
+    transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
+                  include_labels=False)
 
     assert_mit_bih_to_dataset(
         sdk_2, device_patient_map=device_patient_dict, use_patient_id=True, max_records=MAX_RECORDS, seed=SEED)
@@ -101,8 +101,8 @@ def _test_transfer_with_patient_context_deidentify_timeshift(db_type, dataset_lo
     measures = [measure_info['tag'] for measure_info in sdk_1.get_all_measures().values()]
     device_ids = {device_id: "all" for device_id in sdk_1.get_all_devices().keys()}
     definition = DatasetDefinition(measures=measures, device_ids=device_ids)
-    transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False,
-                  patient_info_to_transfer=None, include_labels=False, time_shift=500)
+    transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
+                  include_labels=False, time_shift=500)
 
     assert_mit_bih_to_dataset(
         sdk_2, device_patient_map=device_patient_dict, deidentify=True, time_shift=-500, max_records=MAX_RECORDS,

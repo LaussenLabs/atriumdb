@@ -48,7 +48,7 @@ def create_dataset_definition_from_verified_data(sdk, validated_measure_list, va
 
     # Process measures
     for measure in validated_measure_list:
-        measure_info = {"tag": measure['id']}
+        measure_info = {"id": measure['id'], "tag": measure['tag']}
         if 'freq_nhz' in measure:
             measure_info["freq_hz"] = measure['freq_nhz'] / 1e9  # Convert nanohertz to Hertz
         if 'units' in measure:

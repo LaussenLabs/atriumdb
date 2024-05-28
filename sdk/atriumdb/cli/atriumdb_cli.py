@@ -289,8 +289,9 @@ def export(ctx, definition_filename, gap_tolerance, deidentify, patient_cols, bl
     definition = DatasetDefinition(filename=definition_filename)
 
     transfer_data(src_sdk, dest_sdk, definition, export_format=export_format, gap_tolerance=gap_tolerance,
-                  deidentify=deidentify, patient_info_to_transfer=patient_info_to_transfer, include_labels=include_labels,
-                  measure_tag_match_rule=measure_tag_match_rule, time_shift=time_shift, time_units=time_units)
+                  deidentify=deidentify, patient_info_to_transfer=patient_info_to_transfer,
+                  include_labels=include_labels, measure_tag_match_rule=measure_tag_match_rule, time_shift=time_shift,
+                  time_units=time_units)
 
 
 def get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, api_url, api_token):

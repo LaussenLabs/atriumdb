@@ -81,8 +81,8 @@ def _test_get_interval_arr(db_type, dataset_location, connection_params):
                         freq=freq_hz, time_units="s", freq_units="Hz")
 
     # Test get_interval_array based on device
-    start_time_nano = start_time_s * (10 ** 9)
-    end_time_nano = end_time_s * (10 ** 9)
+    start_time_nano = int(combined_intervals[0][0])
+    end_time_nano = int(combined_intervals[-1][1])
     interval_arr_device = sdk.get_interval_array(measure_id=measure_id, device_tag=device_tag, start=start_time_nano,
                                                  end=end_time_nano)
 

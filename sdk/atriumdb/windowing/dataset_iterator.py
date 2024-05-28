@@ -68,7 +68,11 @@ class DatasetIterator:
         self.sdk = sdk
 
         # Initialize random number generator if shuffle is specified with a seed
-        self.random_gen = random.Random(shuffle) if isinstance(shuffle, int) else random.Random() if shuffle else None
+        self.random_gen = None
+        if isinstance(shuffle, int) and not isinstance(shuffle, bool):
+            self.random_gen = random.Random(shuffle)
+        elif shuffle:
+            self.random_gen = random.Random()
 
         # Store the label_threshold
         self.label_threshold = label_threshold
@@ -109,27 +113,27 @@ class DatasetIterator:
 
         # Emitting warnings for row_size, slide_size, and row_period_ns
 
-        if (self.window_duration_ns * self.highest_freq_nhz) % 1e18 != 0:
+        if (self.window_duration_ns * self.highest_freq_nhz) % (10 ** 18) != 0:
             warnings.warn(
                 f'Given window duration of {window_duration_ns / 1e9} seconds and signal frequency of '
                 f'{self.highest_freq_nhz / (10 ** 9)}Hz result in a non-integer number of signals in the window. '
                 f'window size / row size will round down'
             )
 
-        if (self.window_slide_ns * self.highest_freq_nhz) % 1e18 != 0:
+        if (self.window_slide_ns * self.highest_freq_nhz) % (10 ** 18) != 0:
             warnings.warn(
                 f'Given sliding window duration of {window_slide_ns / 1e9} seconds and signal frequency of '
                 f'{self.highest_freq_nhz / (10 ** 9)}Hz result in a non-integer number of signals in the slide. '
                 f'slide will round down'
             )
 
-        self.row_size = int((self.highest_freq_nhz * self.window_duration_ns) // 1e18)
+        self.row_size = int((self.highest_freq_nhz * self.window_duration_ns) // (10 ** 18))
 
         # The slide size in terms of matrix rows for the sliding window operation.
-        self.slide_size = int((self.highest_freq_nhz * self.window_slide_ns) // 1e18)
+        self.slide_size = int((self.highest_freq_nhz * self.window_slide_ns) // (10 ** 18))
 
         # Time duration between consecutive data points, given the highest frequency.
-        self.row_period_ns = int(1e18 // self.highest_freq_nhz)
+        self.row_period_ns = int((10 ** 18) // self.highest_freq_nhz)
 
         # Default number of windows for each batch is determined as 10 million divided by the number of data points in a window.
         # If provided, it uses the given num_windows_prefetch.
@@ -459,12 +463,12 @@ class DatasetIterator:
         source_batch_data_dictionary = {}
         for i, measure in enumerate(self.measures):
             freq_nhz = measure['freq_nhz']
-            period_ns = int(1e18 // freq_nhz)
+            period_ns = int((10 ** 18) // freq_nhz)
             measure_id = measure['id']
 
             # Create a time array for this specific measure
-            measure_window_size = int((freq_nhz * self.window_duration_ns) // 1e18)
-            measure_slide_size = int((freq_nhz * self.window_slide_ns) // 1e18)
+            measure_window_size = int((freq_nhz * self.window_duration_ns) // (10 ** 18))
+            measure_slide_size = int((freq_nhz * self.window_slide_ns) // (10 ** 18))
             measure_batch_size = measure_window_size + (batch_num_windows - 1) * measure_slide_size
             measure_quantized_end_time = batch_start_time + (measure_batch_size * period_ns)
             measure_filled_time_array = np.arange(batch_start_time, measure_quantized_end_time, period_ns)
