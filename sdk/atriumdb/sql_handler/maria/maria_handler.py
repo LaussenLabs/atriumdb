@@ -309,6 +309,40 @@ class MariaDBHandler(SQLHandler):
             # delete old file data (will delete later)
             # cursor.executemany(maria_delete_file_query, [(file_id,) for file_id in file_ids_to_delete])
 
+    def insert_merged_block_data(self, file_path: str, block_data: List[Dict], old_block_id: int, interval_data: List[Dict],
+                                 interval_index_mode, gap_tolerance: int = 0):
+        # default to merge mode
+        interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
+
+        with self.maria_db_connection(begin=True) as (conn, cursor):
+            # insert file_path into file_index and get id
+            cursor.execute(maria_insert_file_index_query, (file_path,))
+            file_id = cursor.lastrowid
+
+            # insert into block_index
+            block_tuples = [(block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
+                             block["start_time_n"], block["end_time_n"], block["num_values"])
+                            for block in block_data]
+            cursor.executemany(maria_insert_block_query, block_tuples)
+
+            # insert into interval_index
+            if interval_index_mode == "fast":
+                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                    interval["end_time_n"]) for interval in interval_data]
+                cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+
+            elif interval_index_mode == "merge":
+                [cursor.callproc("insert_interval", (interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                    interval["end_time_n"], gap_tolerance)) for interval in interval_data]
+            elif interval_index_mode == "disable":
+                # Do Nothing
+                pass
+            else:
+                raise ValueError(f"interval_index_mode must be one of {allowed_interval_index_modes}")
+
+            # delete the old block data
+            cursor.execute("DELETE FROM block_index WHERE id = ?", (old_block_id,))
+
     def select_file(self, file_id: int = None, file_path: str = None):
         with self.maria_db_connection() as (conn, cursor):
             if file_id is not None:
