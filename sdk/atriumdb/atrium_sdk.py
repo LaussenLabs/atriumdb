@@ -676,13 +676,15 @@ class AtriumSDK:
         if freq_units != "nHz":
             freq = convert_to_nanohz(freq, freq_units)
 
-        # Determine the raw time type based on the size of time_data and value_data
-        if time_data.size == value_data.size:
-            raw_t_t = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
-        else:
-            raw_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
+        # The time and value arrays must be equal, and the times, sorted.
+        if time_data.shape != value_data.shape:
+            raise ValueError(f"Time and value data must have the same shape. Given time_data shape: {time_data.shape}, "
+                             f"value_data shape: {value_data.shape}")
+        time_data, index_unique = np.unique(time_data, return_index=True)
+        value_data = value_data[index_unique]
 
-        # Determine the encoded time type
+        # Set time types
+        raw_t_t = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
         encoded_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
         # Determine the raw and encoded value types based on the dtype of value_data
