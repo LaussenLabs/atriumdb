@@ -692,3 +692,14 @@ class SQLHandler(ABC):
         with self.connection() as (conn, cursor):
             cursor.execute(query, params)
             return cursor.fetchone()
+
+    def find_unreferenced_tsc_files(self):
+        with self.connection() as (conn, cursor):
+            cursor.execute("SELECT t1.* FROM file_index t1 LEFT JOIN (SELECT DISTINCT file_id FROM block_index) t2 "
+                           "ON t1.id = t2.file_id WHERE t2.file_id IS NULL")
+            return cursor.fetchall()
+
+    def delete_tsc_files(self, file_ids_to_delete: List[tuple]):
+        with self.connection(begin=False) as (conn, cursor):
+            # delete old block data
+            cursor.executemany("DELETE FROM file_index WHERE id = ?;", file_ids_to_delete)
