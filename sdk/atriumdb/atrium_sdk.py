@@ -780,6 +780,10 @@ class AtriumSDK:
         assert interval_index_mode in allowed_interval_index_modes, \
             f"interval_index must be one of {allowed_interval_index_modes}"
 
+        # Force Python Integers
+        freq_nhz = int(freq_nhz)
+        time_0 = int(time_0)
+
         # Calculate new intervals
         write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
 
@@ -991,6 +995,9 @@ class AtriumSDK:
 
         # Convert frequency to nanohertz
         freq_nhz = convert_to_nanohz(freq, freq_units)
+
+        # Force python int
+        freq_nhz = int(freq_nhz)
 
         # If metadata connection type is "api", use API method to get the measure ID
         if self.metadata_connection_type == "api":
@@ -1334,9 +1341,13 @@ class AtriumSDK:
         if freq_units != "nHz":
             freq = convert_to_nanohz(freq, freq_units)
 
+        # Force Cast Python integer
+        freq = int(freq)
+
         # Check for id clash
         if measure_id is not None:
             assert isinstance(measure_id, int)
+            measure_id = int(measure_id)
             measure_info = self.get_measure_info(measure_id)
             if measure_info is not None:
                 if measure_info['tag'] == measure_tag and \
@@ -1657,6 +1668,7 @@ class AtriumSDK:
         # Check for id clash
         if device_id is not None:
             assert isinstance(device_id, int)
+            device_id = int(device_id)
             device_info = self.get_device_info(device_id)
             if device_info is not None:
                 if device_info['tag'] == device_tag:
