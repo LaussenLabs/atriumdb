@@ -3515,7 +3515,7 @@ class AtriumSDK:
         for row in interval_result:
             # if the start is greater than or equal to the end_time of this interval skip this interval
             # also if the end time is less than or equal to the current intervals start_time skip the interval
-            if start >= row[4] or end <= row[3]:
+            if (start and start >= row[4]) or (end and end <= row[3]):
                 continue
 
             # If the final intervals list is not empty and the difference between the current interval's start time
