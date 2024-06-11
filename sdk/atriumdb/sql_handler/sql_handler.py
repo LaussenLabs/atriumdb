@@ -289,9 +289,8 @@ class SQLHandler(ABC):
             with self.connection(begin=False) as (conn, cursor):
                 for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
                     encounter_end_time = time.time_ns() if encounter_end_time is None else encounter_end_time
-                    args = (measure_id, encounter_device_id, encounter_start_time, encounter_end_time)
 
-                    cursor.execute(interval_query, args)
+                    cursor.execute(interval_query, (measure_id, encounter_device_id, encounter_start_time, encounter_end_time))
                     interval_results.extend(cursor.fetchall())
             return interval_results
 
