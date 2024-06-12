@@ -34,7 +34,7 @@ from atriumdb.transfer.adb.tsc import _ingest_data_tsc
 from atriumdb.transfer.adb.wfdb import _ingest_data_wfdb
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.atrium_sdk import AtriumSDK
-from atriumdb.adb_functions import convert_value_to_nanoseconds
+from atriumdb.adb_functions import convert_value_to_nanoseconds, condense_byte_read_list, get_block_and_interval_data
 from atriumdb.transfer.adb.devices import transfer_devices
 from atriumdb.transfer.adb.measures import transfer_measures
 from atriumdb.windowing.verify_definition import verify_definition
@@ -48,7 +48,7 @@ time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDefinition, export_format='tsc',
                   gap_tolerance=None, deidentify=True, patient_info_to_transfer=None, include_labels=True,
                   measure_tag_match_rule=None, deidentification_functions=None, time_shift=None, time_units=None,
-                  export_time_format=None, parquet_engine=None, **kwargs):
+                  export_time_format=None, parquet_engine=None, reencode_waveforms=True, **kwargs):
     """
     Transfers data from a source AtriumSDK instance to a destination AtriumSDK instance based on a specified dataset definition.
     This includes transferring measures, devices, patient information, and labels with options for data de-identification,
@@ -75,6 +75,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         'fastparquet' - uses fastparquet to write DataFrame directly.
         'pyarrow' - uses pyarrow to create a Table from data and write it to a Parquet file.
         If None, the default engine installed will be used. The specific engine affects how the Parquet files are handled and can be influenced by additional kwargs.
+    :param Optional[bool] reencode_waveforms: Specifies whether to reencode data into newly encoded blocks.
+        (Default True) Setting to False with reuse existing blocks where possible and significantly speed up transfer.
 
     Examples:
     ---------
@@ -102,6 +104,9 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,deidentify=True,deidentification_functions=my_deid_funcs,time_shift=time_shift,time_units='s')
 
     """
+    if not reencode_waveforms and time_shift is not None:
+        raise ValueError("Cannot apply a time shift without re-encoding waveforms.")
+
     time_units = "ns" if time_units is None else time_units
     export_time_format = "ns" if export_time_format is None else export_time_format
     analog_values = export_format != 'tsc'
@@ -158,23 +163,95 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                 file_path_dicts[(source_type, source_id, start_time_nano, end_time_nano)] = {}
                 for src_measure_id, dest_measure_id in measure_id_map.items():
                     # Insert Waveforms
-                    headers, times, values = src_sdk.get_data(
-                        src_measure_id, start_time_nano, end_time_nano, device_id=src_device_id, time_type=1,
-                        analog=analog_values, sort=True, allow_duplicates=allow_duplicates)
+                    if not reencode_waveforms and export_format == "tsc":
+                        freq_nhz = src_sdk.get_measure_info(src_measure_id)['freq_nhz']
+                        period_ns = (10 ** 18) // freq_nhz
+                        # If we aren't re-encoding, just read the encoded blocks and insert them.
+                        block_list = src_sdk.sql_handler.select_blocks(
+                            int(src_measure_id), int(start_time_nano), int(end_time_nano), src_device_id, None)
 
-                    if values.size == 0:
-                        continue
+                        within_time_blocks = []
+                        remaining_blocks = []
 
-                    if time_shift is not None:
-                        times += time_shift
+                        # Iterate through the block_list and split into the new lists
+                        write_intervals = []
+                        for block in block_list:
+                            block_s = block[6]
+                            block_e = block[7]
+                            if start_time_nano <= block_s and block_e <= end_time_nano:
+                                within_time_blocks.append(block)
+                                write_intervals.append([block_s, block_e + period_ns])
+                            else:
+                                remaining_blocks.append(block)
 
-                    file_path = ingest_data(dest_sdk, dest_measure_id, dest_device_id, headers, times, values,
-                                            export_format=export_format, export_time_format=export_time_format,
-                                            parquet_engine=parquet_engine, **kwargs)
+                        # Concatenate continuous byte intervals to cut down on total number of reads.
+                        read_list = condense_byte_read_list(within_time_blocks)
 
-                    if file_path is not None:
-                        file_path_dicts[(source_type, source_id, start_time_nano, end_time_nano)][
-                            dest_measure_id] = file_path
+                        # if no matching block ids
+                        if len(read_list) == 0:
+                            continue
+
+                        # Map file_ids to filenames and return a dictionary.
+                        file_id_list = [row[2] for row in read_list]
+                        filename_dict = src_sdk.get_filename_dict(file_id_list)
+
+                        # Read the data from the files using the read list
+                        encoded_bytes = src_sdk.file_api.read_file_list(read_list, filename_dict)
+
+                        num_bytes_list = [row[5] for row in within_time_blocks]
+                        byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
+                        byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]],
+                                                          axis=None)
+                        encoded_headers = src_sdk.block.decode_headers(encoded_bytes, byte_start_array)
+                        filename = dest_sdk.file_api.write_bytes(dest_measure_id, dest_device_id, encoded_bytes)
+
+                        block_data, interval_data = get_block_and_interval_data(
+                            dest_measure_id, dest_device_id, encoded_headers, byte_start_array, write_intervals,
+                            interval_gap_tolerance=gap_tolerance)
+
+                        dest_sdk.sql_handler.insert_tsc_file_data(
+                            filename, block_data, interval_data, "fast")
+
+                        if remaining_blocks:
+                            # If there were partial blocks, we need to re-encode them.
+                            # Concatenate continuous byte intervals to cut down on total number of reads.
+                            read_list = condense_byte_read_list(remaining_blocks)
+
+                            # if no matching block ids
+                            if len(read_list) == 0:
+                                continue
+
+                            # Map file_ids to filenames and return a dictionary.
+                            file_id_list = [row[2] for row in read_list]
+                            filename_dict = src_sdk.get_filename_dict(file_id_list)
+                            headers, times, values = src_sdk.get_data_from_blocks(
+                                remaining_blocks, filename_dict, int(start_time_nano), int(end_time_nano),
+                                analog_values, time_type=1, sort=False, allow_duplicates=allow_duplicates)
+
+                            if values.size == 0:
+                                continue
+
+                            file_path = ingest_data(dest_sdk, dest_measure_id, dest_device_id, headers, times, values,
+                                                    export_format=export_format, export_time_format=export_time_format,
+                                                    parquet_engine=parquet_engine, **kwargs)
+                    else:
+                        headers, times, values = src_sdk.get_data(
+                            src_measure_id, start_time_nano, end_time_nano, device_id=src_device_id, time_type=1,
+                            analog=analog_values, sort=True, allow_duplicates=allow_duplicates)
+
+                        if values.size == 0:
+                            continue
+
+                        if time_shift is not None:
+                            times += time_shift
+
+                        file_path = ingest_data(dest_sdk, dest_measure_id, dest_device_id, headers, times, values,
+                                                export_format=export_format, export_time_format=export_time_format,
+                                                parquet_engine=parquet_engine, **kwargs)
+
+                        if file_path is not None:
+                            file_path_dicts[(source_type, source_id, start_time_nano, end_time_nano)][
+                                dest_measure_id] = file_path
 
                 if not include_labels:
                     continue
