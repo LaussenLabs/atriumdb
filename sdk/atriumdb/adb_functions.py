@@ -1173,3 +1173,20 @@ def delete_unreferenced_tsc_files(sdk):
     # remove them from the file_index
     sdk.sql_handler.delete_tsc_files(file_ids)
     print("Completed removal of unreferenced tsc files")
+
+
+def fix_block_boundaries(sdk, only_backwards=False):
+    pass
+
+
+def get_all_blocks(sdk, only_backwards=False):
+    if only_backwards:
+        query = "SELECT * FROM block_index WHERE end_time_n < start_time_n;"
+    else:
+        query = "SELECT * FROM block_index;"
+
+    with sdk.sql_handler.connection() as (conn, cursor):
+        cursor.execute(query, ())
+        block_query_result = cursor.fetchall()
+
+    return block_query_result
