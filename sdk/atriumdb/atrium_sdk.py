@@ -2231,6 +2231,9 @@ class AtriumSDK:
             mrn_to_patient_id_map = self.get_mrn_to_patient_id_map(mrn_list)
             patient_id_list.extend([mrn_to_patient_id_map[mrn] for mrn in mrn_list if mrn in mrn_to_patient_id_map])
 
+        if (device_id_list is not None and len(device_id_list) == 0) or (patient_id_list is not None and len(patient_id_list) == 0):
+            return []
+
         return self.sql_handler.select_device_patients(
             device_id_list=device_id_list, patient_id_list=patient_id_list, start_time=start_time, end_time=end_time)
 
