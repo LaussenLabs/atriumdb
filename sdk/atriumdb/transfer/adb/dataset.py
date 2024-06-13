@@ -165,7 +165,6 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                     # Insert Waveforms
                     if not reencode_waveforms and export_format == "tsc":
                         freq_nhz = src_sdk.get_measure_info(src_measure_id)['freq_nhz']
-                        period_ns = (10 ** 18) // freq_nhz
                         # If we aren't re-encoding, just read the encoded blocks and insert them.
                         block_list = src_sdk.sql_handler.select_blocks(
                             int(src_measure_id), int(start_time_nano), int(end_time_nano), src_device_id, None)
@@ -174,13 +173,15 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                         remaining_blocks = []
 
                         # Iterate through the block_list and split into the new lists
-                        write_intervals = []
+                        write_intervals = src_sdk.get_interval_array(
+                            measure_id=src_measure_id, device_id=src_device_id,
+                            start=int(start_time_nano), end=int(end_time_nano)).tolist()
+
                         for block in block_list:
                             block_s = block[6]
                             block_e = block[7]
                             if start_time_nano <= block_s and block_e <= end_time_nano:
                                 within_time_blocks.append(block)
-                                write_intervals.append([block_s, block_e + period_ns])
                             else:
                                 remaining_blocks.append(block)
 
