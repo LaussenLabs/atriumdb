@@ -159,7 +159,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
             # Simple for now. Optimized by a large gap_tolerance.
             # Might want to aggregate reads and writes in the future.
-            for start_time_nano, end_time_nano in tqdm(time_ranges, desc=f"{source_type}: {source_id}"):
+            for start_time_nano, end_time_nano in time_ranges:
                 file_path_dicts[(source_type, source_id, start_time_nano, end_time_nano)] = {}
                 for src_measure_id, dest_measure_id in measure_id_map.items():
                     # Insert Waveforms
