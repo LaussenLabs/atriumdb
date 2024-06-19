@@ -48,7 +48,7 @@ time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDefinition, export_format='tsc',
                   gap_tolerance=None, deidentify=True, patient_info_to_transfer=None, include_labels=True,
                   measure_tag_match_rule=None, deidentification_functions=None, time_shift=None, time_units=None,
-                  export_time_format=None, parquet_engine=None, **kwargs):
+                  export_time_format=None, parquet_engine=None, timezone_str=None, **kwargs):
     """
     Transfers data from a source AtriumSDK instance to a destination AtriumSDK instance based on a specified dataset definition.
     This includes transferring measures, devices, patient information, and labels with options for data de-identification,
@@ -75,6 +75,9 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         'fastparquet' - uses fastparquet to write DataFrame directly.
         'pyarrow' - uses pyarrow to create a Table from data and write it to a Parquet file.
         If None, the default engine installed will be used. The specific engine affects how the Parquet files are handled and can be influenced by additional kwargs.
+    :param str timezone_str: The timezone to use for the conversion. Default is 'Etc/GMT'.
+        Valid values are any timezone strings recognized by the `zoneinfo` module. Examples include 'America/New_York',
+        'Asia/Tokyo', 'Europe/London', etc. For a complete list of valid timezones, refer to the IANA time zone database.
 
     Examples:
     ---------
@@ -170,7 +173,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
                     file_path = ingest_data(dest_sdk, dest_measure_id, dest_device_id, headers, times, values,
                                             export_format=export_format, export_time_format=export_time_format,
-                                            parquet_engine=parquet_engine, **kwargs)
+                                            parquet_engine=parquet_engine, timezone_str=timezone_str, **kwargs)
 
                     if file_path is not None:
                         file_path_dicts[(source_type, source_id, start_time_nano, end_time_nano)][
@@ -260,7 +263,7 @@ def extract_src_device_and_patient_id_list(validated_sources):
 
 
 def ingest_data(to_sdk, measure_id, device_id, headers, times, values, export_format='tsc', export_time_format=None,
-                parquet_engine=None, **kwargs):
+                parquet_engine=None, timezone_str=None, **kwargs):
     # Determine the file path based on the format
     measure_info = to_sdk.get_measure_info(measure_id)
     measure_tag = measure_info['tag']
@@ -274,14 +277,14 @@ def ingest_data(to_sdk, measure_id, device_id, headers, times, values, export_fo
 
     base_path = Path(to_sdk.dataset_location) / export_format / device_folder_name / measure_folder_name
     base_path.mkdir(parents=True, exist_ok=True)
-    file_name = str(nanoseconds_to_date_string_with_tz(int(times[0]))).replace(".", "f").replace(":", "-")
+    file_name = str(nanoseconds_to_date_string_with_tz(int(times[0]), timezone_str=timezone_str)).replace(".", "f").replace(":", "-")
     file_path = None
 
     if export_format == 'tsc':
         _ingest_data_tsc(to_sdk, measure_id, device_id, headers, times, values)
     elif export_format == 'csv':
         file_path = base_path / f"{file_name}.csv"
-        _write_csv(file_path, times, values, measure_tag, export_time_format=export_time_format)
+        _write_csv(file_path, times, values, measure_tag, export_time_format=export_time_format, timezone_str=timezone_str)
     elif export_format == 'npz':
         file_path = base_path / f"{file_name}.npz"
         _write_numpy(file_path, times, values, measure_tag)
