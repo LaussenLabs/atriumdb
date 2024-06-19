@@ -81,8 +81,8 @@ def slice_times_values(times, values, start_time, end_time):
     unique_values = values[unique_indices]
 
     # Find the insertion points for start_time and end_time
-    start_idx = np.searchsorted(unique_times, start_time, side='left')
-    end_idx = np.searchsorted(unique_times, end_time, side='left')
+    start_idx = np.searchsorted(unique_times, start_time, side='left') if start_time is not None else 0
+    end_idx = np.searchsorted(unique_times, end_time, side='left') if end_time is not None else unique_times.shape[0]
 
     # Slice the arrays based on the indices
     sliced_times = unique_times[start_idx:end_idx]

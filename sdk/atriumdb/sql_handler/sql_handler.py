@@ -703,3 +703,37 @@ class SQLHandler(ABC):
         with self.connection(begin=False) as (conn, cursor):
             # delete old block data
             cursor.executemany("DELETE FROM file_index WHERE id = ?;", file_ids_to_delete)
+
+    def update_block_times(self, block_id, new_start_time_n, new_end_time_n):
+        if block_id is None or new_start_time_n is None or new_end_time_n is None:
+            raise ValueError("block_id, new_start_time_n, and new_end_time_n must be provided")
+
+        update_query = """
+            UPDATE block_index
+            SET start_time_n = ?, end_time_n = ?
+            WHERE id = ?
+        """
+
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(update_query, (int(new_start_time_n), int(new_end_time_n), int(block_id)))
+            conn.commit()
+
+    def update_intervals(self, measure_id, device_id, intervals):
+
+        delete_query = "DELETE FROM interval_index WHERE measure_id = ? AND device_id = ?"
+        insert_query = "INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n) VALUES (?, ?, ?, ?)"
+
+        with self.connection(begin=True) as (conn, cursor):
+            # Delete existing rows
+            cursor.execute(delete_query, (measure_id, device_id))
+
+            # Insert new rows
+            for row in intervals:
+                # Convert numpy integers to native Python types
+                start_time_n = int(row[0])
+                end_time_n = int(row[1])
+                cursor.execute(insert_query, (measure_id, device_id, start_time_n, end_time_n))
+
+            conn.commit()
+
+
