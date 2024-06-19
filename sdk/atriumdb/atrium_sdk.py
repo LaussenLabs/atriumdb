@@ -2234,8 +2234,15 @@ class AtriumSDK:
         if (device_id_list is not None and len(device_id_list) == 0) or (patient_id_list is not None and len(patient_id_list) == 0):
             return []
 
-        return self.sql_handler.select_device_patients(
+        result = self.sql_handler.select_device_patients(
             device_id_list=device_id_list, patient_id_list=patient_id_list, start_time=start_time, end_time=end_time)
+
+        converted_end_times_result = []
+        for device_id, patient_id, start_time, end_time in result:
+            end_time = time.time_ns() if end_time is None else end_time
+            converted_end_times_result.append([device_id, patient_id, start_time, end_time])
+
+        return converted_end_times_result
 
     def _api_get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
                                      mrn_list: List[int] = None, start_time: int = None, end_time: int = None):

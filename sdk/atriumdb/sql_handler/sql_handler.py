@@ -18,6 +18,8 @@ import time
 from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple
 
+from atriumdb.sql_handler.sql_helper import join_sql_and_bools
+
 
 class SQLHandler(ABC):
     @abstractmethod
@@ -358,11 +360,32 @@ class SQLHandler(ABC):
         # Get all matching sources.
         pass
 
-    @abstractmethod
     def select_device_patients(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
                                start_time: int = None, end_time: int = None):
-        # Get all device_patient rows.
-        pass
+        arg_tuple = ()
+        sqlite_select_device_patient_query = \
+            "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
+        where_clauses = []
+        if device_id_list is not None and len(device_id_list) > 0:
+            where_clauses.append("device_id IN ({})".format(
+                ','.join(['?'] * len(device_id_list))))
+            arg_tuple += tuple(device_id_list)
+        if patient_id_list is not None and len(patient_id_list) > 0:
+            where_clauses.append("patient_id IN ({})".format(
+                ','.join(['?'] * len(patient_id_list))))
+            arg_tuple += tuple(patient_id_list)
+        if start_time is not None:
+            where_clauses.append("(end_time > ? OR end_time IS NULL)")
+            arg_tuple += (start_time,)
+        if end_time is not None:
+            where_clauses.append("start_time < ?")
+            arg_tuple += (end_time,)
+        sqlite_select_device_patient_query += join_sql_and_bools(where_clauses)
+        sqlite_select_device_patient_query += " ORDER BY id ASC"
+
+        with self.connection() as (conn, cursor):
+            cursor.execute(sqlite_select_device_patient_query, arg_tuple)
+            return cursor.fetchall()
 
     @abstractmethod
     def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):

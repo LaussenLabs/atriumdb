@@ -607,33 +607,6 @@ class MariaDBHandler(SQLHandler):
             rows = cursor.fetchall()
         return rows
 
-    def select_device_patients(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
-                               start_time: int = None, end_time: int = None):
-        arg_tuple = ()
-        maria_select_device_patient_query = \
-            "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
-        where_clauses = []
-        if device_id_list is not None and len(device_id_list) > 0:
-            where_clauses.append("device_id IN ({})".format(
-                ','.join(['?'] * len(device_id_list))))
-            arg_tuple += tuple(device_id_list)
-        if patient_id_list is not None and len(patient_id_list) > 0:
-            where_clauses.append("patient_id IN ({})".format(
-                ','.join(['?'] * len(patient_id_list))))
-            arg_tuple += tuple(patient_id_list)
-        if start_time is not None:
-            where_clauses.append("end_time > ?")
-            arg_tuple += (start_time,)
-        if end_time is not None:
-            where_clauses.append("start_time < ?")
-            arg_tuple += (end_time,)
-        maria_select_device_patient_query += join_sql_and_bools(where_clauses)
-        maria_select_device_patient_query += " ORDER BY id ASC"
-
-        with self.maria_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(maria_select_device_patient_query, arg_tuple)
-            return cursor.fetchall()
-
     def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
         maria_insert_device_patient_query = \
             "INSERT INTO device_patient (device_id, patient_id, start_time, end_time) VALUES (?, ?, ?, ?)"
