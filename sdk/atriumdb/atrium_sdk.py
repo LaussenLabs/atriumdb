@@ -23,7 +23,8 @@ from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
     find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz, \
     ALLOWED_TIME_TYPES, collect_all_descendant_ids, get_best_measure_id, _calc_end_time_from_gap_data, \
-    merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns
+    merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns, \
+    is_corrupt_header_times
 from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
@@ -492,7 +493,8 @@ class AtriumSDK:
 
         # Sort the data based on the timestamps if sort is true
         if sort and time_type == 1:
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates,
+                                          is_corrupt_header_times(headers, block_list))
 
         end_bench_total = time.perf_counter()
         _LOGGER.debug(f"Total get data call took {round(end_bench_total - start_bench_total, 2)}: {r_values.size} values")
@@ -548,7 +550,8 @@ class AtriumSDK:
 
         # Sort the data based on the timestamps if sort is true
         if sort and time_type == 1:
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates,
+                                          is_corrupt_header_times(headers, block_list))
 
         return headers, r_times, r_values
 
@@ -580,7 +583,10 @@ class AtriumSDK:
 
         # Sort the data based on the timestamps if sort is true
         if sort:
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
+            block_list = [[b['id'], measure_id, device_id, None, None, b['num_bytes'],
+                           b['start_time_n'], b['end_time_n'], b['num_values']] for b in block_info_list]
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates,
+                                          is_corrupt_header_times(headers, block_list))
 
         return headers, r_times, r_values
 
@@ -3738,7 +3744,8 @@ class AtriumSDK:
             old_times, old_values, old_headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
                                                                           time_type=1)
             old_times, old_values = sort_data(old_times, old_values, old_headers, start_time_n, end_time_n,
-                                              allow_duplicates=False)
+                                              allow_duplicates=False,
+                                              corrupt_headers=old_headers)
             # Convert old times to int64
             old_times = old_times.astype(np.int64)
 
@@ -3794,7 +3801,7 @@ class AtriumSDK:
 
         # Sort the data based on the timestamps if sort is true
         if sort and time_type == 1:
-            r_times, r_values = sort_data(r_times, r_values, headers, 0, (2**63) - 1, allow_duplicates)
+            r_times, r_values = sort_data(r_times, r_values, headers, 0, (2**63) - 1, allow_duplicates, True)
 
         return headers, r_times, r_values
 
@@ -3918,7 +3925,8 @@ class AtriumSDK:
 
         # Sort the data based on the timestamps if sort is true
         if sort:
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates,
+                                          is_corrupt_header_times(headers, current_blocks_meta))
 
         return headers, r_times, r_values
 

@@ -122,7 +122,7 @@ def find_intervals(freq_nhz, raw_time_type, time_data, data_start_time, num_valu
 
 
 # if you want to just use this to sort data will have to add default vals for start/end time and skip bisect
-def sort_data(times, values, headers, start_time, end_time, allow_duplicates=True):
+def sort_data(times, values, headers, start_time, end_time, allow_duplicates=True, corrupt_headers=False):
     start_bench = time.perf_counter()
     if len(headers) == 0:
         return times, values
@@ -138,7 +138,7 @@ def sort_data(times, values, headers, start_time, end_time, allow_duplicates=Tru
     # check if the start times are sorted
     start_times_sorted = np.all(np.greater(block_info.T[0][1:], block_info.T[0][:-1]))
     # check if the blocks overlap each other
-    start_end_times_dont_intersect = np.all(np.greater_equal(block_info.T[0][1:], block_info.T[1][:-1]))
+    start_end_times_dont_intersect = np.all(np.greater_equal(block_info.T[0][1:], block_info.T[1][:-1])) and not corrupt_headers
     if start_end_times_dont_intersect and start_times_sorted:
         logging.debug("Blocks already Sorted and don't intersect.")
 
@@ -154,7 +154,7 @@ def sort_data(times, values, headers, start_time, end_time, allow_duplicates=Tru
 
     start_bench = time.perf_counter()
     # if the start times were not sorted, sort them if they were then don't bother running the sort
-    if not start_times_sorted:
+    if not start_times_sorted and not corrupt_headers:
         # use quicksort as it will be faster with smaller arrays
         sorted_block_i = np.argsort(block_info.T[0], kind='quicksort')
         block_info = block_info[sorted_block_i]
@@ -1286,3 +1286,12 @@ def combine_interval_array_list(interval_arrays, gap_tolerance_nano):
             merged_intervals.append(cur_row)
 
     return np.array(merged_intervals, dtype=np.int64)
+
+
+def is_corrupt_header_times(headers, block_list):
+    for h, b in zip(headers, block_list):
+        if h.start_n != b[6] or h.end_n != b[7]:
+            block_start = (b[6] - h.start_n) / 10**9
+            block_end = (b[7] - h.start_n) / 10 ** 9
+            return True
+    return False
