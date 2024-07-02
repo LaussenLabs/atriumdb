@@ -24,7 +24,7 @@ from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_i
     find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz, \
     ALLOWED_TIME_TYPES, collect_all_descendant_ids, get_best_measure_id, _calc_end_time_from_gap_data, \
     merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns, \
-    is_corrupt_header_times
+    is_corrupt_header_times, reconstruct_messages, sort_message_time_values, create_gap_arr_from_variable_messages
 from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
@@ -789,6 +789,33 @@ class AtriumSDK:
         # Force Python Integers
         freq_nhz = int(freq_nhz)
         time_0 = int(time_0)
+        period_ns = (10 ** 18) // freq_nhz
+
+        # Presort the time data
+        if raw_time_type == 1:
+            if time_data.size != value_data.size:
+                raise ValueError("Time array must be of equal size as the Value array in time type 1.")
+            if not np.all(np.diff(time_data) >= 0):
+                # Sort the time_array and value_array based on the sorted indices of time_array
+                sorted_indices = np.argsort(time_data)
+                time_data = time_data[sorted_indices]
+                value_data = value_data[sorted_indices]
+
+        elif raw_time_type == 2:
+            if not np.all(time_data[1::2] >= -period_ns):
+                # Convert gap_data into messages
+                message_starts_1, message_sizes_1 = reconstruct_messages(
+                    time_0, time_data, freq_nhz, int(value_data.size))
+
+                # Sort both message lists + values, and copy values to not mess with the originals
+                value_data = value_data.copy()
+                sort_message_time_values(message_starts_1, message_sizes_1, value_data)
+                time_0 = message_starts_1[0]
+
+                # Convert back into gap data
+                time_data = create_gap_arr_from_variable_messages(message_starts_1, message_sizes_1, freq_nhz)
+        else:
+            raise ValueError("raw_time_type must be either 1 or 2")
 
         # Calculate new intervals
         write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
