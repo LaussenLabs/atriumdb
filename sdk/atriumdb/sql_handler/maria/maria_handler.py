@@ -64,7 +64,6 @@ class SingleConnectionManager:
     def _create_connection(self):
         try:
             self._connection = mariadb.connect(**self._conn_args)
-            self.__last_used = time.perf_counter_ns()
         except mariadb.Error as e:
             raise e
 
