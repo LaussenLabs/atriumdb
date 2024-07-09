@@ -73,8 +73,6 @@ class SingleConnectionManager:
             if self._borrowed:
                 return None
 
-            self._borrowed = True  # Mark the connection as borrowed
-
             # Check and create a new connection if needed
             if self._connection is None:
                 self._create_connection()
@@ -86,6 +84,7 @@ class SingleConnectionManager:
                     except mariadb.Error:
                         self._create_connection()
             self.__last_used = time.perf_counter_ns()
+            self._borrowed = True  # Mark the connection as borrowed
             return self._connection
 
     def release_connection(self):
