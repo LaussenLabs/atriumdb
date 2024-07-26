@@ -229,17 +229,16 @@ class DatasetIterator:
                 # Check if we've gone over.
                 if current_batch_num_windows >= self.max_batch_size:
                     # Add current time_range_info to the batch
-                    if num_time_range_windows > 0:
-                        time_range_info = [
-                            source_type,
-                            source_id,
-                            time_range_info_start,
-                            time_range_info_end,
-                            time_range_info_start,
-                            min(range_end_time, time_range_info_end),
-                            num_time_range_windows,
-                        ]
-                        current_batch.append(time_range_info)
+                    time_range_info = [
+                        source_type,
+                        source_id,
+                        time_range_info_start,
+                        time_range_info_end,
+                        time_range_info_start,
+                        min(range_end_time, time_range_info_end),
+                        num_time_range_windows,
+                    ]
+                    current_batch.append(time_range_info)
 
                     # Add batch to cache list
                     cache_info.append(current_batch)
