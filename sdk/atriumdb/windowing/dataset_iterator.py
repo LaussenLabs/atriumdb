@@ -271,7 +271,8 @@ class DatasetIterator:
                 current_batch.append(time_range_info)
 
         # Add final batch to cache list
-        cache_info.append(current_batch)
+        if len(current_batch) > 0:
+            cache_info.append(current_batch)
         starting_window_index_per_batch.append(total_number_of_windows)
 
         return cache_info, starting_window_index_per_batch, total_number_of_windows
