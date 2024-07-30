@@ -3680,8 +3680,8 @@ class AtriumSDK:
             self.websock_conn.close()
             _LOGGER.debug("Websocket connection closed")
         # if we are in sql mode and there is a connection pool close it
-        elif (self.metadata_connection_type == "mariadb" or self.metadata_connection_type == "mysql") and self.sql_handler.pool is not None:
-            self.sql_handler.pool.close()
+        elif (self.metadata_connection_type == "mariadb" or self.metadata_connection_type == "mysql") and self.sql_handler.connection_manager is not None:
+            self.sql_handler.connection_manager.close_connection()
 
     def get_filename_dict(self, file_id_list):
         if self.metadata_connection_type == "api":

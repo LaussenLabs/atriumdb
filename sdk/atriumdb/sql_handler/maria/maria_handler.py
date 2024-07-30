@@ -16,13 +16,13 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import time
-from typing import List, Dict, Tuple
 from contextlib import contextmanager
+import threading
 
 import mariadb
-import uuid
-
 from mariadb import ProgrammingError
+
+from typing import List, Dict, Tuple
 
 from atriumdb.adb_functions import allowed_interval_index_modes
 from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from_triplet_query, \
@@ -52,9 +52,56 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_PORT = 3306
 
 
+class SingleConnectionManager:
+    def __init__(self, validation_interval=500, **conn_args):
+        self._connection = None
+        self._conn_args = conn_args
+        self._lock = threading.RLock()
+        self.__last_used = 0
+        self._validation_interval = validation_interval
+        self._borrowed = False
+
+    def _create_connection(self):
+        try:
+            self._connection = mariadb.connect(**self._conn_args)
+        except mariadb.Error as e:
+            raise e
+
+    def get_connection(self):
+        with self._lock:
+            # If the connection is already borrowed, return None
+            if self._borrowed:
+                return None
+
+            # Check and create a new connection if needed
+            if self._connection is None:
+                self._create_connection()
+            else:
+                dt = (time.perf_counter_ns() - self.__last_used) / 1_000_000
+                if dt > self._validation_interval:
+                    try:
+                        self._connection.ping()
+                    except mariadb.Error:
+                        self._create_connection()
+            self.__last_used = time.perf_counter_ns()
+            self._borrowed = True  # Mark the connection as borrowed
+            return self._connection
+
+    def release_connection(self):
+        with self._lock:
+            self._borrowed = False  # Mark the connection as available
+
+    def close_connection(self):
+        with self._lock:
+            if self._connection is not None:
+                self._connection.close()
+                self._connection = None
+                self._borrowed = False
+
+
 class MariaDBHandler(SQLHandler):
-    def __init__(self, host: str, user: str, password: str, database: str, port: int = None, pool_size: int = 1,
-                 no_pool=False):
+    def __init__(self, host: str, user: str, password: str, database: str, port: int = None, no_pool=False,
+                 validation_interval=500):
         self.host = host
         self.user = user
         self.password = password
@@ -68,22 +115,12 @@ class MariaDBHandler(SQLHandler):
             'password': self.password,
             'database': self.database,
         }
-        self.pool_size = pool_size
         self.no_pool = no_pool
-        self.pool = None
+        self.connection_manager = None if no_pool else SingleConnectionManager(
+            validation_interval=validation_interval, **self.connection_params)
 
     def maria_connect(self):
         return mariadb.connect(**self.connection_params)
-
-    def create_pool(self):
-        pool_guid = str(uuid.uuid4())
-        self.pool = mariadb.ConnectionPool(pool_name=f"atriumdb_pool_{pool_guid}", pool_size=self.pool_size,
-                                           **self.connection_params)
-
-    def get_connection_from_pool(self):
-        if self.pool is None:
-            self.create_pool()
-        return self.pool.get_connection()
 
     def maria_connect_no_db(self, db_name=None):
         conn = mariadb.connect(
@@ -107,19 +144,20 @@ class MariaDBHandler(SQLHandler):
 
     @contextmanager
     def maria_db_connection(self, begin=False):
-        if not self.check_database_exists():
-            raise ValueError(f"Database {self.database} does not exist. "
-                             f"You can create one using AtriumSDK.create_dataset.")
+        conn = self.maria_connect() if self.no_pool else self.connection_manager.get_connection()
+        attempts = 0
+        while conn is None:
+            if attempts > 5:
+                raise ConnectionError("Connection not available")
+            time.sleep(1)
+            attempts += 1
+            conn = self.maria_connect() if self.no_pool else self.connection_manager.get_connection()
 
-        if self.no_pool:
-            conn = self.maria_connect()
-        else:
-            conn = self.get_connection_from_pool()
         cursor = conn.cursor()
 
         try:
             if begin:
-                cursor.execute("START TRANSACTION")
+                conn.begin()
             yield conn, cursor
             conn.commit()
         except mariadb.Error as e:
@@ -127,9 +165,13 @@ class MariaDBHandler(SQLHandler):
             raise e
         finally:
             cursor.close()
-            conn.close()
+            if self.no_pool:
+                conn.close()
+            else:
+                self.connection_manager.release_connection()
 
     def connection(self, begin=False):
+        # Overrides the inherited class method.
         return self.maria_db_connection(begin=begin)
 
     def create_schema(self):
