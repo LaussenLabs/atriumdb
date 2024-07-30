@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 
 class LabelName(BaseModel):
@@ -29,6 +29,7 @@ class Label(BaseModel):
     end_time_n: int
     label_source_id: Optional[int] = None
     label_source: Optional[str] = None
+    measure_id: Optional[int] = None
 
 
 class LabelsQuery(BaseModel):
@@ -42,3 +43,4 @@ class LabelsQuery(BaseModel):
     include_descendants: Optional[bool] = True
     limit: Optional[int] = 1000
     offset: Optional[int] = 0
+    measure_list: Optional[List[int | Tuple[str, int | float, str]]] = None
