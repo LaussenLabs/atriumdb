@@ -738,7 +738,8 @@ class AtriumSDK:
             it is treated as a break in continuity or gap in the interval index.
         :param bool merge_blocks: If your writing data that is less than an optimal block size it will find an already
             existing block that is closest in time to the data your writing and merge your data with it. THIS IS NOT THREAD SAFE
-            and can lead to race conditions if two processes try to ingest (and merge) data for the same measure and device at the same time.
+            and can lead to race conditions if two processes (with two different sdk objects) try to ingest (and merge)
+            data for the same measure and device at the same time.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.
@@ -941,7 +942,11 @@ class AtriumSDK:
 
         # if your new data was merged with an older block add the new info to mariadb and delete the old block
         if old_block is not None:
-            self.sql_handler.insert_merged_block_data(filename, block_data, old_block[0], interval_data, interval_index_mode, gap_tolerance)
+            old_tsc_file_name = self.sql_handler.insert_merged_block_data(filename, block_data, old_block, interval_data, interval_index_mode, gap_tolerance)
+
+            # remove the tsc file from disk if it is no longer needed
+            if old_tsc_file_name is not None:
+                os.remove(self.file_api.to_abs_path(filename=old_tsc_file_name, measure_id=measure_id, device_id=device_id))
 
         # If data was overwritten
         elif overwrite_file_dict is not None:

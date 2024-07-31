@@ -27,7 +27,7 @@ DB_NAME = 'test-merge-small-block'
 
 def test_merge_small_block():
     _test_for_both(DB_NAME, _test_merge_small_block_timestamp)
-    # _test_for_both(DB_NAME, _test_merge_small_block_gap)
+    _test_for_both(DB_NAME, _test_merge_small_block_gap)
 
 
 def _test_merge_small_block_timestamp(db_type, dataset_location, connection_params):
