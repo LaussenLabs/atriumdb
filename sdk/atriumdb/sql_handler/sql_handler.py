@@ -14,9 +14,11 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
+import time
 from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple
+
+from atriumdb.sql_handler.sql_helper import join_sql_and_bools
 
 
 class SQLHandler(ABC):
@@ -106,6 +108,11 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
+    def insert_merged_block_data(self, file_path: str, block_data: List[Dict], old_block_id: int, interval_data: List[Dict],
+                                 interval_index_mode, gap_tolerance: int = 0):
+        pass
+
+    @abstractmethod
     def select_file(self, file_id: int = None, file_path: str = None):
         # Select a file path either by its id, or by its path.
         pass
@@ -126,6 +133,71 @@ class SQLHandler(ABC):
                      num_values: int = None):
         # select a block either by its id or by all other params.
         pass
+
+    def select_closest_block(self, measure_id: int = None, device_id: int = None, start_time: int = None, end_time: int = None):
+        base_query = """SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values 
+        FROM block_index WHERE measure_id = ? and device_id = ? """
+
+        with self.connection(begin=False) as (conn, cursor):
+            # first check if this block belongs on the end (most likely scenario)
+            end_check_query = base_query + "ORDER BY end_time_n DESC LIMIT 1"
+            cursor.execute(end_check_query, (measure_id, device_id))
+            result = cursor.fetchone()
+
+            # check if the start time is >= the max end time meaning the block goes on the end
+            if result is not None and start_time >= result[7]:
+                # return true meaning it goes on the end. We will check if the last block is full in write_data so we
+                # so we need to know if this is an end block
+                return result, True
+
+            # if it overlaps with the last block
+            if result is not None and start_time <= result[7] and end_time >= result[6]:
+                return result, False
+
+            # check if there is a block that this data fits inside
+            inside_query = base_query + "and start_time_n <= ? and end_time_n >= ? LIMIT 1"
+
+            cursor.execute(inside_query, (measure_id, device_id, start_time, end_time))
+            result = cursor.fetchone()
+
+            # if there is a block this data belongs inside return it
+            if result is not None:
+                return result, False
+
+            # get the closest block  whose start time is <= my start time
+            inside_query = base_query + "and start_time_n <= ? and end_time_n <= ? ORDER BY start_time_n DESC, end_time_n DESC LIMIT 1"
+            cursor.execute(inside_query, (measure_id, device_id, start_time, end_time))
+            block_older = cursor.fetchone()
+
+            # get the closest block whose end time is >= my end time
+            inside_query = base_query + "and start_time_n >= ? and end_time_n >= ? ORDER BY end_time_n ASC, start_time_n ASC LIMIT 1"
+            cursor.execute(inside_query, (measure_id, device_id, start_time, end_time))
+            block_newer = cursor.fetchone()
+
+            # subtract the end time of the old block from the start time of the new block to see how far apart they are
+            # if they overlap the number will become negative and therefore they are closer
+            older_diff = start_time - block_older[7] if block_older is not None else None
+
+            # subtract the start time of the old block from the end time of the new block to see how far apart they are
+            # if they overlap the number will become negative and therefore they are closer
+            newer_diff = block_newer[6] - end_time if block_newer is not None else None
+
+            if older_diff is None and newer_diff is not None:
+                return block_newer, False
+            elif newer_diff is None and older_diff is not None:
+                return block_older, False
+            elif older_diff is None and newer_diff is None:
+                # need this since if it's the first block there will be nothing to merge with
+                return None, False
+            elif older_diff <= newer_diff:
+                return block_older, False
+            elif older_diff > newer_diff:
+                return block_newer, False
+
+    def delete_block(self, block_id: int):
+        with self.connection(begin=True) as (conn, cursor):
+            # delete block data
+            cursor.execute("DELETE FROM block_index WHERE id = ?", (block_id,))
 
     @abstractmethod
     def select_interval(self, interval_id: int = None, measure_id: int = None, device_id: int = None,
@@ -184,14 +256,17 @@ class SQLHandler(ABC):
         args = (patient_id,)
 
         if start_time_n is not None:
-            patient_device_query += " AND end_time >= ? "
+            patient_device_query += " AND (end_time >= ? OR end_time is NULL) "
             args += (start_time_n,)
         if end_time_n is not None:
             patient_device_query += " AND start_time <= ? "
             args += (end_time_n,)
+
+        patient_device_query += " ORDER BY start_time, end_time"
         with self.connection(begin=False) as (conn, cursor):
             cursor.execute(patient_device_query, args)
             return cursor.fetchall()
+
     @abstractmethod
     def select_all_settings(self):
         # Select all settings from settings table.
@@ -217,10 +292,22 @@ class SQLHandler(ABC):
             interval_results = []
             with self.connection(begin=False) as (conn, cursor):
                 for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
-                    args = (measure_id, encounter_device_id, encounter_start_time, encounter_end_time)
+                    encounter_end_time = time.time_ns() if encounter_end_time is None else encounter_end_time
 
-                    cursor.execute(interval_query, args)
-                    interval_results.extend(cursor.fetchall())
+                    cursor.execute(interval_query, (measure_id, encounter_device_id, encounter_start_time, encounter_end_time))
+
+                    #  Truncate Intervals to the Start, End of Encounter
+                    encounter_intervals = cursor.fetchall()
+                    encounter_intervals = [[interval_id,
+                                            measure_id,
+                                            device_id,
+                                            max(start_time_n, encounter_start_time),
+                                            min(end_time_n, encounter_end_time)]
+                                           for interval_id, measure_id, device_id, start_time_n, end_time_n
+                                           in encounter_intervals]
+
+                    interval_results.extend(encounter_intervals)
+
             return interval_results
 
         # Query by device.
@@ -287,11 +374,32 @@ class SQLHandler(ABC):
         # Get all matching sources.
         pass
 
-    @abstractmethod
     def select_device_patients(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
                                start_time: int = None, end_time: int = None):
-        # Get all device_patient rows.
-        pass
+        arg_tuple = ()
+        sqlite_select_device_patient_query = \
+            "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
+        where_clauses = []
+        if device_id_list is not None and len(device_id_list) > 0:
+            where_clauses.append("device_id IN ({})".format(
+                ','.join(['?'] * len(device_id_list))))
+            arg_tuple += tuple(device_id_list)
+        if patient_id_list is not None and len(patient_id_list) > 0:
+            where_clauses.append("patient_id IN ({})".format(
+                ','.join(['?'] * len(patient_id_list))))
+            arg_tuple += tuple(patient_id_list)
+        if start_time is not None:
+            where_clauses.append("(end_time > ? OR end_time IS NULL)")
+            arg_tuple += (start_time,)
+        if end_time is not None:
+            where_clauses.append("start_time < ?")
+            arg_tuple += (end_time,)
+        sqlite_select_device_patient_query += join_sql_and_bools(where_clauses)
+        sqlite_select_device_patient_query += " ORDER BY id ASC"
+
+        with self.connection() as (conn, cursor):
+            cursor.execute(sqlite_select_device_patient_query, arg_tuple)
+            return cursor.fetchall()
 
     @abstractmethod
     def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
@@ -620,3 +728,14 @@ class SQLHandler(ABC):
         with self.connection() as (conn, cursor):
             cursor.execute(query, params)
             return cursor.fetchone()
+
+    def find_unreferenced_tsc_files(self):
+        with self.connection() as (conn, cursor):
+            cursor.execute("SELECT t1.* FROM file_index t1 LEFT JOIN (SELECT DISTINCT file_id FROM block_index) t2 "
+                           "ON t1.id = t2.file_id WHERE t2.file_id IS NULL")
+            return cursor.fetchall()
+
+    def delete_tsc_files(self, file_ids_to_delete: List[tuple]):
+        with self.connection(begin=False) as (conn, cursor):
+            # delete old block data
+            cursor.executemany("DELETE FROM file_index WHERE id = ?;", file_ids_to_delete)

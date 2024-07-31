@@ -226,8 +226,8 @@ class SQLiteHandler(SQLHandler):
 
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
                              interval_index_mode, gap_tolerance: int = 0):
-        # default to merge
-        interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
+        # default to fast
+        interval_index_mode = "fast" if interval_index_mode is None else interval_index_mode
 
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
             # insert file_path into file_index and get id
@@ -236,8 +236,7 @@ class SQLiteHandler(SQLHandler):
 
             # insert into block_index
             block_tuples = [(block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
-                             block["start_time_n"], block["end_time_n"], block["num_values"])
-                            for block in block_data]
+                             block["start_time_n"], block["end_time_n"], block["num_values"]) for block in block_data]
             cursor.executemany(sqlite_insert_block_query, block_tuples)
 
             # insert into interval_index
@@ -258,8 +257,7 @@ class SQLiteHandler(SQLHandler):
                 # insert into block_index
                 block_tuples = [
                     (block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
-                     block["start_time_n"], block["end_time_n"], block["num_values"])
-                    for block in block_data]
+                     block["start_time_n"], block["end_time_n"], block["num_values"]) for block in block_data]
                 cursor.executemany(sqlite_insert_block_query, block_tuples)
 
                 # insert into interval_index
@@ -272,6 +270,31 @@ class SQLiteHandler(SQLHandler):
 
             # delete old file data
             # cursor.executemany(sqlite_delete_file_query, [(file_id,) for file_id in file_ids_to_delete])
+
+    def insert_merged_block_data(self, file_path: str, block_data: List[Dict], old_block_id: int, interval_data: List[Dict],
+                                 interval_index_mode, gap_tolerance: int = 0):
+        # default to fast
+        interval_index_mode = "fast" if interval_index_mode is None else interval_index_mode
+
+        with self.sqlite_db_connection(begin=True) as (conn, cursor):
+            # insert file_path into file_index and get id
+            cursor.execute(sqlite_insert_file_index_query, (file_path,))
+            file_id = cursor.lastrowid
+
+            # insert into block_index
+            block_tuples = [(block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
+                             block["start_time_n"], block["end_time_n"], block["num_values"]) for block in block_data]
+            cursor.executemany(sqlite_insert_block_query, block_tuples)
+
+            # insert into interval_index
+            if interval_index_mode != "disable":
+                # insert into interval_index
+                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                    interval["end_time_n"]) for interval in interval_data]
+                cursor.executemany(sqlite_insert_interval_index_query, interval_tuples)
+
+            # delete the old block data
+            cursor.execute("DELETE FROM block_index WHERE id = ?", (old_block_id,))
 
     def select_file(self, file_id: int = None, file_path: str = None):
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
@@ -538,33 +561,6 @@ class SQLiteHandler(SQLHandler):
             cursor.execute(sqlite_select_sources_by_id_list, source_id_list)
             rows = cursor.fetchall()
         return rows
-
-    def select_device_patients(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
-                               start_time: int = None, end_time: int = None):
-        arg_tuple = ()
-        sqlite_select_device_patient_query = \
-            "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
-        where_clauses = []
-        if device_id_list is not None and len(device_id_list) > 0:
-            where_clauses.append("device_id IN ({})".format(
-                ','.join(['?'] * len(device_id_list))))
-            arg_tuple += tuple(device_id_list)
-        if patient_id_list is not None and len(patient_id_list) > 0:
-            where_clauses.append("patient_id IN ({})".format(
-                ','.join(['?'] * len(patient_id_list))))
-            arg_tuple += tuple(patient_id_list)
-        if start_time is not None:
-            where_clauses.append("end_time > ?")
-            arg_tuple += (start_time,)
-        if end_time is not None:
-            where_clauses.append("start_time < ?")
-            arg_tuple += (end_time,)
-        sqlite_select_device_patient_query += join_sql_and_bools(where_clauses)
-        sqlite_select_device_patient_query += " ORDER BY id ASC"
-
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(sqlite_select_device_patient_query, arg_tuple)
-            return cursor.fetchall()
 
     def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
         sqlite_insert_device_patient_query = \

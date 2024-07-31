@@ -79,7 +79,7 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
       transfer_patient_info(src_sdk, dest_sdk, patient_id_list="all", start_time_nano=1617264000000000000, end_time_nano=1617350400000000000)
 
     """
-    patient_id_list = validate_patient_transfer_list(src_sdk, patient_id_list, mrn_list)
+    patient_id_list = validate_patient_transfer_list(src_sdk, patient_id_list, mrn_list, deidentify)
 
     patient_id_map = create_patient_id_map(patient_id_list, deidentify)
 
@@ -116,7 +116,11 @@ def transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_tim
         dest_sdk.insert_device_patient_data(device_patient_data=dest_device_patient_list)
 
 
-def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list):
+def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list, deidentify):
+    if patient_id_list == "all" and isinstance(deidentify, (str, Path)) and Path(deidentify).exists():
+        patient_id_map = read_csv_to_dict(Path(deidentify))
+        patient_id_list = list(patient_id_map.keys())
+
     if patient_id_list is None and mrn_list is None:
         raise ValueError("Either patient_id_list or mrn_list must be specified.")
     if patient_id_list == "all":

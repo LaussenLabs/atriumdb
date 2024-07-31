@@ -21,9 +21,10 @@ import numpy as np
 import threading
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
-    find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, \
-    convert_from_nanohz, ALLOWED_TIME_TYPES, collect_all_descendant_ids, get_best_measure_id
-from atriumdb.block import Block, convert_intervals_to_gap_array
+    find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz, \
+    ALLOWED_TIME_TYPES, collect_all_descendant_ids, get_best_measure_id, _calc_end_time_from_gap_data, \
+    merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns
+from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
 from atriumdb.file_api import AtriumFileHandler
@@ -130,7 +131,7 @@ class AtriumSDK:
     """
 
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
-                 connection_params: dict = None, num_threads: int = None, api_url: str = None, token: str = None,
+                 connection_params: dict = None, num_threads: int = 1, api_url: str = None, token: str = None,
                  refresh_token=None, validate_token=True, tsc_file_location: str = None, atriumdb_lib_path: str = None,
                  no_pool=False):
 
@@ -141,10 +142,6 @@ class AtriumSDK:
             metadata_connection_type is None else metadata_connection_type
 
         self.metadata_connection_type = metadata_connection_type
-
-        # Set number of threads to max available minus 2 or 1, whichever is greater, if not provided
-        if num_threads is None:
-            num_threads = max(cpu_count() - 2, 1)
 
         # Set the C DLL path based on the platform if not provided
         if atriumdb_lib_path is None:
@@ -704,7 +701,7 @@ class AtriumSDK:
     def write_data(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq_nhz: int,
                    time_0: int, raw_time_type: int = None, raw_value_type: int = None, encoded_time_type: int = None,
                    encoded_value_type: int = None, scale_m: float = None, scale_b: float = None,
-                   interval_index_mode: str = None, gap_tolerance: int = 0):
+                   interval_index_mode: str = None, gap_tolerance: int = 0, merge_blocks: bool = True):
         """
         .. _write_data_label:
 
@@ -739,6 +736,9 @@ class AtriumSDK:
             For live data ingestion, "merge" is recommended.
         :param int gap_tolerance: The maximum number of nanoseconds that can occur between two consecutive values before
             it is treated as a break in continuity or gap in the interval index.
+        :param bool merge_blocks: If your writing data that is less than an optimal block size it will find an already
+            existing block that is closest in time to the data your writing and merge your data with it. THIS IS NOT THREAD SAFE
+            and can lead to race conditions if two processes try to ingest (and merge) data for the same measure and device at the same time.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.
@@ -780,6 +780,10 @@ class AtriumSDK:
         assert interval_index_mode in allowed_interval_index_modes, \
             f"interval_index must be one of {allowed_interval_index_modes}"
 
+        # Force Python Integers
+        freq_nhz = int(freq_nhz)
+        time_0 = int(time_0)
+
         # Calculate new intervals
         write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
 
@@ -815,22 +819,109 @@ class AtriumSDK:
                         measure_id, device_id, time_data, time_0, raw_time_type, value_data.size, freq_nhz)
                 elif overwrite_setting == 'error':
                     raise ValueError("Data to be written overlaps already ingested data.")
-                elif overwrite_setting == 'ignore':
-                    pass
                 else:
                     raise ValueError(f"Overwrite setting {overwrite_setting} not recognized.")
+
+        # default for block merging code (needed to check if we need to delete old stuff at the end)
+        old_block = None
+        num_full_blocks = value_data.size // self.block.block_size
+
+        # only attempt to merge the data with another block if there isn't a full block worth of data
+        if num_full_blocks == 0 and merge_blocks:
+            # if the times are a gap array find the end time of the array so we can find the closest block
+            if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
+                # need to subtract one period since the function gives end_time+1 period
+                end_time = _calc_end_time_from_gap_data(values_size=value_data.size, gap_array=time_data,
+                                                        start_time=time_0, freq_nhz=freq_nhz) - freq_nhz_to_period_ns(freq_nhz)
+            elif raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+                end_time = time_data[-1]
+            else:
+                raise NotImplementedError(
+                    f"Merging small blocks with other blocks is not supported for time type {raw_time_type}")
+
+            # find the closest block to the data we are trying to insert
+            old_block, end_block = self.sql_handler.select_closest_block(measure_id, device_id, time_0, end_time)
+
+            # if the new block goes on the end and the current end block is full then don't try to merge blocks
+            if old_block is not None and not (end_block and (old_block[8] > self.block.block_size)):
+                # get the file info for the block we are going to merge these values into
+                file_info = self.sql_handler.select_file(file_id=old_block[3])
+                # Read the encoded data from the files
+                encoded_bytes_old = self.file_api.read_file_list([old_block[1:6]], filename_dict={file_info[0]: file_info[1]})
+
+                # decode the headers before they are edited by decode blocks so we know the original time type
+                header = self.block.decode_headers(encoded_bytes_old, np.array([0], dtype=np.uint64))
+
+                # make sure the time and value types of the block your merging with match
+                if header[0].t_encoded_type != encoded_time_type:
+                    raise ValueError(f"The time type ({encoded_time_type}) you are trying to encode the times as "
+                                     f"doesn't match the encoded time type ({header[0].t_encoded_type}) of the block "
+                                     f"you are trying to merge with. Either change the encoded time type to match or"
+                                     f" set merge_blocks to false.")
+                elif header[0].v_encoded_type != encoded_value_type:
+                    raise ValueError(f"The value type ({encoded_value_type}) you are trying to encode the values as "
+                                     f"doesn't match the encoded value type ({header[0].v_encoded_type}) of the block "
+                                     f"you are trying to merge with. Either change the encoded value type to match or"
+                                     f" set merge_blocks to false.")
+                elif header[0].v_raw_type != raw_value_type:
+                    raise ValueError(f"The raw value type ({raw_value_type}) doesn't match the raw value type "
+                                     f"({header[0].v_raw_type}) of the block you are trying to merge with. Either "
+                                     f"change the raw value type to match or set merge_blocks to false.")
+
+                # make sure the scale factors match. If they don't then don't merge the blocks
+                if header[0].scale_m == scale_m and header[0].scale_b == scale_b:
+                    # if the original time type of the old block is not the same as the time type of the data we are
+                    # trying to save, we need to make them the same
+                    if header[0].t_raw_type != raw_time_type:
+                        # if the new time data is a gap array make it into a timestamp array to match the old times
+                        if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
+                            try:
+                                time_data = create_timestamps_from_gap_data(values_size=value_data.size, gap_array=time_data,
+                                                                            start_time=time_0, freq_nhz=freq_nhz)
+                                raw_time_type = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
+                            except ValueError:
+                                raise ValueError(f"You are trying to merge a gap array into a block that has the data "
+                                                 f"saved as a timestamp array and integer timestamps cannot be created "
+                                                 f"for your gap data with a frequency of {freq_nhz}. Either set "
+                                                 f"merge_blocks to false or pass in the times as a timestamp array.")
+                        # if the new time data is a gap array convert it to a time array to match the old times
+                        elif raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+                            time_data = create_gap_arr(time_data, 1, freq_nhz)
+                            raw_time_type = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
+
+                    # Decode the data and get the values and the times we are going to merge this data with
+                    r_time, r_value, _ = self.block.decode_blocks(encoded_bytes_old, num_bytes_list=[old_block[5]],
+                                                                  analog=False, time_type=header[0].t_raw_type)
+
+                    # if raw value type is int and it's not int64 then cast it to int64 so it doesn't fail during merge
+                    if raw_value_type == 1 and value_data.dtype != np.int64:
+                        value_data = value_data.astype(np.int64)
+
+                    # merge the blocks
+                    if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+                        time_data, value_data = merge_timestamp_data(r_value, r_time, value_data, time_data)
+                        time_0 = time_data[0]
+                    else:
+                        value_data, time_data, time_0 = merge_gap_data(r_value, r_time, header[0].start_n, value_data,
+                                                                       time_data, time_0, freq_nhz)
+                else:
+                    # if the scale factors are not the same don't merge and set old block to none, so we don't delete it
+                    old_block = None
+            else:
+                # if this is an end block and the closest block is full don't merge and set old block to none, so we don't delete it
+                old_block = None
 
         # check if the write data will make at least one full block and if there will be a small block at the end
         num_full_blocks = value_data.size // self.block.block_size
         if (num_full_blocks > 0 and value_data.size % self.block.block_size != 0 and
                 (raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO or raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO)):
             byte_start_array, encoded_bytes, encoded_headers = self.block.make_oversized_block(
-                encoded_time_type, encoded_value_type, freq_nhz, num_full_blocks, raw_time_type, raw_value_type,
-                scale_b,
+                encoded_time_type, encoded_value_type, freq_nhz, num_full_blocks, raw_time_type, raw_value_type, scale_b,
                 scale_m, time_0, time_data, value_data)
+
         # if all blocks are perfectly sized or there is less than one optimal block worth of data
         else:
-            # Encode the blocks
+            # Encode the block(s)
             encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
                 time_data, value_data, freq_nhz, time_0,
                 raw_time_type=raw_time_type,
@@ -848,8 +939,12 @@ class AtriumSDK:
             measure_id, device_id, encoded_headers, byte_start_array, write_intervals,
             interval_gap_tolerance=gap_tolerance)
 
+        # if your new data was merged with an older block add the new info to mariadb and delete the old block
+        if old_block is not None:
+            self.sql_handler.insert_merged_block_data(filename, block_data, old_block[0], interval_data, interval_index_mode, gap_tolerance)
+
         # If data was overwritten
-        if overwrite_file_dict is not None:
+        elif overwrite_file_dict is not None:
             # Add new data to SQL insertion data
             overwrite_file_dict[filename] = (block_data, interval_data)
 
@@ -900,6 +995,9 @@ class AtriumSDK:
 
         # Convert frequency to nanohertz
         freq_nhz = convert_to_nanohz(freq, freq_units)
+
+        # Force python int
+        freq_nhz = int(freq_nhz)
 
         # If metadata connection type is "api", use API method to get the measure ID
         if self.metadata_connection_type == "api":
@@ -1203,7 +1301,7 @@ class AtriumSDK:
         :param str units: The units of the signal.
         :param str optional freq_units: The unit used for the specified frequency. This value can be one of ["Hz",
             "kHz", "MHz"]. Keep in mind if you use extremely large values for this it will be
-            converted to Hertz in the backend, and you may overflow 64bit integers.
+            converted to nano hertz in the backend, and you may overflow 64bit integers. Default is nano hertz.
         :param str optional measure_name: A long form description of the signal.
         :param int optional measure_id: The desired measure_id.
         :param str optional code: A specific code identifying the signal.
@@ -1243,9 +1341,13 @@ class AtriumSDK:
         if freq_units != "nHz":
             freq = convert_to_nanohz(freq, freq_units)
 
+        # Force Cast Python integer
+        freq = int(freq)
+
         # Check for id clash
         if measure_id is not None:
             assert isinstance(measure_id, int)
+            measure_id = int(measure_id)
             measure_info = self.get_measure_info(measure_id)
             if measure_info is not None:
                 if measure_info['tag'] == measure_tag and \
@@ -1566,6 +1668,7 @@ class AtriumSDK:
         # Check for id clash
         if device_id is not None:
             assert isinstance(device_id, int)
+            device_id = int(device_id)
             device_info = self.get_device_info(device_id)
             if device_info is not None:
                 if device_info['tag'] == device_tag:
@@ -2128,8 +2231,18 @@ class AtriumSDK:
             mrn_to_patient_id_map = self.get_mrn_to_patient_id_map(mrn_list)
             patient_id_list.extend([mrn_to_patient_id_map[mrn] for mrn in mrn_list if mrn in mrn_to_patient_id_map])
 
-        return self.sql_handler.select_device_patients(
+        if (device_id_list is not None and len(device_id_list) == 0) or (patient_id_list is not None and len(patient_id_list) == 0):
+            return []
+
+        result = self.sql_handler.select_device_patients(
             device_id_list=device_id_list, patient_id_list=patient_id_list, start_time=start_time, end_time=end_time)
+
+        converted_end_times_result = []
+        for device_id, patient_id, start_time, end_time in result:
+            end_time = time.time_ns() if end_time is None else end_time
+            converted_end_times_result.append([device_id, patient_id, start_time, end_time])
+
+        return converted_end_times_result
 
     def _api_get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
                                      mrn_list: List[int] = None, start_time: int = None, end_time: int = None):
@@ -3410,14 +3523,21 @@ class AtriumSDK:
         arr = []
         # Iterate through the sorted interval results
         for row in interval_result:
+            # if the start is greater than or equal to the end_time of this interval skip this interval
+            # also if the end time is less than or equal to the current intervals start_time skip the interval
+            if (start and start >= row[4]) or (end and end <= row[3]):
+                continue
+
             # If the final intervals list is not empty and the difference between the current interval's start time
             # and the previous interval's end time is less than or equal to the gap tolerance, update the end time
             # of the previous interval
-            if arr and row[3] - arr[-1][-1] <= gap_tolerance_nano:
-                arr[-1][-1] = row[4]
+            cur_interval_start = row[3] if start is None else max(row[3], start)
+            cur_interval_end = row[4] if end is None else min(row[4], end)
+            if arr and cur_interval_start - arr[-1][-1] <= gap_tolerance_nano:
+                arr[-1][-1] = cur_interval_end
             # Otherwise, add a new interval to the final intervals list
             else:
-                arr.append([row[3], row[4]])
+                arr.append([cur_interval_start, cur_interval_end])
 
         # Convert the final intervals list to a numpy array with int64 data type
         return np.array(arr, dtype=np.int64)
@@ -3560,8 +3680,8 @@ class AtriumSDK:
             self.websock_conn.close()
             _LOGGER.debug("Websocket connection closed")
         # if we are in sql mode and there is a connection pool close it
-        elif (self.metadata_connection_type == "mariadb" or self.metadata_connection_type == "mysql") and self.sql_handler.pool is not None:
-            self.sql_handler.pool.close()
+        elif (self.metadata_connection_type == "mariadb" or self.metadata_connection_type == "mysql") and self.sql_handler.connection_manager is not None:
+            self.sql_handler.connection_manager.close_connection()
 
     def get_filename_dict(self, file_id_list):
         if self.metadata_connection_type == "api":

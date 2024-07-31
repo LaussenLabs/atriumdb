@@ -16,7 +16,7 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from atriumdb import AtriumSDK, T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
-    V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, create_gap_arr_fast, merge_gap_data
+    V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, create_gap_arr, merge_gap_data
 import numpy as np
 import random
 
@@ -203,7 +203,7 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
     measure_tag, scale_b, scale_m, units, value_data = get_record_data_for_ingest(d_record, p_record, signal_i)
 
     # Test gap creation and gap merging
-    _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_data)
+    _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_data, test_riffle=True)
 
     measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq_nano,
                                     units=units)
@@ -256,15 +256,15 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
 
 
 def _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_data, test_riffle=False):
-    created_gap_array = create_gap_arr_fast(time_arr, 1, freq_nano)
+    created_gap_array = create_gap_arr(time_arr, 1, freq_nano)
     assert np.array_equal(gap_data_2d.flatten(), created_gap_array)
     # clean split
     split_index = value_data.size // 2
     values_1, times_1 = value_data[:split_index].copy(), time_arr[:split_index].copy()
     values_2, times_2 = value_data[split_index:].copy(), time_arr[split_index:].copy()
     start_1, start_2 = start_time, int(time_arr[split_index])
-    gap_array_1 = create_gap_arr_fast(times_1, 1, freq_nano)
-    gap_array_2 = create_gap_arr_fast(times_2, 1, freq_nano)
+    gap_array_1 = create_gap_arr(times_1, 1, freq_nano)
+    gap_array_2 = create_gap_arr(times_2, 1, freq_nano)
     merged_values, merged_gap_array, merged_start_time = merge_gap_data(
         values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
 
@@ -276,8 +276,8 @@ def _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_d
     values_1, times_1 = value_data[:split_index].copy(), time_arr[:split_index].copy()
     values_2, times_2 = value_data[split_index:].copy(), time_arr[split_index:].copy()
     start_1, start_2 = start_time, int(time_arr[split_index])
-    gap_array_1 = create_gap_arr_fast(times_1, 1, freq_nano)
-    gap_array_2 = create_gap_arr_fast(times_2, 1, freq_nano)
+    gap_array_1 = create_gap_arr(times_1, 1, freq_nano)
+    gap_array_2 = create_gap_arr(times_2, 1, freq_nano)
     merged_values, merged_gap_array, merged_start_time = merge_gap_data(
         values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
 
@@ -292,8 +292,8 @@ def _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_d
     values_1, times_1 = value_data[:split_index].copy(), time_arr[:split_index].copy()
     values_2, times_2 = value_data[split_index:].copy(), time_arr[split_index:].copy()
     start_1, start_2 = start_time, int(time_arr[split_index])
-    gap_array_1 = create_gap_arr_fast(times_1, 1, freq_nano)
-    gap_array_2 = create_gap_arr_fast(times_2, 1, freq_nano)
+    gap_array_1 = create_gap_arr(times_1, 1, freq_nano)
+    gap_array_2 = create_gap_arr(times_2, 1, freq_nano)
     merged_values, merged_gap_array, merged_start_time = merge_gap_data(
         values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
 
@@ -308,8 +308,8 @@ def _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_d
     times_2 = np.concatenate([time_arr[:split_index_1].copy(), time_arr[split_index_2:].copy()],
                              dtype=time_arr.dtype)
     start_1, start_2 = int(times_1[0]), int(times_2[0])
-    gap_array_1 = create_gap_arr_fast(times_1, 1, freq_nano)
-    gap_array_2 = create_gap_arr_fast(times_2, 1, freq_nano)
+    gap_array_1 = create_gap_arr(times_1, 1, freq_nano)
+    gap_array_2 = create_gap_arr(times_2, 1, freq_nano)
     merged_values, merged_gap_array, merged_start_time = merge_gap_data(
         values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
     merged_timestamps = create_timestamps_from_gap_data(merged_values.size, merged_gap_array, start_time, freq_nano)
@@ -325,8 +325,8 @@ def _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_d
         values_1, times_1 = value_data[::2].copy(), time_arr[::2].copy()
         values_2, times_2 = value_data[1::2].copy(), time_arr[1::2].copy()
         start_1, start_2 = int(times_1[0]), int(times_2[0])
-        gap_array_1 = create_gap_arr_fast(times_1, 1, freq_nano)
-        gap_array_2 = create_gap_arr_fast(times_2, 1, freq_nano)
+        gap_array_1 = create_gap_arr(times_1, 1, freq_nano)
+        gap_array_2 = create_gap_arr(times_2, 1, freq_nano)
         merged_values, merged_gap_array, merged_start_time = merge_gap_data(
             values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
         merged_timestamps = create_timestamps_from_gap_data(merged_values.size, merged_gap_array, start_time, freq_nano)

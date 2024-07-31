@@ -16,13 +16,13 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import time
-from typing import List, Dict, Tuple
 from contextlib import contextmanager
+import threading
 
 import mariadb
-import uuid
-
 from mariadb import ProgrammingError
+
+from typing import List, Dict, Tuple
 
 from atriumdb.adb_functions import allowed_interval_index_modes
 from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from_triplet_query, \
@@ -52,9 +52,56 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_PORT = 3306
 
 
+class SingleConnectionManager:
+    def __init__(self, validation_interval=500, **conn_args):
+        self._connection = None
+        self._conn_args = conn_args
+        self._lock = threading.RLock()
+        self.__last_used = 0
+        self._validation_interval = validation_interval
+        self._borrowed = False
+
+    def _create_connection(self):
+        try:
+            self._connection = mariadb.connect(**self._conn_args)
+        except mariadb.Error as e:
+            raise e
+
+    def get_connection(self):
+        with self._lock:
+            # If the connection is already borrowed, return None
+            if self._borrowed:
+                return None
+
+            # Check and create a new connection if needed
+            if self._connection is None:
+                self._create_connection()
+            else:
+                dt = (time.perf_counter_ns() - self.__last_used) / 1_000_000
+                if dt > self._validation_interval:
+                    try:
+                        self._connection.ping()
+                    except mariadb.Error:
+                        self._create_connection()
+            self.__last_used = time.perf_counter_ns()
+            self._borrowed = True  # Mark the connection as borrowed
+            return self._connection
+
+    def release_connection(self):
+        with self._lock:
+            self._borrowed = False  # Mark the connection as available
+
+    def close_connection(self):
+        with self._lock:
+            if self._connection is not None:
+                self._connection.close()
+                self._connection = None
+                self._borrowed = False
+
+
 class MariaDBHandler(SQLHandler):
-    def __init__(self, host: str, user: str, password: str, database: str, port: int = None, pool_size: int = 1,
-                 no_pool=False, collation: str = 'utf8mb4_general_ci'):
+    def __init__(self, host: str, user: str, password: str, database: str, port: int = None, no_pool=False,
+                 collation: str = 'utf8mb4_general_ci', validation_interval=500):
         self.host = host
         self.user = user
         self.password = password
@@ -70,22 +117,12 @@ class MariaDBHandler(SQLHandler):
             'database': self.database,
             'collation': self.collation
         }
-        self.pool_size = pool_size
         self.no_pool = no_pool
-        self.pool = None
+        self.connection_manager = None if no_pool else SingleConnectionManager(
+            validation_interval=validation_interval, **self.connection_params)
 
     def maria_connect(self):
         return mariadb.connect(**self.connection_params)
-
-    def create_pool(self):
-        pool_guid = str(uuid.uuid4())
-        self.pool = mariadb.ConnectionPool(pool_name=f"atriumdb_pool_{pool_guid}", pool_size=self.pool_size,
-                                           **self.connection_params)
-
-    def get_connection_from_pool(self):
-        if self.pool is None:
-            self.create_pool()
-        return self.pool.get_connection()
 
     def maria_connect_no_db(self, db_name=None):
         conn = mariadb.connect(
@@ -109,19 +146,20 @@ class MariaDBHandler(SQLHandler):
 
     @contextmanager
     def maria_db_connection(self, begin=False):
-        if not self.check_database_exists():
-            raise ValueError(f"Database {self.database} does not exist. "
-                             f"You can create one using AtriumSDK.create_dataset.")
+        conn = self.maria_connect() if self.no_pool else self.connection_manager.get_connection()
+        attempts = 0
+        while conn is None:
+            if attempts > 5:
+                raise ConnectionError("Connection not available")
+            time.sleep(1)
+            attempts += 1
+            conn = self.maria_connect() if self.no_pool else self.connection_manager.get_connection()
 
-        if self.no_pool:
-            conn = self.maria_connect()
-        else:
-            conn = self.get_connection_from_pool()
         cursor = conn.cursor()
 
         try:
             if begin:
-                cursor.execute("START TRANSACTION")
+                conn.begin()
             yield conn, cursor
             conn.commit()
         except mariadb.Error as e:
@@ -129,9 +167,13 @@ class MariaDBHandler(SQLHandler):
             raise e
         finally:
             cursor.close()
-            conn.close()
+            if self.no_pool:
+                conn.close()
+            else:
+                self.connection_manager.release_connection()
 
     def connection(self, begin=False):
+        # Overrides the inherited class method.
         return self.maria_db_connection(begin=begin)
 
     def create_schema(self):
@@ -310,6 +352,40 @@ class MariaDBHandler(SQLHandler):
 
             # delete old file data (will delete later)
             # cursor.executemany(maria_delete_file_query, [(file_id,) for file_id in file_ids_to_delete])
+
+    def insert_merged_block_data(self, file_path: str, block_data: List[Dict], old_block_id: int, interval_data: List[Dict],
+                                 interval_index_mode, gap_tolerance: int = 0):
+        # default to merge mode
+        interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
+
+        with self.maria_db_connection(begin=True) as (conn, cursor):
+            # insert file_path into file_index and get id
+            cursor.execute(maria_insert_file_index_query, (file_path,))
+            file_id = cursor.lastrowid
+
+            # insert into block_index
+            block_tuples = [(block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
+                             block["start_time_n"], block["end_time_n"], block["num_values"])
+                            for block in block_data]
+            cursor.executemany(maria_insert_block_query, block_tuples)
+
+            # insert into interval_index
+            if interval_index_mode == "fast":
+                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                    interval["end_time_n"]) for interval in interval_data]
+                cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+
+            elif interval_index_mode == "merge":
+                [cursor.callproc("insert_interval", (interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                    interval["end_time_n"], gap_tolerance)) for interval in interval_data]
+            elif interval_index_mode == "disable":
+                # Do Nothing
+                pass
+            else:
+                raise ValueError(f"interval_index_mode must be one of {allowed_interval_index_modes}")
+
+            # delete the old block data
+            cursor.execute("DELETE FROM block_index WHERE id = ?", (old_block_id,))
 
     def select_file(self, file_id: int = None, file_path: str = None):
         with self.maria_db_connection() as (conn, cursor):
@@ -574,33 +650,6 @@ class MariaDBHandler(SQLHandler):
             cursor.execute(maria_select_sources_by_id_list, source_id_list)
             rows = cursor.fetchall()
         return rows
-
-    def select_device_patients(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
-                               start_time: int = None, end_time: int = None):
-        arg_tuple = ()
-        maria_select_device_patient_query = \
-            "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
-        where_clauses = []
-        if device_id_list is not None and len(device_id_list) > 0:
-            where_clauses.append("device_id IN ({})".format(
-                ','.join(['?'] * len(device_id_list))))
-            arg_tuple += tuple(device_id_list)
-        if patient_id_list is not None and len(patient_id_list) > 0:
-            where_clauses.append("patient_id IN ({})".format(
-                ','.join(['?'] * len(patient_id_list))))
-            arg_tuple += tuple(patient_id_list)
-        if start_time is not None:
-            where_clauses.append("end_time > ?")
-            arg_tuple += (start_time,)
-        if end_time is not None:
-            where_clauses.append("start_time < ?")
-            arg_tuple += (end_time,)
-        maria_select_device_patient_query += join_sql_and_bools(where_clauses)
-        maria_select_device_patient_query += " ORDER BY id ASC"
-
-        with self.maria_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(maria_select_device_patient_query, arg_tuple)
-            return cursor.fetchall()
 
     def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
         maria_insert_device_patient_query = \
