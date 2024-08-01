@@ -16,9 +16,21 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import datetime
 import zoneinfo
+import pkg_resources
 
+checked_tzdata = False
 
 def nanoseconds_to_date_string_with_tz(nanoseconds, timezone_str=None):
+    global checked_tzdata
+    if not checked_tzdata:
+        # Require tzdata
+        try:
+            pkg_resources.get_distribution('tzdata')
+            checked_tzdata = True
+        except pkg_resources.DistributionNotFound:
+            raise ImportError("tzdata is not installed, please install using 'pip install tzdata'")
+
+
     timezone_str = 'Etc/GMT' if timezone_str is None else timezone_str
 
     seconds = nanoseconds / 1e9
