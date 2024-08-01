@@ -47,6 +47,7 @@ async def search_labels(body: schemas.LabelsQuery, atriumdb_sdk: AtriumSDK = Dep
             end_time=body.end_time,
             time_units=body.time_units,
             include_descendants=body.include_descendants,
+            measure_list=body.measure_list,
             limit=body.limit, offset=body.offset
         )
     except ValueError as e:

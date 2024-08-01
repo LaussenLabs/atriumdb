@@ -151,8 +151,7 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
                 device_list = None
                 patient_id_list = [source_key]
             else:
-                raise ValueError(
-                    f"source type must be device_patient_tuples, device_ids, patient_ids, not {source_type}")
+                raise ValueError(f"source type must be device_patient_tuples, device_ids, patient_ids, not {source_type}")
 
             # Loop through each time range for this source
             for start_time, end_time in time_ranges:

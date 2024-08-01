@@ -189,12 +189,20 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                     label_name_id_list=list(label_set_id_map.keys()), device_list=[src_device_id],
                     start_time=start_time_nano, end_time=end_time_nano)
 
+                if len(labels) == 0:
+                    continue
+
                 if time_shift is not None:
                     for label_dict in labels:
                         label_dict['start_time_n'] += time_shift
                         label_dict['end_time_n'] += time_shift
 
-                insert_labels(dest_sdk, labels, device_id_map)
+                # make the list of label tuples to insert to the other dataset
+                dest_labels = [(label['label_name'], device_id_map[label['device_id']],
+                                measure_id_map[label['measure_id']], label['start_time_n'], label['end_time_n'],
+                                label['label_source_id']) for label in labels]
+
+                dest_sdk.insert_labels(dest_labels, source_type="device_id")
 
     # Create new definition file
     export_definition = create_dataset_definition_from_verified_data(
@@ -204,21 +212,6 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     definition_path = Path(dest_sdk.dataset_location) / "meta" / "definition.yaml"
     definition_path.parent.mkdir(parents=True, exist_ok=True)
     export_definition.save(definition_path, force=True)
-
-
-def insert_labels(dest_sdk, labels, device_id_map):
-    if len(labels) == 0:
-        return
-
-    dest_labels = []
-    for label in labels:
-        label_dest_device_id = device_id_map[label['device_id']]
-        label_name = label['label_name']
-        label_start_time_n = label['start_time_n']
-        label_end_time_n = label['end_time_n']
-
-        dest_labels.append([label_name, label_dest_device_id, label_start_time_n, label_end_time_n])
-    dest_sdk.insert_labels(dest_labels, source_type="device_id")
 
 
 def extract_device_ids(source_id, source_type, device_id_map):

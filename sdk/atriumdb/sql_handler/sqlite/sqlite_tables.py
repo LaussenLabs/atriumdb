@@ -322,12 +322,14 @@ CREATE TABLE IF NOT EXISTS label (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     label_set_id INTEGER NOT NULL,
     device_id INTEGER NOT NULL,
+    measure_id INTEGER,
     label_source_id INTEGER,
     start_time_n INTEGER NOT NULL,
     end_time_n INTEGER NOT NULL,
     FOREIGN KEY (label_set_id) REFERENCES label_set (id),
     FOREIGN KEY (device_id) REFERENCES device (id),
-    FOREIGN KEY (label_source_id) REFERENCES label_source (id)
+    FOREIGN KEY (label_source_id) REFERENCES label_source (id),
+    FOREIGN KEY (measure_id) REFERENCES measure (id)
 );
 """
 
