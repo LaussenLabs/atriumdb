@@ -3834,7 +3834,7 @@ class AtriumSDK:
                                                                           time_type=1)
             old_times, old_values = sort_data(old_times, old_values, old_headers, start_time_n, end_time_n,
                                               allow_duplicates=False,
-                                              corrupt_headers=old_headers)
+                                              corrupt_headers=is_corrupt_header_times(old_headers, file_block_list))
             # Convert old times to int64
             old_times = old_times.astype(np.int64)
 
