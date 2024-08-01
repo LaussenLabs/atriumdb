@@ -41,6 +41,8 @@ def _test_labels(db_type, dataset_location, connection_params):
     new_device_id = sdk.insert_device(device_tag=device_tag, device_name=device_name)
     assert new_device_id == device_id, "Device ID mismatch for the same device tag"
 
+    measure_id = sdk.insert_measure(measure_tag="ECG", freq=1, units="mV", freq_units="Hz")
+
     label_name = "Running"
     label_id = sdk.get_label_name_id(name=label_name)
     assert label_id is None, "There's a label where there shouldn't be"
@@ -66,7 +68,7 @@ def _test_labels(db_type, dataset_location, connection_params):
     label_2_start_time = 2000
     label_2_end_time = 3000
     labels_to_insert = [
-        (label_2_name, device_tag, label_2_start_time, label_2_end_time, None)
+        (label_2_name, device_tag, None, None, label_2_start_time, label_2_end_time)
     ]
     sdk.insert_labels(labels=labels_to_insert, time_units="ms", source_type="device_tag")
 
@@ -98,6 +100,36 @@ def _test_labels(db_type, dataset_location, connection_params):
     # Test retrieval of labels using non-existent device tag
     with pytest.raises(ValueError):
         sdk.get_labels(name_list=[label_name], device_list=["NonExistentDevice"])
+
+    # test inserting label with measure_id
+    labels_to_insert = [
+        ("label2", device_tag, measure_id, None, label_2_start_time, label_2_end_time)
+    ]
+    sdk.insert_labels(labels=labels_to_insert, time_units="ms", source_type="device_tag")
+
+    # test inserting label with measure_tag
+    labels_to_insert = [
+        ("label3", device_tag, ("ECG", 1, "mV"), None, label_2_start_time, label_2_end_time)
+    ]
+    sdk.insert_labels(labels=labels_to_insert, time_units="ms", source_type="device_tag")
+
+    # test pulling by measure_id
+    measure_id_labels = sdk.get_labels(measure_list=[1])
+
+    assert measure_id_labels[0]['measure_id'] == 1 and measure_id_labels[0]['requested_name'] == 'label2'
+    assert measure_id_labels[1]['measure_id'] == 1 and measure_id_labels[1]['requested_name'] == 'label3'
+
+    # test pulling by measure_tag
+    measure_tag_labels = sdk.get_labels(measure_list=[("ECG", 1, "mV")])
+
+    assert measure_tag_labels[0]['measure_id'] == 1 and measure_tag_labels[0]['requested_name'] == 'label2'
+    assert measure_tag_labels[1]['measure_id'] == 1 and measure_tag_labels[1]['requested_name'] == 'label3'
+
+    # test inserting a single label
+    sdk.insert_label(name="label4", device=device_tag,  label_source=None, start_time=10, end_time=20, measure=("ECG", 1, "mV"))
+
+    measure_id_single_insert_labels = sdk.get_labels(measure_list=[1], start_time=10, end_time=20)
+    assert measure_id_single_insert_labels[0]['measure_id'] == 1 and measure_id_single_insert_labels[0]['requested_name'] == 'label4'
 
     # Testing get_label_time_series
     expected_series_1 = np.array([1, 1, 1])
@@ -131,3 +163,4 @@ def _test_labels(db_type, dataset_location, connection_params):
 
     with pytest.raises(ValueError):
         sdk.get_label_time_series(label_name=label_name, device_tag=device_tag, time_units="ms")
+

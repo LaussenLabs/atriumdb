@@ -69,13 +69,13 @@ def condense_byte_read_list(block_list):
     result = []
 
     for row in block_list:
-        if len(result) == 0 or result[-1][1] != row[3] or result[-1][2] + result[-1][3] != row[4]:
+        if len(result) == 0 or result[-1][2] != row[3] or result[-1][3] + result[-1][4] != row[4]:
             # append measure_id, device_id, file_id, start_byte and num_bytes
             result.append([row[1], row[2], row[3], row[4], row[5]])
         else:
             # if the blocks are continuous merge the reads together by adding the size of the next block to the
             # num_bytes field
-            result[-1][3] += row[5]
+            result[-1][4] += row[5]
 
     return result
 

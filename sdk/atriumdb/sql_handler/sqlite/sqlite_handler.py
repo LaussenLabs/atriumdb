@@ -271,7 +271,7 @@ class SQLiteHandler(SQLHandler):
             # delete old file data
             # cursor.executemany(sqlite_delete_file_query, [(file_id,) for file_id in file_ids_to_delete])
 
-    def insert_merged_block_data(self, file_path: str, block_data: List[Dict], old_block_id: int, interval_data: List[Dict],
+    def insert_merged_block_data(self, file_path: str, block_data: List[Dict], old_block: tuple, interval_data: List[Dict],
                                  interval_index_mode, gap_tolerance: int = 0):
         # default to fast
         interval_index_mode = "fast" if interval_index_mode is None else interval_index_mode
@@ -294,7 +294,23 @@ class SQLiteHandler(SQLHandler):
                 cursor.executemany(sqlite_insert_interval_index_query, interval_tuples)
 
             # delete the old block data
-            cursor.execute("DELETE FROM block_index WHERE id = ?", (old_block_id,))
+            cursor.execute("DELETE FROM block_index WHERE id = ?", (old_block[0],))
+
+            # check if the old tsc file only contains the old block
+            cursor.execute("SELECT 1 FROM block_index WHERE file_id = ? LIMIT 1", (old_block[3],))
+            block_exists = cursor.fetchone()
+
+            # if there are no blocks with that file_id then delete the file from the file index
+            if block_exists is None:
+                # get the tsc file name
+                cursor.execute("SELECT path FROM file_index WHERE id = ?", (old_block[3],))
+                file_name = cursor.fetchone()
+
+                # delete it from the file_index
+                cursor.execute("DELETE FROM file_index WHERE id = ?", (old_block[3],))
+                return file_name[0]
+
+            return None
 
     def select_file(self, file_id: int = None, file_path: str = None):
         with self.sqlite_db_connection(begin=False) as (conn, cursor):
@@ -562,33 +578,6 @@ class SQLiteHandler(SQLHandler):
             rows = cursor.fetchall()
         return rows
 
-    def select_device_patients(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
-                               start_time: int = None, end_time: int = None):
-        arg_tuple = ()
-        sqlite_select_device_patient_query = \
-            "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
-        where_clauses = []
-        if device_id_list is not None and len(device_id_list) > 0:
-            where_clauses.append("device_id IN ({})".format(
-                ','.join(['?'] * len(device_id_list))))
-            arg_tuple += tuple(device_id_list)
-        if patient_id_list is not None and len(patient_id_list) > 0:
-            where_clauses.append("patient_id IN ({})".format(
-                ','.join(['?'] * len(patient_id_list))))
-            arg_tuple += tuple(patient_id_list)
-        if start_time is not None:
-            where_clauses.append("end_time > ?")
-            arg_tuple += (start_time,)
-        if end_time is not None:
-            where_clauses.append("start_time < ?")
-            arg_tuple += (end_time,)
-        sqlite_select_device_patient_query += join_sql_and_bools(where_clauses)
-        sqlite_select_device_patient_query += " ORDER BY id ASC"
-
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(sqlite_select_device_patient_query, arg_tuple)
-            return cursor.fetchall()
-
     def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
         sqlite_insert_device_patient_query = \
             "INSERT INTO device_patient (device_id, patient_id, start_time, end_time) VALUES (?, ?, ?, ?)"
@@ -618,118 +607,3 @@ class SQLiteHandler(SQLHandler):
                 # An error occurred for a different reason, re-raise the exception
                 raise
 
-    def insert_label(self, label_set_id, device_id, start_time_n, end_time_n, label_source_id=None):
-        query = "INSERT INTO label (label_set_id, device_id, start_time_n, end_time_n, label_source_id) VALUES (?, ?, ?, ?, ?)"
-        with self.sqlite_db_connection(begin=True) as (conn, cursor):
-            cursor.execute(query, (label_set_id, device_id, start_time_n, end_time_n, label_source_id))
-            conn.commit()
-            return cursor.lastrowid
-
-    def insert_labels(self, labels):
-        query = "INSERT INTO label (label_set_id, device_id, label_source_id, start_time_n, end_time_n) VALUES (?, ?, ?, ?, ?)"
-        with self.sqlite_db_connection(begin=True) as (conn, cursor):
-            cursor.executemany(query, labels)
-            conn.commit()
-
-    def delete_labels(self, label_ids):
-        # Delete multiple label records from the database based on their IDs.
-        query = "DELETE FROM label WHERE id = ?"
-        with self.sqlite_db_connection() as (conn, cursor):
-            # Prepare a list of tuples for the executemany method.
-            id_tuples = [(label_id,) for label_id in label_ids]
-            cursor.executemany(query, id_tuples)
-            conn.commit()
-
-    def select_labels(self, label_set_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
-                      end_time_n=None, label_source_id_list=None, limit=None, offset=None):
-        # Query By Patient.
-        if patient_id_list is not None:
-            results = []
-
-            for patient_id in patient_id_list:
-                device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
-
-                for device_id, device_start_time, device_end_time in device_time_ranges:
-                    # Ensure start and end times are within the provided bounds, if they exist.
-                    final_start_time = max(start_time_n, device_start_time) if start_time_n else device_start_time
-                    final_end_time = min(end_time_n, device_end_time) if end_time_n else device_end_time
-
-                    # Recursively call select_labels for each device_id.
-                    results.extend(self.select_labels(label_set_id_list=label_set_id_list, device_id_list=[device_id],
-                                                      start_time_n=final_start_time, end_time_n=final_end_time,
-                                                      label_source_id_list=label_source_id_list))
-
-            # Sort the results by start_time_n primarily and then by end_time_n secondarily
-            results.sort(key=lambda x: (x[3], x[4]))
-            return results
-
-        query = "SELECT id, label_set_id, device_id, start_time_n, end_time_n, label_source_id FROM label WHERE 1=1"
-        params = []
-
-        if label_set_id_list:
-            placeholders = ', '.join(['?'] * len(label_set_id_list))
-            query += f" AND label_set_id IN ({placeholders})"
-            params.extend(label_set_id_list)
-
-        if device_id_list:
-            placeholders = ', '.join(['?'] * len(device_id_list))
-            query += f" AND device_id IN ({placeholders})"
-            params.extend(device_id_list)
-
-        # Add conditions for label source IDs, if provided.
-        if label_source_id_list:
-            placeholders = ', '.join(['?'] * len(label_source_id_list))
-            query += f" AND label_source_id IN ({placeholders})"
-            params.extend(label_source_id_list)
-
-        if end_time_n:
-            query += " AND start_time_n <= ?"
-            params.append(end_time_n)
-        if start_time_n:
-            query += " AND end_time_n >= ?"
-            params.append(start_time_n)
-
-        # Sort by start_time_n
-        # Used in iterator logic, alter with caution.
-        query += " ORDER BY start_time_n ASC, end_time_n ASC"
-
-        # if limit and offset are specified ent add them to query
-        if limit is not None and offset is not None:
-            query += f" LIMIT {limit} OFFSET {offset}"
-        # if only limit is supplied then only add it to the query
-        elif limit is not None and offset is None:
-            query += f" LIMIT {limit}"
-
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(query, params)
-            return cursor.fetchall()
-
-    def insert_label_source(self, name, description=None):
-        # First, check if the label_source with the given name already exists
-        select_query = "SELECT id FROM label_source WHERE name = ?"
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(select_query, (name,))
-            result = cursor.fetchone()
-            if result:
-                # A label_source with the given name already exists, return its id
-                return result[0]
-
-        query = "INSERT INTO label_source (name, description) VALUES (?, ?)"
-        with self.sqlite_db_connection(begin=True) as (conn, cursor):
-            cursor.execute(query, (name, description))
-            conn.commit()
-            return cursor.lastrowid
-
-    def select_label_source_id_by_name(self, name):
-        query = "SELECT id FROM label_source WHERE name = ? LIMIT 1"
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(query, (name,))
-            result = cursor.fetchone()
-            return result[0] if result else None
-
-    def select_label_source_info_by_id(self, label_source_id):
-        query = "SELECT id, name, description FROM label_source WHERE id = ? LIMIT 1"
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(query, (label_source_id,))
-            result = cursor.fetchone()
-            return {'id': result[0], 'name': result[1], 'description': result[2]} if result else None

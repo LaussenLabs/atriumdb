@@ -15,18 +15,33 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import datetime
+import zoneinfo
+import pkg_resources
+
+checked_tzdata = False
+
+def nanoseconds_to_date_string_with_tz(nanoseconds, timezone_str=None):
+    global checked_tzdata
+    if not checked_tzdata:
+        # Require tzdata
+        try:
+            pkg_resources.get_distribution('tzdata')
+            checked_tzdata = True
+        except pkg_resources.DistributionNotFound:
+            raise ImportError("tzdata is not installed, please install using 'pip install tzdata'")
 
 
-def nanoseconds_to_date_string_with_tz(nanoseconds):
-    # Convert nanoseconds to seconds
+    timezone_str = 'Etc/GMT' if timezone_str is None else timezone_str
+
     seconds = nanoseconds / 1e9
-    # Create a timezone-aware datetime object from the epoch
+
+    # Create a timezone-aware datetime object from the epoch in UTC
     dt_utc = datetime.datetime.fromtimestamp(seconds, tz=datetime.timezone.utc)
     # Get the local system's timezone
-    local_tz = datetime.datetime.now(datetime.timezone.utc).astimezone().tzinfo
+    local_tz = zoneinfo.ZoneInfo(timezone_str)
     # Convert the datetime to the local timezone
     dt_local = dt_utc.astimezone(local_tz)
-    # Format the datetime as a string with timezone information and microseconds
+    # Format the datetime as a string in the specified format
     date_string_with_tz = dt_local.strftime('%Y-%m-%dT%H:%M:%S.%f%z')
 
     return date_string_with_tz
