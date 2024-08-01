@@ -351,7 +351,7 @@ class MariaDBHandler(SQLHandler):
             # delete old file data (will delete later)
             # cursor.executemany(maria_delete_file_query, [(file_id,) for file_id in file_ids_to_delete])
 
-    def insert_merged_block_data(self, file_path: str, block_data: List[Dict], old_block_id: int, interval_data: List[Dict],
+    def insert_merged_block_data(self, file_path: str, block_data: List[Dict], old_block: tuple, interval_data: List[Dict],
                                  interval_index_mode, gap_tolerance: int = 0):
         # default to merge mode
         interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
@@ -383,7 +383,23 @@ class MariaDBHandler(SQLHandler):
                 raise ValueError(f"interval_index_mode must be one of {allowed_interval_index_modes}")
 
             # delete the old block data
-            cursor.execute("DELETE FROM block_index WHERE id = ?", (old_block_id,))
+            cursor.execute("DELETE FROM block_index WHERE id = ?", (old_block[0],))
+
+            # check if the old tsc file only contains the old block
+            cursor.execute("SELECT 1 FROM block_index WHERE file_id = ? LIMIT 1", (old_block[3],))
+            block_exists = cursor.fetchone()
+
+            # if there are no blocks with that file_id then delete the file from the file index
+            if block_exists is None:
+                # get the tsc file name
+                cursor.execute("SELECT path FROM file_index WHERE id = ?", (old_block[3],))
+                file_name = cursor.fetchone()
+
+                # delete it from the file_index
+                cursor.execute("DELETE FROM file_index WHERE id = ?", (old_block[3],))
+                return file_name[0]
+
+            return None
 
     def select_file(self, file_id: int = None, file_path: str = None):
         with self.maria_db_connection() as (conn, cursor):
