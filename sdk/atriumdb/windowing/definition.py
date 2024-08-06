@@ -19,6 +19,7 @@ import yaml
 import os
 import warnings
 import json
+import numpy as np
 
 from atriumdb.windowing.definition_builder import build_source_intervals
 
@@ -194,6 +195,9 @@ class DatasetDefinition:
             raise ValueError("An error occurred while reading the YAML file.") from err
 
     def _validate_and_convert_data(self):
+        # Convert any numpy types to native Python
+        self.data_dict = convert_numpy_types(self.data_dict)
+
         # Validate measures
         seen = set()
         for measure in self.data_dict['measures']:
@@ -426,5 +430,17 @@ class DatasetDefinition:
             raise ValueError("File extension must be yaml/yml.")
 
         # Save the dataset definition to a YAML file
+        converted_data = convert_numpy_types(self.data_dict)
         with open(filepath, 'w') as file:
-            yaml.dump(self.data_dict, file, sort_keys=False)
+            yaml.dump(converted_data, file, sort_keys=False)
+
+
+def convert_numpy_types(data):
+    if isinstance(data, dict):
+        return {convert_numpy_types(key): convert_numpy_types(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [convert_numpy_types(element) for element in data]
+    elif isinstance(data, np.generic):
+        return data.item()
+    else:
+        return data
