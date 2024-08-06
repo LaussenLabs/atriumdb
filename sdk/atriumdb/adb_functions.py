@@ -16,6 +16,7 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import math
 import warnings
+import os
 
 import numpy as np
 import time
@@ -67,13 +68,13 @@ def condense_byte_read_list(block_list):
     result = []
 
     for row in block_list:
-        if len(result) == 0 or result[-1][1] != row[3] or result[-1][2] + result[-1][3] != row[4]:
+        if len(result) == 0 or result[-1][2] != row[3] or result[-1][3] + result[-1][4] != row[4]:
             # append measure_id, device_id, file_id, start_byte and num_bytes
             result.append([row[1], row[2], row[3], row[4], row[5]])
         else:
             # if the blocks are continuous merge the reads together by adding the size of the next block to the
             # num_bytes field
-            result[-1][3] += row[5]
+            result[-1][4] += row[5]
 
     return result
 
@@ -1131,3 +1132,44 @@ def get_headers(sdk, measure_id: int = None, start_time: int = None, end_time: i
     headers = sdk.block.decode_headers(encoded_bytes, byte_start_array)
 
     return headers
+
+
+def delete_unreferenced_tsc_files(sdk):
+    """
+    The method is for removing unreferenced tsc files. When you write a lot of data with merge=True
+    eventually a lot of unused tsc files will build up since the function is copy on write. This
+    Will use up a lot of space unnecessarily and this function will help you free up that space.
+
+    :param AtriumSDK sdk: The AtriumSDK object.
+    """
+    # find tsc files in the file_index that have no references to them in the block_index
+    files = sdk.sql_handler.find_unreferenced_tsc_files()
+
+    # if there are no tsc files to remove just return
+    if len(files) == 0:
+        return
+
+    # extract file names from files and make it a set so we can do a set intersection later
+    file_names = {file[1] for file in files}
+    # extract the ids and put them in a tuple so we can remove them from the sql table later
+    file_ids = [(file[0],) for file in files]
+
+    # clean up memory
+    del files
+
+    # walk the tsc directory looking for files to delete (os.walk is a generator for memory efficiency)
+    for root, _, files in os.walk(sdk.file_api.top_level_dir):
+        # check if there is a match between any of the tsc file names to be deleted and files in the current directory
+        matches = set(files) & file_names
+
+        # if you find a match remove the file from disk
+        for m in matches:
+            print(f"Deleting tsc file {m} from disk")
+            os.remove(os.path.join(root, m))
+
+    # free up memory
+    del file_names
+
+    # remove them from the file_index
+    sdk.sql_handler.delete_tsc_files(file_ids)
+    print("Completed removal of unreferenced tsc files")

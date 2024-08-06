@@ -341,12 +341,14 @@ CREATE TABLE IF NOT EXISTS label (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     label_set_id INT UNSIGNED NOT NULL,
     device_id INT UNSIGNED NOT NULL,
+    measure_id INT UNSIGNED,
     label_source_id INT UNSIGNED,
     start_time_n BIGINT NOT NULL,
     end_time_n BIGINT NOT NULL,
     CONSTRAINT FOREIGN KEY (label_set_id) REFERENCES label_set(id),
     CONSTRAINT FOREIGN KEY (device_id) REFERENCES device(id),
     CONSTRAINT FOREIGN KEY (label_source_id) REFERENCES label_source(id),
+    CONSTRAINT FOREIGN KEY (measure_id) REFERENCES measure(id),
     INDEX (label_set_id, device_id, start_time_n, end_time_n),
     INDEX (label_set_id, device_id, label_source_id, start_time_n, end_time_n)
 );

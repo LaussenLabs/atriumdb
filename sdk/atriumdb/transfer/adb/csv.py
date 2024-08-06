@@ -23,7 +23,7 @@ from atriumdb.transfer.adb.datestring_conversion import nanoseconds_to_date_stri
 time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 
 
-def _write_csv(file_path, times: np.ndarray, values: np.ndarray, measure_tag, export_time_format='ns'):
+def _write_csv(file_path, times: np.ndarray, values: np.ndarray, measure_tag, export_time_format='ns', timezone_str=None):
     # Determine the header based on the export_time_format
     if export_time_format == 'date':
         header_time = "Timestamp (Date)"
@@ -43,5 +43,5 @@ def _write_csv(file_path, times: np.ndarray, values: np.ndarray, measure_tag, ex
         elif export_time_format == 'date':
             # For dates, convert each time individually
             for time, value in zip(times, values):
-                date_string = nanoseconds_to_date_string_with_tz(time)
+                date_string = nanoseconds_to_date_string_with_tz(time, timezone_str=timezone_str)
                 writer.writerow([date_string, value])
