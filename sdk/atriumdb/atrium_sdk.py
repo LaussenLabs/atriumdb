@@ -784,6 +784,8 @@ class AtriumSDK:
         # Force Python Integers
         freq_nhz = int(freq_nhz)
         time_0 = int(time_0)
+        measure_id = int(measure_id)
+        device_id = int(device_id)
 
         # Calculate new intervals
         write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
@@ -2701,8 +2703,8 @@ class AtriumSDK:
         # Convert device tag to device ID if necessary
         if isinstance(device, str):
             converted_device_id = self.get_device_id(device)
-        elif isinstance(device, int):
-            converted_device_id = device
+        elif isinstance(device, int) or isinstance(device, np.generic):
+            converted_device_id = int(device)
 
         if converted_device_id is None or (isinstance(device, int) and self.get_device_info(device) is None):
             raise ValueError(f"device not found for device {device} patient_id {patient_id} mrn {mrn}")
@@ -2807,7 +2809,7 @@ class AtriumSDK:
                 if device is None:
                     raise ValueError(f"mrn {source_id} not found in database")
             elif source_type == "device_id":
-                device = source_id
+                device = int(source_id)
                 if self.get_device_info(source_id) is None:
                     raise ValueError(f"device id {source_id} not found in database")
             else:

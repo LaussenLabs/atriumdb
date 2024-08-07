@@ -23,7 +23,7 @@ import random
 from atriumdb.adb_functions import convert_gap_data_to_timestamps, create_timestamps_from_gap_data
 from tests.generate_wfdb import get_records
 from tests.test_transfer_info import insert_random_patients
-from tests.testing_framework import _test_for_both
+from tests.testing_framework import _test_for_both, create_sibling_sdk
 
 DB_NAME = 'atrium-mit-bih'
 
@@ -68,9 +68,14 @@ def _test_mit_bih(db_type, dataset_location, connection_params):
     write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
     assert_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
 
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
+
+    write_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_numpy=True)
+    assert_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_numpy=True)
+
 
 def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, deidentify=False, time_shift=None,
-                              use_patient_id=False, seed=None):
+                              use_patient_id=False, seed=None, use_numpy=False):
     print()
     seed = SEED if seed is None else seed
     if seed is not None:
@@ -82,10 +87,13 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
             return
         num_records += 1
         device_id = sdk.get_device_id(device_tag=record.record_name)
-        # freq_nano = record.fs * 1_000_000_000
+
         freq_nano = 500 * 1_000_000_000
-        # period_ns = int(10 ** 9 // record.fs)
         period_ns = int(10 ** 18 // freq_nano)
+        if use_numpy:
+            device_id = np.int64(device_id)
+            freq_nano = np.int64(freq_nano)
+            period_ns = np.int64(period_ns)
 
         time_arr = np.arange(record.sig_len, dtype=np.int64) * period_ns
         gap_data_2d = create_gaps(time_arr.size, period_ns)
@@ -108,9 +116,16 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
                 expected_values = record.p_signal.T[i].astype(np.float64)
                 expected_times = time_arr
 
+                start_time_n = int(time_arr[0])
+                end_time_n = int(time_arr[-1]) + period_ns
+
+                if use_numpy:
+                    start_time_n = np.int64(start_time_n)
+                    end_time_n = np.int64(end_time_n)
+
                 headers, read_times, read_values = sdk.get_data(
-                    start_time_n=int(time_arr[0]),
-                    end_time_n=int(time_arr[-1]) + period_ns,
+                    start_time_n=start_time_n,
+                    end_time_n=end_time_n,
                     measure_tag=record.sig_name[i],
                     freq=freq_nano,
                     units=record.units[i],
@@ -140,13 +155,20 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
             measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano,
                                             units=record.units)
 
-            headers, read_times, read_values = sdk.get_data(measure_id, int(time_arr[0]), int(time_arr[-1]) + period_ns,
+            start_time_n = int(time_arr[0])
+            end_time_n = int(time_arr[-1]) + period_ns
+
+            if use_numpy:
+                start_time_n = np.int64(start_time_n)
+                end_time_n = np.int64(end_time_n)
+
+            headers, read_times, read_values = sdk.get_data(measure_id, start_time_n, end_time_n,
                                                             **query_args)
 
             assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
 
 
-def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=None):
+def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=None, use_numpy=False):
     seed = SEED if seed is None else seed
     if seed is not None:
         np.random.seed(seed)
@@ -162,9 +184,14 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
         if max_records and num_records >= max_records:
             return
         num_records += 1
-        device_id = sdk.insert_device(device_tag=record.record_name)
-        freq_nano = 500 * 1_000_000_000
-        period_nano = int(10 ** 18 // freq_nano)
+        if use_numpy:
+            device_id = np.int64(sdk.insert_device(device_tag=record.record_name))
+            freq_nano = np.int64(500 * 1_000_000_000)
+            period_nano = np.int64(10 ** 18 // freq_nano)
+        else:
+            device_id = sdk.insert_device(device_tag=record.record_name)
+            freq_nano = 500 * 1_000_000_000
+            period_nano = int(10 ** 18 // freq_nano)
 
         time_arr = np.arange(record.sig_len, dtype=np.int64) * period_nano
 
@@ -173,11 +200,18 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
         for gap_index, gap_duration in gap_data_2d:
             time_arr[gap_index:] += gap_duration
 
-        patient_id = insert_random_patients(sdk, 1)[0]
-        device_patient_dict[device_id] = patient_id
+        if use_numpy:
+            patient_id = np.int64(insert_random_patients(sdk, 1)[0])
 
-        start_time = int(time_arr[0])
-        end_time = int(time_arr[-1] + period_nano)
+            start_time = np.int64(time_arr[0])
+            end_time = np.int64(time_arr[-1] + period_nano)
+        else:
+            patient_id = insert_random_patients(sdk, 1)[0]
+
+            start_time = int(time_arr[0])
+            end_time = int(time_arr[-1] + period_nano)
+
+        device_patient_dict[int(device_id)] = int(patient_id)
         sdk.insert_device_patient_data([(device_id, patient_id, start_time, end_time)])
 
         # Divide the waveform into random segments and assign random labels
@@ -186,6 +220,11 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
         for segment in range(num_segments):
             segment_start = start_time + segment * segment_duration
             segment_end = segment_start + segment_duration
+
+            if use_numpy:
+                segment_start = np.int64(start_time + segment * segment_duration)
+                segment_end = np.int64(segment_start + segment_duration)
+
             label = random.choice(label_set_list)
             sdk.insert_label(name=label, device=device_id, start_time=segment_start, end_time=segment_end,
                              time_units='ns')

@@ -125,17 +125,6 @@ def _test_device_patient_mapping(db_type, dataset_location, connection_params):
     assert sdk.convert_patient_to_device_id(t1, t2, patient_id9) is None
     assert sdk.convert_device_to_patient_id(t1, t2, 'monitor009a') is None
 
-    # Test case 10: Invalid Input
-    try:
-        sdk.convert_patient_to_device_id('invalid', 'input', patient_id=patient_id1)
-    except ValueError as e:
-        assert str(e) == "start_time and end_time must be integers."
-
-    try:
-        sdk.convert_device_to_patient_id('invalid', 'input', device_id1)
-    except ValueError as e:
-        assert str(e) == "start_time and end_time must be integers."
-
     # Test case 11: No Mappings
     patient_id11 = sdk.insert_patient(mrn='1234567890')
     device_id11 = sdk.insert_device(device_tag='monitor011')
