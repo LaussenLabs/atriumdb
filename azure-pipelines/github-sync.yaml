@@ -15,6 +15,7 @@ pool:
 variables:
 - group: atriumdb-release
 
+
 jobs:
   - job: initiate
     displayName: initiate
@@ -58,10 +59,12 @@ jobs:
         cd ..
       displayName: Build C libraries
 
-    - script: |
+    - bash: |
         VERSION=$(grep -Po '(?<=version = ")[^"]*' sdk/pyproject.toml)
-        NEW_VERSION_NAME="${VERSION}_$(Date:yyyyMMdd)_$(Build.SourceVersion)"
-        sed -i "s/name = \"$VERSION\"/name = \"$NEW_VERSION_NAME\"/g" pyproject.toml
+        DATE=$(Date:yyyyMMdd)
+        COMMIT=$(Build.SourceVersion)
+        NEW_VERSION_NAME="${VERSION}_${DATE}_${COMMIT}"
+        sed -i "s/name = \"$VERSION\"/name = \"$NEW_VERSION_NAME\"/g" sdk/pyproject.toml
       displayName: 'Change package version to reflect commit level'
 
     - bash: |
