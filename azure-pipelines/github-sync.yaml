@@ -33,8 +33,8 @@ jobs:
           git fetch repoGithub
           git push --prune repoGithub +refs/remotes/origin/*:refs/heads/* +refs/tags/*:refs/tags/*
   
-  - job: run_build_release
-    displayName: Run build release
+  - job: run_build_dev
+    displayName: Run build dev
     steps:
     - task: UsePythonVersion@0
       inputs:
@@ -59,7 +59,7 @@ jobs:
       displayName: Build C libraries
 
     - script: |
-        VERSION=$(grep -Po '(?<=version = ")[^"]*' pyproject.toml)
+        VERSION=$(grep -Po '(?<=version = ")[^"]*' sdk/pyproject.toml)
         NEW_VERSION_NAME="${VERSION}_$(Date:yyyyMMdd)_$(Build.SourceVersion)"
         sed -i "s/name = \"$VERSION\"/name = \"$NEW_VERSION_NAME\"/g" pyproject.toml
       displayName: 'Change package version to reflect commit level'
