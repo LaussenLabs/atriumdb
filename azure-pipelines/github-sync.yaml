@@ -66,7 +66,7 @@ jobs:
         DATE=$(date '+%Y%m%d')
         COMMIT=$(Build.SourceVersion)
         NEW_NAME="${VERSION}_${DATE}_${COMMIT}"
-        sed -i "s|name = \"${NAME}\"|name = \"${NEW_NAME}\"|g" sdk/pyproject.toml
+        sed -i "s|name = \"${NAME}\"|name = \"${NEW_NAME}\" sdk/pyproject.toml
       displayName: 'Change package name to reflect commit level'
 
     - bash: |
