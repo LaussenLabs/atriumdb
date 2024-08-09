@@ -48,42 +48,30 @@ jobs:
         pip install twine
       displayName: Setup build environment
 
-    # - bash: |
-    #     cd tsc-lib
-    #     cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_BUILD_TYPE='Release';
-    #     cmake --build cmake-build-release --target Block;
-    #     mkdir ../sdk/bin
-    #     cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll;
-    #     rm -rf cmake-build-release/**;
-    #     cmake -Bcmake-build-release -H. -DCMAKE_BUILD_TYPE='Release';
-    #     cmake --build cmake-build-release --target Block;
-    #     cp cmake-build-release/src/Block/libTSC.so ../sdk/bin/libTSC.so;
-    #     cd ..
-    #   displayName: Build C libraries
-
-    # - bash: |
-    #     NAME=$(grep -Po '(?<=name = ")[^"]*' sdk/pyproject.toml)
-    #     echo ${NAME}
-    #     DATE=$(date '+%Y%m%d')
-    #     echo ${DATE}
-    #     COMMIT=$(Build.SourceVersion)
-    #     echo ${COMMIT}
-    #     NEW_NAME="${VERSION}_${DATE}_${COMMIT}"
-    #     echo ${NEW_NAME}
-    #     sed -i "s|name = \"${NAME}\"|name = \"${NEW_NAME}\"|" sdk/pyproject.toml
-    #   displayName: 'Change package name to reflect commit level'
+    - bash: |
+        cd tsc-lib
+        cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_BUILD_TYPE='Release';
+        cmake --build cmake-build-release --target Block;
+        mkdir ../sdk/bin
+        cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll;
+        rm -rf cmake-build-release/**;
+        cmake -Bcmake-build-release -H. -DCMAKE_BUILD_TYPE='Release';
+        cmake --build cmake-build-release --target Block;
+        cp cmake-build-release/src/Block/libTSC.so ../sdk/bin/libTSC.so;
+        cd ..
+      displayName: Build C libraries
 
     - bash: |
         cd sdk
         python -m build
       displayName: Build SDK package
-      
+
     - bash: |
         VERSION=$(grep -Po '(?<=version = ")[^"]*' sdk/pyproject.toml)
         DATE=$(date '+%Y%m%d')
         COMMIT=$(Build.SourceVersion)
         NEW_NAME="${VERSION}_${DATE}_${COMMIT}"
-        mv sdk/dist/atriumdb-*.whl sdk/dist/atriumdb-${VERSION}_${DATE}_${COMMIT}.tar.gz
+        mv sdk/dist/atriumdb-*.whl sdk/dist/atriumdb-${VERSION}_${DATE}_${COMMIT}.whl
 
     - task: TwineAuthenticate@1
       inputs:
