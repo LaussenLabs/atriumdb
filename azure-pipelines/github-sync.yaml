@@ -63,7 +63,7 @@ jobs:
 
     - bash: |
         NAME=$(grep -Po '(?<=name = ")[^"]*' sdk/pyproject.toml)
-        DATE=$(build_date)
+        DATE=$(date '+%Y%m%d')
         COMMIT=$(Build.SourceVersion)
         NEW_NAME="${VERSION}_${DATE}_${COMMIT}"
         sed -i "s/name = \"$NAME\"/name = \"$NEW_NAME\"/g" sdk/pyproject.toml
