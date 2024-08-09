@@ -72,17 +72,18 @@ jobs:
     #     echo ${NEW_NAME}
     #     sed -i "s|name = \"${NAME}\"|name = \"${NEW_NAME}\"|" sdk/pyproject.toml
     #   displayName: 'Change package name to reflect commit level'
+
+    - bash: |
+        cd sdk
+        python -m build
+      displayName: Build SDK package
+      
     - bash: |
         VERSION=$(grep -Po '(?<=version = ")[^"]*' sdk/pyproject.toml)
         DATE=$(date '+%Y%m%d')
         COMMIT=$(Build.SourceVersion)
         NEW_NAME="${VERSION}_${DATE}_${COMMIT}"
         mv sdk/dist/atriumdb-*.whl sdk/dist/atriumdb-${VERSION}_${DATE}_${COMMIT}.tar.gz
-
-    - bash: |
-        cd sdk
-        python -m build
-      displayName: Build SDK package
 
     - task: TwineAuthenticate@1
       inputs:
