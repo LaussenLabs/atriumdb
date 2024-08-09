@@ -70,8 +70,7 @@ jobs:
         VERSION=$(grep -Po '(?<=version = ")[^"]*' sdk/pyproject.toml)
         DATE=$(date '+%Y%m%d')
         COMMIT=$(Build.SourceVersion)
-        NEW_NAME="${VERSION}_${DATE}_${COMMIT}"
-        mv sdk/dist/atriumdb-*.whl sdk/dist/atriumdb-${VERSION}_${DATE}_${COMMIT}.whl
+        mv sdk/dist/atriumdb-*.whl sdk/dist/atriumdb-${VERSION}.${DATE}.${COMMIT}-py3-none-any.whl
 
     - task: TwineAuthenticate@1
       inputs:
