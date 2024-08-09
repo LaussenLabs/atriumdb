@@ -14,6 +14,8 @@ pool:
 
 variables:
 - group: atriumdb-release
+- name: build_date
+  value: format('{0:yyyyMMdd}',pipeline.startTime)
 
 
 jobs:
@@ -61,7 +63,7 @@ jobs:
 
     - bash: |
         NAME=$(grep -Po '(?<=name = ")[^"]*' sdk/pyproject.toml)
-        DATE=format('{0:yyyyMMdd}',pipeline.startTime)
+        DATE=$(build_date)
         COMMIT=$(Build.SourceVersion)
         NEW_NAME="${VERSION}_${DATE}_${COMMIT}"
         sed -i "s/name = \"$NAME\"/name = \"$NEW_NAME\"/g" sdk/pyproject.toml
