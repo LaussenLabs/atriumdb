@@ -46,9 +46,9 @@ time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 
 
 def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDefinition, export_format='tsc',
-                  gap_tolerance=None, deidentify=True, patient_info_to_transfer=None, include_labels=True,
-                  measure_tag_match_rule=None, deidentification_functions=None, time_shift=None, time_units=None,
-                  export_time_format=None, parquet_engine=None, timezone_str=None, **kwargs):
+                  start_time=None, end_time=None, gap_tolerance=None, deidentify=True, patient_info_to_transfer=None,
+                  include_labels=True, measure_tag_match_rule=None, deidentification_functions=None, time_shift=None,
+                  time_units=None, export_time_format=None, parquet_engine=None, timezone_str=None, **kwargs):
     """
     Transfers data from a source AtriumSDK instance to a destination AtriumSDK instance based on a specified dataset definition.
     This includes transferring measures, devices, patient information, and labels with options for data de-identification,
@@ -58,7 +58,9 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     :param AtriumSDK dest_sdk: The destination SDK instance to which data will be transferred.
     :param DatasetDefinition definition: Specifies the structure and contents of the dataset to be transferred.
     :param str export_format: The format used for exporting data ('tsc' by default). Supported formats include 'tsc', 'csv', 'npz', 'parquet', and 'wfdb'.
-    :param Optional[int] gap_tolerance: A tolerance period for gaps in data, specified in `time_units` (defaults to 5 minutes if not specified).
+    :param start_time: A global start time for the transfer, units specified in `time_units`.
+    :param end_time: A global end time for the transfer, units specified in `time_units`.
+    :param Optional[int] gap_tolerance: A tolerance period for gaps in data, units specified in `time_units` (defaults to 5 minutes if not specified).
         Helps to optimize the waveform transfer by transferring large chunks at a time.
     :param bool deidentify: If True or a filename, scrambles patient_ids during the transfer. patient IDs are replaced with randomly generated IDs or according to provided de-identification csv
         with source ids as column 1 and destination ids as column 2. The the file doesn't exist, then a new one is created with randomly assigned ids.
@@ -114,6 +116,13 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
 
     # convert time values to nanoseconds
+    start_time_n, end_time_n = start_time, end_time
+    if start_time_n is not None:
+        start_time_n = int(start_time_n * time_unit_options[time_units])
+
+    if end_time_n is not None:
+        end_time_n = int(end_time_n * time_unit_options[time_units])
+
     if gap_tolerance is not None:
         gap_tolerance = int(gap_tolerance * time_unit_options[time_units])
 
@@ -126,7 +135,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     measure_tag_match_rule = "all" if measure_tag_match_rule is None else measure_tag_match_rule
 
     validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
-        definition, src_sdk, gap_tolerance=gap_tolerance, measure_tag_match_rule=measure_tag_match_rule)
+        definition, src_sdk, gap_tolerance=gap_tolerance, measure_tag_match_rule=measure_tag_match_rule,
+        start_time_n=start_time_n, end_time_n=end_time_n)
 
     src_measure_id_list = [measure_info["id"] for measure_info in validated_measure_list]
     src_device_id_list, src_patient_id_list = extract_src_device_and_patient_id_list(validated_sources)
@@ -136,7 +146,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     device_id_map = transfer_devices(src_sdk, dest_sdk, device_id_list=src_device_id_list)
     patient_id_map = transfer_patient_info(
         src_sdk, dest_sdk, patient_id_list=src_patient_id_list, deidentify=deidentify,
-        patient_info_to_transfer=patient_info_to_transfer, start_time_nano=None, end_time_nano=None,
+        patient_info_to_transfer=patient_info_to_transfer, start_time_nano=start_time_n, end_time_nano=end_time_n,
         deidentification_functions=deidentification_functions, time_shift_nano=time_shift)
 
     if include_labels:
