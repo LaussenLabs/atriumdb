@@ -48,7 +48,7 @@ time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDefinition, export_format='tsc',
                   gap_tolerance=None, deidentify=True, patient_info_to_transfer=None, include_labels=True,
                   measure_tag_match_rule=None, deidentification_functions=None, time_shift=None, time_units=None,
-                  export_time_format=None, parquet_engine=None, reencode_waveforms=True, **kwargs):
+                  export_time_format=None, parquet_engine=None, timezone_str=None, reencode_waveforms=True, **kwargs):
     """
     Transfers data from a source AtriumSDK instance to a destination AtriumSDK instance based on a specified dataset definition.
     This includes transferring measures, devices, patient information, and labels with options for data de-identification,
@@ -75,6 +75,9 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         'fastparquet' - uses fastparquet to write DataFrame directly.
         'pyarrow' - uses pyarrow to create a Table from data and write it to a Parquet file.
         If None, the default engine installed will be used. The specific engine affects how the Parquet files are handled and can be influenced by additional kwargs.
+    :param str timezone_str: The timezone to use for the conversion. Default is 'Etc/GMT'.
+        Valid values are any timezone strings recognized by the `zoneinfo` module. Examples include 'America/New_York',
+        'Asia/Tokyo', 'Europe/London', etc. For a complete list of valid timezones, refer to the IANA time zone database.
     :param Optional[bool] reencode_waveforms: Specifies whether to reencode data into newly encoded blocks.
         (Default True) Setting to False with reuse existing blocks where possible and significantly speed up transfer.
 
@@ -248,7 +251,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
                         file_path = ingest_data(dest_sdk, dest_measure_id, dest_device_id, headers, times, values,
                                                 export_format=export_format, export_time_format=export_time_format,
-                                                parquet_engine=parquet_engine, **kwargs)
+                                                parquet_engine=parquet_engine, timezone_str=timezone_str, **kwargs)
 
                         if file_path is not None:
                             file_path_dicts[(source_type, source_id, start_time_nano, end_time_nano)][
@@ -264,12 +267,20 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                     label_name_id_list=list(label_set_id_map.keys()), device_list=[src_device_id],
                     start_time=start_time_nano, end_time=end_time_nano)
 
+                if len(labels) == 0:
+                    continue
+
                 if time_shift is not None:
                     for label_dict in labels:
                         label_dict['start_time_n'] += time_shift
                         label_dict['end_time_n'] += time_shift
 
-                insert_labels(dest_sdk, labels, device_id_map)
+                # make the list of label tuples to insert to the other dataset
+                dest_labels = [(label['label_name'], device_id_map[label['device_id']],
+                                measure_id_map[label['measure_id']], label['start_time_n'], label['end_time_n'],
+                                label['label_source_id']) for label in labels]
+
+                dest_sdk.insert_labels(dest_labels, source_type="device_id")
 
     # Create new definition file
     export_definition = create_dataset_definition_from_verified_data(
@@ -279,21 +290,6 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     definition_path = Path(dest_sdk.dataset_location) / "meta" / "definition.yaml"
     definition_path.parent.mkdir(parents=True, exist_ok=True)
     export_definition.save(definition_path, force=True)
-
-
-def insert_labels(dest_sdk, labels, device_id_map):
-    if len(labels) == 0:
-        return
-
-    dest_labels = []
-    for label in labels:
-        label_dest_device_id = device_id_map[label['device_id']]
-        label_name = label['label_name']
-        label_start_time_n = label['start_time_n']
-        label_end_time_n = label['end_time_n']
-
-        dest_labels.append([label_name, label_dest_device_id, label_start_time_n, label_end_time_n])
-    dest_sdk.insert_labels(dest_labels, source_type="device_id")
 
 
 def extract_device_ids(source_id, source_type, device_id_map):
@@ -338,7 +334,7 @@ def extract_src_device_and_patient_id_list(validated_sources):
 
 
 def ingest_data(to_sdk, measure_id, device_id, headers, times, values, export_format='tsc', export_time_format=None,
-                parquet_engine=None, **kwargs):
+                parquet_engine=None, timezone_str=None, **kwargs):
     # Determine the file path based on the format
     measure_info = to_sdk.get_measure_info(measure_id)
     measure_tag = measure_info['tag']
@@ -351,15 +347,16 @@ def ingest_data(to_sdk, measure_id, device_id, headers, times, values, export_fo
     device_folder_name = str(device_tag)
 
     base_path = Path(to_sdk.dataset_location) / export_format / device_folder_name / measure_folder_name
-    base_path.mkdir(parents=True, exist_ok=True)
-    file_name = str(nanoseconds_to_date_string_with_tz(int(times[0]))).replace(".", "f").replace(":", "-")
+    if export_format != 'tsc':
+        base_path.mkdir(parents=True, exist_ok=True)
+    file_name = str(nanoseconds_to_date_string_with_tz(int(times[0]), timezone_str=timezone_str)).replace(".", "f").replace(":", "-")
     file_path = None
 
     if export_format == 'tsc':
         _ingest_data_tsc(to_sdk, measure_id, device_id, headers, times, values)
     elif export_format == 'csv':
         file_path = base_path / f"{file_name}.csv"
-        _write_csv(file_path, times, values, measure_tag, export_time_format=export_time_format)
+        _write_csv(file_path, times, values, measure_tag, export_time_format=export_time_format, timezone_str=timezone_str)
     elif export_format == 'npz':
         file_path = base_path / f"{file_name}.npz"
         _write_numpy(file_path, times, values, measure_tag)

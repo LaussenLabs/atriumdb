@@ -16,17 +16,19 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import time
 from abc import ABC, abstractmethod
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
+
+from atriumdb.sql_handler.sql_helper import join_sql_and_bools
 
 
 class SQLHandler(ABC):
     @abstractmethod
     def create_schema(self):
-        # Creates Tables if they dont exist.
+        # Creates Tables if they don't exist.
         pass
 
     @abstractmethod
-    def connection(self, begin=False):
+    def connection(self, begin: bool = False):
         pass
 
     @abstractmethod
@@ -41,27 +43,27 @@ class SQLHandler(ABC):
     def select_all_patients(self):
         pass
 
-    def select_patient_history(self, patient_id, field, start_time, end_time):
+    def select_patient_history(self, patient_id: int, field: Optional[str], start_time: int, end_time: int):
         # Dynamically construct the query based on whether `field` is None
         if field is None:
             query = "SELECT id, patient_id, field, value, units, time FROM patient_history WHERE patient_id = ? AND time BETWEEN ? AND ? ORDER BY time"
-            query_params = (patient_id, start_time, end_time)
+            query_params = (int(patient_id), int(start_time), int(end_time))
         else:
             query = "SELECT id, patient_id, field, value, units, time FROM patient_history WHERE patient_id = ? AND field = ? AND time BETWEEN ? AND ? ORDER BY time"
-            query_params = (patient_id, field, start_time, end_time)
+            query_params = (int(patient_id), field, int(start_time), int(end_time))
 
         with self.connection(begin=False) as (conn, cursor):
             cursor.execute(query, query_params)
             return cursor.fetchall()
 
-    def select_closest_patient_history(self, patient_id, field, time):
-        # find the patient history that is closest to the timestamp
+    def select_closest_patient_history(self, patient_id: int, field: str, time: int):
+        # Find the patient history that is closest to the timestamp
         query = "SELECT id, patient_id, field, value, units, time FROM patient_history WHERE patient_id = ? and field = ? and time <= ? ORDER BY time DESC LIMIT 1"
         with self.connection(begin=False) as (conn, cursor):
-            cursor.execute(query, (patient_id, field, time))
+            cursor.execute(query, (int(patient_id), field, int(time)))
             return cursor.fetchone()
 
-    def select_unique_history_fields(self):
+    def select_unique_history_fields(self) -> List[str]:
         query = "SELECT DISTINCT field FROM patient_history"
         with self.connection(begin=False) as (conn, cursor):
             cursor.execute(query)
@@ -72,29 +74,29 @@ class SQLHandler(ABC):
         return fields
 
     @abstractmethod
-    def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None,
-                       measure_id=None, code: str = None, unit_label: str = None, unit_code: str = None,
-                       source_id: int = None):
+    def insert_measure(self, measure_tag: str, freq_nhz: int, units: Optional[str] = None, measure_name: Optional[str] = None,
+                       measure_id: Optional[int] = None, code: Optional[str] = None, unit_label: Optional[str] = None, unit_code: Optional[str] = None,
+                       source_id: Optional[int] = None):
         pass
 
     @abstractmethod
-    def select_measure(self, measure_id: int = None, measure_tag: str = None, freq_nhz: int = None, units: str = None):
+    def select_measure(self, measure_id: Optional[int] = None, measure_tag: Optional[str] = None, freq_nhz: Optional[int] = None, units: Optional[str] = None):
         # Select a measure either by its id, or by a tag, freq, units triplet.
         pass
 
     @abstractmethod
-    def insert_device(self, device_tag: str, device_name: str = None, device_id=None, manufacturer: str = None,
-                      model: str = None, device_type: str = None, bed_id: int = None, source_id: int = None):
+    def insert_device(self, device_tag: str, device_name: Optional[str] = None, device_id: Optional[int] = None, manufacturer: Optional[str] = None,
+                      model: Optional[str] = None, device_type: Optional[str] = None, bed_id: Optional[int] = None, source_id: Optional[int] = None):
         pass
 
     @abstractmethod
-    def select_device(self, device_id: int = None, device_tag: str = None):
+    def select_device(self, device_id: Optional[int] = None, device_tag: Optional[str] = None):
         # Select a measure either by its id, or by its unique tag.
         pass
 
     @abstractmethod
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
-                             interval_index_mode, gap_tolerance: int = 0):
+                             interval_index_mode: str, gap_tolerance: int = 0):
         # Insert a file path to file index.
         # Insert block_index rows with foreign key file_id.
         # Insert interval_index rows.
@@ -107,11 +109,11 @@ class SQLHandler(ABC):
 
     @abstractmethod
     def insert_merged_block_data(self, file_path: str, block_data: List[Dict], old_block_id: int, interval_data: List[Dict],
-                                 interval_index_mode, gap_tolerance: int = 0):
+                                 interval_index_mode: str, gap_tolerance: int = 0):
         pass
 
     @abstractmethod
-    def select_file(self, file_id: int = None, file_path: str = None):
+    def select_file(self, file_id: Optional[int] = None, file_path: Optional[str] = None):
         # Select a file path either by its id, or by its path.
         pass
 
@@ -126,66 +128,66 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def select_block(self, block_id: int = None, measure_id: int = None, device_id: int = None, file_id: int = None,
-                     start_byte: int = None, num_bytes: int = None, start_time_n: int = None, end_time_n: int = None,
-                     num_values: int = None):
-        # select a block either by its id or by all other params.
+    def select_block(self, block_id: Optional[int] = None, measure_id: Optional[int] = None, device_id: Optional[int] = None, file_id: Optional[int] = None,
+                     start_byte: Optional[int] = None, num_bytes: Optional[int] = None, start_time_n: Optional[int] = None, end_time_n: Optional[int] = None,
+                     num_values: Optional[int] = None):
+        # Select a block either by its id or by all other params.
         pass
 
-    def select_closest_block(self, measure_id: int = None, device_id: int = None, start_time: int = None, end_time: int = None):
+    def select_closest_block(self, measure_id: int, device_id: int, start_time: int, end_time: int):
         base_query = """SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values 
         FROM block_index WHERE measure_id = ? and device_id = ? """
 
         with self.connection(begin=False) as (conn, cursor):
-            # first check if this block belongs on the end (most likely scenario)
+            # First check if this block belongs on the end (most likely scenario)
             end_check_query = base_query + "ORDER BY end_time_n DESC LIMIT 1"
-            cursor.execute(end_check_query, (measure_id, device_id))
+            cursor.execute(end_check_query, (int(measure_id), int(device_id)))
             result = cursor.fetchone()
 
-            # check if the start time is >= the max end time meaning the block goes on the end
-            if result is not None and start_time >= result[7]:
-                # return true meaning it goes on the end. We will check if the last block is full in write_data so we
-                # so we need to know if this is an end block
+            # Check if the start time is >= the max end time meaning the block goes on the end
+            if result is not None and int(start_time) >= result[7]:
+                # Return true meaning it goes on the end. We will check if the last block is full in write_data so we
+                # need to know if this is an end block
                 return result, True
 
-            # if it overlaps with the last block
-            if result is not None and start_time <= result[7] and end_time >= result[6]:
+            # If it overlaps with the last block
+            if result is not None and int(start_time) <= result[7] and int(end_time) >= result[6]:
                 return result, False
 
-            # check if there is a block that this data fits inside
+            # Check if there is a block that this data fits inside
             inside_query = base_query + "and start_time_n <= ? and end_time_n >= ? LIMIT 1"
 
-            cursor.execute(inside_query, (measure_id, device_id, start_time, end_time))
+            cursor.execute(inside_query, (int(measure_id), int(device_id), int(start_time), int(end_time)))
             result = cursor.fetchone()
 
-            # if there is a block this data belongs inside return it
+            # If there is a block this data belongs inside return it
             if result is not None:
                 return result, False
 
-            # get the closest block  whose start time is <= my start time
+            # Get the closest block whose start time is <= my start time
             inside_query = base_query + "and start_time_n <= ? and end_time_n <= ? ORDER BY start_time_n DESC, end_time_n DESC LIMIT 1"
-            cursor.execute(inside_query, (measure_id, device_id, start_time, end_time))
+            cursor.execute(inside_query, (int(measure_id), int(device_id), int(start_time), int(end_time)))
             block_older = cursor.fetchone()
 
-            # get the closest block whose end time is >= my end time
+            # Get the closest block whose end time is >= my end time
             inside_query = base_query + "and start_time_n >= ? and end_time_n >= ? ORDER BY end_time_n ASC, start_time_n ASC LIMIT 1"
-            cursor.execute(inside_query, (measure_id, device_id, start_time, end_time))
+            cursor.execute(inside_query, (int(measure_id), int(device_id), int(start_time), int(end_time)))
             block_newer = cursor.fetchone()
 
-            # subtract the end time of the old block from the start time of the new block to see how far apart they are
-            # if they overlap the number will become negative and therefore they are closer
-            older_diff = start_time - block_older[7] if block_older is not None else None
+            # Subtract the end time of the old block from the start time of the new block to see how far apart they are
+            # If they overlap the number will become negative and therefore they are closer
+            older_diff = int(start_time) - block_older[7] if block_older is not None else None
 
-            # subtract the start time of the old block from the end time of the new block to see how far apart they are
-            # if they overlap the number will become negative and therefore they are closer
-            newer_diff = block_newer[6] - end_time if block_newer is not None else None
+            # Subtract the start time of the old block from the end time of the new block to see how far apart they are
+            # If they overlap the number will become negative and therefore they are closer
+            newer_diff = block_newer[6] - int(end_time) if block_newer is not None else None
 
             if older_diff is None and newer_diff is not None:
                 return block_newer, False
             elif newer_diff is None and older_diff is not None:
                 return block_older, False
             elif older_diff is None and newer_diff is None:
-                # need this since if it's the first block there will be nothing to merge with
+                # Need this since if it's the first block there will be nothing to merge with
                 return None, False
             elif older_diff <= newer_diff:
                 return block_older, False
@@ -194,12 +196,12 @@ class SQLHandler(ABC):
 
     def delete_block(self, block_id: int):
         with self.connection(begin=True) as (conn, cursor):
-            # delete block data
-            cursor.execute("DELETE FROM block_index WHERE id = ?", (block_id,))
+            # Delete block data
+            cursor.execute("DELETE FROM block_index WHERE id = ?", (int(block_id),))
 
     @abstractmethod
-    def select_interval(self, interval_id: int = None, measure_id: int = None, device_id: int = None,
-                        start_time_n: int = None, end_time_n: int = None):
+    def select_interval(self, interval_id: Optional[int] = None, measure_id: Optional[int] = None, device_id: Optional[int] = None,
+                        start_time_n: Optional[int] = None, end_time_n: Optional[int] = None):
         # Select an interval either by its id, or by all other params.
         pass
 
@@ -214,51 +216,53 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def insert_patient(self, patient_id=None, mrn: str = None, gender: str = None, dob: str = None,
-                       first_name: str = None, middle_name: str = None, last_name: str = None, first_seen: int = None,
-                       last_updated: int = None, source_id: int = 1, weight=None, height=None):
+    def insert_patient(self, patient_id: Optional[int] = None, mrn: Optional[str] = None, gender: Optional[str] = None, dob: Optional[str] = None,
+                       first_name: Optional[str] = None, middle_name: Optional[str] = None, last_name: Optional[str] = None, first_seen: Optional[int] = None,
+                       last_updated: Optional[int] = None, source_id: int = 1, weight: Optional[float] = None, height: Optional[float] = None):
         # Insert patient if it doesn't exist, return id.
         pass
 
-    def insert_patient_history(self, patient_id, field, value, units, time):
+    def insert_patient_history(self, patient_id: int, field: str, value: float, units: str, time: int):
         with self.connection(begin=True) as (conn, cursor):
-            # find the most recent value for the field your entering from the patient history table
-            cursor.execute("SELECT MAX(time) FROM patient_history WHERE patient_id = ? and field = ?", (patient_id, field))
+            # Find the most recent value for the field you're entering from the patient history table
+            cursor.execute("SELECT MAX(time) FROM patient_history WHERE patient_id = ? and field = ?", (int(patient_id), field))
             newest_measurement_time = cursor.fetchone()[0]
 
-            # if the new measurement is newer than the newest in the patient history table update the field in the
-            # patient table. If no history is found also update it.
-            if newest_measurement_time is None or time > newest_measurement_time:
-                cursor.execute(f"UPDATE patient SET {field} = {value} WHERE id = {patient_id}")
+            # If the new measurement is newer than the newest in the patient history table, update the field in the
+            # patient table. If no history is found, also update it.
+            if newest_measurement_time is None or int(time) > newest_measurement_time:
+                cursor.execute(f"UPDATE patient SET {field} = {value} WHERE id = {int(patient_id)}")
 
-            # now insert the row to the patient history table
+            # Now insert the row to the patient history table
             query = "INSERT INTO patient_history (patient_id, field, value, units, time) VALUES (?, ?, ?, ?, ?)"
-            cursor.execute(query, (patient_id, field, value, units, time))
+            cursor.execute(query, (int(patient_id), field, float(value), units, int(time)))
             conn.commit()
             return cursor.lastrowid
 
     @abstractmethod
-    def insert_encounter(self, patient_id: int, bed_id: int, start_time: int, end_time: int = None, source_id: int = 1,
-                         visit_number: int = None, last_updated: int = None):
+    def insert_encounter(self, patient_id: int, bed_id: int, start_time: int, end_time: Optional[int] = None, source_id: int = 1,
+                         visit_number: Optional[int] = None, last_updated: Optional[int] = None):
         # Insert encounter if it doesn't exist, return id.
         pass
 
     @abstractmethod
-    def insert_device_encounter(self, device_id: int, encounter_id: int, start_time: int, end_time: int = None,
+    def insert_device_encounter(self, device_id: int, encounter_id: int, start_time: int, end_time: Optional[int] = None,
                                 source_id: int = 1):
         # Insert device_encounter if it doesn't exist, return id.
         pass
 
-    def get_device_time_ranges_by_patient(self, patient_id: int, end_time_n: int, start_time_n: int):
+    def get_device_time_ranges_by_patient(self, patient_id: int, end_time_n: Optional[int], start_time_n: Optional[int]):
         patient_device_query = "SELECT device_id, start_time, end_time FROM device_patient WHERE patient_id = ?"
-        args = (patient_id,)
+        args = (int(patient_id),)
 
         if start_time_n is not None:
             patient_device_query += " AND (end_time >= ? OR end_time is NULL) "
-            args += (start_time_n,)
+            args += (int(start_time_n),)
         if end_time_n is not None:
             patient_device_query += " AND start_time <= ? "
-            args += (end_time_n,)
+            args += (int(end_time_n),)
+
+        patient_device_query += " ORDER BY start_time, end_time"
         with self.connection(begin=False) as (conn, cursor):
             cursor.execute(patient_device_query, args)
             return cursor.fetchall()
@@ -269,11 +273,11 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def select_blocks(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
+    def select_blocks(self, measure_id: int, start_time_n: Optional[int] = None, end_time_n: Optional[int] = None, device_id: Optional[int] = None, patient_id: Optional[int] = None):
         # Get all matching blocks.
         pass
 
-    def select_intervals(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
+    def select_intervals(self, measure_id: int, start_time_n: Optional[int] = None, end_time_n: Optional[int] = None, device_id: Optional[int] = None, patient_id: Optional[int] = None):
         if device_id is None and patient_id is None:
             raise ValueError("Either device_id or patient_id must be provided")
 
@@ -282,31 +286,43 @@ class SQLHandler(ABC):
         # Query by patient.
         if patient_id is not None:
             device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
-            # add start and end time to the query
+            # Add start and end time to the query
             interval_query += " AND end_time_n >= ? AND start_time_n <= ? ORDER BY start_time_n ASC, end_time_n ASC"
 
             interval_results = []
             with self.connection(begin=False) as (conn, cursor):
                 for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
                     encounter_end_time = time.time_ns() if encounter_end_time is None else encounter_end_time
-                    args = (measure_id, encounter_device_id, encounter_start_time, encounter_end_time)
+                    args = (int(measure_id), int(encounter_device_id), int(encounter_start_time), int(encounter_end_time))
 
                     cursor.execute(interval_query, args)
-                    interval_results.extend(cursor.fetchall())
+
+                    #  Truncate Intervals to the Start, End of Encounter
+                    encounter_intervals = cursor.fetchall()
+                    encounter_intervals = [[interval_id,
+                                            measure_id,
+                                            device_id,
+                                            max(start_time_n, encounter_start_time),
+                                            min(end_time_n, encounter_end_time)]
+                                           for interval_id, measure_id, device_id, start_time_n, end_time_n
+                                           in encounter_intervals]
+
+                    interval_results.extend(encounter_intervals)
+
             return interval_results
 
         # Query by device.
-        args = (measure_id, device_id)
+        args = (int(measure_id), int(device_id))
 
         if end_time_n is not None:
             interval_query += " AND start_time_n <= ?"
-            args += (end_time_n,)
+            args += (int(end_time_n),)
 
         if start_time_n is not None:
             interval_query += " AND end_time_n >= ?"
-            args += (start_time_n,)
+            args += (int(start_time_n),)
 
-        # add the ordering
+        # Add the ordering
         interval_query += " ORDER BY start_time_n ASC, end_time_n ASC"
 
         with self.connection(begin=False) as (conn, cursor):
@@ -314,8 +330,8 @@ class SQLHandler(ABC):
             return cursor.fetchall()
 
     @abstractmethod
-    def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[int] = None, start_time: int = None,
-                          end_time: int = None):
+    def select_encounters(self, patient_id_list: Optional[List[int]] = None, mrn_list: Optional[List[int]] = None, start_time: Optional[int] = None,
+                          end_time: Optional[int] = None):
         # Get all matching encounters.
         pass
 
@@ -325,7 +341,7 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[int] = None):
+    def select_all_patients_in_list(self, patient_id_list: Optional[List[int]] = None, mrn_list: Optional[List[int]] = None):
         # Get all matching patients.
         pass
 
@@ -359,18 +375,39 @@ class SQLHandler(ABC):
         # Get all matching sources.
         pass
 
-    @abstractmethod
     def select_device_patients(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
                                start_time: int = None, end_time: int = None):
-        # Get all device_patient rows.
-        pass
+        arg_tuple = ()
+        sqlite_select_device_patient_query = \
+            "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
+        where_clauses = []
+        if device_id_list is not None and len(device_id_list) > 0:
+            where_clauses.append("device_id IN ({})".format(
+                ','.join(['?'] * len(device_id_list))))
+            arg_tuple += tuple(int(device_id) for device_id in device_id_list)
+        if patient_id_list is not None and len(patient_id_list) > 0:
+            where_clauses.append("patient_id IN ({})".format(
+                ','.join(['?'] * len(patient_id_list))))
+            arg_tuple += tuple(int(patient_id) for patient_id in patient_id_list)
+        if start_time is not None:
+            where_clauses.append("(end_time > ? OR end_time IS NULL)")
+            arg_tuple += (int(start_time),)
+        if end_time is not None:
+            where_clauses.append("start_time < ?")
+            arg_tuple += (int(end_time),)
+        sqlite_select_device_patient_query += join_sql_and_bools(where_clauses)
+        sqlite_select_device_patient_query += " ORDER BY id ASC"
+
+        with self.connection() as (conn, cursor):
+            cursor.execute(sqlite_select_device_patient_query, arg_tuple)
+            return cursor.fetchall()
 
     @abstractmethod
     def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
         # Insert device_patient rows.
         pass
 
-    def insert_label_set(self, name, label_set_id=None, parent_id=None):
+    def insert_label_set(self, name: str, label_set_id: Optional[int] = None, parent_id: Optional[int] = None):
         if label_set_id is not None:
             existing_label_set = self.select_label_set(label_set_id)
             if existing_label_set:
@@ -396,28 +433,26 @@ class SQLHandler(ABC):
 
     @abstractmethod
     def select_label_sets(self):
-        # Retrieve all label types.
-        pass
+        # Retrieve all label types
+                pass
 
     def select_label_set(self, label_set_id: int):
         query = "SELECT id, name, parent_id FROM label_set WHERE id = ? LIMIT 1"
         with self.connection() as (conn, cursor):
-            cursor.execute(query, (label_set_id,))
+            cursor.execute(query, (int(label_set_id),))
             row = cursor.fetchone()
         return row
 
-    def select_label_set_id(self, name):
+    def select_label_set_id(self, name: str) -> Optional[int]:
         # Retrieve the ID of a label type by its name.
         query = "SELECT id FROM label_set WHERE name = ? LIMIT 1"
         with self.connection(begin=False) as (conn, cursor):
             cursor.execute(query, (name,))
             result = cursor.fetchone()
             # Return the ID if it exists or None otherwise.
-            if result:
-                return result[0]
-            return None
+            return result[0] if result else None
 
-    def select_label_name_parent(self, label_set_id: int):
+    def select_label_name_parent(self, label_set_id: int) -> Optional[Tuple[int, str]]:
         query = """
         SELECT parent.id, parent.name FROM label_set
         INNER JOIN label_set AS parent ON label_set.parent_id = parent.id
@@ -426,10 +461,10 @@ class SQLHandler(ABC):
         """
 
         with self.connection() as (conn, cursor):
-            cursor.execute(query.format("label_set.id = ?"), (label_set_id,))
+            cursor.execute(query.format("label_set.id = ?"), (int(label_set_id),))
             return cursor.fetchone()
 
-    def select_all_ancestors(self, label_set_id: int = None, name: str = None):
+    def select_all_ancestors(self, label_set_id: Optional[int] = None, name: Optional[str] = None) -> Optional[List[Tuple[int, str]]]:
         if label_set_id is None and name is None:
             raise ValueError("Either label_set_id or name must be provided")
 
@@ -445,7 +480,7 @@ class SQLHandler(ABC):
 
         with self.connection() as (conn, cursor):
             if label_set_id is not None:
-                cursor.execute(query.format("id = ?"), (label_set_id, label_set_id))
+                cursor.execute(query.format("id = ?"), (int(label_set_id), int(label_set_id)))
             else:
                 query_for_name = """
                 SELECT id FROM label_set WHERE name = ? LIMIT 1;
@@ -458,14 +493,14 @@ class SQLHandler(ABC):
                     return None
             return cursor.fetchall()
 
-    def select_label_name_children(self, label_set_id: int):
+    def select_label_name_children(self, label_set_id: int) -> List[Tuple[int, str]]:
         query = """
         SELECT id, name FROM label_set
         WHERE parent_id = ?
         """
 
         with self.connection() as (conn, cursor):
-            cursor.execute(query, (label_set_id,))
+            cursor.execute(query, (int(label_set_id),))
             return cursor.fetchall()
 
     def select_all_label_name_descendents(self, label_set_id: int):
@@ -481,44 +516,161 @@ class SQLHandler(ABC):
         """
 
         with self.connection() as (conn, cursor):
-            cursor.execute(query, (label_set_id, label_set_id))
+            cursor.execute(query, (int(label_set_id), int(label_set_id)))
             return cursor.fetchall()
 
-    @abstractmethod
-    def insert_label(self, label_set_id, device_id, start_time_n, end_time_n, label_source_id=None):
-        # Insert a single label entry and return its ID.
-        pass
+    def insert_label(self, label_set_id, device_id, start_time_n, end_time_n, label_source_id=None, measure_id=None):
+        # Insert a new label record into the database.
+        query = "INSERT INTO label (label_set_id, device_id, measure_id, label_source_id, start_time_n, end_time_n) VALUES (?, ?, ?, ?, ?, ?)"
+        with self.connection() as (conn, cursor):
+            label_set_id = None if label_set_id is None else int(label_set_id)
+            device_id = None if device_id is None else int(device_id)
+            start_time_n = None if start_time_n is None else int(start_time_n)
+            end_time_n = None if end_time_n is None else int(end_time_n)
+            label_source_id = None if label_source_id is None else int(label_source_id)
+            measure_id = None if measure_id is None else int(measure_id)
+            cursor.execute(query, (label_set_id, device_id, measure_id, label_source_id, start_time_n, end_time_n))
+            conn.commit()
+            # Return the ID of the newly inserted label.
+            return cursor.lastrowid
 
-    @abstractmethod
     def insert_labels(self, labels):
-        # Insert multiple label entries and return their IDs.
-        # `labels` is a list of tuples (label_set_id, device_id, start_time_n, end_time_n, label_source_id)
-        pass
+        # Insert multiple label records into the database.
+        formatted_labels = []
+        for label_set_id, device_id, measure_id, label_source_id, start_time_n, end_time_n in labels:
+            label_set_id = None if label_set_id is None else int(label_set_id)
+            device_id = None if device_id is None else int(device_id)
+            start_time_n = None if start_time_n is None else int(start_time_n)
+            end_time_n = None if end_time_n is None else int(end_time_n)
+            label_source_id = None if label_source_id is None else int(label_source_id)
+            measure_id = None if measure_id is None else int(measure_id)
+            formatted_labels.append([label_set_id, device_id, measure_id, label_source_id, start_time_n, end_time_n])
+        query = "INSERT INTO label (label_set_id, device_id, measure_id, label_source_id, start_time_n, end_time_n) VALUES (?, ?, ?, ?, ?, ?)"
+        with self.connection(begin=True) as (conn, cursor):
+            cursor.executemany(query, formatted_labels)
+            conn.commit()
+            # Return the ID of the last inserted label.
+            return cursor.lastrowid
 
-    @abstractmethod
     def delete_labels(self, label_ids):
         # Delete multiple label records from the database based on their IDs.
-        pass
+        query = "DELETE FROM label WHERE id = ?"
+        with self.connection() as (conn, cursor):
+            # Prepare a list of tuples for the executemany method.
+            id_tuples = [(int(label_id),) for label_id in label_ids]
+            cursor.executemany(query, id_tuples)
+            conn.commit()
 
-    @abstractmethod
     def select_labels(self, label_set_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
-                      end_time_n=None, label_source_id_list=None):
-        # Retrieve labels based on provided criteria.
-        pass
+                      end_time_n=None, label_source_id_list=None, measure_id_list=None, limit=None, offset=None):
+        # Select labels based on the given criteria. This function supports recursive queries for patients.
 
-    @abstractmethod
-    def insert_label_source(self, name, description):
-        pass
+        # If provided patient IDs, fetch device time ranges and recursively call select_labels.
+        if patient_id_list is not None:
+            results = []
+            for patient_id in patient_id_list:
+                # Get device time ranges associated with a patient.
+                device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
 
-    @abstractmethod
+                for device_id, device_start_time, device_end_time in device_time_ranges:
+                    # Adjust the time range based on the provided boundaries.
+                    final_start_time = max(start_time_n, device_start_time) if start_time_n else device_start_time
+                    final_end_time = min(end_time_n, device_end_time) if end_time_n else device_end_time
+
+                    # Recursively fetch labels for each device and accumulate the results.
+                    results.extend(self.select_labels(label_set_id_list=label_set_id_list, device_id_list=[device_id],
+                                                      start_time_n=final_start_time, end_time_n=final_end_time,
+                                                      label_source_id_list=label_source_id_list, measure_id_list=measure_id_list))
+
+            # Sort the results by start_time_n primarily and then by end_time_n secondarily
+            results.sort(key=lambda x: (x[3], x[4]))
+            return results
+
+        # Construct the query for selecting labels based on the provided criteria.
+        query = "SELECT id, label_set_id, device_id, measure_id, label_source_id , start_time_n, end_time_n FROM label WHERE 1=1"
+        params = []
+
+        # Add conditions for label type IDs, if provided.
+        if label_set_id_list:
+            placeholders = ', '.join(['?'] * len(label_set_id_list))
+            query += f" AND label_set_id IN ({placeholders})"
+            params.extend(label_set_id_list)
+
+        # Add conditions for device IDs, if provided.
+        if device_id_list:
+            placeholders = ', '.join(['?'] * len(device_id_list))
+            query += f" AND device_id IN ({placeholders})"
+            params.extend(device_id_list)
+
+        # Add conditions for measure IDs, if provided.
+        if measure_id_list:
+            placeholders = ', '.join(['?'] * len(measure_id_list))
+            query += f" AND measure_id IN ({placeholders})"
+            params.extend(measure_id_list)
+
+        # Add conditions for label source IDs, if provided.
+        if label_source_id_list:
+            placeholders = ', '.join(['?'] * len(label_source_id_list))
+            query += f" AND label_source_id IN ({placeholders})"
+            params.extend(label_source_id_list)
+
+        # Add conditions for start and end times, if provided.
+        if start_time_n:
+            query += " AND end_time_n >= ?"
+            params.append(int(start_time_n))
+        if end_time_n:
+            query += " AND start_time_n <= ?"
+            params.append(int(end_time_n))
+
+        # Sort by start_time_n
+        # Used in iterator logic, alter with caution.
+        query += " ORDER BY start_time_n ASC, end_time_n ASC"
+
+        # if limit and offset are specified add them to query
+        if limit is not None and offset is not None:
+            query += f" LIMIT {limit} OFFSET {offset}"
+        # if only limit is supplied then only add it to the query
+        elif limit is not None and offset is None:
+            query += f" LIMIT {limit}"
+
+        # Execute the query and return the results.
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(query, params)
+            return cursor.fetchall()
+
+    def insert_label_source(self, name, description=None):
+        # First, check if the label_source with the given name already exists
+        select_query = "SELECT id FROM label_source WHERE name = ?"
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(select_query, (name,))
+            result = cursor.fetchone()
+            if result:
+                # A label_source with the given name already exists, return its id
+                return result[0]
+
+        # If not found, insert the new label_source
+        insert_query = "INSERT INTO label_source (name, description) VALUES (?, ?)"
+        with self.connection(begin=True) as (conn, cursor):
+            cursor.execute(insert_query, (name, description))
+            conn.commit()
+            return cursor.lastrowid
+
     def select_label_source_id_by_name(self, name):
-        pass
+        query = "SELECT id FROM label_source WHERE name = ? LIMIT 1"
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, (name,))
+            result = cursor.fetchone()
+            return result[0] if result else None
 
-    @abstractmethod
     def select_label_source_info_by_id(self, label_source_id):
+        query = "SELECT id, name, description FROM label_source WHERE id = ? LIMIT 1"
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, (int(label_source_id),))
+            result = cursor.fetchone()
+            return {'id': result[0], 'name': result[1], 'description': result[2]} if result else None
         pass
 
-    def get_measure_id_with_most_rows(self, tag: str):
+    def get_measure_id_with_most_rows(self, tag: str) -> Optional[int]:
         # Query to get all matching measure.ids
         measure_ids_query = """
         SELECT id FROM measure WHERE tag = ?
@@ -549,7 +701,7 @@ class SQLHandler(ABC):
             result = cursor.fetchone()
             return result[0] if result else None
 
-    def get_tag_to_measure_ids_dict(self, approx=True):
+    def get_tag_to_measure_ids_dict(self, approx: bool = True) -> Dict[str, List[int]]:
         # Retrieve all measures and construct id-to-tag mapping
         measure_query = """
         SELECT id, tag FROM measure
@@ -562,7 +714,7 @@ class SQLHandler(ABC):
                 measure_id, tag = row
                 if tag not in id_to_tag:
                     id_to_tag[tag] = []
-                id_to_tag[tag].append(measure_id)
+                id_to_tag[tag].append(int(measure_id))
 
         # Get count of rows for each measure ID from block_index
         if approx:
@@ -571,7 +723,6 @@ class SQLHandler(ABC):
             FROM block_index
             WHERE id <= 100000
             GROUP BY measure_id;
-
             """
         else:
             block_index_query = """
@@ -580,12 +731,12 @@ class SQLHandler(ABC):
             GROUP BY measure_id
             """
 
-        measure_id_to_count = {}
+        measure_id_to_count: Dict[int, int] = {}
         with self.connection(begin=False) as (conn, cursor):
             cursor.execute(block_index_query)
             for row in cursor.fetchall():
                 measure_id, count = row
-                measure_id_to_count[measure_id] = count
+                measure_id_to_count[int(measure_id)] = count
 
         # Construct the final dictionary
         tag_to_sorted_measure_ids = {}
@@ -600,19 +751,19 @@ class SQLHandler(ABC):
 
         return tag_to_sorted_measure_ids
 
-    def insert_source(self, name: str, description: str = None):
+    def insert_source(self, name: str, description: Optional[str] = None) -> int:
         query = "INSERT INTO source (name, description) VALUES (?, ?)"
         with self.connection() as (conn, cursor):
             cursor.execute(query, (name, description))
             conn.commit()
             return cursor.lastrowid
 
-    def select_source(self, source_id: int = None, name: str = None):
+    def select_source(self, source_id: Optional[int] = None, name: Optional[str] = None) -> Optional[Tuple[int, str, Optional[str]]]:
         query = "SELECT id, name, description FROM source WHERE "
         params = []
         if source_id:
             query += "id = ?"
-            params.append(source_id)
+            params.append(int(source_id))
         elif name:
             query += "name = ?"
             params.append(name)
@@ -623,19 +774,19 @@ class SQLHandler(ABC):
             cursor.execute(query, params)
             return cursor.fetchone()
 
-    def insert_institution(self, name: str):
+    def insert_institution(self, name: str) -> int:
         query = "INSERT INTO institution (name) VALUES (?)"
         with self.connection() as (conn, cursor):
             cursor.execute(query, (name,))
             conn.commit()
             return cursor.lastrowid
 
-    def select_institution(self, institution_id: int = None, name: str = None):
+    def select_institution(self, institution_id: Optional[int] = None, name: Optional[str] = None) -> Optional[Tuple[int, str]]:
         query = "SELECT id, name FROM institution WHERE "
         params = []
         if institution_id:
             query += "id = ?"
-            params.append(institution_id)
+            params.append(int(institution_id))
         elif name:
             query += "name = ?"
             params.append(name)
@@ -646,19 +797,19 @@ class SQLHandler(ABC):
             cursor.execute(query, params)
             return cursor.fetchone()
 
-    def insert_unit(self, institution_id: int, name: str, unit_type: str):
+    def insert_unit(self, institution_id: int, name: str, unit_type: str) -> int:
         query = "INSERT INTO unit (institution_id, name, type) VALUES (?, ?, ?)"
         with self.connection() as (conn, cursor):
-            cursor.execute(query, (institution_id, name, unit_type))
+            cursor.execute(query, (int(institution_id), name, unit_type))
             conn.commit()
             return cursor.lastrowid
 
-    def select_unit(self, unit_id: int = None, name: str = None):
+    def select_unit(self, unit_id: Optional[int] = None, name: Optional[str] = None) -> Optional[Tuple[int, int, str, str]]:
         query = "SELECT id, institution_id, name, type FROM unit WHERE "
         params = []
         if unit_id:
             query += "id = ?"
-            params.append(unit_id)
+            params.append(int(unit_id))
         elif name:
             query += "name = ?"
             params.append(name)
@@ -666,23 +817,22 @@ class SQLHandler(ABC):
             raise ValueError("Either unit_id or name must be provided")
 
         with self.connection() as (conn, cursor):
-            
             cursor.execute(query, params)
             return cursor.fetchone()
 
-    def insert_bed(self, unit_id: int, name: str):
+    def insert_bed(self, unit_id: int, name: str) -> int:
         query = "INSERT INTO bed (unit_id, name) VALUES (?, ?)"
         with self.connection() as (conn, cursor):
-            cursor.execute(query, (unit_id, name))
+            cursor.execute(query, (int(unit_id), name))
             conn.commit()
             return cursor.lastrowid
 
-    def select_bed(self, bed_id: int = None, name: str = None):
+    def select_bed(self, bed_id: Optional[int] = None, name: Optional[str] = None) -> Optional[Tuple[int, int, str]]:
         query = "SELECT id, unit_id, name FROM bed WHERE "
         params = []
         if bed_id:
             query += "id = ?"
-            params.append(bed_id)
+            params.append(int(bed_id))
         elif name:
             query += "name = ?"
             params.append(name)

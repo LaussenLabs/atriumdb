@@ -75,6 +75,7 @@ all = [
     "fastparquet >= 2023.2.0, < 2024",
     "wfdb >= 4.1.0, < 5",
     "pyarrow >= 16.0.0, < 17",
+    "tzdata >= 2024.1, < 2025"
 ]
 
 [dev-dependencies]

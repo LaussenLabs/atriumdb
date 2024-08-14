@@ -738,7 +738,8 @@ class AtriumSDK:
             it is treated as a break in continuity or gap in the interval index.
         :param bool merge_blocks: If your writing data that is less than an optimal block size it will find an already
             existing block that is closest in time to the data your writing and merge your data with it. THIS IS NOT THREAD SAFE
-            and can lead to race conditions if two processes try to ingest (and merge) data for the same measure and device at the same time.
+            and can lead to race conditions if two processes (with two different sdk objects) try to ingest (and merge)
+            data for the same measure and device at the same time.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.
@@ -783,6 +784,8 @@ class AtriumSDK:
         # Force Python Integers
         freq_nhz = int(freq_nhz)
         time_0 = int(time_0)
+        measure_id = int(measure_id)
+        device_id = int(device_id)
 
         # Calculate new intervals
         write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
@@ -941,7 +944,11 @@ class AtriumSDK:
 
         # if your new data was merged with an older block add the new info to mariadb and delete the old block
         if old_block is not None:
-            self.sql_handler.insert_merged_block_data(filename, block_data, old_block[0], interval_data, interval_index_mode, gap_tolerance)
+            old_tsc_file_name = self.sql_handler.insert_merged_block_data(filename, block_data, old_block, interval_data, interval_index_mode, gap_tolerance)
+
+            # remove the tsc file from disk if it is no longer needed
+            if old_tsc_file_name is not None:
+                os.remove(self.file_api.to_abs_path(filename=old_tsc_file_name, measure_id=measure_id, device_id=device_id))
 
         # If data was overwritten
         elif overwrite_file_dict is not None:
@@ -2231,8 +2238,18 @@ class AtriumSDK:
             mrn_to_patient_id_map = self.get_mrn_to_patient_id_map(mrn_list)
             patient_id_list.extend([mrn_to_patient_id_map[mrn] for mrn in mrn_list if mrn in mrn_to_patient_id_map])
 
-        return self.sql_handler.select_device_patients(
+        if (device_id_list is not None and len(device_id_list) == 0) or (patient_id_list is not None and len(patient_id_list) == 0):
+            return []
+
+        result = self.sql_handler.select_device_patients(
             device_id_list=device_id_list, patient_id_list=patient_id_list, start_time=start_time, end_time=end_time)
+
+        converted_end_times_result = []
+        for device_id, patient_id, start_time, end_time in result:
+            end_time = time.time_ns() if end_time is None else end_time
+            converted_end_times_result.append([device_id, patient_id, start_time, end_time])
+
+        return converted_end_times_result
 
     def _api_get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
                                      mrn_list: List[int] = None, start_time: int = None, end_time: int = None):
@@ -2418,9 +2435,10 @@ class AtriumSDK:
 
         return matching_patients[0] if matching_patients else None
 
-    def get_labels(self, label_name_id_list=None, name_list=None, device_list=None, start_time=None, end_time=None,
-                   time_units: str = None, patient_id_list=None,
-                   label_source_list: Optional[List[Union[str, int]]] = None, include_descendants=True, limit=None, offset=0):
+    def get_labels(self, label_name_id_list: List[int] = None, name_list: List[str] = None, device_list: List[Union[int, str]] = None,
+                   start_time: int = None, end_time: int = None, time_units: str = None, patient_id_list: List[int] = None,
+                   label_source_list: List[Union[str, int]] = None, include_descendants=True, limit: int = None, offset: int = 0,
+                   measure_list: List[Union[int, tuple[str, int | float, str]] | None] = None):
         """
         Retrieve labels from the database based on specified criteria.
 
@@ -2431,11 +2449,15 @@ class AtriumSDK:
         :param int end_time: End time filter for the labels.
         :param str time_units: Units for the `start_time` and `end_time` filters. Valid options are 'ns', 's', 'ms', and 'us'.
         :param List[int] patient_id_list: List of patient IDs to filter by.
-        :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter by.
+        :param List[Union[str, int]] label_source_list: List of label source names or IDs to filter by.
         :param bool include_descendants: Returns all labels of descendant label_name, using requested_name_id and
             requested_name to represent the label name of the requested parent.
         :param int limit: Maximum number of rows to return.
         :param int offset: Offset this number of rows before starting to return labels. Used in combination with limit.
+        :param int measure_list: The list of measure_ids or measure tuples (measure_tag, freq_hz, measure_units) you
+        would like to restrict the search to. If you specify measures but also want all the labels that don't have a
+            specified measure_id (the labels for all signals at that time) add None to the list. Measures can also be
+            None to get all labels for a specific source regardless of measure_id.
 
         :return: A list of matching labels from the database. Each label is represented as a dictionary containing label details.
         :rtype: List[Dict]
@@ -2459,12 +2481,12 @@ class AtriumSDK:
                     'end_time_n': 1625100000000000000,
                     'label_source_id': 4,
                     'label_source': "LabelStudio_Project_1",
+                    'measure_id': 2
                 },
                 ...
             ]
 
         Note:
-            - This method currently only supports database connection mode and not API mode.
             - Either `device_list` or `patient_id_list` should be provided, but not both.
             - Either `label_name_id_list` or `name_list` should be provided, but not both.
 
@@ -2488,8 +2510,8 @@ class AtriumSDK:
                 end_time *= time_unit_options[time_units]
 
         if self.metadata_connection_type == "api":
-            return self._api_get_labels(label_name_id_list, name_list, device_list, start_time, end_time,
-                                        patient_id_list, label_source_list, include_descendants, limit, offset)
+            return self._api_get_labels(label_name_id_list, name_list, device_list, start_time, end_time, patient_id_list,
+                                        label_source_list, include_descendants, limit, offset, measure_list)
 
         # Convert label names to IDs if name_list is used
         if name_list:
@@ -2527,6 +2549,16 @@ class AtriumSDK:
                 else:
                     raise ValueError("Label source list items must be either string (name) or integer (ID).")
 
+        # Convert measure tags to IDs
+        if measure_list:
+            measure_id_list = []
+            for measure in measure_list:
+                measure_id = self.get_measure_id(measure[0], measure[1], measure[2], freq_units='Hz') if isinstance(measure, tuple) else measure
+                if measure_id is None:
+                    raise ValueError(f"Measure Tag {measure} not found in database")
+                measure_id_list.append(measure_id)
+            measure_list = measure_id_list
+
         labels = self.sql_handler.select_labels(
             label_set_id_list=label_name_id_list,
             device_id_list=device_list,
@@ -2534,7 +2566,8 @@ class AtriumSDK:
             start_time_n=start_time,
             end_time_n=end_time,
             label_source_id_list=label_source_id_list if label_source_id_list else None,
-            limit=limit, offset=offset
+            measure_id_list=measure_list,
+            limit=limit, offset=offset,
         )
 
         # Extract unique label_set_ids and device_ids
@@ -2547,7 +2580,7 @@ class AtriumSDK:
         device_id_to_info = {device_id: self.get_device_info(device_id) for device_id in unique_device_ids}
 
         result = []
-        for label_entry_id, label_set_id, device_id, start_time_n, end_time_n, label_source_id in labels:
+        for label_entry_id, label_set_id, device_id, measure_id, label_source_id, start_time_n, end_time_n in labels:
             requested_id = closest_requested_ancestor_dict.get(label_set_id, label_set_id)
             requested_name = self.get_label_name_info(requested_id)['name']
 
@@ -2572,7 +2605,8 @@ class AtriumSDK:
                 'start_time_n': start_time_n,
                 'end_time_n': end_time_n,
                 'label_source_id': label_source_id,
-                'label_source': label_source_name
+                'label_source': label_source_name,
+                'measure_id': measure_id
             }
             result.append(formatted_label)
 
@@ -2580,7 +2614,7 @@ class AtriumSDK:
 
     def _api_get_labels(self, label_name_id_list=None, name_list=None, device_list=None, start_time=None, end_time=None,
                         patient_id_list=None, label_source_list: Optional[List[Union[str, int]]] = None,
-                        include_descendants=True, limit=None, offset=0):
+                        include_descendants=True, limit=None, offset=0, measure_list: List[Union[int, tuple[str, int | float, str], None]] = None):
         limit = 1000 if limit is None else limit
 
         label_list = []
@@ -2594,8 +2628,8 @@ class AtriumSDK:
                 'patient_id_list': patient_id_list,
                 'label_source_list': label_source_list,
                 'include_descendants': include_descendants,
-                'limit': limit,
-                'offset': offset
+                'measure_list': measure_list,
+                'limit': limit, 'offset': offset,
             }
 
             result_temp = self._request("POST", "labels/", json=params)
@@ -2615,7 +2649,8 @@ class AtriumSDK:
         return label_list
 
     def insert_label(self, name: str, start_time: int, end_time: int, device: Union[int, str] = None,
-                     patient_id: int = None, mrn: int = None, time_units: str = None, label_source: Union[str, int] = None):
+                     patient_id: int = None, mrn: int = None, time_units: str = None,
+                     label_source: Union[str, int] = None, measure: Union[int, tuple[str, int | float, str]] = None):
         """
         Insert a label record into the database.
 
@@ -2627,6 +2662,8 @@ class AtriumSDK:
         :param int mrn: MRN for the label to be inserted (exclusive with device and patient_id).
         :param str time_units: Units for the `start_time` and `end_time`. Valid options are 'ns', 's', 'ms', and 'us'.
         :param Union[str, int] label_source: Name or ID of the label source.
+        :param Union[int, tuple[str, int|float, str]] measure: Either the measure ID or the measure tuple
+            (measure_tag, freq_hz, measure_units), if the label is for a specific measure. Leave as none if it's for all measures.
         :raises ValueError: If the provided label_source is not found in the database.
         :return: The ID of the inserted label
 
@@ -2635,13 +2672,13 @@ class AtriumSDK:
         .. code-block:: python
 
             # Insert a label for a device with ID 42
-            insert_label(name='Sleep Stage', start_time=1609459200_000_000_000, end_time=1609462800_000_000_000, device=42)
+            insert_label(name='Sleep Stage', start_time=1609459200_000_000_000, end_time=1609462800_000_000_000, device=42, measure=20)
 
             # Insert a label for a patient with patient_id 12345
-            insert_label(name='Medication', start_time=1609459200_000, end_time=1609462800_000, patient_id=12345, time_units='ms')
+            insert_label(name='Medication', start_time=1609459200_000, end_time=1609462800_000, patient_id=12345, time_units='ms', measure=None)
 
             # Using a device tag instead of device ID
-            insert_label(name='Arrhythmia', start_time=1609459200_000_000_000, end_time=1609462800_000_000_000, device='device-tag-xyz')
+            insert_label(name='Arrhythmia', start_time=1609459200_000_000_000, end_time=1609462800_000_000_000, device='device-tag-xyz', measure=('ECG', 200, 'Milli_Volts'))
 
             # Specifying time units and label source by name
             insert_label(name='Exercise', start_time=1609459200, end_time=1609462800, device=42, time_units='s', label_source='Manual Entry')
@@ -2666,11 +2703,18 @@ class AtriumSDK:
         # Convert device tag to device ID if necessary
         if isinstance(device, str):
             converted_device_id = self.get_device_id(device)
-        elif isinstance(device, int):
-            converted_device_id = device
+        elif isinstance(device, int) or isinstance(device, np.generic):
+            converted_device_id = int(device)
 
         if converted_device_id is None or (isinstance(device, int) and self.get_device_info(device) is None):
             raise ValueError(f"device not found for device {device} patient_id {patient_id} mrn {mrn}")
+
+        # convert measure tag tuple into a measure ID if necessary
+        if isinstance(measure, tuple):
+            measure_id = self.get_measure_id(measure[0], measure[1], measure[2], freq_units='Hz')
+            if measure_id is None:
+                raise ValueError(f"Measure Tag {measure} not found in database")
+            measure = measure_id
 
         # Convert time using the provided time units
         time_units = "ns" if time_units is None else time_units
@@ -2700,38 +2744,40 @@ class AtriumSDK:
             label_id = self._label_set_ids[name]
 
         # Insert the label into the database
-        return self.sql_handler.insert_label(label_id, converted_device_id, start_time, end_time, label_source_id)
+        return self.sql_handler.insert_label(label_id, converted_device_id, start_time, end_time, label_source_id, measure)
 
-    def insert_labels(self, labels: List[Tuple[str, Union[int, str], int, int, Union[str, int, None]]],
+    def insert_labels(self, labels: List[Tuple[str, Union[int, str], Union[int, tuple[str, int | float, str], None], Union[str, int, None], int, int]],
                       time_units: str = None, source_type: str = None):
         """
         Insert multiple label records into the database.
 
-        :param List[Tuple[str, Union[int, str], int, int, Union[str, int]]] labels: A list of labels. Each label is a tuple containing:
+        :param List[Tuple[str, Union[int, str], Union[int, tuple[str, int | float, str]], int, int, Union[str, int]]] labels: A list of labels. Each label is a tuple containing:
             - Name of the label type.
             - Source ID based on the source_type parameter (device ID, device tag, patient ID, or MRN).
+            - Measure for the label. Can be measure ID, tuple containing (measure_tag, freq_hz, measure_units) or none if it applies to all measures at that time.
+            - Name or ID of the label source. (Can be None, for no specified source)
             - Start time for the label.
             - End time for the label.
-            - Name or ID of the label source. (Can be None, for no specified source)
+
         :param str time_units: Units for the `start_time` and `end_time` of each label. Valid options are 'ns', 's', 'ms', and 'us'. (default ns)
         :param str source_type: The type of source ID provided in the labels. Valid options are 'device_id', 'device_tag', 'patient_id', and 'mrn'.
-        :raises ValueError: If the provided label_source or source_type is not found in the database.
+        :raises ValueError: If the provided label_source, source_type or measure is not found in the database.
 
         Example usage:
 
         .. code-block:: python
 
-            # Using device ID as the source type
+            # Using device ID as the source type and measure ID
             labels_data = [
-                ('Sleep Stage', 42, 1609459200_000_000_000, 1609462800_000_000_000, None),
-                ('Medication', 56, 1609459200_000_000_000, 1609462800_000_000_000, 'Medication DB')
+                ('Sleep Stage', 42, 3, None, 1609459200_000_000_000, 1609462800_000_000_000),
+                ('Medication', 56, None, 'Medication DB', 1609459200_000_000_000, 1609462800_000_000_000)
             ]
             insert_labels(labels=labels_data, time_units='s', source_type='device_id')
 
-            # Using MRN as the source type
+            # Using MRN as the source type and measure tuple
             labels_data = [
-                ('Heart Rate', 1234567, 1609459200_000, 1609462800_000, None),
-                ('Blood Pressure', 1234568, 1609459200_000, 1609462800_000, 'Automatic Device')
+                ('Heart Rate', 1234567, ('ECG', 200, 'Milli_Volts'), None, 1609459200_000, 1609462800_000),
+                ('Blood Pressure', ('ECG', 200, 'Milli_Volts'), 'Automatic Device', 1234568, 1609459200_000, 1609462800_000)
             ]
             insert_labels(labels=labels_data, time_units='ms', source_type='mrn')
 
@@ -2747,7 +2793,7 @@ class AtriumSDK:
         formatted_labels = []
 
         for label in labels:
-            name, source_id, start_time, end_time, label_source = label
+            name, source_id, measure, label_source, start_time, end_time = label
 
             # Convert source_id based on the source_type parameter
             if source_type == "device_tag":
@@ -2763,11 +2809,18 @@ class AtriumSDK:
                 if device is None:
                     raise ValueError(f"mrn {source_id} not found in database")
             elif source_type == "device_id":
-                device = source_id
+                device = int(source_id)
                 if self.get_device_info(source_id) is None:
                     raise ValueError(f"device id {source_id} not found in database")
             else:
                 raise ValueError(f"Invalid source type. Expected one of: {', '.join(valid_source_types)}")
+
+            # convert measure tag tuple into a measure ID if necessary
+            if isinstance(measure, tuple):
+                measure_id = self.get_measure_id(measure[0], measure[1], measure[2], freq_units='Hz')
+                if measure_id is None:
+                    raise ValueError(f"Measure Tag {measure} not found in database")
+                measure = measure_id
 
             # Adjust start and end times using time units
             if time_units:
@@ -2795,14 +2848,16 @@ class AtriumSDK:
                 label_id = self._label_set_ids[name]
 
             # Add to the formatted labels list
-            formatted_labels.append((label_id, device, label_source_id, start_time, end_time))
+            formatted_labels.append((label_id, device, measure, label_source_id, start_time, end_time))
 
         # Insert the labels into the database
         self.sql_handler.insert_labels(formatted_labels)
 
-    def delete_labels(self, label_id_list=None, label_name_id_list=None, name_list=None, device_list=None,
-                      start_time=None, end_time=None, time_units: str = None,
-                      patient_id_list=None, label_source_list: Optional[List[Union[str, int]]] = None):
+    def delete_labels(self, label_id_list: List[int] = None, label_name_id_list: List[int] = None, name_list: List[str] = None,
+                      device_list: List[Union[int, str]] = None, start_time: int = None, end_time: int = None, time_units: str = None,
+                      patient_id_list: List[int] = None, label_source_list: Optional[List[Union[str, int]]] = None,
+                      measure_list: List[Union[int, tuple[str, int | float, str], None]] = None):
+
         """
         Delete labels from the database based on specified criteria. If no parameters are passed, the method raises an error for safety.
 
@@ -2815,6 +2870,8 @@ class AtriumSDK:
         :param str time_units: Units for the `start_time` and `end_time` filters.
         :param List[int] patient_id_list: List of patient IDs to filter labels for deletion.
         :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter labels for deletion.
+        :param int measure_list: The list of measure_ids you would like to delete. Can also be a list of tuples
+            specifying the measure (measure_tag, freq_hz, measure_units). If None it will delete labels regardless of measure_id.
         :raises ValueError: If no parameters are provided, or if invalid parameters are provided.
         :return: None
 
@@ -2829,18 +2886,10 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for delete.")
 
-        if "protected_mode" not in self.settings_dict:
-            raise ValueError(
-                "protected_mode is not found in settings table. protected_mode must be set and equal to False")
-        if self.settings_dict["protected_mode"] != "False":
-            raise ValueError(
-                "Cannot perform delete, protected_mode not set to `False`, change in sql table to allow deletion.")
-
         if all(param is None for param in
                [label_id_list, label_name_id_list, name_list, device_list, start_time, end_time, patient_id_list,
-                label_source_list]):
-            raise ValueError(
-                "No parameters were provided. For safety, you need to specify at least one parameter. Use label_id_list='*' to delete all labels.")
+                label_source_list, measure_list]):
+            raise ValueError("No parameters were provided. For safety, you need to specify at least one parameter. Use label_id_list='*' to delete all labels.")
 
         if label_id_list == "*":
             all_labels = self.get_labels()
@@ -2853,8 +2902,8 @@ class AtriumSDK:
         filtered_labels = self.get_labels(label_name_id_list=label_name_id_list, name_list=name_list,
                                           device_list=device_list, start_time=start_time, end_time=end_time,
                                           time_units=time_units, patient_id_list=patient_id_list,
-                                          label_source_list=label_source_list)
-        filtered_label_ids = [label_info['label_id'] for label_info in filtered_labels]
+                                          label_source_list=label_source_list, measure_list=measure_list)
+        filtered_label_ids = [label_info['label_entry_id'] for label_info in filtered_labels]
         return self.sql_handler.delete_labels(filtered_label_ids)
 
     def get_label_name_id(self, name: str):
@@ -3181,7 +3230,8 @@ class AtriumSDK:
     def get_label_time_series(self, label_name=None, label_name_id=None, device_tag=None,
                               device_id=None, patient_id=None, start_time=None, end_time=None,
                               timestamp_array=None, sample_period=None, time_units: str = None,
-                              out: np.ndarray = None, label_source_list: Optional[List[Union[str, int]]] = None):
+                              out: np.ndarray = None, label_source_list: Optional[List[Union[str, int]]] = None,
+                              measure: Union[int, tuple[str, int | float, str]] = None):
         """
         Retrieve a time series representation for labels from the database based on specified criteria.
 
@@ -3195,6 +3245,8 @@ class AtriumSDK:
         :param np.ndarray timestamp_array: Array of timestamps. If not provided, it's generated using `start_time`, `end_time`, and `sample_period`.
         :param int sample_period: Time period between consecutive timestamps. Required if `timestamp_array` is not provided.
         :param str time_units: Units for the `start_time`, `end_time`, and `sample_period` filters. Valid options are 'ns', 's', 'ms', and 'us'.
+        :param int measure: The measure_id or tuple specifying the measure (measure_tag, freq_hz, measure_units), you
+            would like to restrict the search to. If none it will get all labels regardless of measure_id.
         :param np.ndarray out: An optional pre-allocated numpy array to hold the result. The shape must match the expected result shape,
             which is the same as `timestamp_array`. Allowed dtypes are integer types or boolean. If provided,
             the results are written into this array in-place. It should be initialized with zeros.
@@ -3272,7 +3324,7 @@ class AtriumSDK:
         labels = self.get_labels(label_name_id_list=[label_name_id] if label_name_id is not None else None,
                                  device_list=[device_id] if device_id is not None else None, start_time=start_time,
                                  end_time=end_time, patient_id_list=[patient_id] if patient_id is not None else None,
-                                 label_source_list=label_source_list)
+                                 label_source_list=label_source_list, measure_list=[measure] if measure is not None else None)
 
         # Create a binary array to indicate presence of a label for each timestamp, if not provided.
         if out is not None:
@@ -3513,6 +3565,11 @@ class AtriumSDK:
         arr = []
         # Iterate through the sorted interval results
         for row in interval_result:
+            # if the start is greater than or equal to the end_time of this interval skip this interval
+            # also if the end time is less than or equal to the current intervals start_time skip the interval
+            if (start and start >= row[4]) or (end and end <= row[3]):
+                continue
+
             # If the final intervals list is not empty and the difference between the current interval's start time
             # and the previous interval's end time is less than or equal to the gap tolerance, update the end time
             # of the previous interval
@@ -3665,8 +3722,8 @@ class AtriumSDK:
             self.websock_conn.close()
             _LOGGER.debug("Websocket connection closed")
         # if we are in sql mode and there is a connection pool close it
-        elif (self.metadata_connection_type == "mariadb" or self.metadata_connection_type == "mysql") and self.sql_handler.pool is not None:
-            self.sql_handler.pool.close()
+        elif (self.metadata_connection_type == "mariadb" or self.metadata_connection_type == "mysql") and self.sql_handler.connection_manager is not None:
+            self.sql_handler.connection_manager.close_connection()
 
     def get_filename_dict(self, file_id_list):
         if self.metadata_connection_type == "api":

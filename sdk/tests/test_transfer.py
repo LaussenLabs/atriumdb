@@ -14,6 +14,7 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import numpy as np
 
 from atriumdb import AtriumSDK, DatasetDefinition
 import shutil
@@ -63,7 +64,7 @@ def _test_transfer_without_re_encoding(db_type, dataset_location, connection_par
     device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
 
     measures = [measure_info['tag'] for measure_info in sdk_1.get_all_measures().values()]
-    device_ids = {device_id: "all" for device_id in sdk_1.get_all_devices().keys()}
+    device_ids = {np.int64(device_id): "all" for device_id in sdk_1.get_all_devices().keys()}
     definition = DatasetDefinition(measures=measures, device_ids=device_ids)
     transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
                   include_labels=False, reencode_waveforms=False)

@@ -125,8 +125,8 @@ def close_gaps(sorted_2d_array, gap_tolerance):
     return np.array(merged, dtype=np.int64)
 
 
-def get_label_intervals(sdk, label_name: str, device_id=None, patient_id=None, start=None, end=None,
-                        gap_tolerance=None):
+def get_label_intervals(sdk, label_name: str, device_id: int = None, patient_id: int = None, start: int = None,
+                        end: int = None, gap_tolerance: int = None, measure_id: int = None):
     """
     Retrieves intervals of a specific label from an AtriumSDK object.
 
@@ -139,6 +139,7 @@ def get_label_intervals(sdk, label_name: str, device_id=None, patient_id=None, s
     :param int gap_tolerance: (Optional) The maximum allowable gap size in the data such that the output considers a
             region continuous. Put another way, the minimum gap size, such that the output of this method will add
             a new row.
+    :param int measure_id: (Optional) Measure ID to filter labels.
     :return: A 2D numpy array of intervals, each row containing the start and end time.
     :rtype: numpy.ndarray
     """
@@ -149,7 +150,8 @@ def get_label_intervals(sdk, label_name: str, device_id=None, patient_id=None, s
         device_list=[device_id] if device_id else None,
         patient_id_list=[patient_id] if patient_id else None,
         start_time=start,
-        end_time=end
+        end_time=end,
+        measure_list=[measure_id] if measure_id else None,
     )
 
     sorted_labels = sorted(labels, key=lambda x: x['start_time_n'])
