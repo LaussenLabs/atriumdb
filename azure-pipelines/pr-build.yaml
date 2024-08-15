@@ -10,9 +10,6 @@ pool:
 
 variables:
 - group: atriumdb-release
-- name: build_date
-  value: format('{0:yyyyMMdd}',pipeline.startTime)
-
 
 jobs: 
   - job: run_build_dev
@@ -24,7 +21,6 @@ jobs:
     - bash: |
         sudo apt-get update && sudo apt-get install -y tzdata cmake build-essential gdb libzstd-dev liblz4-dev python3.10 mingw-w64
         pip install build
-        pip install twine
       displayName: Setup build environment
 
     - bash: |
@@ -44,16 +40,3 @@ jobs:
         cd sdk
         python -m build
       displayName: Build SDK package
-
-    - bash: |
-        VERSION=$(grep -Po '(?<=version = ")[^"]*' sdk/pyproject.toml)
-        DATE=$(date '+%Y%m%d')
-        COMMIT=$(Build.SourceVersion)
-        mv sdk/dist/atriumdb-*.whl sdk/dist/atriumdb-${VERSION}-${DATE}_${COMMIT}-py3-none-any.whl
-
-    - task: TwineAuthenticate@1
-      inputs:
-        artifactFeed: 'Physiological Data System/adb-py-internal'
-    - bash: |
-          python -m twine upload --skip-existing -r adb-py-internal --config-file $(PYPIRC_PATH) sdk/dist/*.whl
-      displayName: Upload build artifacts
