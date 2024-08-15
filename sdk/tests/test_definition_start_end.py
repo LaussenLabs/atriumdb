@@ -96,3 +96,56 @@ def _test_transfer_start_end(db_type, dataset_location, connection_params):
 
         if valid_start_time < third_time or valid_end_time >= second_third_time:
             assert False, f"{valid_start_time} < {third_time} or {valid_end_time} >= {second_third_time}"
+
+    # Test transfer by patient
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)  # Reset the 2nd db
+
+    patient_id = sdk_1.insert_patient()
+    sdk_1.insert_device_patient_data([(device_id, patient_id, start_time, end_time)])
+    definition = DatasetDefinition(measures=["measure"], patient_ids={patient_id: "all"})
+
+    transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
+                  include_labels=False, start_time=third_time, end_time=second_third_time)
+
+    # Check all transferred data.
+    for window in sdk_2.get_iterator(definition, window_duration_nano, window_slide_nano, time_units="ns"):
+        signal = window.signals[("measure", freq_nano / 10 ** 9, 'mV')]
+        times, values = signal['times'], signal['values']
+
+        # Get indices where values are not NaN
+        valid_indices = ~np.isnan(values)
+        valid_times = times[valid_indices]
+
+        if valid_times.size == 0:
+            continue
+        valid_start_time = valid_times[0]
+        valid_end_time = valid_times[-1]
+
+        if valid_start_time < third_time or valid_end_time >= second_third_time:
+            assert False, f"{valid_start_time} < {third_time} or {valid_end_time} >= {second_third_time}"
+
+    # Test transfer with specific source intervals
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)  # Reset the 2nd db
+
+    definition = DatasetDefinition(measures=["measure"],
+                                   patient_ids={patient_id: [{'start': start_time, 'end': end_time}]})
+
+    transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
+                  include_labels=False, start_time=third_time, end_time=second_third_time)
+
+    # Check all transferred data.
+    for window in sdk_2.get_iterator(definition, window_duration_nano, window_slide_nano, time_units="ns"):
+        signal = window.signals[("measure", freq_nano / 10 ** 9, 'mV')]
+        times, values = signal['times'], signal['values']
+
+        # Get indices where values are not NaN
+        valid_indices = ~np.isnan(values)
+        valid_times = times[valid_indices]
+
+        if valid_times.size == 0:
+            continue
+        valid_start_time = valid_times[0]
+        valid_end_time = valid_times[-1]
+
+        if valid_start_time < third_time or valid_end_time >= second_third_time:
+            assert False, f"{valid_start_time} < {third_time} or {valid_end_time} >= {second_third_time}"

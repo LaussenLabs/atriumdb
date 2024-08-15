@@ -245,6 +245,12 @@ def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, 
         else:
             raise ValueError("time0, pre, post or start and/or end must be in the region specification.")
 
-        interval_list.append([start, end])
+        if start_time_n is not None:
+            start = max(start, start_time_n)
+        if end_time_n is not None:
+            end = min(end, end_time_n)
+
+        if start < end:
+            interval_list.append([start, end])
 
     return interval_list
