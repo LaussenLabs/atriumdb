@@ -21,7 +21,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     :param verbose: Optional. A boolean flag that, when set to True, enables the function to print detailed information about the splitting process.
     :param n_trials: Optional. An integer specifying the number of trials to run with different random states in order to find the most balanced partitioning. If None, the function runs only once using the provided or default random state.
     :param num_show_best_trials: Optional. An integer specifying the number of best trials to display if verbose is True and multiple trials (n_trials > 1) are run. If None or 0, no trials are displayed.
-    :param gap_tolerance: Optional. An integer specifying the minimum allowed gap (in nanoseconds) in any generated time ranges. (Default 1 minute)
+    :param gap_tolerance: Optional. An integer specifying the minimum allowed gap (in nanoseconds) in any time ranges generated from a dataset defintition source id being set to "all". (Default 1 minute)
 
     :return: A tuple of DatasetDefinition instances for the training, testing, and optionally validation sets. The tuple will contain two or three elements depending on whether a validation set is created.
 
