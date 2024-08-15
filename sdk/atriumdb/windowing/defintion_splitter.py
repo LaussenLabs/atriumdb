@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 
 def partition_dataset(definition, sdk, partition_ratios, priority_stratification_labels=None, random_state=None,
-                      verbose=False, n_trials=None, num_show_best_trials=None):
+                      verbose=False, n_trials=None, num_show_best_trials=None, gap_tolerance=0):
     """
     Partition a dataset into training, testing, and optionally validation sets, with an option for stratified splitting based on priority labels.
 
@@ -21,7 +21,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     :param verbose: Optional. A boolean flag that, when set to True, enables the function to print detailed information about the splitting process.
     :param n_trials: Optional. An integer specifying the number of trials to run with different random states in order to find the most balanced partitioning. If None, the function runs only once using the provided or default random state.
     :param num_show_best_trials: Optional. An integer specifying the number of best trials to display if verbose is True and multiple trials (n_trials > 1) are run. If None or 0, no trials are displayed.
-
+    :param gap_tolerance: Optional. An integer specifying the minimum allowed gap (in nanoseconds) in any generated time ranges.
 
     :return: A tuple of DatasetDefinition instances for the training, testing, and optionally validation sets. The tuple will contain two or three elements depending on whether a validation set is created.
 
@@ -36,7 +36,8 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
             partition_ratios=[60, 20, 20],
             priority_stratification_labels=['label1', 'label2'],
             random_state=42,
-            verbose=False
+            verbose=False,
+            gap_tolerance=10**9  # 1 second
         )
     """
     if len(definition.data_dict['measures']) == 0:
@@ -44,7 +45,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
 
     # Validate the dataset definition and gather necessary components.
     validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
-        definition, sdk, gap_tolerance=0)
+        definition, sdk, gap_tolerance=gap_tolerance)
 
     # Convert priority stratification labels to label set IDs, using the SDK if necessary.
     priority_stratification_label_set_ids = get_priority_stratification_label_set_ids(
