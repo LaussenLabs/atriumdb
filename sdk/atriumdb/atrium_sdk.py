@@ -2892,13 +2892,6 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for delete.")
 
-        if "protected_mode" not in self.settings_dict:
-            raise ValueError(
-                "protected_mode is not found in settings table. protected_mode must be set and equal to False")
-        if self.settings_dict["protected_mode"] != "False":
-            raise ValueError(
-                "Cannot perform delete, protected_mode not set to `False`, change in sql table to allow deletion.")
-
         if all(param is None for param in
                [label_id_list, label_name_id_list, name_list, device_list, start_time, end_time, patient_id_list,
                 label_source_list, measure_list]):
@@ -2916,7 +2909,7 @@ class AtriumSDK:
                                           device_list=device_list, start_time=start_time, end_time=end_time,
                                           time_units=time_units, patient_id_list=patient_id_list,
                                           label_source_list=label_source_list, measure_list=measure_list)
-        filtered_label_ids = [label_info['label_id'] for label_info in filtered_labels]
+        filtered_label_ids = [label_info['label_entry_id'] for label_info in filtered_labels]
         return self.sql_handler.delete_labels(filtered_label_ids)
 
     def get_label_name_id(self, name: str):
