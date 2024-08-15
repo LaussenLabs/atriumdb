@@ -347,9 +347,10 @@ def ingest_data(to_sdk, measure_id, device_id, headers, times, values, export_fo
     device_folder_name = str(device_tag)
 
     base_path = Path(to_sdk.dataset_location) / export_format / device_folder_name / measure_folder_name
+    file_name = None
     if export_format != 'tsc':
         base_path.mkdir(parents=True, exist_ok=True)
-    file_name = str(nanoseconds_to_date_string_with_tz(int(times[0]), timezone_str=timezone_str)).replace(".", "f").replace(":", "-")
+        file_name = str(nanoseconds_to_date_string_with_tz(int(times[0]), timezone_str=timezone_str)).replace(".", "f").replace(":", "-")
     file_path = None
 
     if export_format == 'tsc':
