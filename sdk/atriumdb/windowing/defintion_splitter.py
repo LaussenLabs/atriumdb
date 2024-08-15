@@ -121,7 +121,7 @@ def get_priority_stratification_label_set_ids(priority_labels, validated_label_s
     if all(isinstance(label, int) for label in priority_labels):
         label_set_ids = priority_labels
     elif all(isinstance(label, str) for label in priority_labels):
-        label_set_ids = [sdk.get_label_set_id(label) for label in priority_labels]
+        label_set_ids = [sdk.get_label_name_id(label) for label in priority_labels]
     else:
         raise ValueError("Priority stratification labels must be all integers or all strings.")
 
@@ -157,7 +157,7 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
             for start_time, end_time in time_ranges:
                 # Fetch labels within this time range
                 labels = sdk.get_labels(
-                    label_set_id_list=priority_stratification_label_set_ids,
+                    label_name_id_list=priority_stratification_label_set_ids,
                     device_list=device_list,
                     patient_id_list=patient_id_list,
                     start_time=start_time,
