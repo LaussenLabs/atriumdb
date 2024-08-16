@@ -2378,13 +2378,14 @@ class AtriumSDK:
 
         return matching_devices[0] if matching_devices else None
 
-    def convert_device_to_patient_id(self, start_time: int, end_time: int, device):
+    def convert_device_to_patient_id(self, start_time: int, end_time: int, device, conflict_resolution='error'):
         """
         Converts a device ID or tag to a patient ID based on the specified time range.
 
         :param int start_time: Start time for the association.
         :param int end_time: End time for the association.
         :param device: Device ID (int) or tag (str) to be converted.
+        :param str conflict_resolution: How to handle multiple matching patients. Options are 'error', '90_percent_overlap', 'always_none'.
         :return: Patient ID if a single patient's interval encapsulates the time range, otherwise None.
         :rtype: int or None
         """
@@ -2427,11 +2428,27 @@ class AtriumSDK:
                 if interval[0] <= start_time and interval[1] >= end_time:
                     matching_patients.append(patient_id)
 
-        # Raise error if more than one match is found
+        # Handle multiple matching patients based on conflict_resolution parameter
         if len(matching_patients) > 1:
-            raise ValueError(f"Multiple patients ({matching_patients}) found for the same time range with parameters: "
-                             f"start_time={start_time}, end_time={end_time}, device={device}. "
-                             "Please check and fix the device_patient table.")
+            if conflict_resolution == 'error':
+                raise ValueError(
+                    f"Multiple patients ({matching_patients}) found for the same time range with parameters: "
+                    f"start_time={start_time}, end_time={end_time}, device={device}. "
+                    "Please check and fix the device_patient table.")
+            elif conflict_resolution == '90_percent_overlap':
+                for patient_id in matching_patients:
+                    total_overlap = sum(min(end_time, interval[1]) - max(start_time, interval[0])
+                                        for interval in patient_intervals[patient_id])
+                    if total_overlap >= 0.9 * (end_time - start_time):
+                        print(f"Warning: Patient {patient_id} overlaps 90% or more of the time range.")
+                        return patient_id
+                print("Warning: No patient overlaps 90% or more of the time range.")
+                return None
+            elif conflict_resolution == 'always_none':
+                print("Warning: Multiple patients found. Returning None.")
+                return None
+            else:
+                raise ValueError(f"Invalid conflict_resolution value: {conflict_resolution}")
 
         return matching_patients[0] if matching_patients else None
 
@@ -2589,7 +2606,8 @@ class AtriumSDK:
             label_source_name = label_source_info['name'] if label_source_info else None
 
             patient_id = self.convert_device_to_patient_id(
-                start_time=start_time_n, end_time=end_time_n, device=device_id)
+                start_time=start_time_n, end_time=end_time_n, device=device_id,
+                conflict_resolution='90_percent_overlap')
             mrn = None if patient_id is None else self.get_mrn(patient_id)
 
             formatted_label = {
