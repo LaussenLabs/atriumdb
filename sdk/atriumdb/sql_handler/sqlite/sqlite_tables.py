@@ -53,7 +53,7 @@ sqlite_block_index_create_query = """CREATE TABLE IF NOT EXISTS block_index(
     num_values INTEGER NOT NULL,
     FOREIGN KEY (measure_id) REFERENCES measure(id),
     FOREIGN KEY (device_id) REFERENCES device(id),
-    FOREIGN KEY (file_id) REFERENCES file_index(id) ON DELETE CASCADE 
+    FOREIGN KEY (file_id) REFERENCES file_index(id) ON DELETE CASCADE ON UPDATE CASCADE
 );"""
 
 sqlite_block_index_idx_query = \
