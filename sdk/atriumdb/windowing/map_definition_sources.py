@@ -81,6 +81,8 @@ def map_validated_sources(sources: dict, sdk) -> dict:
     if 'device_patient_tuples' in mapped_sources:
         mapped_sources['device_patient_tuples'] = reorder_dict_by_sublist(mapped_sources['device_patient_tuples'])
 
+    return mapped_sources
+
 
 def reorder_dict_by_sublist(input_dict):
     # Turn the dictionary into a list of (key, value) pairs.
