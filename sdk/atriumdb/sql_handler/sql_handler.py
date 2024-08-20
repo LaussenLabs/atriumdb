@@ -563,7 +563,8 @@ class SQLHandler(ABC):
 
     def select_labels(self, label_set_id_list=None, device_id_list=None, patient_id_list=None, start_time_n=None,
                       end_time_n=None, label_source_id_list=None, measure_id_list=None, limit=None, offset=None):
-        # Select labels based on the given criteria. This function supports recursive queries for patients.
+        if device_id_list is not None and patient_id_list is not None:
+            raise ValueError("Can only request labels by device or patient, not both")
 
         # If provided patient IDs, fetch device time ranges and recursively call select_labels.
         if patient_id_list is not None:
@@ -583,7 +584,7 @@ class SQLHandler(ABC):
                                                       label_source_id_list=label_source_id_list, measure_id_list=measure_id_list))
 
             # Sort the results by start_time_n primarily and then by end_time_n secondarily
-            results.sort(key=lambda x: (x[3], x[4]))
+            results.sort(key=lambda x: (x[5], x[6]))
             return results
 
         # Construct the query for selecting labels based on the provided criteria.
@@ -638,6 +639,101 @@ class SQLHandler(ABC):
             cursor.execute(query, params)
             return cursor.fetchall()
 
+
+    def select_labels_with_info(self, label_set_id_list=None, device_id_list=None, patient_id_list=None,
+                                start_time_n=None, end_time_n=None, label_source_id_list=None, measure_id_list=None,
+                                limit=None, offset=None):
+        if device_id_list is not None and patient_id_list is not None:
+            raise ValueError("Can only request labels by device or patient, not both")
+
+        results = []
+
+        if patient_id_list is not None:
+            # Fetch device time ranges associated with a patient and adjust the time range based on provided boundaries.
+            for patient_id in patient_id_list:
+                device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
+
+                for device_id, device_start_time, device_end_time in device_time_ranges:
+                    final_start_time = max(start_time_n, device_start_time) if start_time_n else device_start_time
+                    final_end_time = min(end_time_n, device_end_time) if end_time_n else device_end_time
+
+                    # Recursively fetch labels and accumulate the results.
+                    results.extend(
+                        self.select_labels_with_info(label_set_id_list=label_set_id_list, device_id_list=[device_id],
+                                                     start_time_n=final_start_time, end_time_n=final_end_time,
+                                                     label_source_id_list=label_source_id_list,
+                                                     measure_id_list=measure_id_list))
+
+            # Sort the results by start_time_n primarily and then by end_time_n secondarily
+            results.sort(key=lambda x: (x[7], x[8]))
+            return results
+
+        # Construct the query with additional joins for label_source, label_set, and device_patient.
+        query = """
+            SELECT
+                label.id, label_set.name AS label_name, label_set_id, 
+                label.device_id, label.measure_id, label_source.name AS label_source_name, 
+                label_source_id, start_time_n, end_time_n, 
+                device_patient.patient_id
+            FROM label
+            JOIN label_set ON label.label_set_id = label_set.id
+            LEFT JOIN label_source ON label.label_source_id = label_source.id
+            LEFT JOIN device_patient ON label.device_id = device_patient.device_id
+                AND label.start_time_n >= device_patient.start_time
+                AND label.end_time_n <= device_patient.end_time
+        """
+        params = []
+
+        # Add conditions based on the provided criteria.
+        conditions = ["1=1"]  # Placeholder for dynamic query construction
+
+        if label_set_id_list:
+            placeholders = ', '.join(['?'] * len(label_set_id_list))
+            conditions.append(f"label.label_set_id IN ({placeholders})")
+            params.extend(label_set_id_list)
+
+        if device_id_list:
+            placeholders = ', '.join(['?'] * len(device_id_list))
+            conditions.append(f"label.device_id IN ({placeholders})")
+            params.extend(device_id_list)
+
+        if measure_id_list:
+            placeholders = ', '.join(['?'] * len(measure_id_list))
+            conditions.append(f"label.measure_id IN ({placeholders})")
+            params.extend(measure_id_list)
+
+        if label_source_id_list:
+            placeholders = ', '.join(['?'] * len(label_source_id_list))
+            conditions.append(f"label.label_source_id IN ({placeholders})")
+            params.extend(label_source_id_list)
+
+        if start_time_n:
+            conditions.append("label.end_time_n >= ?")
+            params.append(int(start_time_n))
+
+        if end_time_n:
+            conditions.append("label.start_time_n <= ?")
+            params.append(int(end_time_n))
+
+        # Combine conditions into the query.
+        query += " WHERE " + " AND ".join(conditions)
+
+        # Add sorting.
+        query += " ORDER BY start_time_n ASC, end_time_n ASC"
+
+        # Handle limit and offset.
+        if limit is not None:
+            query += f" LIMIT {limit}"
+            if offset is not None:
+                query += f" OFFSET {offset}"
+
+        # Execute the query and return the results.
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(query, params)
+            fetched_results = cursor.fetchall()
+
+        return fetched_results
+
     def insert_label_source(self, name, description=None):
         # First, check if the label_source with the given name already exists
         select_query = "SELECT id FROM label_source WHERE name = ?"
@@ -668,6 +764,10 @@ class SQLHandler(ABC):
             cursor.execute(query, (int(label_source_id),))
             result = cursor.fetchone()
             return {'id': result[0], 'name': result[1], 'description': result[2]} if result else None
+        pass
+
+    @abstractmethod
+    def select_label_sources(self, limit=None, offset=None):
         pass
 
     def get_measure_id_with_most_rows(self, tag: str) -> Optional[int]:

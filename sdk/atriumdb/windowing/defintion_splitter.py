@@ -2,6 +2,7 @@ from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.definition import DatasetDefinition
 import numpy as np
 import random
+import bisect
 import copy
 from tqdm import tqdm
 
@@ -77,6 +78,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
             return partitioned_definition_objects
 
     # Sort the trials to find the best one.
+    print("best")
     best_trials = sorted(trials_results, key=lambda x: x[0])
 
     # Display the specified number of best trials if verbose is True.
@@ -90,6 +92,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
             print("-" * 50)
 
     # Select the best trial based on the metric.
+    print("select")
     best_trial_random_state = best_trials[0][1] if best_trials else random_state
 
     # Rerun the partitioning using the best trial's random state.
@@ -136,38 +139,62 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
     label_duration_list = []
     label_to_index_dict = {label: label_i for label_i, label in enumerate(priority_stratification_label_set_ids)}
 
+    # Get all the label results
+    label_result = sdk.sql_handler.select_labels(
+        label_set_id_list=priority_stratification_label_set_ids,
+    )
+
+    # Sort them by device
+    device_labels = {}
+    for (label_entry_id, label_set_id, device_id, measure_id, label_source_id,
+         start_time_n, end_time_n) in label_result:
+        if device_id not in device_labels:
+            device_labels[device_id] = []
+        formatted_label = {
+            'label_entry_id': label_entry_id,
+            'label_name_id': label_set_id,
+            'device_id': device_id,
+            'start_time_n': start_time_n,
+            'end_time_n': end_time_n,
+            'label_source_id': label_source_id,
+            'measure_id': measure_id
+        }
+        device_labels[device_id].append(formatted_label)
+
+    # Sort the device results by time
+    label_starts = {}
+    label_ends = {}
+    for device_id in device_labels.keys():
+        device_labels[device_id] = sorted(device_labels[device_id], key=lambda x: (x['start_time_n'], x['end_time_n']))
+        label_starts[device_id] = [entry['start_time_n'] for entry in device_labels[device_id]]
+        label_ends[device_id] = [entry['end_time_n'] for entry in device_labels[device_id]]
+
     for source_type, source_data in validated_sources.items():
-        for source_key, time_ranges in source_data.items():
+        for source_key, time_ranges in tqdm(list(source_data.items())):
             # Initialize durations for this source, one for each label, plus one for waveform hours
             durations = [0] * (len(priority_stratification_label_set_ids) + 1)
 
             # (device_id, patient_id)
             if source_type == "device_patient_tuples":
-                device_list = [source_key[0]]
-                patient_id_list = None
+                device_id, patient_id = source_key
             elif source_type == "device_ids":
-                device_list = [source_key]
-                patient_id_list = None
+                device_id, patient_id = source_key, None
             elif source_type == "patient_ids":
-                device_list = None
-                patient_id_list = [source_key]
+                device_id, patient_id = None, source_key
+                # If we couldn't map the patient to a device, then no labels will be found either
+                continue
             else:
                 raise ValueError(f"source type must be device_patient_tuples, device_ids, patient_ids, not {source_type}")
 
             # Loop through each time range for this source
             for start_time, end_time in time_ranges:
                 # Fetch labels within this time range
-                labels = sdk.get_labels(
-                    label_name_id_list=priority_stratification_label_set_ids,
-                    device_list=device_list,
-                    patient_id_list=patient_id_list,
-                    start_time=start_time,
-                    end_time=end_time,
-                )
+                range_labels = find_labels(
+                    device_labels[device_id], label_starts[device_id], label_ends[device_id], start_time, end_time)
                 durations[0] += end_time - start_time
 
                 # Calculate the duration for each priority label within this time range
-                for label in labels:
+                for label in range_labels:
                     if label['label_name_id'] in label_to_index_dict:
                         label_index = label_to_index_dict[label['label_name_id']]
                         label_duration = label['end_time_n'] - label['start_time_n']
@@ -325,3 +352,20 @@ def get_random_states(n_trials, random_state=None):
     """
     rng = np.random.default_rng(random_state)
     return rng.choice(np.iinfo(np.int32).max, size=n_trials, replace=False).tolist()
+
+
+def find_labels(sorted_labels, starts, ends, start_time, end_time):
+    start_idx = bisect.bisect_left(ends, start_time)
+    end_idx = bisect.bisect_left(ends, end_time)
+
+    if start_idx == end_idx:
+        if start_idx >= len(starts):
+            return []
+        if (not (starts[start_idx] <= start_time <= ends[start_idx])
+                and not (starts[end_idx] <= end_time <= ends[end_idx])):
+            return []
+
+    if end_idx < len(starts) and end_time < starts[end_idx]:
+        end_idx = max(0, end_idx - 1)
+
+    return sorted_labels[start_idx:end_idx + 1]
