@@ -270,8 +270,12 @@ def convert_source_lists_to_definitions(partitioned_source_list, original_defini
             # Depending on the source type, update the correct dictionary
             if source_type == 'device_patient_tuples':
                 # Using patient_id and ignoring device_id for simplicity
-                patient_id = source_key[1]
-                patient_ids[patient_id] = time_specifications
+                # patient_id = source_key[1]
+                # patient_ids[patient_id] = time_specifications
+
+                device_id = source_key[0]
+                device_ids[device_id] = time_specifications
+
             elif source_type == 'patient_ids':
                 patient_id = source_key
                 patient_ids[patient_id] = time_specifications
