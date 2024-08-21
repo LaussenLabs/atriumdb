@@ -48,6 +48,7 @@ from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
 from atriumdb.windowing.random_access_iterator import RandomAccessDatasetIterator
 from atriumdb.windowing.verify_definition import verify_definition
+from atriumdb.windowing.defintion_splitter import partition_dataset
 
 try:
     import requests
@@ -3430,10 +3431,10 @@ class AtriumSDK:
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
                      time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
                      shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
-                     end_time=None) -> DatasetIterator:
+                     end_time=None, num_iterators=1) -> Union[DatasetIterator, List[DatasetIterator]]:
         """
-        Constructs and returns a `DatasetIterator` object that allows iteration over the dataset according to
-        the specified definition.
+        Constructs and returns a `DatasetIterator` object or a list of `DatasetIterator` objects that allow iteration
+        over the dataset according to the specified definition.
 
         The method first verifies the provided definition against the dataset of the calling class object.
         If certain parts of the cohort definition aren't present within the dataset, the method will truncate the
@@ -3475,9 +3476,10 @@ class AtriumSDK:
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
+        :param int num_iterators: Number of iterators to create by partitioning the dataset (default is 1).
 
-        :return: DatasetIterator object to easily iterate over the specified data.
-        :rtype: DatasetIterator
+        :return: A single DatasetIterator object or a list of DatasetIterator objects depending on the value of num_iterators.
+        :rtype: Union[DatasetIterator, List[DatasetIterator]]
 
         **Example**:
 
@@ -3533,6 +3535,30 @@ class AtriumSDK:
             assert cached_windows_per_source > 0, "cached_windows_per_source must be at least 1."
             max_cache_duration_per_source = window_duration + (window_slide * (cached_windows_per_source - 1))
 
+        # Check if we need to partition the dataset
+        if num_iterators > 1:
+            definition_list = partition_dataset(
+                definition,
+                self,
+                partition_ratios=[1] * num_iterators,
+                priority_stratification_labels=definition.data_dict['labels'],
+                random_state=42,
+                verbose=False,
+                gap_tolerance=10 ** 9  # 1 second
+            )
+
+            # Create iterators for each partitioned definition
+            iterators = []
+            for partitioned_definition in definition_list:
+                iterator = self.get_iterator(partitioned_definition, window_duration, window_slide, gap_tolerance,
+                                             num_windows_prefetch, "ns", label_threshold, iterator_type,
+                                             window_filter_fn, shuffle, cached_windows_per_source,
+                                             patient_history_fields, start_time_n, end_time_n, num_iterators=1)
+                iterators.append(iterator)
+
+            return iterators
+
+        # Validate the definition and create the iterator for a single partition
         validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
             definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n)
 
@@ -3541,7 +3567,8 @@ class AtriumSDK:
             iterator = RandomAccessDatasetIterator(
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
-                label_threshold=label_threshold, time_units=time_units, max_cache_duration=max_cache_duration_per_source,
+                label_threshold=label_threshold, time_units=time_units,
+                max_cache_duration=max_cache_duration_per_source,
                 shuffle=shuffle, patient_history_fields=patient_history_fields)
         elif iterator_type == 'filtered':
             if window_filter_fn is None:
@@ -3550,7 +3577,8 @@ class AtriumSDK:
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, time_units=time_units, window_filter_fn=window_filter_fn,
-                max_cache_duration=max_cache_duration_per_source, shuffle=shuffle, patient_history_fields=patient_history_fields)
+                max_cache_duration=max_cache_duration_per_source, shuffle=shuffle,
+                patient_history_fields=patient_history_fields)
         else:
             iterator = DatasetIterator(
                 self, validated_measure_list, validated_label_set_list, validated_sources,
