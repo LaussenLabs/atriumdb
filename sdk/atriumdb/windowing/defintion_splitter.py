@@ -293,12 +293,41 @@ def convert_source_lists_to_definitions(partitioned_source_list, original_defini
             else:
                 raise ValueError("Invalid source_type encountered")
 
+        # Merge time ranges for patient_ids and device_ids
+        patient_ids = {pid: merge_time_ranges(ranges) for pid, ranges in patient_ids.items()}
+        device_ids = {did: merge_time_ranges(ranges) for did, ranges in device_ids.items()}
+
         # Create a new definition for this partition
         partition_def = DatasetDefinition(measures=measures, patient_ids=patient_ids,
                                           device_ids=device_ids, labels=labels)
         partitioned_definitions.append(partition_def)
 
     return partitioned_definitions
+
+
+def merge_time_ranges(time_ranges):
+    if not time_ranges:
+        return []
+
+    # Sort by the 'start' time
+    time_ranges.sort(key=lambda x: x['start'])
+
+    merged_ranges = []
+    current_range = time_ranges[0]
+
+    for next_range in time_ranges[1:]:
+        if current_range['end'] == next_range['start']:
+            # Merge the ranges
+            current_range['end'] = next_range['end']
+        else:
+            # No merging needed, push the current range and move to the next
+            merged_ranges.append(current_range)
+            current_range = next_range
+
+    # Add the last range
+    merged_ranges.append(current_range)
+
+    return merged_ranges
 
 
 def get_duration_info(partitioned_durations, priority_stratification_labels, partition_source_counts,
