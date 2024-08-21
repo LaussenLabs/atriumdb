@@ -274,14 +274,22 @@ def convert_source_lists_to_definitions(partitioned_source_list, original_defini
                 # patient_ids[patient_id] = time_specifications
 
                 device_id = source_key[0]
-                device_ids[device_id] = time_specifications
+                if device_id not in device_ids:
+                    device_ids[device_id] = []
+
+                device_ids[device_id].extend(time_specifications)
 
             elif source_type == 'patient_ids':
                 patient_id = source_key
-                patient_ids[patient_id] = time_specifications
+                if patient_id not in patient_ids:
+                    patient_ids[patient_id] = []
+                patient_ids[patient_id].extend(time_specifications)
             elif source_type == 'device_ids':
                 device_id = source_key
-                device_ids[device_id] = time_specifications
+                if device_id not in device_ids:
+                    device_ids[device_id] = []
+
+                device_ids[device_id].extend(time_specifications)
             else:
                 raise ValueError("Invalid source_type encountered")
 
