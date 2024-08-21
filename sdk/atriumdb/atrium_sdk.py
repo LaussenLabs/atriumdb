@@ -268,6 +268,7 @@ class AtriumSDK:
 
         # Create these caches early in case they get used in the initial creation of the caches below.
         self._measures, self._devices, self._label_sets = {}, {}, {}
+        self._label_source_ids, self._label_sources = {}, {}
 
         # Initialize measures and devices if not in API mode
         if metadata_connection_type != "api":
