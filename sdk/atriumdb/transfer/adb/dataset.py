@@ -48,7 +48,7 @@ time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDefinition, export_format='tsc',
                   gap_tolerance=None, deidentify=True, patient_info_to_transfer=None, include_labels=True,
                   measure_tag_match_rule=None, deidentification_functions=None, time_shift=None, time_units=None,
-                  export_time_format=None, parquet_engine=None, timezone_str=None, reencode_waveforms=True, **kwargs):
+                  export_time_format=None, parquet_engine=None, timezone_str=None, reencode_waveforms=False, **kwargs):
     """
     Transfers data from a source AtriumSDK instance to a destination AtriumSDK instance based on a specified dataset definition.
     This includes transferring measures, devices, patient information, and labels with options for data de-identification,
@@ -75,11 +75,11 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         'fastparquet' - uses fastparquet to write DataFrame directly.
         'pyarrow' - uses pyarrow to create a Table from data and write it to a Parquet file.
         If None, the default engine installed will be used. The specific engine affects how the Parquet files are handled and can be influenced by additional kwargs.
-    :param str timezone_str: The timezone to use for the conversion. Default is 'Etc/GMT'.
+    :param Optional[str] timezone_str: The timezone to use for the conversion. Default is 'Etc/GMT'.
         Valid values are any timezone strings recognized by the `zoneinfo` module. Examples include 'America/New_York',
         'Asia/Tokyo', 'Europe/London', etc. For a complete list of valid timezones, refer to the IANA time zone database.
     :param Optional[bool] reencode_waveforms: Specifies whether to reencode data into newly encoded blocks.
-        (Default True) Setting to False with reuse existing blocks where possible and significantly speed up transfer.
+        (Default False) Setting to False will reuse existing blocks where possible and significantly speed up transfer.
 
     Examples:
     ---------
@@ -108,7 +108,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
     """
     if not reencode_waveforms and time_shift is not None:
-        raise ValueError("Cannot apply a time shift without re-encoding waveforms.")
+        raise ValueError("Cannot apply a time shift without re-encoding waveforms. You must set reencode_waveforms=True")
 
     time_units = "ns" if time_units is None else time_units
     export_time_format = "ns" if export_time_format is None else export_time_format
