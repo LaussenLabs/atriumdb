@@ -188,33 +188,34 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                             else:
                                 remaining_blocks.append(block)
 
-                        # Concatenate continuous byte intervals to cut down on total number of reads.
-                        read_list = condense_byte_read_list(within_time_blocks)
-
                         # if no matching block ids
-                        if len(read_list) == 0:
+                        if len(within_time_blocks) + len(remaining_blocks) == 0:
                             continue
 
-                        # Map file_ids to filenames and return a dictionary.
-                        file_id_list = [row[2] for row in read_list]
-                        filename_dict = src_sdk.get_filename_dict(file_id_list)
+                        if within_time_blocks:
+                            # Concatenate continuous byte intervals to cut down on total number of reads.
+                            read_list = condense_byte_read_list(within_time_blocks)
 
-                        # Read the data from the files using the read list
-                        encoded_bytes = src_sdk.file_api.read_file_list(read_list, filename_dict)
+                            # Map file_ids to filenames and return a dictionary.
+                            file_id_list = [row[2] for row in read_list]
+                            filename_dict = src_sdk.get_filename_dict(file_id_list)
 
-                        num_bytes_list = [row[5] for row in within_time_blocks]
-                        byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
-                        byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]],
-                                                          axis=None)
-                        encoded_headers = src_sdk.block.decode_headers(encoded_bytes, byte_start_array)
-                        filename = dest_sdk.file_api.write_bytes(dest_measure_id, dest_device_id, encoded_bytes)
+                            # Read the data from the files using the read list
+                            encoded_bytes = src_sdk.file_api.read_file_list(read_list, filename_dict)
 
-                        block_data, interval_data = get_block_and_interval_data(
-                            dest_measure_id, dest_device_id, encoded_headers, byte_start_array, write_intervals,
-                            interval_gap_tolerance=gap_tolerance)
+                            num_bytes_list = [row[5] for row in within_time_blocks]
+                            byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
+                            byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]],
+                                                              axis=None)
+                            encoded_headers = src_sdk.block.decode_headers(encoded_bytes, byte_start_array)
+                            filename = dest_sdk.file_api.write_bytes(dest_measure_id, dest_device_id, encoded_bytes)
 
-                        dest_sdk.sql_handler.insert_tsc_file_data(
-                            filename, block_data, interval_data, "fast")
+                            block_data, interval_data = get_block_and_interval_data(
+                                dest_measure_id, dest_device_id, encoded_headers, byte_start_array, write_intervals,
+                                interval_gap_tolerance=gap_tolerance)
+
+                            dest_sdk.sql_handler.insert_tsc_file_data(
+                                filename, block_data, interval_data, "fast")
 
                         if remaining_blocks:
                             # If there were partial blocks, we need to re-encode them.
