@@ -231,7 +231,10 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                             filename_dict = src_sdk.get_filename_dict(file_id_list)
                             headers, times, values = src_sdk.get_data_from_blocks(
                                 remaining_blocks, filename_dict, int(start_time_nano), int(end_time_nano),
-                                analog_values, time_type=1, sort=False, allow_duplicates=allow_duplicates)
+                                analog_values, time_type=1, sort=True, allow_duplicates=allow_duplicates)
+
+                            for h_i in range(len(headers)):
+                                headers[h_i].t_raw_type = 1
 
                             if values.size == 0:
                                 continue
@@ -243,6 +246,9 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                         headers, times, values = src_sdk.get_data(
                             src_measure_id, start_time_nano, end_time_nano, device_id=src_device_id, time_type=1,
                             analog=analog_values, sort=True, allow_duplicates=allow_duplicates)
+
+                        for h_i in range(len(headers)):
+                            headers[h_i].t_raw_type = 1
 
                         if values.size == 0:
                             continue
