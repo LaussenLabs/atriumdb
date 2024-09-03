@@ -92,7 +92,7 @@ class DatasetIterator:
         # and have associated time ranges (or "all").
         self.sources = validated_sources
         self.max_cache_duration = max_cache_duration
-        if max_cache_duration is not None:
+        if shuffle is not False and max_cache_duration is not None:
             assert max_cache_duration >= window_duration_ns, \
                 "max_cache_duration must be greater than window_duration_ns"
             self._split_time_ranges(max_cache_duration)

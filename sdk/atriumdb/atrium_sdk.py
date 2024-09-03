@@ -2229,6 +2229,7 @@ class AtriumSDK:
         >>>                                                    start_time=start_time,
         >>>                                                    end_time=end_time)
         """
+        global_start, global_end = start_time, end_time
         if self.metadata_connection_type == "api":
             return self._api_get_device_patient_data(device_id_list=device_id_list, patient_id_list=patient_id_list,
                                                      mrn_list=mrn_list, start_time=start_time, end_time=end_time)
@@ -2247,6 +2248,11 @@ class AtriumSDK:
         converted_end_times_result = []
         for device_id, patient_id, start_time, end_time in result:
             end_time = time.time_ns() if end_time is None else end_time
+
+            # Truncate time regions to fit requested start/end
+            end_time = end_time if global_end is None else min(end_time, global_end)
+            start_time = start_time if global_start is None else max(start_time, global_start)
+
             converted_end_times_result.append([device_id, patient_id, start_time, end_time])
 
         return converted_end_times_result
@@ -2378,13 +2384,14 @@ class AtriumSDK:
 
         return matching_devices[0] if matching_devices else None
 
-    def convert_device_to_patient_id(self, start_time: int, end_time: int, device):
+    def convert_device_to_patient_id(self, start_time: int, end_time: int, device, conflict_resolution='error'):
         """
         Converts a device ID or tag to a patient ID based on the specified time range.
 
         :param int start_time: Start time for the association.
         :param int end_time: End time for the association.
         :param device: Device ID (int) or tag (str) to be converted.
+        :param str conflict_resolution: How to handle multiple matching patients. Options are 'error', '90_percent_overlap', 'always_none'.
         :return: Patient ID if a single patient's interval encapsulates the time range, otherwise None.
         :rtype: int or None
         """
@@ -2427,11 +2434,27 @@ class AtriumSDK:
                 if interval[0] <= start_time and interval[1] >= end_time:
                     matching_patients.append(patient_id)
 
-        # Raise error if more than one match is found
+        # Handle multiple matching patients based on conflict_resolution parameter
         if len(matching_patients) > 1:
-            raise ValueError(f"Multiple patients ({matching_patients}) found for the same time range with parameters: "
-                             f"start_time={start_time}, end_time={end_time}, device={device}. "
-                             "Please check and fix the device_patient table.")
+            if conflict_resolution == 'error':
+                raise ValueError(
+                    f"Multiple patients ({matching_patients}) found for the same time range with parameters: "
+                    f"start_time={start_time}, end_time={end_time}, device={device}. "
+                    "Please check and fix the device_patient table.")
+            elif conflict_resolution == '90_percent_overlap':
+                for patient_id in matching_patients:
+                    total_overlap = sum(min(end_time, interval[1]) - max(start_time, interval[0])
+                                        for interval in patient_intervals[patient_id])
+                    if total_overlap >= 0.9 * (end_time - start_time):
+                        print(f"Warning: Patient {patient_id} overlaps 90% or more of the time range.")
+                        return patient_id
+                print("Warning: No patient overlaps 90% or more of the time range.")
+                return None
+            elif conflict_resolution == 'always_none':
+                print("Warning: Multiple patients found. Returning None.")
+                return None
+            else:
+                raise ValueError(f"Invalid conflict_resolution value: {conflict_resolution}")
 
         return matching_patients[0] if matching_patients else None
 
@@ -2589,7 +2612,8 @@ class AtriumSDK:
             label_source_name = label_source_info['name'] if label_source_info else None
 
             patient_id = self.convert_device_to_patient_id(
-                start_time=start_time_n, end_time=end_time_n, device=device_id)
+                start_time=start_time_n, end_time=end_time_n, device=device_id,
+                conflict_resolution='90_percent_overlap')
             mrn = None if patient_id is None else self.get_mrn(patient_id)
 
             formatted_label = {
@@ -3352,10 +3376,10 @@ class AtriumSDK:
 
         return result_array
 
-    def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None,
-                     num_windows_prefetch=None, time_units: str = None, label_threshold=0.5,
-                     iterator_type=None, window_filter_fn=None, shuffle=False,
-                     cached_windows_per_source=None, patient_history_fields=None) -> DatasetIterator:
+    def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
+                     time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
+                     shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
+                     end_time=None) -> DatasetIterator:
         """
         Constructs and returns a `DatasetIterator` object that allows iteration over the dataset according to
         the specified definition.
@@ -3373,42 +3397,33 @@ class AtriumSDK:
 
         :param definition: A DefinitionYAML object or string representation specifying the measures and
                            patients or devices over particular time intervals.
-        :type definition: Union[DatasetDefinition, str]
-        :param window_duration: Duration of each window in units time_units (default nanoseconds).
-        :type window_duration: int
-        :param window_slide: Slide duration between consecutive windows in units time_units (default nanoseconds).
-        :type window_slide: int
-        :param gap_tolerance: Tolerance for gaps in definition intervals auto generated by "all" (optional) in units
-            time_units (default nanoseconds)..
-        :type gap_tolerance: int, optional
-        :param num_windows_prefetch: Number of windows you want to get from AtriumDB at a time. Setting this value
+        :param int window_duration: Duration of each window in units time_units (default nanoseconds).
+        :param int window_slide: Slide duration between consecutive windows in units time_units (default nanoseconds).
+        :param int gap_tolerance: Tolerance for gaps in definition intervals auto generated by "all" (optional) in units
+            time_units (default nanoseconds).
+        :param int num_windows_prefetch: Number of windows you want to get from AtriumDB at a time. Setting this value
             higher will make decompression faster but at the expense of using more RAM. (default the number of windows
             that gets you closest to 10 million values).
-        :type num_windows_prefetch: int, optional
-        :param time_units: If you would like the window_duration and window_slide to be specified in units other than
+        :param str time_units: If you would like the window_duration and window_slide to be specified in units other than
                             nanoseconds you can choose from one of ["s", "ms", "us", "ns"].
-        :type time_units: str
-        :param label_threshold: The percentage of the window that must contain a label before the entire window is
+        :param float label_threshold: The percentage of the window that must contain a label before the entire window is
             marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
-        :type label_threshold: float
-        :param iterator_type: Specify the type of iterator. If set to 'random_access', a RandomAccessDatasetIterator
+        :param str iterator_type: Specify the type of iterator. If set to 'random_access', a RandomAccessDatasetIterator
           will be returned, allowing indexed access to dataset windows. If set to 'filtered',
           a FilteredDatasetIterator will be returned with additional filtering functionality based on
           the `window_filter_fn`. By default or if set to None, a standard DatasetIterator is returned.
-        :type iterator_type: str, optional
-        :param window_filter_fn: If provided, only windows for which this function returns True will be included in the
+        :param callable window_filter_fn: If provided, only windows for which this function returns True will be included in the
              iteration. This function should accept a window as its argument. This is only applicable
              if `iterator_type` is set to 'filtered'.
-        :type window_filter_fn: callable, optional
-        :param shuffle: If True, the order of windows will be randomized before iteration. If set to an integer, this
+        :param Union[bool, int] shuffle: If True, the order of windows will be randomized before iteration. If set to an integer, this
             value will seed the random number generator for reproducible shuffling. If False, windows are
             returned in their original order.
-        :type shuffle: Union[bool, int], optional
-        :param cached_windows_per_source: The maximum number of windows to cache for a single source before moving
+        :param int cached_windows_per_source: The maximum number of windows to cache for a single source before moving
             on to a new source, helpful for adding more randomness to the shuffle. Making it too small heavily decreases
             efficiency, making it too large will make the windows less random when shuffled.
-        :type cached_windows_per_source: int, optional
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
+        :param int start_time: The global minimum start time for data windows, using time_units units.
+        :param int end_time: The global maximum end time for data windows, using time_units units.
 
         :return: DatasetIterator object to easily iterate over the specified data.
         :rtype: DatasetIterator
@@ -3454,6 +3469,13 @@ class AtriumSDK:
         if gap_tolerance is not None:
             gap_tolerance = int(gap_tolerance * time_unit_options[time_units])
 
+        start_time_n, end_time_n = start_time, end_time
+        if start_time_n is not None:
+            start_time_n = int(start_time_n * time_unit_options[time_units])
+
+        if end_time_n is not None:
+            end_time_n = int(end_time_n * time_unit_options[time_units])
+
         max_cache_duration_per_source = None
         if cached_windows_per_source is not None:
             assert isinstance(cached_windows_per_source, int), "cached_windows_per_source must be of type int."
@@ -3461,7 +3483,7 @@ class AtriumSDK:
             max_cache_duration_per_source = window_duration + (window_slide * (cached_windows_per_source - 1))
 
         validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
-            definition, self, gap_tolerance=gap_tolerance)
+            definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n)
 
         # Create appropriate iterator object based on iterator_type
         if iterator_type == 'random_access':
