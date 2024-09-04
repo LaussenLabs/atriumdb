@@ -3668,7 +3668,7 @@ class AtriumSDK:
         for row in interval_result:
             # if the start is greater than or equal to the end_time of this interval skip this interval
             # also if the end time is less than or equal to the current intervals start_time skip the interval
-            if (start and start >= row[4]) or (end and end <= row[3]):
+            if (start and start >= row[4]) or (end and end <= row[3]) or (row[3] >= row[4]):
                 continue
 
             # If the final intervals list is not empty and the difference between the current interval's start time
@@ -3677,7 +3677,7 @@ class AtriumSDK:
             cur_interval_start = row[3] if start is None else max(row[3], start)
             cur_interval_end = row[4] if end is None else min(row[4], end)
             if arr and cur_interval_start - arr[-1][-1] <= gap_tolerance_nano:
-                arr[-1][-1] = cur_interval_end
+                arr[-1][-1] = max(cur_interval_end, arr[-1][-1])
             # Otherwise, add a new interval to the final intervals list
             else:
                 arr.append([cur_interval_start, cur_interval_end])
