@@ -4,8 +4,9 @@ Dataset Iterators
 Iterating Over a Dataset
 ------------------------
 
-Often we are interested in working with relatively small windows of data at a time. For visualizing or pre-processing
+Often we are interested in working with relatively small windows of data at a time. For visualizing, pre-processing
 small amounts of data at once, or when we are training a model.
+
 However the primary way of querying data, `AtriumSDK.get_data  <contents.html#atriumdb.AtriumSDK.get_data>`_ incurs an
 overhead cost everytime it is called. This makes it an inefficient means of collecting a large amount of small windows
 of data.
@@ -16,29 +17,15 @@ preloads large amounts of data in your RAM, and feeds it to you piece by piece i
 `AtriumSDK.get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_ also does the job of windowing and indexing
 your data for you, which makes tasks like training a model much simpler.
 
-What is the ``get_iterator`` method?
-###################################################
+Dataset Iterator Example
+############################
 
-The `AtriumSDK.get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_ method allows users to define a set of
-measures and specific patients or devices over particular time intervals through the
-`DatasetDefinition Class <contents.html#atriumdb.DatasetDefinition>`_ or a filename pointing to a valid
-:ref:`definition_file_format`. It ensures that the defined cohort exists within the available dataset.
-If portions of the cohort definition fall outside the dataset's boundaries, the method trims the cohort to fit within
-the available dataset and raises warnings about any data that has been omitted.
-
-The method returns a ``DatasetIterator`` object. This object implements ``__len__``, ``__next__`` and ``__getitem__``
-methods, allowing it to be looped over or iterated upon using traditional python code conventions like
-``for window in iterator`` or ``window = next(iterator)``. It also allows the class to directly facilitate a
-PyTorch Dataloader.
-
-How to Use
-#################
-
-1. Initialize your SDK instance:
+1. Initialize your SDK instance, connected to an existing dataset:
 
 .. code-block:: python
 
-   sdk = AtriumSDK(dataset_location=local_dataset_location)
+    from atriumdb import AtriumSDK
+    sdk = AtriumSDK(dataset_location=local_dataset_location)
 
 2. Define the measures and patient or device cohorts:
 
@@ -46,17 +33,18 @@ How to Use
 
 .. code-block:: python
 
-   measures = ["MLII"]
+    from atriumdb import DatasetDefinition
+    measures = ["MLII"]
 
-   patient_ids = {
+    patient_ids = {
        1: "all",
        2: [{"time0": 1682739250000000000, "pre": 500000000, "post": 500000000}],
        3: [{"start": 1690776318966000000, "end": 1690777625288000000}],
        4: [{"start": 1690781225288000000}],
        5: [{"end": 1690787437932000000}],
-   }
+    }
 
-   definition = DatasetDefinition(measures=measures, patient_ids=patient_ids)
+    definition = DatasetDefinition(measures=measures, patient_ids=patient_ids)
 
 **Example 2: By Device**
 
