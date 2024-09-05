@@ -71,7 +71,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     :param Optional[dict] deidentification_functions: Custom functions for de-identifying specific patient information fields.
         A dictionary where keys are the patient_info or patient_history field to be altered and values are the functions that alter them.
         Example: `{'height': lambda x: x + random.uniform(-1.5, 1.5)}`
-    :param Optional[int] time_shift: An amount of time by which to shift all timestamps in the transferred data, specified in `time_units`.
+    :param Optional[int] time_shift: An amount of time by which to shift all timestamps in the transferred data, specified in `time_units`. Only supported when `reencode_waveforms=True`.
     :param Optional[str] time_units: Units for `gap_tolerance` and `time_shift`. Supported units are 'ns' (nanoseconds), 's' (seconds), 'ms' (milliseconds), and 'us' (microseconds). Defaults to 'ns'.
     :param Optional[str] export_time_format: The format for timestamps in the exported data. Supports 'ns', 's', 'ms', 'us', and 'date'. Defaults to 'ns'.
     :param Optional[str] parquet_engine: Specifies the engine to use for writing Parquet files. Can be 'fastparquet' or 'pyarrow'.
@@ -83,6 +83,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         'Asia/Tokyo', 'Europe/London', etc. For a complete list of valid timezones, refer to the IANA time zone database.
     :param Optional[bool] reencode_waveforms: Specifies whether to reencode data into newly encoded blocks.
         (Default False) Setting to False will reuse existing blocks where possible and significantly speed up transfer.
+        Setting to True allows you to change the block size and in general will reorder the blocks by time, which can
+        speed up datasets that were originally ingested in small or unordered chunks.
 
     Examples:
     ---------
