@@ -54,23 +54,6 @@ You can also create a dataset with a different metadata database, such as MariaD
    }
    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", database_type="mysql", connection_params=connection_params)
 
-Additionally, you can set the protection mode and overwrite behavior using the `protected_mode` and `overwrite` parameters.
-For example, to create a dataset with protection mode enabled and an overwrite behavior set to "ignore":
-
-.. code-block:: python
-
-   sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", protected_mode=True, overwrite="error")
-
-Protected mode disables any data deletion operations.
-
-Overwrite determines what happens when multiple values are stored for the same signal from the same source at the same time.
-Allowed values are:
-
-- `"error"`: an error will be raised.
-- `"ignore"`: the new data will not be inserted.
-- `"overwrite"`: the old data will be overwritten with the new data.
-
-The default behavior can be changed in the `sdk/atriumdb/helpers/config.toml` file.
 
 Inserting Data into the Dataset
 --------------------------------
@@ -86,12 +69,13 @@ for each record and handle multiple signals in a single record.
     import numpy as np
 
     # Get the list of record names from the MIT-BIH Arrhythmia Database
-    record_names = wfdb.get_record_list('mitdb')
+    pn_dir = 'mitdb'
+    record_names = wfdb.get_record_list(pn_dir)
 
     # Loop through each record in the record_names list and read the record using the `rdrecord` function from the wfdb library
     for n in tqdm(record_names):
-
-        record = wfdb.rdrecord(n, pn_dir="mitdb")
+        # Pull record with digital values
+        record = wfdb.rdrecord(n, pn_dir=pn_dir, return_res=64, physical=False)
 
         # For each record, create a new device in our dataset with the record name as the device tag
         # Check if a device with the given tag already exists using the `get_device_id` function
@@ -132,9 +116,15 @@ for each record and handle multiple signals in a single record.
                 if measure_id is None:
                     measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i])
 
+                # Calculate the digital to analog scale factors.
+                gain = segment.adc_gain[i]
+                baseline = segment.baseline[i]
+                scale_m = 1 / gain
+                scale_b = -baseline / gain
+
                 # Write the data using the `write_data_easy` function
-                sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal.T[i],
-                                    freq_nano, scale_m=None, scale_b=None)
+                sdk.write_data_easy(measure_id, device_id, time_arr, record.d_signal.T[i],
+                                    freq_nano, scale_m=scale_m, scale_b=scale_b)
 
         # If there is only one signal in the input file, insert it in the same way as for multiple signals
         else:
@@ -144,9 +134,15 @@ for each record and handle multiple signals in a single record.
             if measure_id is None:
                 measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano, unit=record.units)
 
+            # Calculate the digital to analog scale factors.
+            gain = segment.adc_gain
+            baseline = segment.baseline
+            scale_m = 1 / gain
+            scale_b = -baseline / gain
+
             # Write the data using the `write_data_easy` function
-            sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal,
-                                freq_nano, scale_m=None, scale_b=None)
+            sdk.write_data_easy(measure_id, device_id, time_arr, record.d_signal,
+                                freq_nano, scale_m=scale_m, scale_b=scale_b)
 
 
 Surveying Data in the Dataset
@@ -330,8 +326,7 @@ We will iterate through the records in the MIT-BIH Arrhythmia Database and compa
        record = wfdb.rdrecord(n, pn_dir="mitdb")
        # Calculate the sample frequency in nanohertz
        freq_nano = record.fs * 1_000_000_000
-       # Create a time array for the record
-       time_arr = np.arange(record.sig_len, dtype=np.int64) * ((10 ** 9) // record.fs)
+
        # Get the device ID for the current record
        device_id = sdk.get_device_id(device_tag=record.record_name)
 
@@ -344,8 +339,8 @@ We will iterate through the records in the MIT-BIH Arrhythmia Database and compa
                # Query the data from the dataset
                _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
 
-               # Check that both the signal and time arrays from MIT-BIH and AtriumDB are equal
-               assert np.array_equal(record.p_signal.T[i], read_values) and np.array_equal(time_arr, read_times)
+               # Check that the signal from MIT-BIH and AtriumDB are equal
+               assert np.allclose(record.p_signal.T[i], read_values)
 
        # If there is only one signal in the record
        else:
@@ -355,8 +350,8 @@ We will iterate through the records in the MIT-BIH Arrhythmia Database and compa
            # Query the data from the dataset
            _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
 
-           # Check that both the signal and time arrays from MIT-BIH and AtriumDB are equal
-           assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
+           # Check that the signal from MIT-BIH and AtriumDB are equal
+           assert np.allclose(record.p_signal.T[i], read_values)
 
 
 Retrieving Labels from the Dataset
