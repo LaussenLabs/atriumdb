@@ -3,33 +3,32 @@ Quick Start
 
 This quick start guide will walk you through the process of creating a new dataset, pulling example data from WFDB, defining signals and sources, and reading and writing data in AtriumDB.
 
-Creating a new dataset
+Creating a New Dataset
 #######################
 
 To create a new dataset, you can use the `create_dataset` method. This method allows you to specify the type of metadata database to use and where the data will be stored.
 
 .. code-block:: python
 
+    import os
+    import shutil
     from atriumdb import AtriumSDK
 
-    # Create a new local dataset using SQLite
-    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset")
+    # Define dataset location
+    dataset_location = "./new_dataset"
 
-    # OR create a new local dataset using MariaDB
-    connection_params = {
-        'host': "localhost",
-        'user': "user",
-        'password': "pass",
-        'database': "new_dataset",
-        'port': 3306
-    }
-    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", database_type="mysql", connection_params=connection_params)
+    # Reset the local database if it exists
+    if os.path.exists(dataset_location):
+        shutil.rmtree(dataset_location)
+
+    # Create a new dataset
+    sdk = AtriumSDK.create_dataset(dataset_location=dataset_location)
 
 Connecting to an Existing Dataset
 #######################################
 
-To connect to an already created dataset, you will need to specify a local path where the dataset is stored if it's a sqlite database.
-If it's a MariaDB dataset you will also have to specify the connection parameters.
+To connect to an already created dataset, you will need to specify a local path where the dataset is stored if it's a SQLite database.
+If it's a MariaDB dataset, you will also have to specify the connection parameters.
 
 .. code-block:: python
 
@@ -39,10 +38,10 @@ If it's a MariaDB dataset you will also have to specify the connection parameter
     # Define a directory path where the dataset is stored (always needed)
     dataset_location = "./example_dataset"
 
-    # Create AtriumSDK python object (sqlite)
+    # Create AtriumSDK python object (SQLite)
     sdk = AtriumSDK(dataset_location=dataset_location)
 
-    # OR Connect to a dataset supported by mariadb
+    # OR Connect to a dataset supported by MariaDB
     connection_params = {
         'host': "localhost",
         'user': "user",
@@ -58,63 +57,95 @@ If it's a MariaDB dataset you will also have to specify the connection parameter
     sdk = AtriumSDK(api_url=api_url, token=token, metadata_connection_type="api")
 
 
-Pull Some Example Data from WFDB
-#####################################
+Pulling Example Data from WFDB
+#######################################
 
-To pull some example data from WFDB, you will need to install the `wfdb` library.
-
-.. code-block:: bash
-
-    pip install wfdb
-
-Then, you can use the `wfdb` library to read in a record from the MITDB database.
+We will start by pulling a record from the MITDB database using the `wfdb` library.
 
 .. code-block:: python
 
     import numpy as np
     import wfdb  # pip install wfdb
 
-    record = wfdb.rdrecord("100", pn_dir="mitdb")
-    freq_hz = record.fs
-    value_data = record.p_signal.T[0]
-    sig_name = record.sig_name[0]
+    # Fetch record 100 from MITDB
+    record_name, pn_dir = "100", "mitdb"
 
-    # WFDB doesn't have time information associated with this data, so create some.
-    period_ns = (10 ** 9) // record.fs
-    time_data = np.arange(value_data.size, dtype=np.int64) * period_ns
+    # Read the record (digital format)
+    record = wfdb.rdrecord(record_name, pn_dir=pn_dir, return_res=64, smooth_frames=False, m2s=False, physical=False)
+    segments = record.segments if isinstance(record, wfdb.MultiRecord) else [record]
 
-    # Remember start & end times for future query
-    start_time_nano = 0
-    end_time_nano = start_time_nano + (period_ns * value_data.size)
+`insert_device`, `insert_measure` and `write_data_easy`: Defining a Device and Inserting Signals into AtriumDB
+################################################################################################################
 
-Define Signals and Sources
-#############################
-
-To define signals and sources in AtriumDB, you will use the `insert_measure` and `insert_device` methods of the AtriumSDK object.
+Each signal from the WFDB record will be stored in AtriumDB as a measure. We will first define a device, and then insert the signals.
 
 .. code-block:: python
 
-    # Define a new signal.
-    new_measure_id = sdk.insert_measure(measure_tag=sig_name, freq=freq_hz, freq_units="Hz")
-
-    # Define a new source.
+    # Define a new device in the database
     device_tag = "MITDB_record_100"
-    new_device_id = sdk.insert_device(device_tag=device_tag)
+    device_id = sdk.insert_device(device_tag=device_tag)
 
-Read and Write Data
-#####################
+    # Iterate over the WFDB segments to extract and store signal data
+    end_frame = 0
+    for segment in segments:
+        start_frame = end_frame
+        end_frame += segment.sig_len
 
-To write and read data in AtriumDB, you will use the `write_data_easy` and `get_data` methods of the AtriumSDK object.
+        if segment.sig_len == 0:
+            continue
+
+        for i, measure_tag in enumerate(segment.sig_name):
+            freq_hz = segment.fs * segment.samps_per_frame[i]
+            start_time_s = start_frame / segment.fs
+            gain = segment.adc_gain[i]
+            baseline = segment.baseline[i]
+            digital_signal = segment.e_d_signal[i]
+
+            # Create a timestamp array
+            time_data_s = np.arange(digital_signal.size) / freq_hz + start_time_s
+
+            # Insert the signal (measure) into AtriumDB
+            measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq_hz, freq_units="Hz")
+
+            # Write the signal data to AtriumDB
+            scale_m = 1 / gain
+            scale_b = -baseline / gain
+            sdk.write_data_easy(measure_id, device_id, time_data_s, digital_signal, freq_hz, scale_m=scale_m, scale_b=scale_b, time_units="s", freq_units="Hz")
+
+`get_data`: Checking the written data against the source of truth
+############################################################################
+
+Once the digital signal is stored in AtriumDB, we can repull the record with its physical values to verify the data. Here’s how to do that:
 
 .. code-block:: python
 
-    # Write Data
-    sdk.write_data_easy(new_measure_id, new_device_id, time_data, value_data, freq_hz, freq_units="Hz")
+    # Repull the record in analog (physical) format
+    record = wfdb.rdrecord(record_name, pn_dir=pn_dir, return_res=64, smooth_frames=False, m2s=True, physical=True)
 
-    # Read Data
-    _, read_time_data, read_value_data = sdk.get_data(measure_id=new_measure_id, start_time_n=start_time_nano, end_time_n=end_time_nano, device_id=new_device_id)
-    assert np.array_equal(time_data, read_time_data)
-    assert np.array_equal(value_data, read_value_data)
+    for i, measure_tag in enumerate(record.sig_name):
+        analog_signal = record.e_p_signal[i]
+        freq_hz = record.fs * record.samps_per_frame[i]
+
+        # Retrieve the data from AtriumDB
+        measure_id = sdk.get_measure_id(measure_tag=measure_tag, freq=freq_hz, freq_units="Hz")
+        _, read_time_data, read_value_data = sdk.get_data(
+            measure_id=measure_id,
+            start_time_n=0,
+            end_time_n=end_frame / record.fs,
+            device_id=device_id,
+            time_units="s",
+        )
+
+        # Verify the data matches the original analog signal
+        assert np.allclose(read_value_data, analog_signal)
+
+
+Full Python Script
+###################
+
+You can view or download the full Python script used in this tutorial from the following link:
+
+Download the full script :download:`quickstart_script.py <scripts/quickstart_script.py>`
 
 
 Using the CLI for authentication and remote access
