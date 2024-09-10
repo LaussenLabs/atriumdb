@@ -74,8 +74,8 @@ We will start by pulling a record from the MITDB database using the `wfdb` libra
     record = wfdb.rdrecord(record_name, pn_dir=pn_dir, return_res=64, smooth_frames=False, m2s=False, physical=False)
     segments = record.segments if isinstance(record, wfdb.MultiRecord) else [record]
 
-`insert_device`, `insert_measure` and `write_data_easy`: Defining a Device and Inserting Signals into AtriumDB
-################################################################################################################
+insert_device, insert_measure and write_data_easy: Defining a Device and Inserting Signals into AtriumDB
+######################################################################################################################
 
 Each signal from the WFDB record will be stored in AtriumDB as a measure. We will first define a device, and then insert the signals.
 
@@ -112,7 +112,7 @@ Each signal from the WFDB record will be stored in AtriumDB as a measure. We wil
             scale_b = -baseline / gain
             sdk.write_data_easy(measure_id, device_id, time_data_s, digital_signal, freq_hz, scale_m=scale_m, scale_b=scale_b, time_units="s", freq_units="Hz")
 
-`get_data`: Checking the written data against the source of truth
+get_data: Checking the written data against the source of truth
 ############################################################################
 
 Once the digital signal is stored in AtriumDB, we can repull the record with its physical values to verify the data. Here’s how to do that:
@@ -140,12 +140,10 @@ Once the digital signal is stored in AtriumDB, we can repull the record with its
         assert np.allclose(read_value_data, analog_signal)
 
 
-Full Python Script
-###################
+Full Quick Start Script
+###########################
 
-You can view or download the full Python script used in this tutorial from the following link:
-
-Download the full script :download:`quickstart_script.py <scripts/quickstart_script.py>`
+You can view or download the full Python script used in this tutorial here :download:`quickstart_script.py <scripts/quickstart_script.py>`.
 
 
 Using the CLI for authentication and remote access

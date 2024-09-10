@@ -46,7 +46,7 @@ from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
-from atriumdb.windowing.random_access_iterator import RandomAccessDatasetIterator
+from atriumdb.windowing.random_access_iterator import MappedIterator
 from atriumdb.windowing.verify_definition import verify_definition
 
 try:
@@ -3408,7 +3408,7 @@ class AtriumSDK:
                             nanoseconds you can choose from one of ["s", "ms", "us", "ns"].
         :param float label_threshold: The percentage of the window that must contain a label before the entire window is
             marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
-        :param str iterator_type: Specify the type of iterator. If set to 'random_access', a RandomAccessDatasetIterator
+        :param str iterator_type: Specify the type of iterator. If set to 'mapped', a RandomAccessDatasetIterator
           will be returned, allowing indexed access to dataset windows. If set to 'filtered',
           a FilteredDatasetIterator will be returned with additional filtering functionality based on
           the `window_filter_fn`. By default or if set to None, a standard DatasetIterator is returned.
@@ -3486,8 +3486,8 @@ class AtriumSDK:
             definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n)
 
         # Create appropriate iterator object based on iterator_type
-        if iterator_type == 'random_access':
-            iterator = RandomAccessDatasetIterator(
+        if iterator_type == 'mapped':
+            iterator = MappedIterator(
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, time_units=time_units, max_cache_duration=max_cache_duration_per_source,

@@ -1,8 +1,11 @@
 Dataset Iterators
 ========================
 
-Iterating Over a Dataset
-------------------------
+.. toctree::
+   :maxdepth: 2
+
+Iterator Usage
+---------------------
 
 Often we are interested in working with relatively small windows of data at a time. For visualizing, pre-processing
 small amounts of data at once, or when we are training a model.
@@ -73,17 +76,20 @@ changeable using ``time_units`` param, output times with conform to ``time_units
 increases efficiency at the cost of RAM usage (default will pick the number of windows such that the total number of
 cached values is closest to 10 million values.)
 
-**gap_tolerance** informs the auto-generated definition intervals when using "all" mode, defining the desired largest
-possible section of no data to be emitted by the windows.
+**shuffle** When True, Randomizes the order of the dataset slices and the windows within a slice. You can define a slice size
+using **cached_windows_per_source** which is the number of windows you want each slice to contain. Setting ``cached_windows_per_source=1``
+ensures true randomness, but at great cost to the speed in which the windows are iterated.
 
 **time_units** defines the time units of ``window_duration``, ``window_slide`` and ``gap_tolerance`` options are
 ``["s", "ms", "us", "ns"]``, default ``"ns"``.
 
+Check the `AtriumSDK.get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_ documentation for a complete list of parameters
+
 .. code-block:: python
 
    num_windows_prefetch = 100_000  # preload 100,000 windows before emitting
-   gap_tolerance = 3600_000_000_000  # No gaps between data less than an hour. (NaNs will fill the gaps)
-   time_units = "ns"
+   gap_tolerance = 60  # Fill gaps in data less than 1 minute with nans
+   time_units = "s"
 
 5. Obtain the iterator:
 
@@ -101,15 +107,12 @@ possible section of no data to be emitted by the windows.
         print(window.start_time)
         print(window.device_id)
         print(window.patient_id)
-        for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
-            print(measure_tag, measure_freq_nhz, measure_units, signal_dict['measure_id'])
+        for (measure_tag, measure_freq_hz, measure_units), signal_dict in window.signals.items():
+            print(measure_tag, measure_freq_hz, measure_units, signal_dict['measure_id'])
             print('times', signal_dict['times'])
             print('values', signal_dict['values'])
             print('expected_count', signal_dict['expected_count'])
             print('actual_count', signal_dict['actual_count'])
-
-        # Total Data Matrix, useful for feeding a model.
-        print(iterator.get_array_matrix(window_i))
 
 You can find explanations of the returned Window object in the :ref:`window_format` section below.
 
@@ -126,7 +129,7 @@ information related to patient and analysis results.
 **Attributes**:
 
 - ``signals`` : ``dict``
-    A dictionary where each entry corresponds to a different measure signal, making it easier to handle measures of different frequencies. The keys of this dictionary are tuples, each consisting of the measure tag, the frequency of the measure (in nHz), and the units of the measure. The values are dictionaries containing metadata and data for each measure.
+    A dictionary where each entry corresponds to a different measure signal, making it easier to handle measures of different frequencies. The keys of this dictionary are tuples, each consisting of the measure tag, the frequency of the measure (in Hz), and the units of the measure. The values are dictionaries containing metadata and data for each measure.
 
     Each signal dictionary has the following structure:
 
@@ -171,14 +174,14 @@ Example of the ``signals`` dictionary:
 .. code-block:: python
 
     {
-        ('heart_rate', 1_000_000_000, 'bpm'): {
+        ('heart_rate', 1, 'bpm'): {
             'times': np.array([1, 2, 3, ...]),
             'values': np.array([70, 71, 69, ...]),
             'expected_count': 100,
             'actual_count': 100,
             'measure_id': 123,
         },
-        ('temperature', 10_000_000, 'C'): {
+        ('temperature', 0.01, 'C'): {
             'times': np.array([0, 10, 20, ...]),
             'values': np.array([36.6, 36.7, np.nan, ...]),
             'expected_count': 10,
@@ -213,6 +216,65 @@ Example of the ``patient_info`` dictionary:
             'time': 1609545500000000000,  # Nanoseconds since epoch
         }
     }
+
+
+Iterator Types
+------------------------
+
+The `AtriumSDK.get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_ method supports three different types of iterators: default, filtered, and mapped. Each type serves different purposes and offers unique functionalities to handle your dataset windows as per your needs.
+
+Default Iterator
+####################
+
+By default, or if you set `iterator_type` to None or `"iterator"`, you get the standard iterator. This returns an object that implements the `__iter__` and `__next__` methods, which allows you to iterate over a dataset's windows. The windows returned are :ref:`Window <window_format>` objects, which you can query for relevant signals, start time, device information, patient information, and any labels specified in your :ref:`dataset definition <definition_file_format>`.
+
+Filtered Iterator
+####################
+
+The filtered iterator is similar to the default iterator, but it adds an additional filter functionality by accepting a user made filter function that decides whether a window should be included or skipped during iteration.
+
+To use the filtered iterator, set `iterator_type` to `"filtered"` and pass a filter function using the `window_filter_fn` parameter. This filter function should take a window object as input and return `True` if the window should be included and `False` otherwise.
+
+Example of defining a filter function:
+
+.. code-block:: python
+
+    def my_filter(window):
+        # Your condition here
+        return window.signals[("ECG_II", 500.0, "mV")]['actual_count'] >= 5  # at least 5 non-nan values.
+
+    iterator = sdk.get_iterator(definition, window_size_nano, slide_size_nano, iterator_type='filtered', window_filter_fn=my_filter)
+
+.. note::
+
+    The filter function is a good place to do preprocessing. Any modifications made to the window object within the filter function will be retained when the window is passed back through the iterator.
+
+
+Mapped Iterator
+####################
+
+The mapped iterator allows random access to dataset windows by using the `__getitem__` method. This means you can index the iterator directly to get a specific window, which is a useful feature if you need precise control over which windows to access, such as when labeling or visualizing specific windows by their indices.
+
+To use the mapped iterator, set `iterator_type` to `"mapped"`. Be aware that this iterator type might be slower compared to the default iterator, as it cannot take advantage of certain optimizations related to sequential access.
+
+Example of using the mapped iterator:
+
+.. code-block:: python
+
+    iterator = sdk.get_iterator(definition, window_size_nano, slide_size_nano, iterator_type='mapped')
+
+    # Access a specific window by index
+    window = iterator[5]
+    print(window.start_time)
+
+Recommendations
+####################
+
+- For most use cases, including model training and general window iteration, the default iterator should suffice. If you need to ensure data randomness for model training, you can set the `shuffle` parameter to `True`.
+- Use the filtered iterator when you need to filter or preprocess windows on-the-fly.
+- Use the mapped iterator for tasks that require random access to specific windows by their indices. However, note that it may be slower due to the lack of sequential access optimizations.
+
+For further information and options on the `get_iterator` method, `check its section in the API Reference  <contents.html#atriumdb.AtriumSDK.get_iterator>`_.
 
 .. _definition_file_format:
 

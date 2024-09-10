@@ -101,7 +101,7 @@ for each record and handle multiple signals in a single record.
         for i in range(len(label_value_list)):
             start_time = label_time_array[i]
             end_time = start_time + int(10 ** 9 // record.fs)  # Assuming an annotation lasts for one sample
-            labels.append(('Arrhythmia Annotation', device_id, start_time, end_time, label_value_list[i]))
+            labels.append(('Arrhythmia Annotation', device_id, None, start_time, end_time, label_value_list[i]))
 
         # Insert labels into the database
         sdk.insert_labels(labels=labels, time_units='ns', source_type='device_id')
@@ -334,7 +334,7 @@ We will iterate through the records in the MIT-BIH Arrhythmia Database and compa
        if record.n_sig > 1:
            for i in range(len(record.sig_name)):
                # Get the measure ID for the current signal
-               measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano)
+               measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i])
 
                # Query the data from the dataset
                _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
@@ -345,7 +345,7 @@ We will iterate through the records in the MIT-BIH Arrhythmia Database and compa
        # If there is only one signal in the record
        else:
            # Get the measure ID for the signal
-           measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano)
+           measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, units=record.units)
 
            # Query the data from the dataset
            _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
@@ -423,26 +423,12 @@ Reading Dataset With Iterators
 
 Working with large datasets often requires efficient access to smaller windows of data, particularly for tasks such
 as data visualization, pre-processing, or model training. The AtriumSDK provides a convenient method, `get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_,
-to handle these cases effectively. This tutorial will guide you through the end-to-end process of setting up the
-AtriumSDK instance, creating a `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ object, and iterating over data windows.
-
-
-Setting Up the SDK Instance
----------------------------
-
-First things first, let's set up the SDK:
-
-.. code-block:: python
-
-    from atriumdb import AtriumSDK
-
-    local_dataset_location = "/path/to/your/dataset"
-    sdk = AtriumSDK(dataset_location=local_dataset_location)
+to handle these cases effectively.
 
 Creating a Dataset Definition
 -----------------------------
 
-The `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ object specifies the measures, patients, or devices and the time intervals we are interested in querying.
+The `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ object specifies the measures, patients and/or devices, and the time intervals we are interested in querying.
 This definition can be provided in two different ways: by reading from a YAML file or by creating the object in your Python script.
 
 **Option 1: Using a YAML file**
@@ -451,17 +437,15 @@ Suppose you have the following in your `definition.yaml  <dataset.html#definitio
 
 .. code-block:: yaml
 
-    patient_ids:
-      1001: all
-      1002:
-        - start: 1682739200000000000  # nanosecond Unix Epoch Time
-          end: 1682739300000000000    # End time
+    device_ids:
+      1: all
+      2: all
 
     measures:
-      - MDC_ECG_LEAD_I
-      - tag: MDC_TEMP
-        freq_hz: 1.0
-        units: 'MDC_DIM_DEGC'
+      - MLII
+      - tag: V1
+        freq_hz: 360.0
+        units: 'mV'
 
 You can load this into a `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ object as follows:
 
@@ -480,14 +464,14 @@ Alternatively, you can define your dataset programmatically:
 
     from atriumdb import DatasetDefinition
 
-    measures = ['MDC_ECG_LEAD_I',
-                {"tag": "MDC_TEMP", "freq_hz": 1.0, "units": "MDC_DIM_DEGC"},]
-    patient_ids = {
-        1001: 'all',
-        1002: [{'start': 1682739200000000000, 'end': 1682739300000000000}]
+    measures = ['MLII',
+                {"tag": "V1", "freq_hz": 360.0, "units": "mV"},]
+    device_ids = {
+        1: 'all',
+        2: 'all',
     }
 
-    definition = DatasetDefinition(measures=measures, patient_ids=patient_ids)
+    definition = DatasetDefinition(measures=measures, device_ids=device_ids)
 
 If you wanted to create a dataset of all patients born after a certain date, you could setup your patient_ids dictionary like:
 
@@ -497,6 +481,20 @@ If you wanted to create a dataset of all patients born after a certain date, you
     patient_ids = {patient_id: "all" for patient_id, patient_info in
         sdk.get_all_patients().items() if patient_info['dob'] and patient_info['dob'] > min_dob}
 
+    definition = DatasetDefinition(measures=measures, patient_ids=patient_ids)
+
+
+**Generating a DatasetDefinition for WFDB Example**
+
+.. code-block:: python
+
+    measures = [{"tag": measure_info['tag'],
+                 "freq_nhz": measure_info['freq_nhz'],  # Can specify freq_nhz or freq_hz
+                 "units": measure_info['unit']}
+                for measure_info in sdk.get_all_measures().values()]
+    device_ids = {device_id: 'all' for device_id in sdk.get_all_devices().keys()}
+    definition = DatasetDefinition(measures=measures, device_ids=device_ids)
+
 Iterating Over Windows
 ----------------------
 
@@ -504,11 +502,11 @@ Now that we've setup the `DatasetDefinition <contents.html#atriumdb.DatasetDefin
 
 .. code-block:: python
 
-    window_size_nano = 60 * 1_000_000_000  # Define window size in nanoseconds (60 seconds)
-    slide_size_nano = 30 * 1_000_000_000  # Define slide size in nanoseconds for overlapping windows if necessary (30 seconds)
+    window_size = 60
+    slide_size = 30
 
     # Obtain the iterator
-    iterator = sdk.get_iterator(definition, window_size_nano, slide_size_nano)
+    iterator = sdk.get_iterator(definition, window_size, slide_size, time_units="s")
 
     # Now you can iterate over the data windows
     for window_i, window in enumerate(iterator):
@@ -518,15 +516,16 @@ Now that we've setup the `DatasetDefinition <contents.html#atriumdb.DatasetDefin
         print(f"Patient ID: {window.patient_id}")
 
         # Use window.signals to view available signals in their original form
-        for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
-            print(f"Measure: {measure_tag}, Frequency: {measure_freq_nhz}, Units: {measure_units}")
+        for (measure_tag, measure_freq_hz, measure_units), signal_dict in window.signals.items():
+            print(f"Measure: {measure_tag}, Frequency: {measure_freq_hz} Hz, Units: {measure_units}")
             print(f"Times: {signal_dict['times']}")
             print(f"Values: {signal_dict['values']}")
             print(f"Expected Count: {signal_dict['expected_count']}")
             print(f"Actual Count: {signal_dict['actual_count']}")
 
-        # Use the array_matrix for a single matrix containing all signals
-        data_matrix = iterator.get_array_matrix(window_i)
-        print(data_matrix)
 
+***************************************
+Full Tutorial Script
+***************************************
 
+You can view or download the full Python script used in this tutorial here :download:`tutorial_script.py <scripts/tutorial_script.py>`.
