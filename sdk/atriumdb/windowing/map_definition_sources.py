@@ -62,17 +62,16 @@ def map_validated_sources(sources: dict, sdk) -> dict:
                         else:
                             mapped_sources["device_patient_tuples"][key].extend(intersected_ranges)
                         # Update the union_ranges list for the current src_id
-                        union_ranges.extend(intersected_ranges)
+                        union_ranges.extend(sorted(intersected_ranges))
 
             # Calculate the union of ranges and update the mapped_sources dictionary with differences for the current src_id
             union_ranges = intervals_union_list(union_ranges).tolist()
-            for time_range in time_ranges:
-                difference_ranges = list_difference([time_range], union_ranges)
-                if difference_ranges:
-                    if id_type not in mapped_sources:
-                        mapped_sources[id_type] = {src_id: difference_ranges}
-                    else:
-                        mapped_sources[id_type][src_id] = difference_ranges
+
+            difference_ranges = list_difference(sorted(time_ranges), union_ranges)
+            if len(difference_ranges) > 0:
+                if id_type not in mapped_sources:
+                    mapped_sources[id_type] = {}
+                mapped_sources[id_type][src_id] = difference_ranges
 
     # Process patient_ids and device_ids separately
     process_ids(patient_ids, 'patient_ids')
