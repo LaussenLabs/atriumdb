@@ -29,7 +29,7 @@ import bisect
 
 from atriumdb.helpers.block_calculations import calc_time_by_freq
 from atriumdb.helpers.block_constants import TIME_TYPES
-
+from atriumdb.intervals.union import intervals_union_list
 
 ALLOWED_TIME_TYPES = [1, 2]
 time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
@@ -1231,7 +1231,7 @@ def get_all_blocks(sdk, measure_id, device_id):
         SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values 
         FROM block_index
         WHERE measure_id = ? AND device_id = ?
-        ORDER BY file_id, start_byte ASC;
+        ORDER BY start_time_n ASC;
     """
 
     with sdk.sql_handler.connection() as (conn, cursor):
@@ -1315,3 +1315,209 @@ def fix_corrupt_header_times(headers, block_list, times, values):
             values[block_start_value:block_start_value + block_num_values] = block_values[sorted_inds]
 
         block_start_value += block_num_values
+
+
+def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interval_gap_tolerance_nano=0):
+    # WARNING:
+    # This function does not preserve duplicate values, nor is it deterministic in which duplicate value it keeps.
+    # Cases Taken into account:
+    # if scale_m and/or scale_b vary between blocks of the same measure.
+    # If the frequency (in nanohertz) of each signal divides 10^18.
+    sdk.block.block_size = values_per_block
+
+    measures = sdk.get_all_measures()
+    devices = sdk.get_all_devices()
+
+    measure_data = list(measures.items())
+    device_data = list(devices.items())
+
+    for device_id, device_info in tqdm(device_data, desc="Devices"):
+        for measure_id, measure_info in tqdm(measure_data, desc="Measures"):
+            sorted_block_list_by_time = get_all_blocks(sdk, measure_id, device_id)
+            if len(sorted_block_list_by_time) == 0:
+                continue
+
+            file_id_list = list(set([row[3] for row in sorted_block_list_by_time]))
+            filename_dict = sdk.get_filename_dict(file_id_list)
+
+            total_measure_device_interval_array = []
+
+            for block_group in group_sorted_block_list(
+                    sorted_block_list_by_time, num_values_per_group=values_per_block * blocks_per_file):
+                if (10 ** 18) % measure_info['freq_nhz'] == 0:
+                    # Perfect Precision Time-Value Pairs are Possible
+                    period_ns = (10 ** 18) // measure_info['freq_nhz']
+                    time_type = 1
+                    r_headers, timestamp_arr, r_values = sdk.get_data_from_blocks(block_group, filename_dict, 0,
+                                                                                2 ** 62, False, time_type, sort=False,
+                                                                                allow_duplicates=True)
+
+                    if timestamp_arr.size == 0:
+                        continue
+
+                    total_encoded_bytes = []
+                    total_encoded_headers = []
+                    total_byte_start_array = []
+                    block_group_interval_data = []
+                    group_byte_offset = 0
+                    for group_headers, group_times, group_values in group_headers_by_scale_factor_all(
+                            r_headers, timestamp_arr, r_values):
+
+                        # Sort the group data
+                        group_times, sorted_time_indices = np.unique(group_times, return_index=True)
+                        group_values = group_values[sorted_time_indices]
+
+                        group_interval_data = get_interval_list_from_ordered_timestamps(group_times, period_ns)
+
+                        # Encode the block(s)
+                        encoded_bytes, encoded_headers, byte_start_array = sdk.block.encode_blocks(
+                            group_times, group_values, measure_info['freq_nhz'], group_times[0],
+                            raw_time_type=1,
+                            encoded_time_type=2,
+                            scale_m=group_headers[0].scale_m,
+                            scale_b=group_headers[0].scale_b)
+
+                        block_group_interval_data.append(group_interval_data)
+                        total_encoded_bytes.append(encoded_bytes)
+                        total_encoded_headers.extend(encoded_headers)
+                        total_byte_start_array.append(byte_start_array + group_byte_offset)
+                        group_byte_offset += encoded_bytes.size
+
+                    block_group_interval_data = intervals_union_list(block_group_interval_data)
+                    total_encoded_bytes = np.concatenate(total_encoded_bytes)
+                    total_byte_start_array = np.concatenate(total_byte_start_array)
+
+                else:
+                    # Perfect Precision Time-Value Pairs Not Possible: Use Message/Gap Format.
+                    raise NotImplementedError("Not Implemented For Nanohertz Frequencies That Don't Divide 10^18")
+
+                # Write the encoded bytes to disk
+                filename = sdk.file_api.write_bytes(measure_id, device_id, total_encoded_bytes)
+
+                block_data = []
+                for header_i, header in enumerate(total_encoded_headers):
+                    block_data.append({
+                        "measure_id": measure_id,
+                        "device_id": device_id,
+                        "start_byte": int(total_byte_start_array[header_i]),
+                        "num_bytes": header.meta_num_bytes + header.t_num_bytes + header.v_num_bytes,
+                        "start_time_n": header.start_n,
+                        "end_time_n": header.end_n,
+                        "num_values": header.num_vals,
+                    })
+
+                # Write new and delete old sql blocks
+                sdk.sql_handler.insert_and_delete_tsc_file_data(
+                    filename, block_data, [block[0] for block in block_group])
+
+                total_measure_device_interval_array.append(block_group_interval_data)
+
+            # Combine collected intervals and replace the old intervals with the collected.
+            total_measure_device_interval_array = intervals_union_list(
+                total_measure_device_interval_array, gap_tolerance_nano=interval_gap_tolerance_nano)
+
+            sdk.sql_handler.replace_intervals(measure_id, device_id, total_measure_device_interval_array)
+
+            # Remove tsc files from sql and disk
+            sdk.sql_handler.delete_files_by_ids(file_id_list)
+
+            for filename in filename_dict.values():
+                file_path = sdk.file_api.to_abs_path(filename, measure_id, device_id)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+
+
+def group_sorted_block_list(sorted_block_list, num_values_per_group=8388608):
+    next_group = []
+    total_group_size = 0
+
+    for block in tqdm(sorted_block_list, desc="Blocks"):
+        if total_group_size >= num_values_per_group:
+            yield next_group
+            next_group = []
+            total_group_size = 0
+
+        num_values = block[8]
+        next_group.append(block)
+        total_group_size += num_values
+
+    if total_group_size > 0:
+        yield next_group
+
+
+def group_headers_by_scale_factor(headers, times_array, values_array):
+    if len(headers) == 0:
+        return
+    start_idx = 0
+    current_scale_m, current_scale_b = headers[0].scale_m, headers[0].scale_b
+    current_group = [headers[0]]
+
+    for h in headers[1:]:
+        if h.scale_m == current_scale_m and h.scale_b == current_scale_b:
+            # Same scale factors, add to current group
+            current_group.append(h)
+        else:
+            # Different scale factors, yield current group
+            end_idx = start_idx + sum(header.num_vals for header in current_group)
+            yield current_group, times_array[start_idx:end_idx], values_array[start_idx:end_idx]
+
+            # Start new group
+            start_idx = end_idx
+            current_scale_m, current_scale_b = h.scale_m, h.scale_b
+            current_group = [h]
+
+    # After loop ends, yield any remaining group
+    if current_group:
+        end_idx = start_idx + sum(header.num_vals for header in current_group)
+        yield current_group, times_array[start_idx:end_idx], values_array[start_idx:end_idx]
+
+
+def group_headers_by_scale_factor_all(headers, times_array, values_array):
+    if len(headers) == 0:
+        return
+
+    # Map scale factors to list of headers and corresponding times and values
+    scale_factor_groups = {}
+    idx = 0
+
+    for h in headers:
+        scale_key = (h.scale_m, h.scale_b)
+        num_vals = h.num_vals
+        times_slice = times_array[idx:idx+num_vals]
+        values_slice = values_array[idx:idx+num_vals]
+        idx += num_vals
+
+        if scale_key not in scale_factor_groups:
+            scale_factor_groups[scale_key] = {'headers': [], 'times': [], 'values': []}
+        scale_factor_groups[scale_key]['headers'].append(h)
+        scale_factor_groups[scale_key]['times'].append(times_slice)
+        scale_factor_groups[scale_key]['values'].append(values_slice)
+
+    # Yield the groups in the order their scale factors first appear
+    seen_scale_keys = set()
+    for h in headers:
+        scale_key = (h.scale_m, h.scale_b)
+        if scale_key not in seen_scale_keys:
+            seen_scale_keys.add(scale_key)
+            group = scale_factor_groups[scale_key]
+            yield group['headers'], np.concatenate(group['times']), np.concatenate(group['values'])
+
+
+def get_interval_list_from_ordered_timestamps(timestamps, period_ns):
+    if timestamps.size == 0:
+        return []
+
+    diffs = np.diff(timestamps)
+    break_indices = np.where(diffs > period_ns)[0]
+
+    # Start indices of each region ([0] + break_indices + 1)
+    start_indices = np.insert(break_indices + 1, 0, 0)
+    # End indices of each region (break_indices + [len(timestamps) - 1])
+    end_indices = np.append(break_indices, timestamps.size - 1)
+
+    start_times = timestamps[start_indices]
+    end_times = timestamps[end_indices] + period_ns
+
+    regions = np.column_stack((start_times, end_times))
+
+    return regions

@@ -37,7 +37,7 @@ def intervals_union(a, b):
     return np.array(merged, dtype=np.int64)
 
 
-def intervals_union_list(interval_list):
+def intervals_union_list(interval_list, gap_tolerance_nano=0):
     interval_list = [interval for interval in interval_list if len(interval) > 0]
     if len(interval_list) == 0:
         return np.array([], dtype=np.int64)
@@ -53,11 +53,13 @@ def intervals_union_list(interval_list):
 
     merged = [intervals[0].tolist()]
     for current in intervals:
-        # if the list of merged intervals is empty or if the current interval does not overlap with the previous, append it
-        if not merged or merged[-1][1] < current[0]:
+        if not merged or (merged[-1][1] + gap_tolerance_nano) < current[0]:
+            # if the list of merged intervals is empty or if the current interval does not overlap with the
+            # previous interval (plus a given gap tolerance), append it
             merged.append(current.tolist())
-        # otherwise, there is overlap, so we merge the current and previous intervals.
+
         else:
+            # otherwise, there is overlap, so we merge the current and previous intervals.
             merged[-1][1] = max(merged[-1][1], current[1])
 
     return np.array(merged, dtype=np.int64)

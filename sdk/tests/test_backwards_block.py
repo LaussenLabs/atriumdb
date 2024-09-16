@@ -21,7 +21,7 @@ from atriumdb import AtriumSDK, T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TY
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, create_gap_arr
 from atriumdb.adb_functions import fix_block_boundaries, get_block_and_interval_data, merge_gap_data, \
     merge_timestamp_data, create_timestamps_from_gap_data, _calc_end_time_from_gap_data, find_intervals, \
-    allowed_interval_index_modes, convert_to_nanoseconds, convert_to_nanohz
+    allowed_interval_index_modes, convert_to_nanoseconds, convert_to_nanohz, reencode_dataset
 from atriumdb.helpers.block_calculations import freq_nhz_to_period_ns
 from atriumdb.helpers.settings import OVERWRITE_SETTING_NAME
 from atriumdb.intervals import Intervals
@@ -32,7 +32,7 @@ DB_NAME = 'backwards_block'
 
 
 def test_backwards_block():
-    # _test_for_both(DB_NAME, _test_backwards_block)
+    _test_for_both(DB_NAME, _test_backwards_block)
     _test_for_both(DB_NAME, _test_backwards_block_prospective)
 
 
@@ -95,7 +95,8 @@ def _test_backwards_block(db_type, dataset_location, connection_params):
                    encoded_value_type=encoded_v_t)
 
     # Fix backward block data
-    fix_block_boundaries(sdk, gap_tolerance_nano=0)
+    # fix_block_boundaries(sdk, gap_tolerance_nano=0)
+    reencode_dataset(sdk, values_per_block=10, blocks_per_file=2, interval_gap_tolerance_nano=0)
 
     # Query entire written data
     min_time = np.min(simple_timestamps)
