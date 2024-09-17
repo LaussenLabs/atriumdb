@@ -914,25 +914,15 @@ class AtriumSDK:
                 # if this is an end block and the closest block is full don't merge and set old block to none, so we don't delete it
                 old_block = None
 
-        # check if the write data will make at least one full block and if there will be a small block at the end
-        num_full_blocks = value_data.size // self.block.block_size
-        if (num_full_blocks > 0 and value_data.size % self.block.block_size != 0 and
-                (raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO or raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO)):
-            byte_start_array, encoded_bytes, encoded_headers = self.block.make_oversized_block(
-                encoded_time_type, encoded_value_type, freq_nhz, num_full_blocks, raw_time_type, raw_value_type, scale_b,
-                scale_m, time_0, time_data, value_data)
-
-        # if all blocks are perfectly sized or there is less than one optimal block worth of data
-        else:
-            # Encode the block(s)
-            encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
-                time_data, value_data, freq_nhz, time_0,
-                raw_time_type=raw_time_type,
-                raw_value_type=raw_value_type,
-                encoded_time_type=encoded_time_type,
-                encoded_value_type=encoded_value_type,
-                scale_m=scale_m,
-                scale_b=scale_b)
+        # Encode the block(s)
+        encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
+            time_data, value_data, freq_nhz, time_0,
+            raw_time_type=raw_time_type,
+            raw_value_type=raw_value_type,
+            encoded_time_type=encoded_time_type,
+            encoded_value_type=encoded_value_type,
+            scale_m=scale_m,
+            scale_b=scale_b)
 
         # Write the encoded bytes to disk
         filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
