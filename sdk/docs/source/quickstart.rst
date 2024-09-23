@@ -60,7 +60,8 @@ If it's a MariaDB dataset, you will also have to specify the connection paramete
 Pulling Example Data from WFDB
 #######################################
 
-We will start by pulling a record from the MITDB database using the `wfdb` library.
+We will start by pulling a record from the MITDB database using the `wfdb` library. AtriumDB indexes data by
+`time epochs <https://www.epochconverter.com/>`_ so we'll also manufacture some time information.
 
 .. code-block:: python
 
@@ -71,17 +72,25 @@ We will start by pulling a record from the MITDB database using the `wfdb` libra
     record_name, pn_dir = "100", "mitdb"
 
     # Read the record (digital format)
+    # AtriumDB performs significantly better when signals are written as digital integers with associated scale factors.
     record = wfdb.rdrecord(record_name, pn_dir=pn_dir, return_res=64, smooth_frames=False, m2s=False, physical=False)
     segments = record.segments if isinstance(record, wfdb.MultiRecord) else [record]
 
-insert_device, insert_measure and write_data_easy: Defining a Device and Inserting Signals into AtriumDB
+Inserting Signals
 ######################################################################################################################
 
 Each signal from the WFDB record will be stored in AtriumDB as a measure. We will first define a device, and then insert the signals.
 
+Time information from WFDB and many medical monitors are provided as a start time, sample frequency and a sequence of
+`sequential signal values <https://en.wikipedia.org/wiki/Sampling_(signal_processing)/>`_  seperated by a constant
+sample period defined by the sample frequency.
+
+In that case we use the `AtriumSDK.write_message  <contents.html#atriumdb.AtriumSDK.write_message>`_ method.
+For inserting data of alternate time formats (for example, time-value pairs), see :ref:`methods_of_inserting_data`.
+
 .. code-block:: python
 
-    # Define a new device in the database
+    # Define a new device in the database. If the device already exists, the id will simply be returned.
     device_tag = "MITDB_record_100"
     device_id = sdk.insert_device(device_tag=device_tag)
 
@@ -94,28 +103,28 @@ Each signal from the WFDB record will be stored in AtriumDB as a measure. We wil
         if segment.sig_len == 0:
             continue
 
-        for i, measure_tag in enumerate(segment.sig_name):
+        for i, signal_name in enumerate(segment.sig_name):
             freq_hz = segment.fs * segment.samps_per_frame[i]
             start_time_s = start_frame / segment.fs
             gain = segment.adc_gain[i]
             baseline = segment.baseline[i]
             digital_signal = segment.e_d_signal[i]
 
-            # Create a timestamp array
-            time_data_s = np.arange(digital_signal.size) / freq_hz + start_time_s
+            # Define a new signal type (measure) in AtriumDB. If the signal already exists, the id will be returned
+            # without defining anything new. `freq_units` must be specified!
+            measure_id = sdk.insert_measure(measure_tag=signal_name, freq=freq_hz, freq_units="Hz")
 
-            # Insert the signal (measure) into AtriumDB
-            measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq_hz, freq_units="Hz")
-
-            # Write the signal data to AtriumDB
+            # Scale factors such that: Analog_Signal = scale_m * Digital_Signal + scale_b
             scale_m = 1 / gain
             scale_b = -baseline / gain
-            sdk.write_data_easy(measure_id, device_id, time_data_s, digital_signal, freq_hz, scale_m=scale_m, scale_b=scale_b, time_units="s", freq_units="Hz")
 
-get_data: Checking the written data against the source of truth
+            # Write the signal data to AtriumDB
+            sdk.write_message(measure_id, device_id, digital_signal, start_time_s, freq=freq_hz, scale_m=scale_m, scale_b=scale_b)
+
+Querying Data
 ############################################################################
 
-Once the digital signal is stored in AtriumDB, we can repull the record with its physical values to verify the data. Here’s how to do that:
+Once the digital signal + scale factors are stored in AtriumDB, we can repull the record with its physical/analog values to verify the data.
 
 .. code-block:: python
 
@@ -126,7 +135,7 @@ Once the digital signal is stored in AtriumDB, we can repull the record with its
         analog_signal = record.e_p_signal[i]
         freq_hz = record.fs * record.samps_per_frame[i]
 
-        # Retrieve the data from AtriumDB
+        # Retrieve the data from AtriumDB. `time_units` must be specified as the default is "ns" nanoseconds.
         measure_id = sdk.get_measure_id(measure_tag=measure_tag, freq=freq_hz, freq_units="Hz")
         _, read_time_data, read_value_data = sdk.get_data(
             measure_id=measure_id,
@@ -154,6 +163,7 @@ To use the CLI for authentication and remote access, you will need to install th
 .. code-block:: bash
 
     pip install atriumdb[cli,remote]
+    # or pip install atriumdb[all]
 
 You can then use the `atriumdb` CLI to set the endpoint URL and log in to the remote API.
 
@@ -182,19 +192,24 @@ Now, you can access the remote dataset using the AtriumSDK object, as shown in t
 Using the CLI for Local Operations
 ##################################
 
-The `atriumdb` CLI also provides commands for working with local datasets. You can use the CLI to list and filter measures, devices, and patients in your local dataset.
+The `atriumdb` CLI also provides commands for working with local datasets. You can use the CLI to list data available and export datasets.
 
-First, ensure you have the `atriumdb` package with the `cli` optional dependency installed:
+You will only need the `cli` optional dependency installed:
 
 .. code-block:: bash
 
     pip install atriumdb[cli]
 
+Assuming you have an atriumdb dataset in the current working directory:
+
 To list measures, use the `measure ls` command:
 
 .. code-block:: bash
 
-    atriumdb measure ls
+    atriumdb --dataset-location . measure ls
+
+Assuming you have the ATRIUMDB_DATASET_LOCATION environment variable set to the `dataset_location` of
+your atriumdb dataset:
 
 To filter measures by a specific tag or frequency, use the `--tag-match` or `--freq` options:
 

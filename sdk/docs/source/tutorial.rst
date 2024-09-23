@@ -84,14 +84,10 @@ for each record and handle multiple signals in a single record.
         if device_id is None:
             device_id = sdk.insert_device(device_tag=record.record_name)
 
-        # Calculate the frequency in nanoseconds for the record and create a time array
-        freq_nano = record.fs * 1_000_000_000
-        time_arr = np.arange(record.sig_len, dtype=np.int64) * int(10 ** 9 // record.fs)
-
         # Read The Record Annotations
         annotation = wfdb.rdann(n, 'atr', pn_dir="mitdb", summarize_labels=True, return_label_elements=['description'])
         label_time_idx_array = annotation.sample
-        label_time_array = time_arr[label_time_idx_array]
+        label_time_array = label_time_idx_array * (1 / record.fs)
         label_value_list = annotation.description
 
         # Define list of labels for the record
@@ -100,13 +96,17 @@ for each record and handle multiple signals in a single record.
         # Create labels for each annotation
         for i in range(len(label_value_list)):
             start_time = label_time_array[i]
-            end_time = start_time + int(10 ** 9 // record.fs)  # Assuming an annotation lasts for one sample
-            labels.append(('Arrhythmia Annotation', device_id, None, start_time, end_time, label_value_list[i]))
+            end_time = start_time + (1 / record.fs)  # Assuming an annotation lasts for one sample
+            label_name = label_value_list[i]
+            label_measure_id = None  # No specific signal associated with this label.
+            label_source = 'WFDB Arrhythmia Annotation'  # Where the label came from
+            labels.append((label_name, label_source, device_id, label_measure_id, start_time, end_time))
 
         # Insert labels into the database
-        sdk.insert_labels(labels=labels, time_units='ns', source_type='device_id')
+        sdk.insert_labels(labels=labels, time_units='s', source_type='device_id')
 
         # If there are multiple signals in one record, split them into separate dataset entries
+        start_time_s = 0
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
 
@@ -122,9 +122,8 @@ for each record and handle multiple signals in a single record.
                 scale_m = 1 / gain
                 scale_b = -baseline / gain
 
-                # Write the data using the `write_data_easy` function
-                sdk.write_data_easy(measure_id, device_id, time_arr, record.d_signal.T[i],
-                                    freq_nano, scale_m=scale_m, scale_b=scale_b)
+                # Write the data using the `write_message` function
+                sdk.write_message(measure_id, device_id, record.d_signal.T[i], start_time_s, freq=record.fs, scale_m=scale_m, scale_b=scale_b)
 
         # If there is only one signal in the input file, insert it in the same way as for multiple signals
         else:
@@ -141,9 +140,99 @@ for each record and handle multiple signals in a single record.
             scale_b = -baseline / gain
 
             # Write the data using the `write_data_easy` function
-            sdk.write_data_easy(measure_id, device_id, time_arr, record.d_signal,
-                                freq_nano, scale_m=scale_m, scale_b=scale_b)
+            sdk.write_message(measure_id, device_id, record.d_signal, start_time_s, freq=record.fs, scale_m=scale_m, scale_b=scale_b)
 
+.. _methods_of_inserting_data:
+
+Methods of Inserting Data
+--------------------------
+
+There are multiple ways to insert data into AtriumDB, depending on the format and use case.
+
+The two primary methods are: inserting **messages** and inserting **time-value pairs**, both with the option of using
+**buffered inserts** to batch small pieces of data together.
+
+Understanding these formats helps to select the best approach for your use case.
+
+Messages
+^^^^^^^^^^
+
+Messages are `a sequence of evenly-timed samples <https://en.wikipedia.org/wiki/Sampling_(signal_processing)/>`_ .
+A message includes a **start time**, a **sampling frequency**, and a sequence of **values**.
+The timestamp of each value can be inferred based on the start time and the frequency.
+
+Messages are often used for high-frequency waveforms or signals.
+
+Messages can be inserted one at a time using `AtriumSDK.write_message <contents.html#atriumdb.AtriumSDK.write_message>`_
+or in batches using `AtriumSDK.write_messages <contents.html#atriumdb.AtriumSDK.write_messages>`_.
+
+Messages can also be batched piece by piece using :ref:`buffered_inserts`.
+
+.. code-block:: python
+
+    sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+    measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+    device_id = sdk.insert_device(device_tag="test_device")
+
+    # Inserting a single message
+    message_values = np.arange(100)  # Continuous values from 0 to 99
+    start_time = 0.0  # Start time in seconds
+    sdk.write_message(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
+
+    # Inserting multiple messages at once
+    messages = [np.arange(10), np.arange(10, 20), np.arange(20, 30)]
+    start_times = [0.0, 10.0, 20.0]  # Start times in seconds for each message
+    sdk.write_messages(measure_id, device_id, messages, start_times, freq=1.0, freq_units="Hz")
+
+
+Time-Value Pairs
+^^^^^^^^^^^^^^^^^^
+
+Time-value pairs allow you to insert irregularly sampled data, where each value has its own specific timestamp.
+This format is common for low-frequency signals, such as metrics or aperiodic signals.
+
+The method `AtriumSDK.write_time_value_pairs <contents.html#atriumdb.AtriumSDK.write_time_value_pairs>`_
+can be used for inserting time-value pairs, with arrays of values and corresponding timestamps passed as arguments.
+
+.. code-block:: python
+
+    sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+    measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+    device_id = sdk.insert_device(device_tag="test_device")
+
+    # Inserting time-value pairs
+    times = np.array([0.0, 2.0, 4.5])  # Time values in seconds
+    values = np.array([100, 200, 300])  # Corresponding values
+    sdk.write_time_value_pairs(measure_id, device_id, times, values)
+
+.. _buffered_inserts:
+
+Buffered Inserts
+^^^^^^^^^^^^^^^^^^^^
+
+Buffered inserts allow for efficient batch writing of data into the database.
+When using the buffer, data is accumulated until a threshold is met (e.g., the number of values exceeds a specified maximum),
+at which point the buffer is automatically flushed. The buffer can also be flushed manually and automatically upon exiting the buffer's context.
+This method is optimal for live ingesting messages as they come from a device or back loading an archive of many small messages.
+
+You can buffer both **messages** and **time-value pairs** using the `AtriumSDK.write_buffer <contents.html#atriumdb.AtriumSDK.write_buffer>`_ method.
+The buffer is specific to a measure-device pair, and data is automatically written once the buffer fills or the context is closed.
+
+.. code-block:: python
+
+    sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+    measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+    device_id = sdk.insert_device(device_tag="test_device")
+
+    # Using write_buffer for batched writes
+    with sdk.write_buffer(measure_id, device_id, max_values_buffered=200) as buffer:
+        # Write multiple small messages to buffer
+        for i in range(43):
+            message_values = np.arange(i * 10, (i + 1) * 10)
+            start_time = i * 10
+            sdk.write_message(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
+
+        # Buffer auto-flushes when the context is exited
 
 Surveying Data in the Dataset
 -----------------------------
