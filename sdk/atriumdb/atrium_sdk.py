@@ -981,6 +981,21 @@ class AtriumSDK:
             less than gap_tolerance, specified in `time_units` units (default "s").
         :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is seconds.
 
+        Example:
+
+            >>> import numpy as np
+            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+            >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+            >>> device_id = sdk.insert_device(device_tag="test_device")
+
+            >>> # Using write_buffer for batched writes
+            >>> with sdk.write_buffer(measure_id, device_id, max_values_buffered=100) as buffer:
+            ...     # Write multiple small messages to buffer
+            ...     for i in range(5):
+            ...         message_values = np.arange(i * 10, (i + 1) * 10)
+            ...         start_time = i * 10.0
+            ...         sdk.write_message(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
+            ...     # Buffer auto-flushes when context is exited
 
         **Notes:**
 
@@ -1014,6 +1029,18 @@ class AtriumSDK:
         :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b).
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b).
+
+        Example:
+
+            >>> import numpy as np
+            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+            >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+            >>> device_id = sdk.insert_device(device_tag="test_device")
+
+            >>> # Inserting a single message
+            >>> message_values = np.arange(50)  # Continuous values from 0 to 49
+            >>> start_time = 0.0  # Start time in seconds
+            >>> sdk.write_message(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
 
         **Notes:**
 
@@ -1060,6 +1087,18 @@ class AtriumSDK:
         :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b).
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b).
+
+        Example:
+
+            >>> import numpy as np
+            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+            >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+            >>> device_id = sdk.insert_device(device_tag="test_device")
+
+            >>> # Inserting multiple messages at once
+            >>> messages = [np.arange(10), np.arange(10, 20), np.arange(20, 30)]
+            >>> start_times = [0.0, 10.0, 20.0]  # Start times in seconds for each message
+            >>> sdk.write_messages(measure_id, device_id, messages, start_times, freq=1.0, freq_units="Hz")
 
         **Notes:**
 
@@ -1196,6 +1235,18 @@ class AtriumSDK:
         :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b). Default is 1.0.
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b). Default is 0.0.
+
+        Example:
+
+            >>> import numpy as np
+            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+            >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+            >>> device_id = sdk.insert_device(device_tag="test_device")
+
+            >>> # Inserting time-value pairs
+            >>> times = np.array([0.0, 2.0, 4.5])  # Time values in seconds
+            >>> values = np.array([100, 200, 300])  # Corresponding values
+            >>> sdk.write_time_value_pairs(measure_id, device_id, times, values)
 
         **Notes:**
 
@@ -3128,7 +3179,7 @@ class AtriumSDK:
             # Using MRN as the source type and measure tuple
             labels_data = [
                 ('Heart Rate', 1234567, ('ECG', 200, 'Milli_Volts'), None, 1609459200_000, 1609462800_000),
-                ('Blood Pressure', ('ECG', 200, 'Milli_Volts'), 'Automatic Device', 1234568, 1609459200_000, 1609462800_000)
+                ('Blood Pressure', 1234568, ('ECG', 200, 'Milli_Volts'), 'Automatic Device', 1609459200_000, 1609462800_000)
             ]
             insert_labels(labels=labels_data, time_units='ms', source_type='mrn')
 
