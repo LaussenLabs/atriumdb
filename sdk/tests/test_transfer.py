@@ -118,7 +118,7 @@ def _test_transfer_with_patient_context_deidentify_timeshift(db_type, dataset_lo
     device_ids = {device_id: "all" for device_id in sdk_1.get_all_devices().keys()}
     definition = DatasetDefinition(measures=measures, device_ids=device_ids)
     transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
-                  include_labels=False, time_shift=500)
+                  include_labels=False, time_shift=500, reencode_waveforms=True)
 
     assert_mit_bih_to_dataset(
         sdk_2, device_patient_map=device_patient_dict, deidentify=True, time_shift=-500, max_records=MAX_RECORDS,
