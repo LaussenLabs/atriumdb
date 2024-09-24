@@ -297,8 +297,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
                 # make the list of label tuples to insert to the other dataset
                 dest_labels = [(label['label_name'], device_id_map[label['device_id']],
-                                measure_id_map[label['measure_id']], label['start_time_n'], label['end_time_n'],
-                                label['label_source_id']) for label in labels]
+                                measure_id_map.get(label['measure_id']), label['label_source_id'],
+                                label['start_time_n'], label['end_time_n'],) for label in labels]
 
                 dest_sdk.insert_labels(dest_labels, source_type="device_id")
 
