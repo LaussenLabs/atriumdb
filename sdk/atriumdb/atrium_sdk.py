@@ -1075,18 +1075,20 @@ class AtriumSDK:
 
         :param int measure_id: Identifier for the measure, corresponding to the measures table in the linked relational database.
         :param int device_id: Identifier for the device, corresponding to the devices table in the linked relational database.
-        :param list messages: Each list item is a numpy array of contiguous values that corresponds to a `start_time`
+        :param List[ndarray] messages: Each list item is a numpy array of contiguous values that corresponds to a `start_time`
             from an equally sized start_times list.
-        :param list start_times: Each list item is a float or int representing a start time corresponds to a `message`
+        :param List[int|float] start_times: Each list item is a float or int representing a start time corresponds to a `message`
             from an equally sized messages list.
         :param float period: (Optional) Sampling period of the data to be written. Only one of `period` or `freq` should be specified.
-                             If units other than the default (seconds) are used, specify the desired unit using the `time_units` parameter.
+            If units other than the default (seconds) are used, specify the desired unit using the `time_units` parameter.
         :param float freq: (Optional) Sampling frequency of the data to be written. Only one of `period` or `freq` should be specified.
-                           If units other than the default (hertz) are used, specify the desired unit using the `freq_units` parameter.
+            If units other than the default (hertz) are used, specify the desired unit using the `freq_units` parameter.
         :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is seconds.
         :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b).
+            It may be a single number or a list with one number per message
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b).
+            It may be a single number or a list with one number per message
 
         Example:
 
@@ -1111,6 +1113,10 @@ class AtriumSDK:
         # Set default time and frequency units if not provided
         time_units = "s" if time_units is None else time_units
         freq_units = "Hz" if freq_units is None else freq_units
+
+        # Set default for scale factors
+        scale_m = 1 if scale_m is None else scale_m
+        scale_b = 0 if scale_b is None else scale_b
 
         # Confirm measure and device information
         measure_info = self.get_measure_info(measure_id)
@@ -1225,8 +1231,8 @@ class AtriumSDK:
 
         :param int measure_id: Identifier for the measure, corresponding to the measures table in the linked relational database.
         :param int device_id: Identifier for the device, corresponding to the devices table in the linked relational database.
-        :param list values: List or numpy array of values to write.
-        :param list times: List or numpy array of corresponding timestamps for each value. The lengths of `values` and `times` must match.
+        :param ndarray values: Numpy array of values to write.
+        :param ndarray times: Numpy array of corresponding timestamps for each value. The shape of `values` and `times` must match.
         :param float period: (Optional) Sampling period of the data. Only one of `period` or `freq` should be specified.
                              If specified, time deltas in `times` will be adjusted to match `period` within the `gap_tolerance`.
         :param float freq: (Optional) Sampling frequency of the data. Only one of `period` or `freq` should be specified.
@@ -1266,6 +1272,10 @@ class AtriumSDK:
         # Set default time and frequency units if not provided
         time_units = "s" if time_units is None else time_units
         freq_units = "Hz" if freq_units is None else freq_units
+
+        # Set default for scale factors
+        scale_m = 1 if scale_m is None else scale_m
+        scale_b = 0 if scale_b is None else scale_b
 
         # Confirm measure and device information
         measure_info = self.get_measure_info(measure_id)
