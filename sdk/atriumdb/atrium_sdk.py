@@ -938,7 +938,7 @@ class AtriumSDK:
 
             # remove the tsc file from disk if it is no longer needed
             if old_tsc_file_name is not None:
-                os.remove(self.file_api.to_abs_path(filename=old_tsc_file_name, measure_id=measure_id, device_id=device_id))
+                self.file_api.remove(self.file_api.to_abs_path(filename=old_tsc_file_name, measure_id=measure_id, device_id=device_id))
 
         # If data was overwritten
         elif overwrite_file_dict is not None:

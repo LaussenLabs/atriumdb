@@ -14,7 +14,7 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
+import os
 from pathlib import Path
 import uuid
 import numpy as np
@@ -141,3 +141,9 @@ class AtriumFileHandler:
         writable_file_bytes = np.frombuffer(file_bytes, dtype=np.uint8).copy()
 
         return writable_file_bytes
+    def remove(self, file_path:str ):
+        # rm file
+        os.remove(file_path)
+    def walk(self, root_path: str):
+        # Directory tree generator
+        return os.walk(root_path)

@@ -1158,14 +1158,14 @@ def delete_unreferenced_tsc_files(sdk):
     del files
 
     # walk the tsc directory looking for files to delete (os.walk is a generator for memory efficiency)
-    for root, _, files in os.walk(sdk.file_api.top_level_dir):
+    for root, _, files in sdk.file_api.walk(sdk.file_api.top_level_dir):
         # check if there is a match between any of the tsc file names to be deleted and files in the current directory
         matches = set(files) & file_names
 
         # if you find a match remove the file from disk
         for m in matches:
             print(f"Deleting tsc file {m} from disk")
-            os.remove(os.path.join(root, m))
+            sdk.file_api.remove(os.path.join(root, m))
 
     # free up memory
     del file_names
