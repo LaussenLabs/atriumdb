@@ -101,6 +101,7 @@ class AtriumSDK:
     :param str tsc_file_location: A file path pointing to the directory in which the TSC (time series compression) files are written for this dataset. Used to customize the TSC directory location, rather than using `dataset_location/tsc`.
     :param str atriumdb_lib_path: A file path pointing to the shared library (CDLL) that powers the compression and decompression. Not required for most users.
     :param bool no_pool: If true disables Mariadb connection pooling, instead using a new connection for each query.
+    :param AtriumFileHandler storage_handler: Advanced feature. If you implement your own atriumdb file handler you can set it here.
 
     Examples:
     -----------
@@ -133,7 +134,7 @@ class AtriumSDK:
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
                  connection_params: dict = None, num_threads: int = 1, api_url: str = None, token: str = None,
                  refresh_token=None, validate_token=True, tsc_file_location: str = None, atriumdb_lib_path: str = None,
-                 no_pool=False):
+                 no_pool=False, storage_handler: AtriumFileHandler = None):
 
         self.dataset_location = dataset_location
 
@@ -181,7 +182,7 @@ class AtriumSDK:
             # Initialize the SQLiteHandler with the database file path
             self.sql_handler = SQLiteHandler(db_file)
             self.mode = "local"
-            self.file_api = AtriumFileHandler(tsc_file_location)
+            self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
             self.settings_dict = self._get_all_settings()
 
         # Handle MySQL or MariaDB connections
@@ -209,7 +210,7 @@ class AtriumSDK:
             # Initialize the MariaDBHandler with the connection parameters
             self.sql_handler = MariaDBHandler(host, user, password, database, port, no_pool=no_pool)
             self.mode = "local"
-            self.file_api = AtriumFileHandler(tsc_file_location)
+            self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
             self.settings_dict = self._get_all_settings()
 
         # Handle API connections
@@ -938,7 +939,7 @@ class AtriumSDK:
 
             # remove the tsc file from disk if it is no longer needed
             if old_tsc_file_name is not None:
-                os.remove(self.file_api.to_abs_path(filename=old_tsc_file_name, measure_id=measure_id, device_id=device_id))
+                self.file_api.remove(self.file_api.to_abs_path(filename=old_tsc_file_name, measure_id=measure_id, device_id=device_id))
 
         # If data was overwritten
         elif overwrite_file_dict is not None:

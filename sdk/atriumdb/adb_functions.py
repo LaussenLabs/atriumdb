@@ -1154,18 +1154,18 @@ def delete_unreferenced_tsc_files(sdk):
     # extract the ids and put them in a tuple so we can remove them from the sql table later
     file_ids = [(file[0],) for file in files]
 
-    # clean up memory
-    del files
+    # walk the tsc directory looking for files to delete (walk is a generator for memory efficiency)
+    for root, dir_names, files in sdk.file_api.walk(sdk.file_api.top_level_dir):
+        # remove any dirs that are not digits (device_id or measure_id) so walk doesn't traverse those directories
+        dir_names[:] = [d for d in dir_names if d.isdigit()]
 
-    # walk the tsc directory looking for files to delete (os.walk is a generator for memory efficiency)
-    for root, _, files in os.walk(sdk.file_api.top_level_dir):
         # check if there is a match between any of the tsc file names to be deleted and files in the current directory
         matches = set(files) & file_names
 
         # if you find a match remove the file from disk
         for m in matches:
             print(f"Deleting tsc file {m} from disk")
-            os.remove(os.path.join(root, m))
+            sdk.file_api.remove(os.path.join(root, m))
 
     # free up memory
     del file_names

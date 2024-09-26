@@ -15,6 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import time
+import math
 from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple, Optional
 
@@ -851,5 +852,7 @@ class SQLHandler(ABC):
 
     def delete_tsc_files(self, file_ids_to_delete: List[tuple]):
         with self.connection(begin=False) as (conn, cursor):
-            # delete old block data
-            cursor.executemany("DELETE FROM file_index WHERE id = ?;", file_ids_to_delete)
+            # if you put too many rows in the delete statement mariadb will fail. So we split it up
+            for i in range(math.ceil(len(file_ids_to_delete) / 100_000)):
+                # delete old tsc files
+                cursor.executemany("DELETE FROM file_index WHERE id = ?;", file_ids_to_delete[i * 100_000:(i + 1) * 100_000])
