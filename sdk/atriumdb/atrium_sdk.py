@@ -158,7 +158,7 @@ class AtriumSDK:
         self.block = Block(atriumdb_lib_path, num_threads)
 
         # Initialize write buffer param
-        self._buffer = {}
+        self._active_buffer = None
 
         # Setup SQL Handler
         self.sql_handler = None
@@ -968,28 +968,24 @@ class AtriumSDK:
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
 
-    def write_buffer(self, measure_id: int, device_id: int, max_values_buffered=None, gap_tolerance=0,
+    def write_buffer(self, max_values_per_measure_device=None, max_total_values_buffered=None, gap_tolerance=0,
                      time_units=None):
         """
-        Create a buffer Context Object for the given measure-device pair, to batch incoming messages/signals until they hit some threshold,
-        are manually flushed to the dataset or are automatically flushed by exiting the context opened by this object.
+        Create a buffer Context Object to batch incoming messages/signals until they hit some threshold,
+        are manually flushed to the dataset, or are automatically flushed by exiting the context opened by this object.
 
-        :param int measure_id: The buffer will be specific to this measure_id.
-        :param int device_id: The buffer will be specific to this device_id.
-        :param int max_values_buffered: (Optional) If the buffer ever goes over this number of values, the data will be automatically flushed to the dataset.
+        :param int max_values_per_measure_device: (Optional) If the buffer for a measure-device pair ever goes over this number of values,
+            the data will be automatically flushed to the dataset. Defaults to 100 blocks.
+        :param int max_total_values_buffered: (Optional) If the total number of buffered values across all measure-device pairs
+            exceeds this number, the oldest buffer that has values in it will be automatically flushed. Defaults to 10,000 blocks.
         :param float gap_tolerance: (Optional) Merges sequential intervals from the AtriumSDK.get_interval_array method that have a duration between them
             less than gap_tolerance, specified in `time_units` units (default "s").
-        :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is seconds.
+        :param str time_units: (Optional) Unit for `gap_tolerance`, which can be one of ["s", "ms", "us", "ns"]. Must be specified if gap_tolerance is given.
 
         Example:
 
-            >>> import numpy as np
-            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
-            >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
-            >>> device_id = sdk.insert_device(device_tag="test_device")
-
             >>> # Using write_buffer for batched writes
-            >>> with sdk.write_buffer(measure_id, device_id, max_values_buffered=100) as buffer:
+            >>> with sdk.write_buffer(max_values_per_measure_device=100, max_total_values_buffered=1000) as buffer:
             ...     # Write multiple small messages to buffer
             ...     for i in range(5):
             ...         message_values = np.arange(i * 10, (i + 1) * 10)
@@ -999,14 +995,13 @@ class AtriumSDK:
 
         **Notes:**
 
-        - Each buffer only works on one measure-device combination. If you must ingest multiple measures or multiple devices at one time, you must use multiple buffers.
+        - The buffer will manage sub-buffers for each measure-device combination used within its context.
 
         """
         return WriteBuffer(
             self,
-            measure_id,
-            device_id,
-            max_values_buffered=max_values_buffered,
+            max_values_per_measure_device=max_values_per_measure_device,
+            max_total_values_buffered=max_total_values_buffered,
             gap_tolerance=gap_tolerance,
             time_units=time_units,
         )
@@ -1164,14 +1159,14 @@ class AtriumSDK:
             write_messages.append(message_dict)
 
 
-        if self._buffer.get((measure_id, device_id)) is None:
+        if self._active_buffer is None:
             # Write immediately to disk
             interval_gap_tolerance_nano = 0
 
             self._write_messages_to_dataset(measure_id, device_id, write_messages, interval_gap_tolerance_nano)
         else:
             # Push new messages to the buffer
-            self._buffer[(measure_id, device_id)].push_messages(write_messages)
+            self._active_buffer.push_messages(measure_id, device_id, write_messages)
 
     def _write_messages_to_dataset(self, measure_id, device_id, write_messages, interval_gap_tolerance_nano=0):
         sorted_messages = sorted(write_messages, key=lambda x: x['start_time_nano'])
@@ -1313,13 +1308,13 @@ class AtriumSDK:
             'freq_nhz': freq_nano
         }
 
-        if self._buffer.get((measure_id, device_id)) is None:
+        if self._active_buffer is None:
             # Ingest Immediately
             interval_gap_tolerance_nano = 0
             self._write_time_value_pairs_to_dataset(measure_id, device_id, [data_dict], interval_gap_tolerance_nano)
         else:
             # Push data to buffer
-            self._buffer[(measure_id, device_id)].push_time_value_pair(data_dict)
+            self._active_buffer.push_time_value_pairs(measure_id, device_id, data_dict)
 
     def _write_time_value_pairs_to_dataset(self, measure_id, device_id, data_dicts, interval_gap_tolerance_nano=0):
         # Ensure consistency across data_dicts
