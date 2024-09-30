@@ -1006,7 +1006,7 @@ class AtriumSDK:
             time_units=time_units,
         )
 
-    def write_message(self, measure_id: int, device_id: int, message_values: np.ndarray, start_time: float,
+    def write_message(self, measure_id: int, device_id: int, message_values: np.ndarray, start_time: float|int,
                       period: float = None, freq: float = None, time_units: str = None,
                       freq_units: str = None, scale_m: float = None, scale_b: float = None):
         """
@@ -1062,7 +1062,7 @@ class AtriumSDK:
             scale_b=scale_b
         )
 
-    def write_messages(self, measure_id: int, device_id: int, messages: list, start_times: list,
+    def write_messages(self, measure_id: int, device_id: int, messages: List[np.ndarray], start_times: List[float|int],
                        period: float = None, freq: float = None, time_units: str = None,
                        freq_units: str = None, scale_m: float = None, scale_b: float = None):
         """
