@@ -17,6 +17,7 @@
 import warnings
 
 import numpy as np
+import bisect
 
 import threading
 from atriumdb.windowing.definition import DatasetDefinition
@@ -135,6 +136,10 @@ class AtriumSDK:
                  connection_params: dict = None, num_threads: int = 1, api_url: str = None, token: str = None,
                  refresh_token=None, validate_token=True, tsc_file_location: str = None, atriumdb_lib_path: str = None,
                  no_pool=False, storage_handler: AtriumFileHandler = None):
+        self.block_cache = {}
+        self.start_cache = {}
+        self.end_cache = {}
+        self.filename_dict = {}
 
         self.dataset_location = dataset_location
 
@@ -386,6 +391,88 @@ class AtriumSDK:
 
         return sdk_object
 
+    def load_device(self, device_id: int, measure_id: Optional[int] = None):
+        """
+        Load all or one measure for a single device, and set up the caches.
+        """
+        # Fetch block index data for the device (and measure if specified)
+        if measure_id is not None:
+            # Fetch blocks for the specific device and measure
+            block_query = """
+            SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
+            FROM block_index
+            WHERE device_id = ? AND measure_id = ?
+            ORDER BY measure_id, device_id, start_time_n ASC;
+            """
+            args = (device_id, measure_id)
+        else:
+            # Fetch blocks for the device across all measures
+            block_query = """
+            SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
+            FROM block_index
+            WHERE device_id = ?
+            ORDER BY measure_id, device_id, start_time_n ASC;
+            """
+            args = (device_id,)
+
+        with self.sql_handler.connection() as (conn, cursor):
+            cursor.execute(block_query, args)
+            block_query_result = cursor.fetchall()
+
+        # Get unique file_ids
+        file_id_list = list(set([row[3] for row in block_query_result]))
+        filename_dict = self.get_filename_dict(file_id_list)
+
+        # Build caches
+        for block in block_query_result:
+            block_id, measure_id, device_id, file_id, start_byte, num_bytes, start_time, end_time, num_values = block
+            measure_id, device_id = int(measure_id), int(device_id)
+            block = np.array([block_id, measure_id, device_id, file_id, start_byte, num_bytes, start_time, end_time, num_values], dtype=np.int64)
+
+            if measure_id not in self.block_cache:
+                self.block_cache[measure_id] = {}
+                self.start_cache[measure_id] = {}
+                self.end_cache[measure_id] = {}
+
+            if device_id not in self.block_cache[measure_id]:
+                self.block_cache[measure_id][device_id] = []
+                self.start_cache[measure_id][device_id] = []
+                self.end_cache[measure_id][device_id] = []
+
+            self.block_cache[measure_id][device_id].append(block)
+            self.start_cache[measure_id][device_id].append(start_time)
+            self.end_cache[measure_id][device_id].append(end_time)
+
+        for measure_id in self.block_cache:
+            for device_id in self.block_cache[measure_id]:
+                current_cache = self.block_cache[measure_id][device_id]
+                if isinstance(current_cache, list):
+                    self.block_cache[measure_id][device_id] = np.vstack(current_cache)
+                    self.start_cache[measure_id][device_id] = np.array(self.start_cache[measure_id][device_id], dtype=np.int64)
+                    self.end_cache[measure_id][device_id] = np.array(self.end_cache[measure_id][device_id], dtype=np.int64)
+
+        # Update filename dictionary
+        self.filename_dict.update(filename_dict)
+
+    def find_blocks(self, measure_id: int, device_id: int, start_time: int, end_time: int):
+        """
+        Find blocks within the cached data that overlap with the specified time range.
+        """
+        if measure_id not in self.block_cache or device_id not in self.block_cache[measure_id]:
+            return []
+
+        blocks = self.block_cache[measure_id][device_id]
+        starts = self.start_cache[measure_id][device_id]
+        ends = self.end_cache[measure_id][device_id]
+
+        # Find indices where blocks end after start_time
+        start_idx = bisect.bisect_left(ends, start_time)
+        # Find indices where blocks start before end_time
+        end_idx = bisect.bisect_right(starts, end_time)
+
+        # Return the blocks that overlap
+        return blocks[start_idx:end_idx]
+
     def get_data(self, measure_id: int = None, start_time_n: int = None, end_time_n: int = None,
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
@@ -430,7 +517,10 @@ class AtriumSDK:
         if time_type not in ALLOWED_TIME_TYPES:
             raise ValueError("Time type must be in [1, 2]")
 
-        # convert start and end time to nanoseconds
+        # Convert time units to nanoseconds if necessary
+        time_units = "ns" if time_units is None else time_units
+        if time_units not in time_unit_options.keys():
+            raise ValueError(f"Invalid time units. Expected one of: {list(time_unit_options.keys())}")
         start_time_n = int(start_time_n * time_unit_options[time_units])
         end_time_n = int(end_time_n * time_unit_options[time_units])
 
@@ -439,9 +529,6 @@ class AtriumSDK:
 
         if patient_id is None and mrn is not None:
             patient_id = self.get_patient_id(mrn)
-
-        _LOGGER.debug("\n")
-        start_bench_total = time.perf_counter()
 
         # If the data is from the api.
         if self.mode == "api":
@@ -457,27 +544,35 @@ class AtriumSDK:
             assert measure_tag is not None, "One of measure_id, measure_tag must be specified."
             measure_id = get_best_measure_id(self, measure_tag, freq, units, freq_units)
 
-        # If we don't already have the blocks
-        if block_info is None:
-            # Select all blocks from the block_index (sql table) that match params.
-            start_bench = time.perf_counter()
-            block_list = self.sql_handler.select_blocks(int(measure_id), int(start_time_n), int(end_time_n), device_id, patient_id)
+        measure_id = int(measure_id) if measure_id is not None else measure_id
+        device_id = int(device_id) if device_id is not None else device_id
+        # Determine if we can use the cache
+        use_cache = False
+        if device_id is not None and measure_id is not None:
+            if measure_id in self.block_cache and device_id in self.block_cache[measure_id]:
+                use_cache = True
 
-            # Concatenate continuous byte intervals to cut down on total number of reads.
-            read_list = condense_byte_read_list(block_list)
+        if use_cache:
+            # Use cached blocks
+            block_list = self.find_blocks(measure_id, device_id, start_time_n, end_time_n)
+            filename_dict = self.filename_dict
 
-            # if no matching block ids
-            if len(read_list) == 0:
+            if len(block_list) == 0:
                 return [], np.array([]), np.array([])
 
-            # Map file_ids to filenames and return a dictionary.
+        elif block_info is None:
+            # Fetch blocks from the database
+            block_list = self.sql_handler.select_blocks(
+                int(measure_id), int(start_time_n), int(end_time_n), device_id, patient_id
+            )
+
+            read_list = condense_byte_read_list(block_list)
+
+            if not read_list:
+                return [], np.array([]), np.array([])
+
             file_id_list = [row[2] for row in read_list]
             filename_dict = self.get_filename_dict(file_id_list)
-            end_bench = time.perf_counter()
-            # print(f"DB query took {round((end_bench - start_bench) * 1000, 4)} ms")
-            _LOGGER.debug(f"get filename dictionary  {(end_bench - start_bench) * 1000} ms")
-
-        # If we already have the blocks
         else:
             block_list = block_info['block_list']
             filename_dict = block_info['filename_dict']
@@ -495,11 +590,7 @@ class AtriumSDK:
         if sort and time_type == 1:
             r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
-        end_bench_total = time.perf_counter()
-        _LOGGER.debug(f"Total get data call took {round(end_bench_total - start_bench_total, 2)}: {r_values.size} values")
-        _LOGGER.debug(f"{round(r_values.size / (end_bench_total - start_bench_total), 2)} values per second.")
-
-        # convert time data from nanoseconds to unit of choice
+        # Convert time data from nanoseconds to unit of choice
         if time_units != 'ns':
             r_times = r_times / time_unit_options[time_units]
 
