@@ -391,33 +391,24 @@ class AtriumSDK:
 
         return sdk_object
 
-    def load_device(self, device_id: int, measure_id: Optional[int] = None):
+    def load_device(self, device_id: int, measure_id: int|List[int] = None):
         """
-        Load all or one measure for a single device, and set up the caches.
-        """
-        # Fetch block index data for the device (and measure if specified)
-        if measure_id is not None:
-            # Fetch blocks for the specific device and measure
-            block_query = """
-            SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
-            FROM block_index
-            WHERE device_id = ? AND measure_id = ?
-            ORDER BY measure_id, device_id, start_time_n ASC;
-            """
-            args = (device_id, measure_id)
-        else:
-            # Fetch blocks for the device across all measures
-            block_query = """
-            SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
-            FROM block_index
-            WHERE device_id = ?
-            ORDER BY measure_id, device_id, start_time_n ASC;
-            """
-            args = (device_id,)
+        Load block metadata into RAM for a given device.
 
-        with self.sql_handler.connection() as (conn, cursor):
-            cursor.execute(block_query, args)
-            block_query_result = cursor.fetchall()
+        This method loads block metadata (such as file IDs, byte ranges, and timestamps) for a
+        particular device from the database and caches it locally. The caching improves the performance
+        of future data queries, especially when querying the same device or measure multiple times.
+
+        If a measure_id is specified, only blocks corresponding to that measure (or measures) will be cached.
+        Otherwise, metadata for all measures associated with the device will be loaded and cached.
+
+        :param int device_id: The device identifier. Blocks associated with this device will be fetched.
+        :param int|List[int] measure_id: The measure identifier(s) associated with the metadata you want to cache.
+            If None, blocks for all measures of the device will be fetched.
+
+        """
+        # Fetch block index data for the device (and measures if specified)
+        block_query_result = self.sql_handler.select_blocks_for_device(device_id, measure_id)
 
         # Get unique file_ids
         file_id_list = list(set([row[3] for row in block_query_result]))
