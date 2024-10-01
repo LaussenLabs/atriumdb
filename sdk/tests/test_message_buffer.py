@@ -58,7 +58,7 @@ def _test_write_message(db_type, dataset_location, connection_params):
     start_time = 0.0  # Start at time 0
 
     # Write the message
-    sdk.write_message(measure_id, device_id, message_values, start_time, freq=freq, freq_units='Hz')
+    sdk.write_segment(measure_id, device_id, message_values, start_time, freq=freq, freq_units='Hz')
 
     # Check the blocks
     blocks = get_all_blocks(sdk, measure_id, device_id)
@@ -91,7 +91,7 @@ def _test_write_messages(db_type, dataset_location, connection_params):
     start_times = [0.0, 10.0, 20.0]  # Start times in seconds
 
     # Write the messages
-    sdk.write_messages(measure_id, device_id, messages, start_times, freq=freq, freq_units='Hz')
+    sdk.write_segments(measure_id, device_id, messages, start_times, freq=freq, freq_units='Hz')
 
     # Check the blocks
     blocks = get_all_blocks(sdk, measure_id, device_id)
@@ -134,7 +134,7 @@ def _test_write_buffer(db_type, dataset_location, connection_params):
         start_time = 0.0
         for idx, message_values in enumerate(message_values_list):
             current_start_time = start_time + idx  # Each message at a different time
-            sdk.write_message(measure_id, device_id, message_values, current_start_time, freq=freq, freq_units='Hz')
+            sdk.write_segment(measure_id, device_id, message_values, current_start_time, freq=freq, freq_units='Hz')
 
             # Check if buffer has automatically flushed after exceeding max_values_buffered
             if (idx + 1) % max_values_buffered == 0:
@@ -297,7 +297,7 @@ def _test_comprehensive(db_type, dataset_location, connection_params):
     start_time = 0.0
 
     # Write the message
-    sdk.write_message(measure_id, device_id, message_values, start_time, freq=freq, freq_units='Hz')
+    sdk.write_segment(measure_id, device_id, message_values, start_time, freq=freq, freq_units='Hz')
 
     # Check blocks after write_message
     blocks = get_all_blocks(sdk, measure_id, device_id)
@@ -321,7 +321,7 @@ def _test_comprehensive(db_type, dataset_location, connection_params):
     start_times = [100.0, 110.0, 120.0]
 
     # Write the messages
-    sdk.write_messages(measure_id, device_id, messages, start_times, freq=freq, freq_units='Hz')
+    sdk.write_segments(measure_id, device_id, messages, start_times, freq=freq, freq_units='Hz')
 
     # Check blocks after write_messages
     blocks = get_all_blocks(sdk, measure_id, device_id)
@@ -348,7 +348,7 @@ def _test_comprehensive(db_type, dataset_location, connection_params):
         start_time = 130.0
         for idx, message_values in enumerate(message_values_list):
             current_start_time = start_time + idx
-            sdk.write_message(measure_id, device_id, message_values, current_start_time, freq=freq, freq_units='Hz')
+            sdk.write_segment(measure_id, device_id, message_values, current_start_time, freq=freq, freq_units='Hz')
 
             # Check for automatic buffer flush
             if (idx + 1) % max_values_buffered == 0:
@@ -436,7 +436,7 @@ def _test_multi_buffer(db_type, dataset_location, connection_params):
                 start_time = 0.0
                 for idx, message_values in enumerate(message_values_list):
                     current_start_time = start_time + idx  # Each message at a different time
-                    sdk.write_message(measure_id, device_id, message_values, current_start_time, freq=freq,
+                    sdk.write_segment(measure_id, device_id, message_values, current_start_time, freq=freq,
                                       freq_units='Hz')
 
                     # Check if buffer has automatically flushed after exceeding max_values_buffered

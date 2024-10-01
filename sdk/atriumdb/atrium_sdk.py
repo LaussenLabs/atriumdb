@@ -971,7 +971,7 @@ class AtriumSDK:
     def write_buffer(self, max_values_per_measure_device=None, max_total_values_buffered=None, gap_tolerance=0,
                      time_units=None):
         """
-        Create a buffer Context Object to batch incoming messages/signals until they hit some threshold,
+        Create a buffer Context Object to batch incoming segments/signals until they hit some threshold,
         are manually flushed to the dataset, or are automatically flushed by exiting the context opened by this object.
 
         :param int max_values_per_measure_device: (Optional) If the buffer for a measure-device pair ever goes over this number of values,
@@ -990,7 +990,7 @@ class AtriumSDK:
             ...     for i in range(5):
             ...         message_values = np.arange(i * 10, (i + 1) * 10)
             ...         start_time = i * 10.0
-            ...         sdk.write_message(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
+            ...         sdk.write_segment(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
             ...     # Buffer auto-flushes when context is exited
 
         **Notes:**
@@ -1006,16 +1006,16 @@ class AtriumSDK:
             time_units=time_units,
         )
 
-    def write_message(self, measure_id: int, device_id: int, message_values: np.ndarray, start_time: float|int,
+    def write_segment(self, measure_id: int, device_id: int, segment_values: np.ndarray, start_time: float | int,
                       period: float = None, freq: float = None, time_units: str = None,
                       freq_units: str = None, scale_m: float = None, scale_b: float = None):
         """
-        Write a single message consisting of contiguous values starting at a specific time.
+        Write a single segment consisting of contiguous values starting at a specific time.
 
         :param int measure_id: Identifier for the measure, corresponding to the measures table in the linked relational database.
         :param int device_id: Identifier for the device, corresponding to the devices table in the linked relational database.
-        :param np.ndarray message_values: List or 1D numpy array of contiguous values to write.
-        :param float start_time: Epoch time when the message starts. If `time_units` is specified, `start_time` is assumed to be in those units.
+        :param np.ndarray segment_values: List or 1D numpy array of contiguous values to write.
+        :param float start_time: Epoch time when the segment starts. If `time_units` is specified, `start_time` is assumed to be in those units.
         :param float period: (Optional) Sampling period of the data to be written. Only one of `period` or `freq` should be specified.
                              If units other than the default (seconds) are used, specify the desired unit using the `time_units` parameter.
         :param float freq: (Optional) Sampling frequency of the data to be written. Only one of `period` or `freq` should be specified.
@@ -1032,27 +1032,27 @@ class AtriumSDK:
             >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
             >>> device_id = sdk.insert_device(device_tag="test_device")
 
-            >>> # Inserting a single message
-            >>> message_values = np.arange(50)  # Continuous values from 0 to 49
+            >>> # Inserting a single segment
+            >>> segment_values = np.arange(50)  # Continuous values from 0 to 49
             >>> start_time = 0.0  # Start time in seconds
-            >>> sdk.write_message(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
+            >>> sdk.write_segment(measure_id, device_id, segment_values, start_time, freq=1.0, freq_units="Hz")
 
         **Notes:**
 
         - This method is ideal for writing continuous sequences of data that start at a specific time and have uniform sampling intervals.
         - Output from medical monitors, or wfdb Records from physionet dataset typically have this format.
-        - If you have multiple messages to write, consider using `write_messages` for better performance.
+        - If you have multiple segments to write, consider using `write_segments` for better performance.
 
         """
-        # Wrap the single message and start time into lists to use with write_messages
-        messages = [message_values]
+        # Wrap the single segment and start time into lists to use with write_segments
+        segments = [segment_values]
         start_times = [start_time]
 
-        # Call write_messages with the single message
-        self.write_messages(
+        # Call write_segments with the single segment
+        self.write_segments(
             measure_id=measure_id,
             device_id=device_id,
-            messages=messages,
+            segments=segments,
             start_times=start_times,
             period=period,
             freq=freq,
@@ -1062,18 +1062,18 @@ class AtriumSDK:
             scale_b=scale_b
         )
 
-    def write_messages(self, measure_id: int, device_id: int, messages: List[np.ndarray], start_times: List[float|int],
+    def write_segments(self, measure_id: int, device_id: int, segments: List[np.ndarray], start_times: List[float | int],
                        period: float = None, freq: float = None, time_units: str = None,
                        freq_units: str = None, scale_m: float = None, scale_b: float = None):
         """
-        Write multiple messages consisting of value arrays and corresponding start times.
+        Write multiple segments consisting of value arrays and corresponding start times.
 
         :param int measure_id: Identifier for the measure, corresponding to the measures table in the linked relational database.
         :param int device_id: Identifier for the device, corresponding to the devices table in the linked relational database.
-        :param List[ndarray] messages: Each list item is a numpy array of contiguous values that corresponds to a `start_time`
+        :param List[ndarray] segments: Each list item is a numpy array of contiguous values that corresponds to a `start_time`
             from an equally sized start_times list.
-        :param List[int|float] start_times: Each list item is a float or int representing a start time corresponds to a `message`
-            from an equally sized messages list.
+        :param List[int|float] start_times: Each list item is a float or int representing a start time that corresponds to a `segment`
+            from an equally sized segments list.
         :param float period: (Optional) Sampling period of the data to be written. Only one of `period` or `freq` should be specified.
             If units other than the default (seconds) are used, specify the desired unit using the `time_units` parameter.
         :param float freq: (Optional) Sampling frequency of the data to be written. Only one of `period` or `freq` should be specified.
@@ -1081,9 +1081,9 @@ class AtriumSDK:
         :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is seconds.
         :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b).
-            It may be a single number or a list with one number per message
+            It may be a single number or a list with one number per segment
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b).
-            It may be a single number or a list with one number per message
+            It may be a single number or a list with one number per segment
 
         Example:
 
@@ -1092,14 +1092,14 @@ class AtriumSDK:
             >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
             >>> device_id = sdk.insert_device(device_tag="test_device")
 
-            >>> # Inserting multiple messages at once
-            >>> messages = [np.arange(10), np.arange(10, 20), np.arange(20, 30)]
-            >>> start_times = [0.0, 10.0, 20.0]  # Start times in seconds for each message
-            >>> sdk.write_messages(measure_id, device_id, messages, start_times, freq=1.0, freq_units="Hz")
+            >>> # Inserting multiple segments at once
+            >>> segments = [np.arange(10), np.arange(10, 20), np.arange(20, 30)]
+            >>> start_times = [0.0, 10.0, 20.0]  # Start times in seconds for each segment
+            >>> sdk.write_segments(measure_id, device_id, segments, start_times, freq=1.0, freq_units="Hz")
 
         **Notes:**
 
-        - This method is optimized for batch writing of messages and is more efficient than calling `write_message` multiple times.
+        - This method is optimized for batch writing of segments and is more efficient than calling `write_segment` multiple times.
 
         """
         if self.metadata_connection_type == "api":
