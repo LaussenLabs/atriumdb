@@ -1,51 +1,119 @@
+import time
+
 from atriumdb.adb_functions import time_unit_options
 
 
 class WriteBuffer:
-    def __init__(self, sdk, measure_id, device_id, max_values_buffered=None, gap_tolerance=0, time_units=None):
+    def __init__(self, sdk, max_values_per_measure_device=None, max_total_values_buffered=None, gap_tolerance=0, time_units=None):
         self.sdk = sdk
-        self.measure_id = measure_id
-        self.device_id = device_id
-        self.max_values_buffered = max_values_buffered
-        time_units = time_units if time_units is not None else 's'
-        self.gap_tolerance_nano = int(gap_tolerance * time_unit_options[time_units])
-        self.buffered_messages = []
-        self.buffered_time_value_pairs = []
+        self.max_values_per_measure_device = max_values_per_measure_device \
+            if max_values_per_measure_device is not None else sdk.block.block_size * 100
+
+        self.max_total_values_buffered = max_total_values_buffered \
+            if max_total_values_buffered is not None else sdk.block.block_size * 10_000
+
+        if gap_tolerance > 0:
+            if time_units is None:
+                raise ValueError('If you are using a non-zero gap_tolerance you must specify time_units, '
+                                 'one of ["s", "ms", "us", "ns"]')
+            self.gap_tolerance_nano = int(gap_tolerance * time_unit_options[time_units])
+        else:
+            self.gap_tolerance_nano = 0
+
+        self.sub_buffers = {}  # Key: (measure_id, device_id), Value: sub-buffer dict
         self.total_values_buffered = 0
 
     def __enter__(self):
-        self.sdk._buffer[(self.measure_id, self.device_id)] = self  # Enable buffer in the SDK
+        self.sdk._active_buffer = self  # Set active buffer in the SDK
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.flush()
-        self.sdk._buffer[(self.measure_id, self.device_id)] = None  # Disable buffer in the SDK
+        self.flush_all()
+        self.sdk._active_buffer = None  # Remove active buffer in the SDK
 
-    def push_messages(self, message_list):
-        for message in message_list:
-            self.total_values_buffered += message['values'].size
-        self.buffered_messages.extend(message_list)
+    def push_messages(self, measure_id, device_id, message_list):
+        key = (measure_id, device_id)
+        if key not in self.sub_buffers:
+            self.sub_buffers[key] = {
+                'buffered_messages': [],
+                'buffered_time_value_pairs': [],
+                'total_values_buffered': 0,
+                'last_pushed_time': time.time()
+            }
+        sub_buffer = self.sub_buffers[key]
+        sub_buffer['buffered_messages'].extend(message_list)
+        num_values = sum(m['values'].size for m in message_list)
+        sub_buffer['total_values_buffered'] += num_values
+        self.total_values_buffered += num_values
+        sub_buffer['last_pushed_time'] = time.time()
 
-        if self.max_values_buffered is not None and self.total_values_buffered >= self.max_values_buffered:
-            self.flush()
+        # Check if sub-buffer exceeds max_values_per_measure_device
+        if self.max_values_per_measure_device is not None and sub_buffer['total_values_buffered'] >= self.max_values_per_measure_device:
+            # Flush this sub-buffer
+            self.flush_sub_buffer(key)
 
-    def push_time_value_pair(self, data_dict):
-        self.total_values_buffered += data_dict['values'].size
-        self.buffered_time_value_pairs.append(data_dict)
+        # Check if total_values_buffered exceeds max_total_values_buffered
+        if self.max_total_values_buffered is not None and self.total_values_buffered >= self.max_total_values_buffered:
+            # Flush oldest sub-buffer that has values
+            self.flush_oldest_sub_buffer()
 
-        if self.max_values_buffered is not None and self.total_values_buffered >= self.max_values_buffered:
-            self.flush()
+    def push_time_value_pairs(self, measure_id, device_id, data_dict):
+        key = (measure_id, device_id)
+        if key not in self.sub_buffers:
+            self.sub_buffers[key] = {
+                'buffered_messages': [],
+                'buffered_time_value_pairs': [],
+                'total_values_buffered': 0,
+                'last_pushed_time': time.time()
+            }
+        sub_buffer = self.sub_buffers[key]
+        sub_buffer['buffered_time_value_pairs'].append(data_dict)
+        num_values = data_dict['values'].size
+        sub_buffer['total_values_buffered'] += num_values
+        self.total_values_buffered += num_values
+        sub_buffer['last_pushed_time'] = time.time()
 
-    def flush(self):
-        if len(self.buffered_messages) > 0:
+        # Check if sub-buffer exceeds max_values_per_measure_device
+        if sub_buffer['total_values_buffered'] >= self.max_values_per_measure_device:
+            # Flush this sub-buffer
+            self.flush_sub_buffer(key)
+
+        # Check if total_values_buffered exceeds max_total_values_buffered
+        if self.total_values_buffered >= self.max_total_values_buffered:
+            # Flush oldest sub-buffer that has values
+            self.flush_oldest_sub_buffer()
+
+    def flush_sub_buffer(self, key):
+        sub_buffer = self.sub_buffers.get(key)
+        if sub_buffer is None:
+            return
+
+        measure_id, device_id = key
+        if sub_buffer['buffered_messages']:
             self.sdk._write_messages_to_dataset(
-                self.measure_id, self.device_id, self.buffered_messages, self.gap_tolerance_nano)
+                measure_id, device_id, sub_buffer['buffered_messages'], self.gap_tolerance_nano)
 
-        if len(self.buffered_time_value_pairs) > 0:
+        if sub_buffer['buffered_time_value_pairs']:
             self.sdk._write_time_value_pairs_to_dataset(
-                self.measure_id, self.device_id, self.buffered_time_value_pairs, self.gap_tolerance_nano)
+                measure_id, device_id, sub_buffer['buffered_time_value_pairs'], self.gap_tolerance_nano)
 
-        # Clear the buffer after flushing
-        self.buffered_messages.clear()
-        self.buffered_time_value_pairs.clear()
-        self.total_values_buffered = 0
+
+        self.total_values_buffered -= sub_buffer['total_values_buffered']
+
+        del self.sub_buffers[key]
+
+    def flush_oldest_sub_buffer(self):
+        # Find the sub-buffer with the oldest last_pushed_time
+        oldest_key = None
+        oldest_time = None
+        for key, sub_buffer in self.sub_buffers.items():
+            if sub_buffer['total_values_buffered'] > 0:
+                if oldest_time is None or sub_buffer['last_pushed_time'] < oldest_time:
+                    oldest_time = sub_buffer['last_pushed_time']
+                    oldest_key = key
+        if oldest_key is not None:
+            self.flush_sub_buffer(oldest_key)
+
+    def flush_all(self):
+        for key in list(self.sub_buffers.keys()):
+            self.flush_sub_buffer(key)
