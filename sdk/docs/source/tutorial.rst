@@ -122,8 +122,8 @@ for each record and handle multiple signals in a single record.
                 scale_m = 1 / gain
                 scale_b = -baseline / gain
 
-                # Write the data using the `write_message` function
-                sdk.write_message(measure_id, device_id, record.d_signal.T[i], start_time_s, freq=record.fs, scale_m=scale_m, scale_b=scale_b)
+                # Write the data using the `write_segment` function
+                sdk.write_segment(measure_id, device_id, record.d_signal.T[i], start_time_s, freq=record.fs, scale_m=scale_m, scale_b=scale_b)
 
         # If there is only one signal in the input file, insert it in the same way as for multiple signals
         else:
@@ -140,7 +140,7 @@ for each record and handle multiple signals in a single record.
             scale_b = -baseline / gain
 
             # Write the data using the `write_data_easy` function
-            sdk.write_message(measure_id, device_id, record.d_signal, start_time_s, freq=record.fs, scale_m=scale_m, scale_b=scale_b)
+            sdk.write_segment(measure_id, device_id, record.d_signal, start_time_s, freq=record.fs, scale_m=scale_m, scale_b=scale_b)
 
 .. _methods_of_inserting_data:
 
@@ -149,24 +149,24 @@ Methods of Inserting Data
 
 There are multiple ways to insert data into AtriumDB, depending on the format and use case.
 
-The two primary methods are: inserting **messages** and inserting **time-value pairs**, both with the option of using
+The two primary methods are: inserting **segments** and inserting **time-value pairs**, both with the option of using
 **buffered inserts** to batch small pieces of data together.
 
 Understanding these formats helps to select the best approach for your use case.
 
-Messages
+Segments
 ^^^^^^^^^^
 
-Messages are `a sequence of evenly-timed samples <https://en.wikipedia.org/wiki/Sampling_(signal_processing)/>`_ .
-A message includes a **start time**, a **sampling frequency**, and a sequence of **values**.
+Segments are `a sequence of evenly-timed samples <https://en.wikipedia.org/wiki/Sampling_(signal_processing)/>`_ .
+A segment includes a **start time**, a **sampling frequency**, and a sequence of **values**.
 The timestamp of each value can be inferred based on the start time and the frequency.
 
-Messages are often used for high-frequency waveforms or signals.
+Segments are often used for high-frequency waveforms or signals.
 
-Messages can be inserted one at a time using `AtriumSDK.write_message <contents.html#atriumdb.AtriumSDK.write_message>`_
-or in batches using `AtriumSDK.write_messages <contents.html#atriumdb.AtriumSDK.write_messages>`_.
+Segments can be inserted one at a time using `AtriumSDK.write_segment <contents.html#atriumdb.AtriumSDK.write_segment>`_
+or in batches using `AtriumSDK.write_segments <contents.html#atriumdb.AtriumSDK.write_segments>`_.
 
-Messages can also be batched piece by piece using :ref:`buffered_inserts`.
+Segments can also be batched piece by piece using :ref:`buffered_inserts`.
 
 .. code-block:: python
 
@@ -174,15 +174,15 @@ Messages can also be batched piece by piece using :ref:`buffered_inserts`.
     measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
     device_id = sdk.insert_device(device_tag="test_device")
 
-    # Inserting a single message
-    message_values = np.arange(100)  # Continuous values from 0 to 99
+    # Inserting a single segment
+    segment_values = np.arange(100)  # Continuous values from 0 to 99
     start_time = 0.0  # Start time in seconds
-    sdk.write_message(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
+    sdk.write_segment(measure_id, device_id, segment_values, start_time, freq=1.0, freq_units="Hz")
 
-    # Inserting multiple messages at once
-    messages = [np.arange(10), np.arange(10, 20), np.arange(20, 30)]
-    start_times = [0.0, 10.0, 20.0]  # Start times in seconds for each message
-    sdk.write_messages(measure_id, device_id, messages, start_times, freq=1.0, freq_units="Hz")
+    # Inserting multiple segments at once
+    segments = [np.arange(10), np.arange(10, 20), np.arange(20, 30)]
+    start_times = [0.0, 10.0, 20.0]  # Start times in seconds for each segment
+    sdk.write_segments(measure_id, device_id, segments, start_times, freq=1.0, freq_units="Hz")
 
 
 Time-Value Pairs
@@ -213,9 +213,9 @@ Buffered Inserts
 Buffered inserts allow for efficient batch writing of data into the database.
 When using the buffer, data is accumulated until a threshold is met (e.g., the number of values exceeds a specified maximum),
 at which point the buffer is automatically flushed. The buffer can also be flushed manually and automatically upon exiting the buffer's context.
-This method is optimal for live ingesting messages as they come from a device or back loading an archive of many small messages.
+This method is optimal for live ingesting segments as they come from a device or back loading an archive of many small segments.
 
-You can buffer both **messages** and **time-value pairs** using the `AtriumSDK.write_buffer <contents.html#atriumdb.AtriumSDK.write_buffer>`_ method.
+You can buffer both **segments** and **time-value pairs** using the `AtriumSDK.write_buffer <contents.html#atriumdb.AtriumSDK.write_buffer>`_ method.
 The buffer is specific to a measure-device pair, and data is automatically written once the buffer fills or the context is closed.
 
 .. code-block:: python
@@ -226,11 +226,11 @@ The buffer is specific to a measure-device pair, and data is automatically writt
 
     # Using write_buffer for batched writes
     with sdk.write_buffer(measure_id, device_id, max_values_buffered=200) as buffer:
-        # Write multiple small messages to buffer
+        # Write multiple small segments to buffer
         for i in range(43):
-            message_values = np.arange(i * 10, (i + 1) * 10)
+            segment_values = np.arange(i * 10, (i + 1) * 10)
             start_time = i * 10
-            sdk.write_message(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
+            sdk.write_segment(measure_id, device_id, segment_values, start_time, freq=1.0, freq_units="Hz")
 
         # Buffer auto-flushes when the context is exited
 

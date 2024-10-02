@@ -85,7 +85,7 @@ Time information from WFDB and many medical monitors are provided as a start tim
 `sequential signal values <https://en.wikipedia.org/wiki/Sampling_(signal_processing)/>`_  seperated by a constant
 sample period defined by the sample frequency.
 
-In that case we use the `AtriumSDK.write_message  <contents.html#atriumdb.AtriumSDK.write_message>`_ method.
+In that case we use the `AtriumSDK.write_segment  <contents.html#atriumdb.AtriumSDK.write_segment>`_ method.
 For inserting data of alternate time formats (for example, time-value pairs), see :ref:`methods_of_inserting_data`.
 
 .. code-block:: python
@@ -119,7 +119,7 @@ For inserting data of alternate time formats (for example, time-value pairs), se
             scale_b = -baseline / gain
 
             # Write the signal data to AtriumDB
-            sdk.write_message(measure_id, device_id, digital_signal, start_time_s, freq=freq_hz, scale_m=scale_m, scale_b=scale_b)
+            sdk.write_segment(measure_id, device_id, digital_signal, start_time_s, freq=freq_hz, scale_m=scale_m, scale_b=scale_b)
 
 Querying Data
 ############################################################################
