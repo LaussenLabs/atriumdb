@@ -24,7 +24,8 @@ from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
     find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz, \
     ALLOWED_TIME_TYPES, collect_all_descendant_ids, get_best_measure_id, _calc_end_time_from_gap_data, \
-    merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns
+    merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns, time_unit_options, \
+    create_gap_arr_from_variable_messages
 from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
@@ -49,6 +50,8 @@ from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
 from atriumdb.windowing.random_access_iterator import RandomAccessDatasetIterator
 from atriumdb.windowing.verify_definition import verify_definition
+from atriumdb.windowing.defintion_splitter import partition_dataset
+from atriumdb.write_buffer import WriteBuffer
 
 try:
     import requests
@@ -73,7 +76,6 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_META_CONNECTION_TYPE = 'sqlite'
-time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 
 # _LOGGER.basicConfig(
 #     level=_LOGGER.debug,
@@ -161,6 +163,11 @@ class AtriumSDK:
 
         # Initialize the block object with the C DLL path and number of threads
         self.block = Block(atriumdb_lib_path, num_threads)
+
+        # Initialize write buffer param
+        self._buffer = {}
+
+        # Setup SQL Handler
         self.sql_handler = None
 
         # Handle SQLite connections
@@ -274,12 +281,19 @@ class AtriumSDK:
 
         # Create these caches early in case they get used in the initial creation of the caches below.
         self._measures, self._devices, self._label_sets = {}, {}, {}
+        self._label_source_ids, self._label_sources = {}, {}
 
         # Initialize measures and devices if not in API mode
         if metadata_connection_type != "api":
             self._measures = self.get_all_measures()
             self._devices = self.get_all_devices()
             self._label_sets = self.get_all_label_names()
+
+            self._label_sources = self.get_all_label_sources()
+            self._label_source_ids = {}
+
+            for source_id, source_info in self._label_sources.items():
+                self._label_source_ids[source_info['name']] = source_id
 
             # Lazy caching, cache only built if patient info requested later
             self._patients = {}
@@ -1044,6 +1058,398 @@ class AtriumSDK:
             self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, interval_index_mode, gap_tolerance)
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
+
+    def write_buffer(self, measure_id: int, device_id: int, max_values_buffered=None, gap_tolerance=0,
+                     time_units=None):
+        """
+        Create a buffer Context Object for the given measure-device pair, to batch incoming messages/signals until they hit some threshold,
+        are manually flushed to the dataset or are automatically flushed by exiting the context opened by this object.
+
+        :param int measure_id: The buffer will be specific to this measure_id.
+        :param int device_id: The buffer will be specific to this device_id.
+        :param int max_values_buffered: (Optional) If the buffer ever goes over this number of values, the data will be automatically flushed to the dataset.
+        :param float gap_tolerance: (Optional) Merges sequential intervals from the AtriumSDK.get_interval_array method that have a duration between them
+            less than gap_tolerance, specified in `time_units` units (default "s").
+        :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is seconds.
+
+        Example:
+
+            >>> import numpy as np
+            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+            >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+            >>> device_id = sdk.insert_device(device_tag="test_device")
+
+            >>> # Using write_buffer for batched writes
+            >>> with sdk.write_buffer(measure_id, device_id, max_values_buffered=100) as buffer:
+            ...     # Write multiple small messages to buffer
+            ...     for i in range(5):
+            ...         message_values = np.arange(i * 10, (i + 1) * 10)
+            ...         start_time = i * 10.0
+            ...         sdk.write_message(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
+            ...     # Buffer auto-flushes when context is exited
+
+        **Notes:**
+
+        - Each buffer only works on one measure-device combination. If you must ingest multiple measures or multiple devices at one time, you must use multiple buffers.
+
+        """
+        return WriteBuffer(
+            self,
+            measure_id,
+            device_id,
+            max_values_buffered=max_values_buffered,
+            gap_tolerance=gap_tolerance,
+            time_units=time_units,
+        )
+
+    def write_message(self, measure_id: int, device_id: int, message_values: np.ndarray, start_time: float,
+                      period: float = None, freq: float = None, time_units: str = None,
+                      freq_units: str = None, scale_m: float = None, scale_b: float = None):
+        """
+        Write a single message consisting of contiguous values starting at a specific time.
+
+        :param int measure_id: Identifier for the measure, corresponding to the measures table in the linked relational database.
+        :param int device_id: Identifier for the device, corresponding to the devices table in the linked relational database.
+        :param np.ndarray message_values: List or 1D numpy array of contiguous values to write.
+        :param float start_time: Epoch time when the message starts. If `time_units` is specified, `start_time` is assumed to be in those units.
+        :param float period: (Optional) Sampling period of the data to be written. Only one of `period` or `freq` should be specified.
+                             If units other than the default (seconds) are used, specify the desired unit using the `time_units` parameter.
+        :param float freq: (Optional) Sampling frequency of the data to be written. Only one of `period` or `freq` should be specified.
+                           If units other than the default (hertz) are used, specify the desired unit using the `freq_units` parameter.
+        :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is seconds.
+        :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
+        :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b).
+        :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b).
+
+        Example:
+
+            >>> import numpy as np
+            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+            >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+            >>> device_id = sdk.insert_device(device_tag="test_device")
+
+            >>> # Inserting a single message
+            >>> message_values = np.arange(50)  # Continuous values from 0 to 49
+            >>> start_time = 0.0  # Start time in seconds
+            >>> sdk.write_message(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
+
+        **Notes:**
+
+        - This method is ideal for writing continuous sequences of data that start at a specific time and have uniform sampling intervals.
+        - Output from medical monitors, or wfdb Records from physionet dataset typically have this format.
+        - If you have multiple messages to write, consider using `write_messages` for better performance.
+
+        """
+        # Wrap the single message and start time into lists to use with write_messages
+        messages = [message_values]
+        start_times = [start_time]
+
+        # Call write_messages with the single message
+        self.write_messages(
+            measure_id=measure_id,
+            device_id=device_id,
+            messages=messages,
+            start_times=start_times,
+            period=period,
+            freq=freq,
+            time_units=time_units,
+            freq_units=freq_units,
+            scale_m=scale_m,
+            scale_b=scale_b
+        )
+
+    def write_messages(self, measure_id: int, device_id: int, messages: list, start_times: list,
+                       period: float = None, freq: float = None, time_units: str = None,
+                       freq_units: str = None, scale_m: float = None, scale_b: float = None):
+        """
+        Write multiple messages consisting of value arrays and corresponding start times.
+
+        :param int measure_id: Identifier for the measure, corresponding to the measures table in the linked relational database.
+        :param int device_id: Identifier for the device, corresponding to the devices table in the linked relational database.
+        :param List[ndarray] messages: Each list item is a numpy array of contiguous values that corresponds to a `start_time`
+            from an equally sized start_times list.
+        :param List[int|float] start_times: Each list item is a float or int representing a start time corresponds to a `message`
+            from an equally sized messages list.
+        :param float period: (Optional) Sampling period of the data to be written. Only one of `period` or `freq` should be specified.
+            If units other than the default (seconds) are used, specify the desired unit using the `time_units` parameter.
+        :param float freq: (Optional) Sampling frequency of the data to be written. Only one of `period` or `freq` should be specified.
+            If units other than the default (hertz) are used, specify the desired unit using the `freq_units` parameter.
+        :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is seconds.
+        :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
+        :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b).
+            It may be a single number or a list with one number per message
+        :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b).
+            It may be a single number or a list with one number per message
+
+        Example:
+
+            >>> import numpy as np
+            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+            >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+            >>> device_id = sdk.insert_device(device_tag="test_device")
+
+            >>> # Inserting multiple messages at once
+            >>> messages = [np.arange(10), np.arange(10, 20), np.arange(20, 30)]
+            >>> start_times = [0.0, 10.0, 20.0]  # Start times in seconds for each message
+            >>> sdk.write_messages(measure_id, device_id, messages, start_times, freq=1.0, freq_units="Hz")
+
+        **Notes:**
+
+        - This method is optimized for batch writing of messages and is more efficient than calling `write_message` multiple times.
+
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for writing data.")
+
+        # Set default time and frequency units if not provided
+        time_units = "s" if time_units is None else time_units
+        freq_units = "Hz" if freq_units is None else freq_units
+
+        # Set default for scale factors
+        scale_m = 1 if scale_m is None else scale_m
+        scale_b = 0 if scale_b is None else scale_b
+
+        # Confirm measure and device information
+        measure_info = self.get_measure_info(measure_id)
+        device_info = self.get_device_info(device_id)
+
+        if measure_info is None:
+            raise ValueError(f"measure_id {measure_id} not found in the dataset. "
+                             f"Add it with AtriumSDK.insert_measure(tag, freq, units)")
+        if device_info is None:
+            raise ValueError(f"device_id {device_id} not found in the dataset. "
+                             f"Add it with AtriumSDK.insert_device(tag)")
+
+        # Figure out the frequency
+        if freq is not None:
+            freq_nano = convert_to_nanohz(freq, freq_units)
+        elif period is not None:
+            period_ns = int(period * time_unit_options[time_units])
+            freq_nano = 10**18 // period_ns
+            if 10**18 % period_ns != 0:
+                warnings.warn(f"Given period doesn't divide perfectly into a frequency. "
+                              f"Estimating to be {freq_nano / 10**9} Hz")
+        else:
+            freq_nano = measure_info["freq_nhz"]
+
+        # Create message list for writing.
+        scale_m_list = scale_m if isinstance(scale_m, list) else [scale_m] * len(messages)
+        scale_b_list = scale_b if isinstance(scale_b, list) else [scale_b] * len(messages)
+        write_messages = []
+        for values, start_time, m, b in zip(messages, start_times, scale_m_list, scale_b_list):
+            if not isinstance(values, np.ndarray):
+                raise ValueError(f"Individual messages must be numpy arrays, not {type(values)}")
+
+            if isinstance(start_time, np.generic):
+                start_time = start_time.item()
+
+            if not isinstance(start_time, (int, float)):
+                raise ValueError(f"Individual start times must be int or float, not {type(start_time)}")
+            message_dict = {
+                'start_time_nano': int(start_time * time_unit_options[time_units]),
+                'values': values,
+                'scale_m': m,
+                'scale_b': b,
+                'freq_nhz': freq_nano,
+            }
+            write_messages.append(message_dict)
+
+
+        if self._buffer.get((measure_id, device_id)) is None:
+            # Write immediately to disk
+            interval_gap_tolerance_nano = 0
+
+            self._write_messages_to_dataset(measure_id, device_id, write_messages, interval_gap_tolerance_nano)
+        else:
+            # Push new messages to the buffer
+            self._buffer[(measure_id, device_id)].push_messages(write_messages)
+
+    def _write_messages_to_dataset(self, measure_id, device_id, write_messages, interval_gap_tolerance_nano=0):
+        sorted_messages = sorted(write_messages, key=lambda x: x['start_time_nano'])
+        message_start_epoch_array = []
+        message_size_array = []
+        freq_nhz = sorted_messages[0]['freq_nhz']
+        scale_m = sorted_messages[0]['scale_m']
+        scale_b = sorted_messages[0]['scale_b']
+        message_dtype = sorted_messages[0]['values'].dtype
+        for message in sorted_messages:
+            message_start_epoch_array.append(message['start_time_nano'])
+            message_size_array.append(message['values'].size)
+
+            if message['freq_nhz'] != freq_nhz:
+                raise ValueError("Messages inserted do not all have the same frequency. "
+                                 "If you want to ingest messages for the same signal with different frequencies, "
+                                 "you must insert them separately.")
+            if message['scale_m'] != scale_m or message['scale_b'] != scale_b:
+                raise ValueError("Messages inserted do not all have the same scale factors.")
+            if message['values'].dtype != message_dtype:
+                raise ValueError("Messages inserted do not all have the same dtype.")
+        # Convert messages to gap_data
+        gap_data = create_gap_arr_from_variable_messages(
+            message_start_epoch_array, message_size_array, freq_nhz)
+        value_data = np.concatenate([message['values'] for message in sorted_messages])
+        time_0 = int(sorted_messages[0]['start_time_nano'])
+        write_intervals = find_intervals(freq_nhz, 2, gap_data, time_0, int(value_data.size))
+        # Encode the block(s)
+        if np.issubdtype(value_data.dtype, np.integer):
+            raw_v_t = V_TYPE_INT64
+            encoded_v_t = V_TYPE_DELTA_INT64
+        else:
+            raw_v_t = V_TYPE_DOUBLE
+            encoded_v_t = V_TYPE_DOUBLE
+        encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
+            gap_data, value_data, freq_nhz, time_0,
+            raw_time_type=2,
+            raw_value_type=raw_v_t,
+            encoded_time_type=2,
+            encoded_value_type=encoded_v_t,
+            scale_m=scale_m,
+            scale_b=scale_b)
+        # Write the encoded bytes to disk
+        filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
+        # Use the header data to create rows to be inserted into the block_index and interval_index SQL tables
+        block_data, interval_data = get_block_and_interval_data(
+            measure_id, device_id, encoded_headers, byte_start_array, write_intervals,
+            interval_gap_tolerance=interval_gap_tolerance_nano)
+        # Insert new data into the SQL tables
+        self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, "fast", interval_gap_tolerance_nano)
+
+    def write_time_value_pairs(self, measure_id: int, device_id: int, times: np.ndarray, values: np.ndarray,
+                               period: float = None, freq: float = None, time_units: str = None, freq_units: str = None,
+                               scale_m: float = None, scale_b: float = None):
+        """
+        Write time-value pairs where each value corresponds to a specific timestamp.
+
+        :param int measure_id: Identifier for the measure, corresponding to the measures table in the linked relational database.
+        :param int device_id: Identifier for the device, corresponding to the devices table in the linked relational database.
+        :param ndarray values: Numpy array of values to write.
+        :param ndarray times: Numpy array of corresponding timestamps for each value. The shape of `values` and `times` must match.
+        :param float period: (Optional) Sampling period of the data. Only one of `period` or `freq` should be specified.
+                             If specified, time deltas in `times` will be adjusted to match `period` within the `gap_tolerance`.
+        :param float freq: (Optional) Sampling frequency of the data. Only one of `period` or `freq` should be specified.
+                           If specified, time deltas in `times` will be adjusted based on `freq` within the `gap_tolerance`.
+        :param str time_units: (Optional) Unit for `times` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is seconds.
+        :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
+        :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b). Default is 1.0.
+        :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b). Default is 0.0.
+
+        Example:
+
+            >>> import numpy as np
+            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+            >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+            >>> device_id = sdk.insert_device(device_tag="test_device")
+
+            >>> # Inserting time-value pairs
+            >>> times = np.array([0.0, 2.0, 4.5])  # Time values in seconds
+            >>> values = np.array([100, 200, 300])  # Corresponding values
+            >>> sdk.write_time_value_pairs(measure_id, device_id, times, values)
+
+        **Notes:**
+
+        - If neither `freq` nor `period` is specified, the method will attempt to infer the sampling frequency from the most common difference between consecutive timestamps in `times`.
+        - Use this method when dealing with irregularly sampled data or if your data is already formatted in time-value pairs.
+
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for writing data.")
+
+        if values.size == 0:
+            return
+
+        if values.shape != times.shape:
+            raise ValueError("values and times must be numpy arrays of equal shape.")
+
+        # Set default time and frequency units if not provided
+        time_units = "s" if time_units is None else time_units
+        freq_units = "Hz" if freq_units is None else freq_units
+
+        # Set default for scale factors
+        scale_m = 1 if scale_m is None else scale_m
+        scale_b = 0 if scale_b is None else scale_b
+
+        # Confirm measure and device information
+        measure_info = self.get_measure_info(measure_id)
+        device_info = self.get_device_info(device_id)
+
+        if measure_info is None:
+            raise ValueError(f"measure_id {measure_id} not found in the dataset. "
+                             f"Add it with AtriumSDK.insert_measure(tag, freq, units)")
+        if device_info is None:
+            raise ValueError(f"device_id {device_id} not found in the dataset. "
+                             f"Add it with AtriumSDK.insert_device(tag)")
+
+        # Convert times to nanoseconds
+        if time_units != "ns":
+            times = convert_to_nanoseconds(times, time_units)
+
+        # Figure out the frequency
+        if freq is not None:
+            freq_nano = convert_to_nanohz(freq, freq_units)
+        elif period is not None:
+            period_ns = int(period * time_unit_options[time_units])
+            freq_nano = 10 ** 18 // period_ns
+            if 10 ** 18 % period_ns != 0:
+                warnings.warn(f"Given period doesn't divide perfectly into a frequency. "
+                              f"Estimating to be {freq_nano / 10 ** 9} Hz")
+        else:
+            freq_nano = measure_info["freq_nhz"]
+
+        # Create data dictionary
+        data_dict = {
+            'times': times.astype(np.int64),
+            'values': values,
+            'scale_m': scale_m,
+            'scale_b': scale_b,
+            'freq_nhz': freq_nano
+        }
+
+        if self._buffer.get((measure_id, device_id)) is None:
+            # Ingest Immediately
+            interval_gap_tolerance_nano = 0
+            self._write_time_value_pairs_to_dataset(measure_id, device_id, [data_dict], interval_gap_tolerance_nano)
+        else:
+            # Push data to buffer
+            self._buffer[(measure_id, device_id)].push_time_value_pair(data_dict)
+
+    def _write_time_value_pairs_to_dataset(self, measure_id, device_id, data_dicts, interval_gap_tolerance_nano=0):
+        # Ensure consistency across data_dicts
+        freq_nhz = data_dicts[0]['freq_nhz']
+        scale_m = data_dicts[0]['scale_m']
+        scale_b = data_dicts[0]['scale_b']
+        data_dtype = data_dicts[0]['values'].dtype
+        for data in data_dicts:
+            if data['freq_nhz'] != freq_nhz:
+                raise ValueError("Data dictionaries have inconsistent frequencies.")
+            if data['scale_m'] != scale_m or data['scale_b'] != scale_b:
+                raise ValueError("Data dictionaries have inconsistent scale factors.")
+            if data['values'].dtype != data_dtype:
+                raise ValueError("Data dictionaries have inconsistent data types.")
+
+        # Combine times and values
+        all_times = np.concatenate([data['times'] for data in data_dicts])
+        all_values = np.concatenate([data['values'] for data in data_dicts])
+
+        # Sort times and values, remove duplicates
+        times, sorted_time_indices = np.unique(all_times, return_index=True)
+        values = all_values[sorted_time_indices]
+
+        time_0 = int(times[0])
+
+        # Encode the block(s)
+        if np.issubdtype(values.dtype, np.integer):
+            raw_v_t = V_TYPE_INT64
+            encoded_v_t = V_TYPE_DELTA_INT64
+        else:
+            raw_v_t = V_TYPE_DOUBLE
+            encoded_v_t = V_TYPE_DOUBLE
+
+        self.write_data(measure_id, device_id, times, values, freq_nhz, time_0,
+                        raw_time_type=1,
+                        raw_value_type=raw_v_t, encoded_time_type=2, encoded_value_type=encoded_v_t,
+                        scale_m=scale_m, scale_b=scale_b, interval_index_mode="fast",
+                        gap_tolerance=interval_gap_tolerance_nano, merge_blocks=False)
+
 
     def get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None):
         """
@@ -2655,7 +3061,7 @@ class AtriumSDK:
                 measure_id_list.append(measure_id)
             measure_list = measure_id_list
 
-        labels = self.sql_handler.select_labels(
+        labels = self.sql_handler.select_labels_with_info(
             label_set_id_list=label_name_id_list,
             device_id_list=device_list,
             patient_id_list=patient_id_list,
@@ -2667,8 +3073,8 @@ class AtriumSDK:
         )
 
         # Extract unique label_set_ids and device_ids
-        unique_label_set_ids = {label[1] for label in labels}
-        unique_device_ids = {label[2] for label in labels}
+        unique_label_set_ids = {label[2] for label in labels}
+        unique_device_ids = {label[3] for label in labels}
 
         # Create dictionaries for label set and device info for optimized lookup
         label_set_id_to_info = {label_set_id: self.get_label_name_info(label_set_id) for label_set_id in
@@ -2676,17 +3082,15 @@ class AtriumSDK:
         device_id_to_info = {device_id: self.get_device_info(device_id) for device_id in unique_device_ids}
 
         result = []
-        for label_entry_id, label_set_id, device_id, measure_id, label_source_id, start_time_n, end_time_n in labels:
+        for (label_entry_id, label_name, label_set_id, device_id, measure_id, label_source_name, label_source_id,
+             start_time_n, end_time_n, patient_id) in labels:
+
             requested_id = closest_requested_ancestor_dict.get(label_set_id, label_set_id)
             requested_name = self.get_label_name_info(requested_id)['name']
 
-            # Get label_source_name
-            label_source_info = self.get_label_source_info(label_source_id) if label_source_id else None
-            label_source_name = label_source_info['name'] if label_source_info else None
-
-            patient_id = self.convert_device_to_patient_id(
-                start_time=start_time_n, end_time=end_time_n, device=device_id,
-                conflict_resolution='90_percent_overlap')
+            # patient_id = self.convert_device_to_patient_id(
+            #     start_time=start_time_n, end_time=end_time_n, device=device_id,
+            #     conflict_resolution='90_percent_overlap')
             mrn = None if patient_id is None else self.get_mrn(patient_id)
 
             formatted_label = {
@@ -2874,7 +3278,7 @@ class AtriumSDK:
             # Using MRN as the source type and measure tuple
             labels_data = [
                 ('Heart Rate', 1234567, ('ECG', 200, 'Milli_Volts'), None, 1609459200_000, 1609462800_000),
-                ('Blood Pressure', ('ECG', 200, 'Milli_Volts'), 'Automatic Device', 1234568, 1609459200_000, 1609462800_000)
+                ('Blood Pressure', 1234568, ('ECG', 200, 'Milli_Volts'), 'Automatic Device', 1609459200_000, 1609462800_000)
             ]
             insert_labels(labels=labels_data, time_units='ms', source_type='mrn')
 
@@ -3295,11 +3699,22 @@ class AtriumSDK:
         :return: The label source ID or None if not found.
         """
 
+        # Check the cache first
+        if name in self._label_source_ids:
+            return self._label_source_ids[name]
+
+        # If not in cache, fetch from the database or API
         if self.metadata_connection_type == 'api':
             params = {'label_source_id': None, 'label_source_name': name}
-            return self._request("GET", "/labels/source", params=params)
+            source_id = self._request("GET", "/labels/source", params=params)
+        else:
+            source_id = self.sql_handler.select_label_source_id_by_name(name)
 
-        return self.sql_handler.select_label_source_id_by_name(name)
+        if source_id is not None:
+            # Update the cache
+            self._label_source_ids[name] = source_id
+            self._label_sources[source_id] = {'id': source_id, 'name': name}
+        return source_id
 
     def get_label_source_info(self, label_source_id: int) -> Optional[dict]:
         """
@@ -3307,11 +3722,46 @@ class AtriumSDK:
         :param label_source_id: The identifier for the label source.
         :return: A dictionary containing information about the label source, or None if not found.
         """
+
+        # Check the cache first
+        if label_source_id in self._label_sources:
+            return self._label_sources[label_source_id]
+
+        # If not in cache, fetch from the database or API
         if self.metadata_connection_type == 'api':
             params = {'label_source_id': label_source_id, 'label_source_name': None}
-            return self._request("GET", "/labels/source", params=params)
+            source_info = self._request("GET", "/labels/source", params=params)
+        else:
+            source_info = self.sql_handler.select_label_source_info_by_id(label_source_id)
 
-        return self.sql_handler.select_label_source_info_by_id(label_source_id)
+        if source_info is not None:
+            # Update the cache
+            self._label_sources[label_source_id] = source_info
+            self._label_source_ids[source_info['name']] = label_source_id
+        return source_info
+
+    def get_all_label_sources(self, limit=None, offset=0) -> dict:
+        """
+        Retrieve all distinct label sources from the database.
+        :param int limit: Maximum number of rows to return.
+        :param int offset: Offset this number of rows before starting to return label sources.
+        :return: A dictionary where keys are label source IDs and values are dictionaries containing 'id' and 'name' keys.
+        :rtype: dict
+        """
+        if self.metadata_connection_type == "api":
+            warnings.warn("API mode cannot cache label_sources, leaving cache empty.")
+            return {}
+
+        source_tuple_list = self.sql_handler.select_label_sources(limit=limit, offset=offset)
+
+        source_dict = {}
+        for source_info in source_tuple_list:
+            source_id, source_name = source_info
+            source_dict[source_id] = {
+                'id': source_id,
+                'name': source_name
+            }
+        return source_dict
 
     def insert_label_source(self, name: str, description: str = None) -> int:
         """
@@ -3452,10 +3902,10 @@ class AtriumSDK:
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
                      time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
                      shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
-                     end_time=None) -> DatasetIterator:
+                     end_time=None, num_iterators=1) -> Union[DatasetIterator, List[DatasetIterator]]:
         """
-        Constructs and returns a `DatasetIterator` object that allows iteration over the dataset according to
-        the specified definition.
+        Constructs and returns a `DatasetIterator` object or a list of `DatasetIterator` objects that allow iteration
+        over the dataset according to the specified definition.
 
         The method first verifies the provided definition against the dataset of the calling class object.
         If certain parts of the cohort definition aren't present within the dataset, the method will truncate the
@@ -3497,9 +3947,10 @@ class AtriumSDK:
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
+        :param int num_iterators: Number of iterators to create by partitioning the dataset (default is 1).
 
-        :return: DatasetIterator object to easily iterate over the specified data.
-        :rtype: DatasetIterator
+        :return: A single DatasetIterator object or a list of DatasetIterator objects depending on the value of num_iterators.
+        :rtype: Union[DatasetIterator, List[DatasetIterator]]
 
         **Example**:
 
@@ -3555,6 +4006,30 @@ class AtriumSDK:
             assert cached_windows_per_source > 0, "cached_windows_per_source must be at least 1."
             max_cache_duration_per_source = window_duration + (window_slide * (cached_windows_per_source - 1))
 
+        # Check if we need to partition the dataset
+        if num_iterators > 1:
+            definition_list = partition_dataset(
+                definition,
+                self,
+                partition_ratios=[1] * num_iterators,
+                priority_stratification_labels=definition.data_dict['labels'],
+                random_state=42,
+                verbose=False,
+                gap_tolerance=10 ** 9  # 1 second
+            )
+
+            # Create iterators for each partitioned definition
+            iterators = []
+            for partitioned_definition in definition_list:
+                iterator = self.get_iterator(partitioned_definition, window_duration, window_slide, gap_tolerance,
+                                             num_windows_prefetch, "ns", label_threshold, iterator_type,
+                                             window_filter_fn, shuffle, cached_windows_per_source,
+                                             patient_history_fields, start_time_n, end_time_n, num_iterators=1)
+                iterators.append(iterator)
+
+            return iterators
+
+        # Validate the definition and create the iterator for a single partition
         validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
             definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n)
 
@@ -3563,7 +4038,8 @@ class AtriumSDK:
             iterator = RandomAccessDatasetIterator(
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
-                label_threshold=label_threshold, time_units=time_units, max_cache_duration=max_cache_duration_per_source,
+                label_threshold=label_threshold, time_units=time_units,
+                max_cache_duration=max_cache_duration_per_source,
                 shuffle=shuffle, patient_history_fields=patient_history_fields)
         elif iterator_type == 'filtered':
             if window_filter_fn is None:
@@ -3572,7 +4048,8 @@ class AtriumSDK:
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, time_units=time_units, window_filter_fn=window_filter_fn,
-                max_cache_duration=max_cache_duration_per_source, shuffle=shuffle, patient_history_fields=patient_history_fields)
+                max_cache_duration=max_cache_duration_per_source, shuffle=shuffle,
+                patient_history_fields=patient_history_fields)
         else:
             iterator = DatasetIterator(
                 self, validated_measure_list, validated_label_set_list, validated_sources,

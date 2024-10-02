@@ -1,3 +1,21 @@
+# AtriumDB is a timeseries database software designed to best handle the unique features and
+# challenges that arise from clinical waveform data.
+#     Copyright (C) 2023  The Hospital for Sick Children
+#
+#     This program is free software: you can redistribute it and/or modify
+#     it under the terms of the GNU General Public License as published by
+#     the Free Software Foundation, either version 3 of the License, or
+#     (at your option) any later version.
+#
+#     This program is distributed in the hope that it will be useful,
+#     but WITHOUT ANY WARRANTY; without even the implied warranty of
+#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#     GNU General Public License for more details.
+#
+#     You should have received a copy of the GNU General Public License
+#     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+import bisect
 from typing import List, Tuple
 
 from atriumdb.intervals.difference import list_difference
@@ -17,15 +35,24 @@ def map_validated_sources(sources: dict, sdk) -> dict:
     def process_ids(ids_dict, id_type):
         for src_id, time_ranges in ids_dict.items():
             union_ranges = []
+            device_patient_data = sdk.get_device_patient_data(
+                    patient_id_list=[src_id] if id_type == 'patient_ids' else None,
+                    device_id_list=[src_id] if id_type == 'device_ids' else None)
+
+            time_sorted_device_patient_data = sorted(device_patient_data, key=lambda x: x[2])
+
+            # Extract start_times and end_times
+            device_patient_starts = [entry[2] for entry in time_sorted_device_patient_data]
+            device_patient_ends = [entry[3] for entry in time_sorted_device_patient_data]
+
             for time_range in time_ranges:
                 start_time, end_time = time_range
                 # Fetch device_patient_data based on id_type
-                device_patient_data = sdk.get_device_patient_data(
-                    patient_id_list=[src_id] if id_type == 'patient_ids' else None,
-                    device_id_list=[src_id] if id_type == 'device_ids' else None,
-                    start_time=start_time, end_time=end_time)
+                matching_device_patient_data = find_device_patient_data(
+                    time_sorted_device_patient_data, device_patient_starts, device_patient_ends, start_time, end_time)
+
                 # Aggregate the time ranges based on the device and patient IDs
-                aggregated_ranges = aggregate_time_ranges(device_patient_data)
+                aggregated_ranges = aggregate_time_ranges(matching_device_patient_data)
                 for (device_id, patient_id), ranges in aggregated_ranges.items():
                     intersected_ranges = list_intersection(ranges, [time_range])
                     if intersected_ranges:
@@ -81,3 +108,20 @@ def aggregate_time_ranges(device_patient_data: List[Tuple[int, int, int, int]]):
         result[key].sort(key=lambda x: x[0])
 
     return result
+
+
+def find_device_patient_data(sorted_device_patient_data, starts, ends, start_time, end_time):
+    start_idx = bisect.bisect_left(ends, start_time)
+    end_idx = bisect.bisect_left(ends, end_time)
+
+    if start_idx == end_idx:
+        if start_idx >= len(starts):
+            return []
+        if (not (starts[start_idx] <= start_time <= ends[start_idx])
+                and not (starts[end_idx] <= end_time <= ends[end_idx])):
+            return []
+
+    if end_idx < len(starts) and end_time < starts[end_idx]:
+        end_idx = max(0, end_idx - 1)
+
+    return sorted_device_patient_data[start_idx:end_idx + 1]

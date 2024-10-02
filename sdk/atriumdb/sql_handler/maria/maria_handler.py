@@ -699,3 +699,25 @@ class MariaDBHandler(SQLHandler):
                 raise
 
 
+    def select_label_sources(self, limit=None, offset=None):
+        # Retrieve all label sources from the database.
+        query = "SELECT id, name FROM label_source ORDER BY id ASC"
+
+        # if limit and offset are specified ent add them to query
+        if limit is not None and offset is not None:
+            query += f" LIMIT {limit} OFFSET {offset}"
+        # if only limit is supplied then only add it to the query
+        elif limit is not None and offset is None:
+            query += f" LIMIT {limit}"
+
+        try:
+            with self.maria_db_connection(begin=False) as (conn, cursor):
+                cursor.execute(query)
+                return cursor.fetchall()
+        except ProgrammingError as e:
+            if 'Table' in str(e) and 'doesn\'t exist' in str(e):
+                return []  # Table doesn't exist, return an empty list
+            else:
+                # An error occurred for a different reason, re-raise the exception
+                raise e
+

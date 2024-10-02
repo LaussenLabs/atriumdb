@@ -580,8 +580,7 @@ def is_gap_data_sorted(gap_data, freq_nhz):
     return np.all(gap_durations >= -period_ns)
 
 
-def create_gap_arr_from_variable_messages(message_start_epoch_array: np.ndarray, message_size_array: np.ndarray,
-                                          sample_freq):
+def create_gap_arr_from_variable_messages(message_start_epoch_array, message_size_array, sample_freq):
     sample_freq = int(sample_freq)
     result_list = []
     current_sample = 0
