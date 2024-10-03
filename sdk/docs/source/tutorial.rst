@@ -216,7 +216,7 @@ at which point the buffer is automatically flushed. The buffer can also be flush
 This method is optimal for live ingesting segments as they come from a device or back loading an archive of many small segments.
 
 You can buffer both **segments** and **time-value pairs** using the `AtriumSDK.write_buffer <contents.html#atriumdb.AtriumSDK.write_buffer>`_ method.
-The buffer is specific to a measure-device pair, and data is automatically written once the buffer fills or the context is closed.
+The buffer organized data by their measure-device pair, and data is automatically written once the buffer fills or the context is closed.
 
 .. code-block:: python
 
@@ -225,7 +225,7 @@ The buffer is specific to a measure-device pair, and data is automatically writt
     device_id = sdk.insert_device(device_tag="test_device")
 
     # Using write_buffer for batched writes
-    with sdk.write_buffer(measure_id, device_id, max_values_buffered=200) as buffer:
+    with sdk.write_buffer(max_values_per_measure_device=100, max_total_values_buffered=200) as buffer:
         # Write multiple small segments to buffer
         for i in range(43):
             segment_values = np.arange(i * 10, (i + 1) * 10)
