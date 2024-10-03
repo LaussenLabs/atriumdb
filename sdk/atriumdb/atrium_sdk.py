@@ -42,6 +42,7 @@ from multiprocessing import cpu_count
 import sys
 import os
 from typing import Union, List, Tuple, Optional
+import platform
 
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
@@ -146,6 +147,8 @@ class AtriumSDK:
         self.metadata_connection_type = metadata_connection_type
 
         # Set the C DLL path based on the platform if not provided
+        if platform.system() == "Darwin":
+            raise OSError("AtriumSDK is not currently supported on macOS.")
         if atriumdb_lib_path is None:
             if sys.platform == "win32":
                 shared_lib_filename = shared_lib_filename_windows
