@@ -990,7 +990,7 @@ class AtriumSDK:
 
             >>> # Using write_buffer for batched writes
             >>> with sdk.write_buffer(max_values_per_measure_device=100, max_total_values_buffered=1000) as buffer:
-            ...     # Write multiple small messages to buffer
+            ...     # Write multiple small segments to buffer
             ...     for i in range(5):
             ...         message_values = np.arange(i * 10, (i + 1) * 10)
             ...         start_time = i * 10.0
@@ -1141,12 +1141,12 @@ class AtriumSDK:
             freq_nano = measure_info["freq_nhz"]
 
         # Create message list for writing.
-        scale_m_list = scale_m if isinstance(scale_m, list) else [scale_m] * len(messages)
-        scale_b_list = scale_b if isinstance(scale_b, list) else [scale_b] * len(messages)
-        write_messages = []
-        for values, start_time, m, b in zip(messages, start_times, scale_m_list, scale_b_list):
+        scale_m_list = scale_m if isinstance(scale_m, list) else [scale_m] * len(segments)
+        scale_b_list = scale_b if isinstance(scale_b, list) else [scale_b] * len(segments)
+        write_segments = []
+        for values, start_time, m, b in zip(segments, start_times, scale_m_list, scale_b_list):
             if not isinstance(values, np.ndarray):
-                raise ValueError(f"Individual messages must be numpy arrays, not {type(values)}")
+                raise ValueError(f"Individual segments must be numpy arrays, not {type(values)}")
 
             if isinstance(start_time, np.generic):
                 start_time = start_time.item()
@@ -1160,43 +1160,43 @@ class AtriumSDK:
                 'scale_b': b,
                 'freq_nhz': freq_nano,
             }
-            write_messages.append(message_dict)
+            write_segments.append(message_dict)
 
 
         if self._active_buffer is None:
             # Write immediately to disk
             interval_gap_tolerance_nano = 0
 
-            self._write_messages_to_dataset(measure_id, device_id, write_messages, interval_gap_tolerance_nano)
+            self._write_segments_to_dataset(measure_id, device_id, write_segments, interval_gap_tolerance_nano)
         else:
-            # Push new messages to the buffer
-            self._active_buffer.push_messages(measure_id, device_id, write_messages)
+            # Push new segments to the buffer
+            self._active_buffer.push_segments(measure_id, device_id, write_segments)
 
-    def _write_messages_to_dataset(self, measure_id, device_id, write_messages, interval_gap_tolerance_nano=0):
-        sorted_messages = sorted(write_messages, key=lambda x: x['start_time_nano'])
+    def _write_segments_to_dataset(self, measure_id, device_id, write_segments, interval_gap_tolerance_nano=0):
+        sorted_segments = sorted(write_segments, key=lambda x: x['start_time_nano'])
         message_start_epoch_array = []
         message_size_array = []
-        freq_nhz = sorted_messages[0]['freq_nhz']
-        scale_m = sorted_messages[0]['scale_m']
-        scale_b = sorted_messages[0]['scale_b']
-        message_dtype = sorted_messages[0]['values'].dtype
-        for message in sorted_messages:
+        freq_nhz = sorted_segments[0]['freq_nhz']
+        scale_m = sorted_segments[0]['scale_m']
+        scale_b = sorted_segments[0]['scale_b']
+        message_dtype = sorted_segments[0]['values'].dtype
+        for message in sorted_segments:
             message_start_epoch_array.append(message['start_time_nano'])
             message_size_array.append(message['values'].size)
 
             if message['freq_nhz'] != freq_nhz:
-                raise ValueError("Messages inserted do not all have the same frequency. "
-                                 "If you want to ingest messages for the same signal with different frequencies, "
+                raise ValueError("Segments inserted do not all have the same frequency. "
+                                 "If you want to ingest segments for the same signal with different frequencies, "
                                  "you must insert them separately.")
             if message['scale_m'] != scale_m or message['scale_b'] != scale_b:
-                raise ValueError("Messages inserted do not all have the same scale factors.")
+                raise ValueError("Segments inserted do not all have the same scale factors.")
             if message['values'].dtype != message_dtype:
-                raise ValueError("Messages inserted do not all have the same dtype.")
-        # Convert messages to gap_data
+                raise ValueError("Segments inserted do not all have the same dtype.")
+        # Convert segments to gap_data
         gap_data = create_gap_arr_from_variable_messages(
             message_start_epoch_array, message_size_array, freq_nhz)
-        value_data = np.concatenate([message['values'] for message in sorted_messages])
-        time_0 = int(sorted_messages[0]['start_time_nano'])
+        value_data = np.concatenate([message['values'] for message in sorted_segments])
+        time_0 = int(sorted_segments[0]['start_time_nano'])
         write_intervals = find_intervals(freq_nhz, 2, gap_data, time_0, int(value_data.size))
         # Encode the block(s)
         if np.issubdtype(value_data.dtype, np.integer):
