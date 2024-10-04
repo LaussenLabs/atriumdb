@@ -313,7 +313,7 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
                 messages.append(value_data[message_start_index:message_start_index + num_values])
                 message_start_index += num_values
 
-            sdk.write_messages(measure_id, device_id, messages, message_starts, freq=freq_nano,
+            sdk.write_segments(measure_id, device_id, messages, message_starts, freq=freq_nano,
                                freq_units='nHz', time_units='ns', scale_m=scale_m, scale_b=scale_b)
             return
 
