@@ -3900,7 +3900,7 @@ class AtriumSDK:
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
                      time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
                      shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
-                     end_time=None, num_iterators=1) -> Union[DatasetIterator, List[DatasetIterator]]:
+                     end_time=None, num_iterators=1, guarantee_data=False, guarantee_patient=False) -> Union[DatasetIterator, List[DatasetIterator]]:
         """
         Constructs and returns a `DatasetIterator` object or a list of `DatasetIterator` objects that allow iteration
         over the dataset according to the specified definition.
@@ -3946,6 +3946,8 @@ class AtriumSDK:
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
         :param int num_iterators: Number of iterators to create by partitioning the dataset (default is 1).
+        :param bool guarantee_data: This will significantly slow down the data verification process in order to guarantee that all windows have data.
+        :param bool guarantee_patient: guarantees that all windows have patient data.
 
         :return: A single DatasetIterator object or a list of DatasetIterator objects depending on the value of num_iterators.
         :rtype: Union[DatasetIterator, List[DatasetIterator]]
@@ -4029,7 +4031,8 @@ class AtriumSDK:
 
         # Validate the definition and create the iterator for a single partition
         validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
-            definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n)
+            definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n,
+            guarantee_data=guarantee_data, guarantee_patient=guarantee_patient)
 
         # Create appropriate iterator object based on iterator_type
         if iterator_type == 'random_access':

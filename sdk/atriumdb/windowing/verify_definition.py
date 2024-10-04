@@ -28,7 +28,7 @@ from atriumdb.windowing.map_definition_sources import map_validated_sources
 
 
 def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rule="best", start_time_n=None,
-                      end_time_n=None):
+                      end_time_n=None, guarantee_data=False, guarantee_patient=False):
     """
     Verifies and validates a dataset definition against the given AtriumSDK, including measures, label sets, and sources.
 
@@ -38,6 +38,8 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
     :param str measure_tag_match_rule: "best" or "all" as a strategy for dealing with measure tags where there may be multiple measures with the given tag.
     :param start_time_n: Global start time in nanoseconds.
     :param end_time_n: Global end time in nanoseconds.
+    :param bool guarantee_data: This will significantly slow down the data verification process in order to guarantee that all windows have data.
+    :param bool guarantee_patient: guarantees that all windows have patient data.
 
     :return: A tuple containing three elements:
         1. validated_measure_list (list of dicts): A list of dictionaries, each representing a validated measure. Each dictionary includes:
@@ -74,7 +76,83 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
 
     mapped_sources = map_validated_sources(validated_sources, sdk)
 
+    if guarantee_patient:
+        if 'device_ids' in mapped_sources:
+            del mapped_sources['device_ids']
+
+    if guarantee_data:
+        find_data_windows(sdk, mapped_sources, validated_measure_list, gap_tolerance)
+
     return validated_measure_list, validated_label_set_list, mapped_sources
+
+
+def find_data_windows(sdk, mapped_sources, validated_measure_list, gap_tolerance):
+    if 'patient_ids' in mapped_sources:
+        del mapped_sources['patient_ids']
+    if 'device_patient_tuples' in mapped_sources:
+        new_device_patient_tuples = {}
+        for (device_id, patient_id), time_ranges in mapped_sources['device_patient_tuples'].items():
+            new_device_patient_tuples[(device_id, patient_id)] = []
+            for range_start, range_end in time_ranges:
+                all_measure_range = []
+                for measure_info in validated_measure_list:
+                    measure_id = measure_info['id']
+                    _, times, _ = sdk.get_data(measure_id, range_start, range_end, device_id=device_id)
+                    if times.size <= 1:
+                        continue
+                    time_delta = np.diff(times)
+                    freq_nhz = int(measure_info['freq_nhz'])
+                    period_ns = (10 ** 18) / freq_nhz
+                    smallest_gap = max(period_ns, gap_tolerance)
+
+                    break_points = np.where((time_delta > smallest_gap) &
+                                            (~np.isclose(time_delta, smallest_gap)))[0]
+
+                    continuous_start_indices = np.concatenate(([0], break_points + 1))
+                    continuous_end_indices = np.concatenate((break_points, [len(times) - 1]))
+
+                    new_measure_ranges = np.column_stack(
+                        (times[continuous_start_indices], times[continuous_end_indices] + period_ns)).astype(
+                        np.int64)
+
+                    all_measure_range.append(new_measure_ranges)
+
+                all_measure_range = intervals_union_list(all_measure_range)
+                new_device_patient_tuples[(device_id, patient_id)].extend(all_measure_range)
+
+        mapped_sources['device_patient_tuples'] = new_device_patient_tuples
+    if 'device_ids' in mapped_sources:
+        new_device_ids = {}
+        for device_id, time_ranges in mapped_sources['device_ids'].items():
+            new_device_ids[device_id] = []
+            for range_start, range_end in time_ranges:
+                all_measure_range = []
+                for measure_info in validated_measure_list:
+                    measure_id = measure_info['id']
+                    _, times, _ = sdk.get_data(measure_id, range_start, range_end, device_id=device_id)
+                    if times.size <= 1:
+                        continue
+                    time_delta = np.diff(times)
+                    freq_nhz = int(measure_info['freq_nhz'])
+                    period_ns = (10 ** 18) / freq_nhz
+                    smallest_gap = max(period_ns, gap_tolerance)
+
+                    break_points = np.where((time_delta > smallest_gap) &
+                                            (~np.isclose(time_delta, smallest_gap)))[0]
+
+                    continuous_start_indices = np.concatenate(([0], break_points + 1))
+                    continuous_end_indices = np.concatenate((break_points, [len(times) - 1]))
+
+                    new_measure_ranges = np.column_stack(
+                        (times[continuous_start_indices], times[continuous_end_indices] + period_ns)).astype(
+                        np.int64)
+
+                    all_measure_range.append(new_measure_ranges)
+
+                all_measure_range = intervals_union_list(all_measure_range)
+                new_device_ids[device_id].extend(all_measure_range)
+
+        mapped_sources['device_ids'] = new_device_ids
 
 
 def _validate_measures(definition: DatasetDefinition, sdk, measure_tag_match_rule="best"):
