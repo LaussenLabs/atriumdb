@@ -699,11 +699,17 @@ def merge_sorted_messages(message_starts_1, message_sizes_1, values_1,
     # Find differences in sample times
     diff_sample_times = np.diff(sample_times)
 
+    # Calculate the max floating point imprecision
+    max_timestamp = np.max(sorted_timestamps)
+    max_diff_sample_times = np.max(diff_sample_times)
+
+    max_imprecision = np.finfo(np.float64).eps * (max_timestamp / period_ns + max_diff_sample_times)
+
     # Identify where timestamps are close to 1 (consecutive message elements)
-    close_to_one = np.isclose(diff_sample_times, 1)
+    close_to_one = np.isclose(diff_sample_times, 1, atol=max_imprecision, rtol=0)
 
     # Identify where timestamps are close to 0 (duplicates)
-    close_to_zero = np.isclose(diff_sample_times, 0)
+    close_to_zero = np.isclose(diff_sample_times, 0, atol=max_imprecision, rtol=0)
 
     # Reconstruct the merged messages, handling duplicates by skipping them
     merged_starts = []
