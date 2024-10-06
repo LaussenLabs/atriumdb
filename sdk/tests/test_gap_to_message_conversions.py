@@ -87,14 +87,14 @@ def test_gap_data_to_message_time_conversion():
     test_cases = [
         ([1000000000_000_000_000, 1000002000_000_000_000, 1000004000_000_000_000],
          [200, 200, 200],
-         1e9),
+         10**9),
         ([1000000000_000_000_000, 1000003000_000_000_000, 1000006000_000_000_000],
          [100, 300, 200],
-         1e9),
+         10**9),
         ([1000003000_000_000_000, 1000000000_000_000_000, 1000006000_000_000_000],
          [300, 100, 200],
-         1e9),  # Out of Order
-        ([1000000000_000_000_000], [100], 1e9),  # Single message test case
+         10**9),  # Out of Order
+        ([1000000000_000_000_000], [100], 10**9),  # Single message test case
     ]
 
     for message_start_epoch_array, message_size_array, freq in test_cases:
@@ -132,7 +132,7 @@ def test_merge_sorted_messages_no_overlap():
     message_sizes_2 = np.array([1, 1], dtype=np.int64)
     values_2 = np.array([0.3, 0.4], dtype=np.float64)
 
-    freq_nhz = 1e9
+    freq_nhz = 10**9
 
     merged_starts_expected = np.array([0], dtype=np.int64)
     merged_sizes_expected = np.array([4], dtype=np.int64)
@@ -147,6 +147,57 @@ def test_merge_sorted_messages_no_overlap():
     np.testing.assert_array_equal(merged_sizes, merged_sizes_expected)
     np.testing.assert_array_equal(merged_values, merged_values_expected)
 
+    ####
+
+    message_starts_1 = np.array([4_000, 12_000], dtype=np.int64)
+    message_sizes_1 = np.array([4, 4], dtype=np.int64)
+    values_1 = np.array([0, 1, 2, 3, 8, 9, 10, 11], dtype=np.float64)
+
+    message_starts_2 = np.array([8_000, 16_000], dtype=np.int64)
+    message_sizes_2 = np.array([4, 4], dtype=np.int64)
+    values_2 = np.array([4, 5, 6, 7, 12, 13, 14, 15], dtype=np.float64)
+
+    freq_nhz = 10**15
+
+    merged_starts_expected = np.array([4_000], dtype=np.int64)
+    merged_sizes_expected = np.array([16], dtype=np.int64)
+    merged_values_expected = np.array(list(range(16)), dtype=np.float64)
+
+    merged_starts, merged_sizes, merged_values = merge_sorted_messages(
+        message_starts_1, message_sizes_1, values_1,
+        message_starts_2, message_sizes_2, values_2,
+        freq_nhz)
+
+    np.testing.assert_array_equal(merged_starts, merged_starts_expected)
+    np.testing.assert_array_equal(merged_sizes, merged_sizes_expected)
+    np.testing.assert_array_equal(merged_values, merged_values_expected)
+
+    ####
+
+    freq_hz = 300
+
+    message_starts_1 = np.array([3, 5], dtype=np.int64) * (10 ** 9)
+    message_sizes_1 = np.array([300, 300], dtype=np.int64)
+    values_1 = np.concatenate((np.arange(0, 300), np.arange(600, 900)), dtype=np.float64)
+
+    message_starts_2 = np.array([4, 6], dtype=np.int64) * (10 ** 9)
+    message_sizes_2 = np.array([300, 300], dtype=np.int64)
+    values_2 = np.concatenate((np.arange(300, 600), np.arange(900, 1200)), dtype=np.float64)
+
+    freq_nhz = freq_hz * (10 ** 9)
+
+    merged_starts_expected = np.array([3], dtype=np.int64) * (10 ** 9)
+    merged_sizes_expected = np.array([1200], dtype=np.int64)
+    merged_values_expected = np.array(list(range(1200)), dtype=np.float64)
+
+    merged_starts, merged_sizes, merged_values = merge_sorted_messages(
+        message_starts_1, message_sizes_1, values_1,
+        message_starts_2, message_sizes_2, values_2,
+        freq_nhz)
+
+    np.testing.assert_array_equal(merged_starts, merged_starts_expected)
+    np.testing.assert_array_equal(merged_sizes, merged_sizes_expected)
+    np.testing.assert_array_equal(merged_values, merged_values_expected)
 
 def test_merge_sorted_messages_with_overlap():
     message_starts_1 = np.array([0, 5 * 10**9], dtype=np.int64)
@@ -157,7 +208,7 @@ def test_merge_sorted_messages_with_overlap():
     message_sizes_2 = np.array([2, 2], dtype=np.int64)
     values_2 = np.array([0.5, 0.6, 0.7, 0.8], dtype=np.float64)
 
-    freq_nhz = 1e9
+    freq_nhz = 10**9
 
     merged_starts_expected = np.array([0, 5 * 10**9, 15 * 10**9], dtype=np.int64)
     merged_sizes_expected = np.array([2, 2, 2], dtype=np.int64)  # Adjusted due to overlap
