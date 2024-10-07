@@ -14,10 +14,9 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import warnings
-
 import numpy as np
-
 import threading
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
@@ -33,12 +32,12 @@ from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_li
     overwrite_default_setting
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME, \
     ALLOWABLE_PROTECTED_MODE_SETTINGS
+from atriumdb.helpers.block_constants import TIME_TYPES_STR, VALUE_TYPES_STR
 from atriumdb.block_wrapper import BlockMetadata
 from atriumdb.intervals.intervals import Intervals
 import time
 import atexit
 from pathlib import Path, PurePath
-from multiprocessing import cpu_count
 import sys
 import os
 from typing import Union, List, Tuple, Optional
@@ -781,10 +780,18 @@ class AtriumSDK:
             raise NotImplementedError("API mode is not supported for writing data.")
 
         # Ensure there is data to be written
-        assert value_data.size > 0, "Cannot write no data."
+        assert value_data.size > 0, "There are no values in the value array to write. Cannot write no data."
 
         # Ensure time data is of integer type
         assert np.issubdtype(time_data.dtype, np.integer), "Time information must be encoded as an integer."
+
+        # check that value types make sense
+        if not ((raw_value_type == 1 and encoded_value_type == 3) or (raw_value_type == encoded_value_type)):
+            raise ValueError(f"Cannot encode raw value type {VALUE_TYPES_STR[raw_value_type]} to encoded value type {VALUE_TYPES_STR[encoded_value_type]}")
+
+        # check that time types make sense
+        if not ((raw_time_type == 1 and encoded_time_type == 2) or (raw_time_type == encoded_time_type)):
+            raise ValueError(f"Cannot encode raw time type {TIME_TYPES_STR[raw_time_type]} to encoded time type {TIME_TYPES_STR[encoded_time_type]}")
 
         # Set default interval index and ensure valid type.
         interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
@@ -855,7 +862,7 @@ class AtriumSDK:
             # find the closest block to the data we are trying to insert
             old_block, end_block = self.sql_handler.select_closest_block(measure_id, device_id, time_0, end_time)
 
-            # if the new block goes on the end and the current end block is full then don't try to merge blocks
+            # if the new block goes on the end and the current end block is full then skip this and don't merge blocks
             if old_block is not None and not (end_block and (old_block[8] > self.block.block_size)):
                 # get the file info for the block we are going to merge these values into
                 file_info = self.sql_handler.select_file(file_id=old_block[3])
@@ -866,23 +873,24 @@ class AtriumSDK:
                 header = self.block.decode_headers(encoded_bytes_old, np.array([0], dtype=np.uint64))
 
                 # make sure the time and value types of the block your merging with match
+                same_type = True
                 if header[0].t_encoded_type != encoded_time_type:
-                    raise ValueError(f"The time type ({encoded_time_type}) you are trying to encode the times as "
-                                     f"doesn't match the encoded time type ({header[0].t_encoded_type}) of the block "
-                                     f"you are trying to merge with. Either change the encoded time type to match or"
-                                     f" set merge_blocks to false.")
+                    same_type = False
+                    _LOGGER.warning(f"The time type ({TIME_TYPES_STR[encoded_time_type]}) you are trying to encode the times as "
+                                     f"doesn't match the encoded time type ({TIME_TYPES_STR[header[0].t_encoded_type]}) of the block "
+                                     f"you are trying to merge with.")
                 elif header[0].v_encoded_type != encoded_value_type:
-                    raise ValueError(f"The value type ({encoded_value_type}) you are trying to encode the values as "
-                                     f"doesn't match the encoded value type ({header[0].v_encoded_type}) of the block "
-                                     f"you are trying to merge with. Either change the encoded value type to match or"
-                                     f" set merge_blocks to false.")
+                    same_type = False
+                    _LOGGER.warning(f"The value type ({VALUE_TYPES_STR[encoded_value_type]}) you are trying to encode the values as "
+                                     f"doesn't match the encoded value type ({VALUE_TYPES_STR[header[0].v_encoded_type]}) of the block "
+                                     f"you are trying to merge with.")
                 elif header[0].v_raw_type != raw_value_type:
-                    raise ValueError(f"The raw value type ({raw_value_type}) doesn't match the raw value type "
-                                     f"({header[0].v_raw_type}) of the block you are trying to merge with. Either "
-                                     f"change the raw value type to match or set merge_blocks to false.")
+                    same_type = False
+                    _LOGGER.warning(f"The raw value type ({VALUE_TYPES_STR[raw_value_type]}) doesn't match the raw value type "
+                                     f"({VALUE_TYPES_STR[header[0].v_raw_type]}) of the block you are trying to merge with.")
 
                 # make sure the scale factors match. If they don't then don't merge the blocks
-                if header[0].scale_m == scale_m and header[0].scale_b == scale_b:
+                if same_type and header[0].scale_m == scale_m and header[0].scale_b == scale_b:
                     # if the original time type of the old block is not the same as the time type of the data we are
                     # trying to save, we need to make them the same
                     if header[0].t_raw_type != raw_time_type:
