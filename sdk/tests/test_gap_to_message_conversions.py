@@ -199,6 +199,62 @@ def test_merge_sorted_messages_no_overlap():
     np.testing.assert_array_equal(merged_sizes, merged_sizes_expected)
     np.testing.assert_array_equal(merged_values, merged_values_expected)
 
+    ####
+
+    freq_hz = 1
+
+    message_starts_1 = np.array([1000], dtype=np.int64) * (10 ** 6)
+    message_sizes_1 = np.array([4], dtype=np.int64)
+    values_1 = np.array([1, 2, 3, 4], dtype=np.float64)
+
+    message_starts_2 = np.array([1001], dtype=np.int64) * (10 ** 6)
+    message_sizes_2 = np.array([4], dtype=np.int64)
+    values_2 = np.array([5, 6, 7, 8], dtype=np.float64)
+
+    freq_nhz = int(freq_hz * (10 ** 9))
+
+    merged_starts_expected = np.array([1000, 1001, 2000, 2001, 3000, 3001, 4000, 4001], dtype=np.int64) * (10 ** 6)
+    merged_sizes_expected = np.array([1, 1, 1, 1, 1, 1, 1, 1], dtype=np.int64)
+    merged_values_expected = np.array([1, 5, 2, 6, 3, 7, 4, 8], dtype=np.float64)
+
+    merged_starts, merged_sizes, merged_values = merge_sorted_messages(
+        message_starts_1, message_sizes_1, values_1,
+        message_starts_2, message_sizes_2, values_2,
+        freq_nhz)
+
+    np.testing.assert_array_equal(merged_starts, merged_starts_expected)
+    np.testing.assert_array_equal(merged_sizes, merged_sizes_expected)
+    np.testing.assert_allclose(merged_values, merged_values_expected)
+
+
+    ####
+
+    freq_hz = 300
+
+    message_starts_1 = np.array([315532800], dtype=np.int64) * (10 ** 9)
+    message_sizes_1 = np.array([300_000], dtype=np.int64)
+    values_1 = np.arange(0, 300_000, dtype=np.float64)
+
+    # 10,000 years later
+    message_starts_2 = np.array([317270000000], dtype=np.int64) * (10 ** 9)
+    message_sizes_2 = np.array([300_000], dtype=np.int64)
+    values_2 = np.arange(300_000, 600_000, dtype=np.float64)
+
+    freq_nhz = freq_hz * (10 ** 9)
+
+    merged_starts_expected = np.array([315532800, 317270000000], dtype=np.int64) * (10 ** 9)
+    merged_sizes_expected = np.array([300_000, 300_000], dtype=np.int64)
+    merged_values_expected = np.arange(0, 600_000, dtype=np.float64)
+
+    merged_starts, merged_sizes, merged_values = merge_sorted_messages(
+        message_starts_1, message_sizes_1, values_1,
+        message_starts_2, message_sizes_2, values_2,
+        freq_nhz)
+
+    np.testing.assert_array_equal(merged_starts, merged_starts_expected)
+    np.testing.assert_array_equal(merged_sizes, merged_sizes_expected)
+    np.testing.assert_allclose(merged_values, merged_values_expected)
+
 def test_merge_sorted_messages_with_overlap():
     message_starts_1 = np.array([0, 5 * 10**9], dtype=np.int64)
     message_sizes_1 = np.array([2, 2], dtype=np.int64)
