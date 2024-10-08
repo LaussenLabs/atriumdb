@@ -3896,7 +3896,7 @@ class AtriumSDK:
         :param callable window_filter_fn: If provided, only windows for which this function returns True will be included in the
              iteration. This function should accept a window as its argument. This is only applicable
              if `iterator_type` is set to 'filtered'.
-        :param Union[bool, int] shuffle: If True, the order of windows will be randomized before iteration. If set to an integer, this
+        :param bool | int shuffle: If True, the order of windows will be randomized before iteration. If set to an integer, this
             value will seed the random number generator for reproducible shuffling. If False, windows are
             returned in their original order.
         :param int cached_windows_per_source: The maximum number of windows to cache for a single source before moving
@@ -3971,7 +3971,7 @@ class AtriumSDK:
             iterator = RandomAccessDatasetIterator(
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
-                label_threshold=label_threshold, time_units=time_units, max_cache_duration=max_cache_duration_per_source,
+                label_threshold=label_threshold, max_cache_duration=max_cache_duration_per_source,
                 shuffle=shuffle, patient_history_fields=patient_history_fields)
         elif iterator_type == 'filtered':
             if window_filter_fn is None:
@@ -3979,13 +3979,13 @@ class AtriumSDK:
             iterator = FilteredDatasetIterator(
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
-                label_threshold=label_threshold, time_units=time_units, window_filter_fn=window_filter_fn,
+                label_threshold=label_threshold, window_filter_fn=window_filter_fn,
                 max_cache_duration=max_cache_duration_per_source, shuffle=shuffle, patient_history_fields=patient_history_fields)
         else:
             iterator = DatasetIterator(
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
-                label_threshold=label_threshold, time_units=time_units, shuffle=shuffle,
+                label_threshold=label_threshold, shuffle=shuffle,
                 max_cache_duration=max_cache_duration_per_source, patient_history_fields=patient_history_fields)
 
         return iterator

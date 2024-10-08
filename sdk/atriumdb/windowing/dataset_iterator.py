@@ -34,35 +34,25 @@ class DatasetIterator:
     Allows efficient iterative access to sliding windows of data from different sources (e.g., devices or patients)
     by organizing data into batches and loading one batch at a time.
 
-    :param sdk: SDK object to fetch data
-    :type sdk: AtriumSDK
-    :param validated_measure_list: List of validated measures with information about each measure
-    :type validated_measure_list: list
+    :param AtriumSDK sdk: SDK object to fetch data
+    :param list validated_measure_list: List of validated measures with information about each measure
     :param validated_sources: Dictionary containing sources with associated time ranges
     :type validated_sources: dict
-    :param window_duration_ns: Duration of each window in nanoseconds
-    :type window_duration_ns: int
-    :param window_slide_ns: Interval in nanoseconds by which the window advances in time
-    :type window_slide_ns: int
-    :param num_windows_prefetch: Number of windows you want to get from AtriumDB at a time. Setting this value
+    :param int window_duration_ns: Duration of each window in nanoseconds
+    :param int window_slide_ns: Interval in nanoseconds by which the window advances in time
+    :param int num_windows_prefetch: Number of windows you want to get from AtriumDB at a time. Setting this value
             higher will make decompression faster but at the expense of using more RAM. (default the number of windows
             that gets you closest to 10 million values).
-    :type num_windows_prefetch: int, optional
-    :param time_units: If you would like the window_duration and window_slide to be specified in units other than
-                            nanoseconds you can choose from one of ["s", "ms", "us", "ns"].
-    :type time_units: str
-    :param shuffle: If True, shuffle the order of windows before iterating. If an integer, it will initialize
-                    a seeded random number generator for reproducible shuffling. If False or None, no shuffling occurs.
-    :type shuffle: Union[bool, None, int]
-    :param max_cache_duration: If specified, no single cache will have a time range larger than this duration.
-                               The time range will be split accordingly. The duration must be larger than window_duration_ns.
-    :type max_cache_duration: int, optional
+    :param bool | None | int shuffle: If True, shuffle the order of windows before iterating. If an integer, it will initialize
+                                        a seeded random number generator for reproducible shuffling. If False or None, no shuffling occurs.
+    :param int | None max_cache_duration: If specified, no single cache will have a time range larger than this duration.
+                                           The time range will be split accordingly. The duration must be larger than window_duration_ns.
     :param list patient_history_fields: A list of patient_history fields you would like returned in the Window object.
     """
 
     def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
-                 label_threshold=0.5, time_units=None, shuffle=False, max_cache_duration=None,
+                 label_threshold=0.5, shuffle=False, max_cache_duration=None,
                  patient_history_fields: list = None):
         # AtriumSDK object
         self.sdk = sdk
@@ -78,9 +68,6 @@ class DatasetIterator:
         self.label_threshold = label_threshold
 
         self.patient_history_fields = patient_history_fields
-
-        self.time_units = "ns" if time_units is None else time_units
-        self.time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 
         # List of validated measures. Each item is a "measure_info" from sdk data.
         self.measures = validated_measure_list
@@ -503,10 +490,6 @@ class DatasetIterator:
             # Populate the arrays using vectorized operations
             measure_filled_value_array[closest_i_array_signals] = measure_sdk_values[mask]
             measure_filled_time_array[closest_i_array_signals] = measure_sdk_times[mask]
-
-            # convert time data from nanoseconds to unit of choice
-            # if self.time_units != 'ns':
-            #     measure_filled_time_array = measure_filled_time_array / self.time_unit_options[self.time_units]
 
             # Create Windows
             windowed_measure_times = sliding_window_view(measure_filled_time_array, measure_window_size)

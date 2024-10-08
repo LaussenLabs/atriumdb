@@ -40,10 +40,10 @@ class RandomAccessDatasetIterator(DatasetIterator):
 
     def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
-                 label_threshold=0.5, time_units=None, shuffle=False, max_cache_duration=None,
+                 label_threshold=0.5, shuffle=False, max_cache_duration=None,
                  patient_history_fields: list = None):
         super().__init__(sdk, validated_measure_list, validated_label_set_list, validated_sources,
-                         window_duration_ns, window_slide_ns, num_windows_prefetch, label_threshold, time_units,
+                         window_duration_ns, window_slide_ns, num_windows_prefetch, label_threshold,
                          shuffle, max_cache_duration, patient_history_fields)
 
         pass
