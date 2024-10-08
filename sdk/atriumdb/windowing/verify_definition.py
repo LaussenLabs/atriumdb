@@ -27,43 +27,31 @@ from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.windowing.map_definition_sources import map_validated_sources
 
 
-def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rule="best"):
+def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rule="best", start_time_n=None,
+                      end_time_n=None):
     """
-    Verifies and validates a dataset definition against the given AtriumSDK, including measures, label sets,
-    and sources.
+    Verifies and validates a dataset definition against the given AtriumSDK, including measures, label sets, and sources.
 
-    Parameters:
-    - definition (str | DatasetDefinition): The dataset definition to be verified. This can be either a filename
-      (str) pointing to a dataset definition file or an instance of DatasetDefinition.
-    - sdk: An AtriumSDK object pointing at the dataset to validate the requested definition against.
-    - gap_tolerance (int, optional): The minimum allowed gap (in nanoseconds) in any generated time ranges
-        (time ranges are explained below).
-    - measure_tag_match_rule (str, optional): "best" or "all" as a strategy for dealing with measure tags where there
-        may be multiple measures with the given tag.
+    :param Union[str, DatasetDefinition] definition: The dataset definition to be verified. This can be either a filename (str) pointing to a dataset definition file or an instance of DatasetDefinition.
+    :param AtriumSDK sdk: An AtriumSDK object pointing at the dataset to validate the requested definition against.
+    :param Optional[int] gap_tolerance: The minimum allowed gap (in nanoseconds) in any generated time ranges (time ranges are explained below).
+    :param str measure_tag_match_rule: "best" or "all" as a strategy for dealing with measure tags where there may be multiple measures with the given tag.
+    :param start_time_n: Global start time in nanoseconds.
+    :param end_time_n: Global end time in nanoseconds.
 
-    Returns:
-    - tuple: A tuple containing three elements:
-        1. validated_measure_list (list of dicts): A list of dictionaries, each representing a validated measure.
-           Each dictionary includes:
+    :return: A tuple containing three elements:
+        1. validated_measure_list (list of dicts): A list of dictionaries, each representing a validated measure. Each dictionary includes:
            - 'id': The unique identifier of the measure.
            - 'tag': A string tag associated with the measure.
            - 'freq_nhz': The frequency of the measure in nanohertz (optional).
            - 'units': The units of the measure (optional).
-        2. validated_label_set_list (list of int): A list of label set IDs that have been validated against
-            the AtriumSDK. Each element is an integer representing the unique identifier of a label set.
+        2. validated_label_set_list (list of int): A list of label set IDs that have been validated against the AtriumSDK. Each element is an integer representing the unique identifier of a label set.
         3. mapped_sources (dict): A dictionary representing the validated and mapped sources with the following keys:
-           - 'device_patient_tuples': A dictionary where each key is a tuple (device_id, patient_id) and each value
-             is a list of time ranges (start_time, end_time) for which the device-patient tuple has data. Both
-             start_time and end_time are integers, representing nanosecond precision timestamps since the Unix epoch.
-           - 'patient_ids' (optional): A dictionary present only if there are unmatched patient IDs. Each key is a
-             patient ID, and each value is a list of time ranges where data could not be matched to devices.
-           - 'device_ids' (optional): A dictionary present only if there are unmatched device IDs. Each key is a
-             device ID, and each value is a list of time ranges where data could not be matched to patients.
+           - 'device_patient_tuples': A dictionary where each key is a tuple (device_id, patient_id) and each value is a list of time ranges (start_time, end_time) for which the device-patient tuple has data. Both start_time and end_time are integers, representing nanosecond precision timestamps since the Unix epoch.
+           - 'patient_ids' (optional): A dictionary present only if there are unmatched patient IDs. Each key is a patient ID, and each value is a list of time ranges where data could not be matched to devices.
+           - 'device_ids' (optional): A dictionary present only if there are unmatched device IDs. Each key is a device ID, and each value is a list of time ranges where data could not be matched to patients.
 
-    Raises:
-    - ValueError: If the input 'definition' is neither a filename (str) nor an instance of DatasetDefinition, or
-      if specified measures or label sets are not found in the AtriumSDK.
-
+    :raises ValueError: If the input 'definition' is neither a filename (str) nor an instance of DatasetDefinition, or if specified measures or label sets are not found in the AtriumSDK.
     """
     gap_tolerance = 60_000_000_000 if gap_tolerance is None else gap_tolerance  # 1 minute nano default
     # If the input is a string, it is assumed to be a filename
@@ -81,7 +69,8 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
     validated_label_set_list = _validate_label_sets(definition, sdk)
 
     # Validate sources
-    validated_sources = _validate_sources(definition, sdk, validated_measure_list, gap_tolerance=gap_tolerance)
+    validated_sources = _validate_sources(definition, sdk, validated_measure_list, gap_tolerance=gap_tolerance,
+                                          start_time_n=start_time_n, end_time_n=end_time_n)
 
     mapped_sources = map_validated_sources(validated_sources, sdk)
 
@@ -140,7 +129,8 @@ def _validate_label_sets(definition: DatasetDefinition, sdk):
     return validated_label_set_list
 
 
-def _validate_sources(definition: DatasetDefinition, sdk, validated_measure_list, gap_tolerance=None):
+def _validate_sources(definition: DatasetDefinition, sdk, validated_measure_list, gap_tolerance=None, start_time_n=None,
+                      end_time_n=None):
     data_dict = definition.data_dict
 
     validated_sources_dict = dict()
@@ -154,10 +144,8 @@ def _validate_sources(definition: DatasetDefinition, sdk, validated_measure_list
             for mrn, time_specs in source_data.items():
                 if mrn in mrn_to_patient_id_map:
                     patient_id = mrn_to_patient_id_map[mrn]
-                    validated_entries = _get_validated_entries(time_specs,
-                                                               validated_measure_list, sdk,
-                                                               patient_id=patient_id,
-                                                               gap_tolerance=gap_tolerance)
+                    validated_entries = _get_validated_entries(time_specs, validated_measure_list, sdk,
+                                                               patient_id=patient_id, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n)
                     if validated_entries is not None:  # Only add if it's not None
                         current_validated_source_dict[patient_id] = validated_entries
                 else:
@@ -167,10 +155,8 @@ def _validate_sources(definition: DatasetDefinition, sdk, validated_measure_list
             all_patients = sdk.get_all_patients()
             for patient_id, time_specs in source_data.items():
                 if patient_id in all_patients:
-                    validated_entries = _get_validated_entries(time_specs,
-                                                               validated_measure_list, sdk,
-                                                               patient_id=patient_id,
-                                                               gap_tolerance=gap_tolerance)
+                    validated_entries = _get_validated_entries(time_specs, validated_measure_list, sdk,
+                                                               patient_id=patient_id, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n)
                     if validated_entries is not None:  # Only add if it's not None
                         current_validated_source_dict[patient_id] = validated_entries
                 else:
@@ -183,10 +169,8 @@ def _validate_sources(definition: DatasetDefinition, sdk, validated_measure_list
             for device_tag, time_specs in source_data.items():
                 if str(device_tag) in tag_to_dev_id_map:
                     device_id = tag_to_dev_id_map[str(device_tag)]
-                    validated_entries = _get_validated_entries(time_specs,
-                                                               validated_measure_list, sdk,
-                                                               device_id=device_id,
-                                                               gap_tolerance=gap_tolerance)
+                    validated_entries = _get_validated_entries(time_specs, validated_measure_list, sdk,
+                                                               device_id=device_id, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n)
                     if validated_entries is not None:  # Only add if it's not None
                         current_validated_source_dict[device_id] = validated_entries
                 else:
@@ -196,10 +180,8 @@ def _validate_sources(definition: DatasetDefinition, sdk, validated_measure_list
             all_device_ids = list(sdk.get_all_devices().keys())
             for device_id, time_specs in source_data.items():
                 if device_id in all_device_ids:
-                    validated_entries = _get_validated_entries(time_specs,
-                                                               validated_measure_list, sdk,
-                                                               device_id=device_id,
-                                                               gap_tolerance=gap_tolerance)
+                    validated_entries = _get_validated_entries(time_specs, validated_measure_list, sdk,
+                                                               device_id=device_id, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n)
                     if validated_entries is not None:  # Only add if it's not None
                         current_validated_source_dict[device_id] = validated_entries
                 else:
@@ -221,12 +203,14 @@ def _validate_sources(definition: DatasetDefinition, sdk, validated_measure_list
     return validated_sources_dict
 
 
-def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, patient_id=None, gap_tolerance=None):
+def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, patient_id=None, gap_tolerance=None,
+                           start_time_n=None, end_time_n=None):
     gap_tolerance = 60 * 60 * 1_000_000_000 if gap_tolerance is None else gap_tolerance  # 1 hour nano default
 
     union_intervals = intervals_union_list(
         [sdk.get_interval_array(
-            measure_info['id'], device_id=device_id, patient_id=patient_id, gap_tolerance_nano=gap_tolerance)
+            measure_info['id'], device_id=device_id, patient_id=patient_id, gap_tolerance_nano=gap_tolerance,
+            start=start_time_n, end=end_time_n)
             for measure_info in validated_measures])
 
     merged_union_intervals = []
@@ -261,6 +245,12 @@ def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, 
         else:
             raise ValueError("time0, pre, post or start and/or end must be in the region specification.")
 
-        interval_list.append([start, end])
+        if start_time_n is not None:
+            start = max(start, start_time_n)
+        if end_time_n is not None:
+            end = min(end, end_time_n)
+
+        if start < end:
+            interval_list.append([start, end])
 
     return interval_list

@@ -62,16 +62,22 @@ class SingleConnectionManager:
         self._borrowed = False
 
     def _create_connection(self):
-        try:
-            self._connection = mariadb.connect(**self._conn_args)
-        except mariadb.Error as e:
-            raise e
+        attempts = 0
+        while attempts < 5:
+            try:
+                self._connection = mariadb.connect(**self._conn_args)
+                return
+            except mariadb.Error as e:
+                attempts += 1
+                if attempts >= 5:
+                    raise e
+                time.sleep(1)
 
     def get_connection(self):
         with self._lock:
-            # If the connection is already borrowed, return None
+            # If the connection is already borrowed, raise Error
             if self._borrowed:
-                return None
+                raise ValueError("The connection is already borrowed, please release it before requesting it again.")
 
             # Check and create a new connection if needed
             if self._connection is None:
@@ -145,13 +151,10 @@ class MariaDBHandler(SQLHandler):
     @contextmanager
     def maria_db_connection(self, begin=False):
         conn = self.maria_connect() if self.no_pool else self.connection_manager.get_connection()
-        attempts = 0
-        while conn is None:
-            if attempts > 5:
-                raise ConnectionError("Connection not available")
-            time.sleep(1)
-            attempts += 1
-            conn = self.maria_connect() if self.no_pool else self.connection_manager.get_connection()
+        if conn is None:
+            # This error shouldn't get hit, because the connection manager / mariadb
+            # should handle errors before this line.
+            raise ValueError("Something went wrong with the MariaDB connection.")
 
         cursor = conn.cursor()
 

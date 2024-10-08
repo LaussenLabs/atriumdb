@@ -14,8 +14,9 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import numpy as np
 
-from atriumdb import AtriumSDK, DatasetDefinition
+from atriumdb import AtriumSDK, DatasetDefinition, partition_dataset
 import shutil
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
@@ -30,6 +31,7 @@ SEED = 42
 
 def test_transfer():
     _test_for_both(DB_NAME, _test_transfer)
+    _test_for_both(DB_NAME, _test_transfer_without_re_encoding)
     _test_for_both(DB_NAME, _test_transfer_with_patient_context)
     _test_for_both(DB_NAME, _test_transfer_with_patient_context_deidentify_timeshift)
 
@@ -41,27 +43,43 @@ def _test_transfer(db_type, dataset_location, connection_params):
 
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
-    # Test
+    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
+
+    measures = [measure_info['tag'] for measure_info in sdk_1.get_all_measures().values()]
+    device_ids = {np.int64(device_id): "all" for device_id in sdk_1.get_all_devices().keys()}
+    label_name = list(sdk_1.get_all_label_names().values())[0]['name']
+    definition = DatasetDefinition(measures=measures, device_ids=device_ids, labels=[label_name])
+
+    # Test the dataset splitter
+    train_def, test_def, val_def = partition_dataset(
+        definition,
+        sdk_1,
+        partition_ratios=[60, 20, 20],
+        priority_stratification_labels=[label_name],
+        random_state=SEED,
+        verbose=False
+    )
+
+    transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
+                  include_labels=False)
+
+    assert_mit_bih_to_dataset(sdk_2, device_patient_map=device_patient_dict, max_records=MAX_RECORDS, seed=SEED)
+
+
+def _test_transfer_without_re_encoding(db_type, dataset_location, connection_params):
+    # Setup
+    sdk_1 = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
     device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
 
-    measure_id_list = None
-    device_id_list = None
-    patient_id_list = None
-    start = None
-    end = None
-    time_units = None
-    batch_size = None
-
-    # old_transfer_data(from_sdk=sdk_1, to_sdk=sdk_2, measure_id_list=measure_id_list, device_id_list=device_id_list,
-    #                   patient_id_list=patient_id_list, start=start, end=end, time_units=time_units,
-    #                   batch_size=batch_size)
-
     measures = [measure_info['tag'] for measure_info in sdk_1.get_all_measures().values()]
-    device_ids = {device_id: "all" for device_id in sdk_1.get_all_devices().keys()}
+    device_ids = {np.int64(device_id): "all" for device_id in sdk_1.get_all_devices().keys()}
     definition = DatasetDefinition(measures=measures, device_ids=device_ids)
     transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
-                  include_labels=False)
+                  include_labels=False, reencode_waveforms=False)
 
     assert_mit_bih_to_dataset(sdk_2, device_patient_map=device_patient_dict, max_records=MAX_RECORDS, seed=SEED)
 
@@ -73,10 +91,8 @@ def _test_transfer_with_patient_context(db_type, dataset_location, connection_pa
 
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
-    # Test
     device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
 
-    # old_transfer_data(from_sdk=sdk_1, to_sdk=sdk_2, include_patient_context=True)
 
     measures = [measure_info['tag'] for measure_info in sdk_1.get_all_measures().values()]
     device_ids = {device_id: "all" for device_id in sdk_1.get_all_devices().keys()}
@@ -102,7 +118,7 @@ def _test_transfer_with_patient_context_deidentify_timeshift(db_type, dataset_lo
     device_ids = {device_id: "all" for device_id in sdk_1.get_all_devices().keys()}
     definition = DatasetDefinition(measures=measures, device_ids=device_ids)
     transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
-                  include_labels=False, time_shift=500)
+                  include_labels=False, time_shift=500, reencode_waveforms=True)
 
     assert_mit_bih_to_dataset(
         sdk_2, device_patient_map=device_patient_dict, deidentify=True, time_shift=-500, max_records=MAX_RECORDS,

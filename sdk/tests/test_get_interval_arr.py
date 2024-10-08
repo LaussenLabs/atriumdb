@@ -90,12 +90,34 @@ def _test_get_interval_arr(db_type, dataset_location, connection_params):
     assert np.array_equal(interval_arr_device, np.array(combined_intervals, dtype=np.int64)), "Unexpected intervals for device"
 
     # Test get_interval_array based on patient
-    # Needs Fixing
     for patient_id in patient_ids:
         interval_arr_patient = sdk.get_interval_array(measure_id=measure_id, patient_id=patient_id,
                                                       start=start_time_nano, end=end_time_nano)
 
         assert interval_arr_patient.shape[0] > 0, f"No intervals found for patient {patient_id}"
         assert np.array_equal(interval_arr_patient, expected_intervals[patient_id]), f"Unexpected intervals for patient {patient_id}"
+
+    # Test for overlapping intervals
+    freq_hz = 1
+    period_s = 1
+    device_id = sdk.insert_device("overlapping device")
+    measure_id = sdk.insert_measure("overlapping signal", freq_hz, freq_units="Hz")
+
+    start_1, end_1 = 0, 60
+    times_1 = np.arange(start_1, end_1, period_s, dtype=np.int64)
+    values_1 = np.sin(times_1)
+
+    start_2, end_2 = 20, 30
+    times_2 = np.arange(start_2, end_2, period_s, dtype=np.int64)
+    values_2 = np.sin(times_2)
+
+    sdk.write_data_easy(measure_id=measure_id, device_id=device_id, time_data=times_1, value_data=values_1, freq=freq_hz, time_units="s", freq_units="Hz")
+    sdk.write_data_easy(measure_id=measure_id, device_id=device_id, time_data=times_2, value_data=values_2, freq=freq_hz, time_units="s", freq_units="Hz")
+
+    start_time_nano = start_1 * 10**9
+    end_time_nano = end_1 * 10**9
+    interval_arr = sdk.get_interval_array(measure_id=measure_id, device_id=device_id, start=start_time_nano, end=end_time_nano)
+    assert np.array_equal(interval_arr,
+                          np.array([[start_time_nano, end_time_nano]], dtype=np.int64))
 
 
