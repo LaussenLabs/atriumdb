@@ -19,14 +19,14 @@ import numpy as np
 from atriumdb import AtriumSDK
 from tests.testing_framework import _test_for_both
 
-DB_NAME = 'nan_gap'
+DB_NAME = 'nan_filled'
 
 
-def test_nan_gap():
-    _test_for_both(DB_NAME, _test_nan_gap)
+def test_nan_filled():
+    _test_for_both(DB_NAME, _test_nan_filled)
 
 
-def _test_nan_gap(db_type, dataset_location, connection_params):
+def _test_nan_filled(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
@@ -39,12 +39,11 @@ def _test_nan_gap(db_type, dataset_location, connection_params):
     times = np.array([1, 3, 4, 5, 8, 9], dtype=np.int64)
     scale_m, scale_b = 1.0, 0.0
 
-    expected_nan_gap = np.array([1, np.nan, 2, 3, 4, np.nan, np.nan, 5, 6], dtype=np.float64)
+    expected_nan_filled = np.array([1, np.nan, 2, 3, 4, np.nan, np.nan, 5, 6], dtype=np.float64)
 
     sdk.write_time_value_pairs(measure_id, device_id, times, data, freq=freq_hz, scale_m=scale_m, scale_b=scale_b,
                                freq_units="Hz", time_units="s")
 
-    _, actual_nan_gap = sdk.get_data(measure_id, 1, 10, device_id=device_id, time_units="s",
-                                     return_nan_gap=True)
+    _, actual_nan_filled = sdk.get_data(measure_id, 1, 10, device_id=device_id, time_units="s", return_nan_filled=True)
 
-    assert np.allclose(expected_nan_gap, actual_nan_gap, equal_nan=True)
+    assert np.allclose(expected_nan_filled, actual_nan_filled, equal_nan=True)

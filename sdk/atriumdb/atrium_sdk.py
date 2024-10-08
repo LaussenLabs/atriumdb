@@ -399,7 +399,7 @@ class AtriumSDK:
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
                  freq: Union[int, float] = None, units: str = None, freq_units: str = None,
-                 device_tag: str = None, mrn: int = None, return_nan_gap: bool = False):
+                 device_tag: str = None, mrn: int = None, return_nan_filled: bool = False):
         """
         The method for querying data from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
         time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
@@ -425,7 +425,7 @@ class AtriumSDK:
             "Hz", "kHz", "MHz"] default "nHz".
         :param str device_tag: A string identifying the device. Exclusive with device_id.
         :param int mrn: Medical record number for the patient. Exclusive with patient_id.
-        :param bool return_nan_gap: Whether or not to return values as a list of nans from start to end.
+        :param bool return_nan_filled: Whether or not to fill missing values from start to end with np.nan.
 
         :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
         :returns: List of Block header objects, 1D numpy array for time data, 1D numpy array for value data.
@@ -478,7 +478,7 @@ class AtriumSDK:
 
             # if no matching block ids
             if len(read_list) == 0:
-                if return_nan_gap:
+                if return_nan_filled:
                     period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
                     expected_num_values = round((end_time_n - start_time_n) / period_ns)
                     return [], np.full(expected_num_values, np.nan, dtype=np.float64)
@@ -500,7 +500,7 @@ class AtriumSDK:
             if len(block_list) == 0:
                 return [], np.array([]), np.array([])
 
-        if return_nan_gap:
+        if return_nan_filled:
             return self.get_data_from_blocks(block_list, filename_dict, start_time_n, end_time_n, analog, time_type,
                                              return_nan_gap=True)
 
