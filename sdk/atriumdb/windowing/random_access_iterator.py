@@ -17,34 +17,34 @@ class RandomAccessDatasetIterator(DatasetIterator):
     sliding windows of data from different sources. Adds the ability to access specific windows directly
     by their index and to determine the total number of windows available in the dataset.
 
-    :param sdk: SDK object to fetch data
-    :type sdk: AtriumSDK
-    :param validated_measure_list: List of validated measures with information about each measure
-    :type validated_measure_list: list
-    :param validated_sources: Dictionary containing sources with associated time ranges
-    :type validated_sources: dict
-    :param window_duration_ns: Duration of each window in nanoseconds
-    :type window_duration_ns: int
-    :param window_slide_ns: Interval in nanoseconds by which the window advances in time
-    :type window_slide_ns: int
-    :param num_windows_prefetch: Number of windows you want to get from AtriumDB at a time. Setting this value
+    :param AtriumSDK sdk: SDK object to fetch data
+    :param list validated_measure_list: List of validated measures with information about each measure
+    :param dict validated_sources: Dictionary containing sources with associated time ranges
+    :param int window_duration_ns: Duration of each window in nanoseconds
+    :param int window_slide_ns: Interval in nanoseconds by which the window advances in time
+    :param int num_windows_prefetch: Number of windows you want to get from AtriumDB at a time. Setting this value
             higher will make decompression faster but at the expense of using more RAM. (default the number of windows
             that gets you closest to 10 million values).
-    :type num_windows_prefetch: int, optional
-    :param label_threshold: Threshold for labeling in classification tasks.
-    :type label_threshold: float
-    :param time_units: If you would like the window_duration and window_slide to be specified in units other than
-                            nanoseconds you can choose from one of ["s", "ms", "us", "ns"].
-    :type time_units: str
+    :param float label_threshold: Threshold for labeling in classification tasks.
     """
 
     def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
                  label_threshold=0.5, shuffle=False, max_cache_duration=None,
                  patient_history_fields: list = None):
-        super().__init__(sdk, validated_measure_list, validated_label_set_list, validated_sources,
-                         window_duration_ns, window_slide_ns, num_windows_prefetch, label_threshold,
-                         shuffle, max_cache_duration, patient_history_fields)
+        super().__init__(
+            sdk=sdk,
+            validated_measure_list=validated_measure_list,
+            validated_label_set_list=validated_label_set_list,
+            validated_sources=validated_sources,
+            window_duration_ns=window_duration_ns,
+            window_slide_ns=window_slide_ns,
+            num_windows_prefetch=num_windows_prefetch,
+            label_threshold=label_threshold,
+            shuffle=shuffle,
+            max_cache_duration=max_cache_duration,
+            patient_history_fields=patient_history_fields
+        )
 
         pass
 
