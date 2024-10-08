@@ -145,7 +145,8 @@ class AtriumFileHandler:
 
     def remove(self, file_path: str):
         # rm file
-        os.remove(file_path)
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
     def walk(self, root_path: str):
         # Directory tree generator

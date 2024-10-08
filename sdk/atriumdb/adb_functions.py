@@ -1111,38 +1111,46 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                     if timestamp_arr.size == 0:
                         continue
 
-                    total_encoded_bytes = []
-                    total_encoded_headers = []
-                    total_byte_start_array = []
+                    # Prepare segments for encode_blocks_from_multiple_segments
+                    segments = []
                     block_group_interval_data = []
-                    group_byte_offset = 0
-                    for group_headers, group_times, group_values in group_headers_by_scale_factor_all(
+
+                    # Group data by scale factor
+                    for group_headers, group_times, group_values in group_headers_by_scale_factor(
                             r_headers, timestamp_arr, r_values):
 
                         # Sort the group data
                         group_times, sorted_time_indices = np.unique(group_times, return_index=True)
                         group_values = group_values[sorted_time_indices]
 
+                        # Get interval data
                         group_interval_data = get_interval_list_from_ordered_timestamps(group_times, period_ns)
-
-                        # Encode the block(s)
-                        encoded_bytes, encoded_headers, byte_start_array = sdk.block.encode_blocks(
-                            group_times, group_values, measure_info['freq_nhz'], group_times[0],
-                            raw_time_type=1,
-                            encoded_time_type=2,
-                            scale_m=group_headers[0].scale_m,
-                            scale_b=group_headers[0].scale_b)
-
                         block_group_interval_data.append(group_interval_data)
-                        total_encoded_bytes.append(encoded_bytes)
-                        total_encoded_headers.extend(encoded_headers)
-                        total_byte_start_array.append(byte_start_array + group_byte_offset)
-                        group_byte_offset += encoded_bytes.size
 
+                        # Create segment dictionary
+                        segment = {
+                            'times': group_times,
+                            'values': group_values,
+                            'freq_nhz': measure_info['freq_nhz'],
+                            'start_ns': group_times[0],
+                            'raw_time_type': 1,
+                            'encoded_time_type': 2,
+                            'scale_m': group_headers[0].scale_m,
+                            'scale_b': group_headers[0].scale_b
+                        }
+                        segments.append(segment)
+
+                    # Now, call encode_blocks_from_multiple_segments
+                    encoded_bytes, encoded_headers, byte_start_array = (
+                        sdk.block.encode_blocks_from_multiple_segments(segments))
+
+                    # Handle the outputs
+                    total_encoded_bytes = encoded_bytes
+                    total_encoded_headers = encoded_headers
+                    total_byte_start_array = byte_start_array
+
+                    # Process the intervals
                     block_group_interval_data = intervals_union_list(block_group_interval_data)
-                    total_encoded_bytes = np.concatenate(total_encoded_bytes)
-                    total_byte_start_array = np.concatenate(total_byte_start_array)
-
                 else:
                     # Perfect Precision Time-Value Pairs Not Possible: Use Message/Gap Format.
                     raise NotImplementedError("Not Implemented For Nanohertz Frequencies That Don't Divide 10^18")
@@ -1162,7 +1170,7 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                         "num_values": header.num_vals,
                     })
 
-                # Write new and delete old sql blocks
+                # Write new and delete old SQL blocks
                 sdk.sql_handler.insert_and_delete_tsc_file_data(
                     filename, block_data, [block[0] for block in block_group])
 
@@ -1174,13 +1182,12 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
 
             sdk.sql_handler.replace_intervals(measure_id, device_id, total_measure_device_interval_array)
 
-            # Remove tsc files from sql and disk
+            # Remove TSC files from SQL and disk
             sdk.sql_handler.delete_files_by_ids(file_id_list)
 
             for filename in filename_dict.values():
                 file_path = sdk.file_api.to_abs_path(filename, measure_id, device_id)
-                if os.path.exists(file_path):
-                    os.remove(file_path)
+                sdk.file_api.remove(file_path)
 
 
 def group_sorted_block_list(sorted_block_list, num_values_per_group=8388608):
