@@ -263,7 +263,6 @@ class DatasetIterator:
 
         return cache_info, starting_window_index_per_batch, total_number_of_windows
 
-    @profile
     def _load_batch_matrix(self, idx: int):
         batch_index, batch_start_index, batch_end_index, batch_num_windows, batch_size = \
             self._calculate_batch_size(idx)
@@ -445,7 +444,6 @@ class DatasetIterator:
             threshold_labels = get_threshold_labels(sliced_labels, label_threshold=self.label_threshold)
         return sliced_labels, threshold_labels
 
-    @profile
     def _query_source_data(self, device_id, query_patient_id, batch_start_time, batch_end_time, range_start_time,
                            range_end_time, batch_num_windows, batch_size, batch_matrix):
         # Reset and populate the batch data signal dictionary
