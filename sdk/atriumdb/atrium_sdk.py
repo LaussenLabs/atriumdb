@@ -518,10 +518,7 @@ class AtriumSDK:
         if time_type not in ALLOWED_TIME_TYPES:
             raise ValueError("Time type must be in [1, 2]")
 
-        # Convert time units to nanoseconds if necessary
-        time_units = "ns" if time_units is None else time_units
-        if time_units not in time_unit_options.keys():
-            raise ValueError(f"Invalid time units. Expected one of: {list(time_unit_options.keys())}")
+        # convert start and end time to nanoseconds
         start_time_n = int(start_time_n * time_unit_options[time_units])
         end_time_n = int(end_time_n * time_unit_options[time_units])
 
@@ -559,7 +556,7 @@ class AtriumSDK:
             filename_dict = self.filename_dict
 
             if len(block_list) == 0:
-                if return_nan_gap:
+                if return_nan_filled:
                     period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
                     expected_num_values = round((end_time_n - start_time_n) / period_ns)
                     return [], np.full(expected_num_values, np.nan, dtype=np.float64)
