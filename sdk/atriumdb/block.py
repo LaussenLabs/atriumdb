@@ -368,7 +368,7 @@ class Block:
         else:
             raise ValueError("Header had an unsupported raw value type, {}.".format(headers[0].v_raw_type))
 
-        if return_nan_gap:
+        if isinstance(return_nan_gap, np.ndarray) or return_nan_gap:
             if time_type != 1:
                 raise ValueError("Returning nan gaps is only supported for time type 1.")
             if period_ns is None:
@@ -377,7 +377,12 @@ class Block:
             start_ns = start_time_n if start_time_n is not None else time_data[0]
             end_ns = end_time_n if end_time_n is not None else round(time_data[-1] + period_ns)
             expected_num_values = int(round((end_ns - start_ns) / period_ns))
-            nan_analog_array = np.full(expected_num_values, np.nan, dtype=np.float64)
+            if isinstance(return_nan_gap, np.ndarray):
+                nan_analog_array = return_nan_gap
+                if nan_analog_array.size != expected_num_values:
+                    raise ValueError("input array must be of size int(round((end_time_n - start_time_n) / period_ns))")
+            else:
+                nan_analog_array = np.full(expected_num_values, np.nan, dtype=np.float64)
             self.wrapped_dll.fill_nan_array_with_analog(value_data, nan_analog_array,
                                                         headers, len(headers), time_data, start_ns, float(period_ns))
 

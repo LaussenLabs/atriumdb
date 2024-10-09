@@ -477,7 +477,7 @@ class AtriumSDK:
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
                  freq: Union[int, float] = None, units: str = None, freq_units: str = None,
-                 device_tag: str = None, mrn: int = None, return_nan_filled: bool = False):
+                 device_tag: str = None, mrn: int = None, return_nan_filled: bool | np.ndarray = False):
         """
         The method for querying data from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
         time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
@@ -503,7 +503,7 @@ class AtriumSDK:
             "Hz", "kHz", "MHz"] default "nHz".
         :param str device_tag: A string identifying the device. Exclusive with device_id.
         :param int mrn: Medical record number for the patient. Exclusive with patient_id.
-        :param bool return_nan_filled: Whether or not to fill missing values from start to end with np.nan.
+        :param bool | ndarray return_nan_filled: Whether or not to fill missing values from start to end with np.nan.
 
         :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
         :returns: List of Block header objects, 1D numpy array for time data, 1D numpy array for value data.
@@ -556,10 +556,11 @@ class AtriumSDK:
             filename_dict = self.filename_dict
 
             if len(block_list) == 0:
-                if return_nan_filled:
+                if isinstance(return_nan_filled, np.ndarray) or return_nan_filled:
                     period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
                     expected_num_values = round((end_time_n - start_time_n) / period_ns)
                     return [], np.full(expected_num_values, np.nan, dtype=np.float64)
+
                 return [], np.array([]), np.array([])
 
         elif block_info is None:
@@ -572,7 +573,7 @@ class AtriumSDK:
 
             # if no matching block ids
             if len(read_list) == 0:
-                if return_nan_filled:
+                if isinstance(return_nan_filled, np.ndarray) or return_nan_filled:
                     period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
                     expected_num_values = round((end_time_n - start_time_n) / period_ns)
                     return [], np.full(expected_num_values, np.nan, dtype=np.float64)
@@ -588,9 +589,9 @@ class AtriumSDK:
             if len(block_list) == 0:
                 return [], np.array([]), np.array([])
 
-        if return_nan_filled:
+        if isinstance(return_nan_filled, np.ndarray) or return_nan_filled:
             return self.get_data_from_blocks(block_list, filename_dict, start_time_n, end_time_n, analog, time_type,
-                                             return_nan_gap=True)
+                                             return_nan_gap=return_nan_filled)
 
         # Read and decode the blocks.
         headers, r_times, r_values = self.get_data_from_blocks(block_list, filename_dict, start_time_n,
@@ -625,7 +626,7 @@ class AtriumSDK:
         :param bool sort: Whether to sort the returned data by time.
         :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
         nothing if sort is false.
-        :param bool return_nan_gap: Whether or not to return values as a list of nans from start to end.
+        :param bool | ndarray return_nan_gap: Whether or not to return values as a list of nans from start to end.
         :return: Tuple containing headers, times, and values.
         :rtype: tuple
         """
@@ -641,9 +642,9 @@ class AtriumSDK:
         # Extract the number of bytes for each block
         num_bytes_list = [row[5] for row in block_list]
 
-        if return_nan_gap:
+        if isinstance(return_nan_gap, np.ndarray) or return_nan_gap:
             return self.block.decode_blocks(
-                encoded_bytes, num_bytes_list, analog=True, time_type=1, return_nan_gap=True,
+                encoded_bytes, num_bytes_list, analog=True, time_type=1, return_nan_gap=return_nan_gap,
                 start_time_n=start_time_n, end_time_n=end_time_n)
 
         # Decode the data and separate it into headers, times, and values
