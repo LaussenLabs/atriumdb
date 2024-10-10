@@ -39,4 +39,8 @@ void decode_blocks(void *time_data, void *value_data, void *encoded_bytes, uint6
 void convert_value_data_to_analog(const void *value_data, double *analog_values, const block_metadata_t *headers,
                                   const uint64_t *analog_block_start_index_array, uint64_t num_blocks);
 
+void fill_nan_array_with_analog(const void *value_data, double *nan_analog_array, const block_metadata_t *headers,
+                                const uint64_t *analog_block_start_index_array, uint64_t num_blocks,
+                                const int64_t *times, int64_t start_ns, double period_ns, uint64_t nan_array_length);
+
 #endif //MINIMAL_SDK_BLOCK_H

@@ -398,7 +398,7 @@ class AtriumSDK:
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
                  freq: Union[int, float] = None, units: str = None, freq_units: str = None,
-                 device_tag: str = None, mrn: int = None):
+                 device_tag: str = None, mrn: int = None, return_nan_filled: bool = False):
         """
         The method for querying data from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
         time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
@@ -424,6 +424,7 @@ class AtriumSDK:
             "Hz", "kHz", "MHz"] default "nHz".
         :param str device_tag: A string identifying the device. Exclusive with device_id.
         :param int mrn: Medical record number for the patient. Exclusive with patient_id.
+        :param bool return_nan_filled: Whether or not to fill missing values from start to end with np.nan.
 
         :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
         :returns: List of Block header objects, 1D numpy array for time data, 1D numpy array for value data.
@@ -476,6 +477,10 @@ class AtriumSDK:
 
             # if no matching block ids
             if len(read_list) == 0:
+                if return_nan_filled:
+                    period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
+                    expected_num_values = round((end_time_n - start_time_n) / period_ns)
+                    return [], np.full(expected_num_values, np.nan, dtype=np.float64)
                 return [], np.array([]), np.array([])
 
             # Map file_ids to filenames and return a dictionary.
@@ -493,6 +498,10 @@ class AtriumSDK:
             # if no matching block ids
             if len(block_list) == 0:
                 return [], np.array([]), np.array([])
+
+        if return_nan_filled:
+            return self.get_data_from_blocks(block_list, filename_dict, start_time_n, end_time_n, analog, time_type,
+                                             return_nan_gap=True)
 
         # Read and decode the blocks.
         headers, r_times, r_values = self.get_data_from_blocks(block_list, filename_dict, start_time_n,
@@ -514,7 +523,7 @@ class AtriumSDK:
         return headers, r_times, r_values
 
     def get_data_from_blocks(self, block_list, filename_dict, start_time_n, end_time_n, analog=True,
-                             time_type=1, sort=True, allow_duplicates=True):
+                             time_type=1, sort=True, allow_duplicates=True, return_nan_gap=False):
         """
         Retrieve data from blocks.
 
@@ -531,14 +540,12 @@ class AtriumSDK:
         :param bool sort: Whether to sort the returned data by time.
         :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
         nothing if sort is false.
+        :param bool return_nan_gap: Whether or not to return values as a list of nans from start to end.
         :return: Tuple containing headers, times, and values.
         :rtype: tuple
         """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this function.")
-
-        # Start performance benchmark
-        start_bench = time.perf_counter()
 
         # Condense the block list for optimized reading
         read_list = condense_byte_read_list(block_list)
@@ -546,10 +553,13 @@ class AtriumSDK:
         # Read the data from the files using the read list
         encoded_bytes = self.file_api.read_file_list(read_list, filename_dict)
 
-        _LOGGER.debug(f"read from disk {round((time.perf_counter() - start_bench) * 1000, 4)} ms")
-
         # Extract the number of bytes for each block
         num_bytes_list = [row[5] for row in block_list]
+
+        if return_nan_gap:
+            return self.block.decode_blocks(
+                encoded_bytes, num_bytes_list, analog=True, time_type=1, return_nan_gap=True,
+                start_time_n=start_time_n, end_time_n=end_time_n)
 
         # Decode the data and separate it into headers, times, and values
         r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
@@ -578,10 +588,7 @@ class AtriumSDK:
         # Get the number of bytes for each block
         num_bytes_list = [row['num_bytes'] for row in block_info_list]
 
-        # tik = time.perf_counter()
         encoded_bytes = self._block_websocket_request(block_info_list)
-        # print(f"Time for {len(block_info_list)} blocks over websocket: {round((time.perf_counter() - tik) * 1000, 4)} ms")
-        # print(f"Mb/s is {(np.sum(num_bytes_list)/(time.perf_counter() - tik))/1_000_000}\n")\
 
         # Decode the concatenated bytes to get headers, request times and request values
         r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
