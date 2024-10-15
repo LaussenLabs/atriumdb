@@ -1127,6 +1127,13 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                         group_interval_data = get_interval_list_from_ordered_timestamps(group_times, period_ns)
                         block_group_interval_data.append(group_interval_data)
 
+                        if np.issubdtype(group_values.dtype, np.integer):
+                            raw_value_type = 1
+                            encoded_value_type = 3
+                        else:
+                            raw_value_type = 2
+                            encoded_value_type = 2
+
                         # Create segment dictionary
                         segment = {
                             'times': group_times,
@@ -1135,6 +1142,8 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                             'start_ns': group_times[0],
                             'raw_time_type': 1,
                             'encoded_time_type': 2,
+                            'raw_value_type': raw_value_type,
+                            'encoded_value_type': encoded_value_type,
                             'scale_m': group_headers[0].scale_m,
                             'scale_b': group_headers[0].scale_b
                         }
@@ -1233,37 +1242,6 @@ def group_headers_by_scale_factor(headers, times_array, values_array):
     if current_group:
         end_idx = start_idx + sum(header.num_vals for header in current_group)
         yield current_group, times_array[start_idx:end_idx], values_array[start_idx:end_idx]
-
-
-def group_headers_by_scale_factor_all(headers, times_array, values_array):
-    if len(headers) == 0:
-        return
-
-    # Map scale factors to list of headers and corresponding times and values
-    scale_factor_groups = {}
-    idx = 0
-
-    for h in headers:
-        scale_key = (h.scale_m, h.scale_b)
-        num_vals = h.num_vals
-        times_slice = times_array[idx:idx+num_vals]
-        values_slice = values_array[idx:idx+num_vals]
-        idx += num_vals
-
-        if scale_key not in scale_factor_groups:
-            scale_factor_groups[scale_key] = {'headers': [], 'times': [], 'values': []}
-        scale_factor_groups[scale_key]['headers'].append(h)
-        scale_factor_groups[scale_key]['times'].append(times_slice)
-        scale_factor_groups[scale_key]['values'].append(values_slice)
-
-    # Yield the groups in the order their scale factors first appear
-    seen_scale_keys = set()
-    for h in headers:
-        scale_key = (h.scale_m, h.scale_b)
-        if scale_key not in seen_scale_keys:
-            seen_scale_keys.add(scale_key)
-            group = scale_factor_groups[scale_key]
-            yield group['headers'], np.concatenate(group['times']), np.concatenate(group['values'])
 
 
 def get_interval_list_from_ordered_timestamps(timestamps, period_ns):
