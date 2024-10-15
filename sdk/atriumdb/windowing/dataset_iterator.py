@@ -19,6 +19,8 @@
 from bisect import bisect_right
 import warnings
 import random
+import pickle
+import hashlib
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
@@ -48,12 +50,13 @@ class DatasetIterator:
     :param int | None max_cache_duration: If specified, no single cache will have a time range larger than this duration.
                                            The time range will be split accordingly. The duration must be larger than window_duration_ns.
     :param list patient_history_fields: A list of patient_history fields you would like returned in the Window object.
+    :param bool cache_windows_results: If True, caches the results of _extract_cache_info to speed up future iterations.
     """
 
     def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
                  label_threshold=0.5, shuffle=False, max_cache_duration=None,
-                 patient_history_fields: list = None):
+                 patient_history_fields: list = None, cache_windows_results=False):
         # AtriumSDK object
         self.sdk = sdk
 
@@ -126,6 +129,9 @@ class DatasetIterator:
         # If provided, it uses the given num_windows_prefetch.
         self.max_batch_size = int(10_000_000 // self.row_size) if num_windows_prefetch is None else num_windows_prefetch
 
+        # Cache windows results flag
+        self.cache_windows_results = cache_windows_results
+
         # Lists containing the starting index for each batch and details about each batch respectively.
         # Also, the total length (number of windows) in the dataset.
         self.batch_info, self.batch_first_index, self._length = self._extract_cache_info()
@@ -177,7 +183,35 @@ class DatasetIterator:
                     new_time_ranges.append([start, end])
                 self.sources[source_type][source_id] = new_time_ranges
 
+    def _get_cache_key(self):
+        # Generate a unique cache key based on variables that affect _extract_cache_info's output
+        variables_to_hash = {
+            'sources': self.sources,
+            'shuffle': self.shuffle,
+            'max_cache_duration': self.max_cache_duration,
+            'window_duration_ns': self.window_duration_ns,
+            'window_slide_ns': self.window_slide_ns,
+            'max_batch_size': self.max_batch_size,
+        }
+        # Serialize the variables using pickle
+        serialized_vars = pickle.dumps(variables_to_hash)
+        # Compute a SHA256 hash of the serialized variables
+        cache_hash = hashlib.sha256(serialized_vars).hexdigest()
+        # Return the cache key
+        cache_key = f'dataset_iterator_cache_{cache_hash}'
+        return cache_key
+
     def _extract_cache_info(self):
+        # Check if caching is enabled
+        if self.cache_windows_results:
+            self.sdk.file_api.ensure_cache_dir()
+            cache_key = self._get_cache_key()
+            # Check if cache exists
+            if self.sdk.file_api.cache_exists(cache_key):
+                # Load from cache
+                cached_data = self.sdk.file_api.load_cache(cache_key)
+                return cached_data
+
         # Flattening the nested dictionary/list structure
         flattened_sources = []
         for source_type, sources in self.sources.items():
@@ -260,6 +294,11 @@ class DatasetIterator:
         if len(current_batch) > 0:
             cache_info.append(current_batch)
         starting_window_index_per_batch.append(total_number_of_windows)
+
+        # If caching is enabled, save the results
+        if self.cache_windows_results:
+            data_to_cache = (cache_info, starting_window_index_per_batch, total_number_of_windows)
+            self.sdk.file_api.save_cache(cache_key, data_to_cache)
 
         return cache_info, starting_window_index_per_batch, total_number_of_windows
 

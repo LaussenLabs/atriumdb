@@ -21,6 +21,10 @@ from typing import List, Tuple, Dict
 import yaml
 import numpy as np
 
+import pickle
+import hashlib
+import json
+
 from atriumdb.adb_functions import get_measure_id_from_generic_measure
 from atriumdb.intervals.union import intervals_union_list
 from atriumdb.windowing.definition import DatasetDefinition
@@ -28,7 +32,7 @@ from atriumdb.windowing.map_definition_sources import map_validated_sources
 
 
 def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rule="best", start_time_n=None,
-                      end_time_n=None):
+                      end_time_n=None, use_cache=False):
     """
     Verifies and validates a dataset definition against the given AtriumSDK, including measures, label sets, and sources.
 
@@ -38,6 +42,7 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
     :param str measure_tag_match_rule: "best" or "all" as a strategy for dealing with measure tags where there may be multiple measures with the given tag.
     :param start_time_n: Global start time in nanoseconds.
     :param end_time_n: Global end time in nanoseconds.
+    :param bool use_cache: Whether to use a disk based cache to store the verified definition results.
 
     :return: A tuple containing three elements:
         1. validated_measure_list (list of dicts): A list of dictionaries, each representing a validated measure. Each dictionary includes:
@@ -62,6 +67,22 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
     else:
         raise ValueError("Input must be either a filename or an instance of DatasetDefinition.")
 
+    cache_key = compute_cache_key(
+        definition.data_dict, gap_tolerance, measure_tag_match_rule, start_time_n, end_time_n)
+
+    if use_cache:
+        # Ensure the cache directory exists
+        sdk.file_api.ensure_cache_dir()
+
+        # Check if the result is already cached
+        if sdk.file_api.cache_exists(cache_key):
+            try:
+                result = sdk.file_api.load_cache(cache_key)
+                return result
+            except (EOFError, pickle.UnpicklingError):
+                # If cache is corrupted, remove it and proceed to recompute
+                sdk.file_api.remove_cache(cache_key)
+
     # Validate measures
     validated_measure_list = _validate_measures(definition, sdk, measure_tag_match_rule=measure_tag_match_rule)
 
@@ -74,7 +95,12 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
 
     mapped_sources = map_validated_sources(validated_sources, sdk)
 
-    return validated_measure_list, validated_label_set_list, mapped_sources
+    result = (validated_measure_list, validated_label_set_list, mapped_sources)
+
+    if use_cache:
+        sdk.file_api.save_cache(cache_key, result)
+
+    return result
 
 
 def _validate_measures(definition: DatasetDefinition, sdk, measure_tag_match_rule="best"):
@@ -254,3 +280,29 @@ def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, 
             interval_list.append([start, end])
 
     return interval_list
+
+
+def compute_hash(data):
+    """Compute a SHA256 hash of the given data."""
+    data_string = json.dumps(data, sort_keys=True)
+    return hashlib.sha256(data_string.encode()).hexdigest()
+
+def compute_cache_key(definition_data_dict, gap_tolerance, measure_tag_match_rule, start_time_n, end_time_n):
+    """Compute a unique cache key based on the function inputs."""
+
+    # Compute a hash of the definition data dictionary
+    definition_hash = compute_hash(definition_data_dict)
+
+    # Prepare key elements
+    key_elements = [
+        definition_hash,
+        str(gap_tolerance),
+        measure_tag_match_rule,
+        str(start_time_n),
+        str(end_time_n)
+    ]
+
+    key_string = '|'.join(key_elements)
+    key_hash = hashlib.sha256(key_string.encode()).hexdigest()
+
+    return key_hash

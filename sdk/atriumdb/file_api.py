@@ -18,13 +18,16 @@
 from pathlib import Path
 import uuid
 import numpy as np
+import pickle
 import os
 from collections import Counter
 
 
 class AtriumFileHandler:
-    def __init__(self, top_level_dir):
+    def __init__(self, top_level_dir, dataset_location=None):
         self.top_level_dir = top_level_dir
+        self.dataset_location = dataset_location if dataset_location is not None else self.top_level_dir
+        self.cache_dir = os.path.join(self.dataset_location, "meta", "cache")
 
     def generate_tsc_filename(self, measure_id, device_id):
         # Generate a random UUID and convert it to a hexadecimal string
@@ -150,3 +153,33 @@ class AtriumFileHandler:
     def walk(self, root_path: str):
         # Directory tree generator
         return os.walk(root_path)
+
+    def ensure_cache_dir(self):
+        # Ensure the cache directory exists
+        os.makedirs(self.cache_dir, exist_ok=True)
+
+    def get_cache_filepath(self, cache_key):
+        # Get the full path to the cache file
+        return os.path.join(self.cache_dir, f'{cache_key}.pkl')
+
+    def cache_exists(self, cache_key):
+        # Check if a cache file exists
+        cache_file = self.get_cache_filepath(cache_key)
+        return os.path.exists(cache_file)
+
+    def load_cache(self, cache_key):
+        # Load data from a cache file
+        cache_file = self.get_cache_filepath(cache_key)
+        with open(cache_file, 'rb') as f:
+            return pickle.load(f)
+
+    def save_cache(self, cache_key, data):
+        # Save data to a cache file
+        cache_file = self.get_cache_filepath(cache_key)
+        with open(cache_file, 'wb') as f:
+            pickle.dump(data, f)
+
+    def remove_cache(self, cache_key):
+        # Remove a cache file
+        cache_file = self.get_cache_filepath(cache_key)
+        os.remove(cache_file)
