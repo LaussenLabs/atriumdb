@@ -14,6 +14,8 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -65,7 +67,7 @@ def _test_iterator(db_type, dataset_location, connection_params):
 
         # Try while loading the cache
         iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None,
-                                    use_cache=True)
+                                    cache=Path(sdk.dataset_location) / "cache")
 
         for window_i, window in enumerate(iterator):
             assert isinstance(window.start_time, int)
@@ -82,7 +84,7 @@ def _test_iterator(db_type, dataset_location, connection_params):
 
         # Try while reading the cache
         iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None,
-                                    use_cache=True)
+                                    cache=Path(sdk.dataset_location) / "cache")
 
         for window_i, window in enumerate(iterator):
             assert isinstance(window.start_time, int)

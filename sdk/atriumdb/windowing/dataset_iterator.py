@@ -50,13 +50,12 @@ class DatasetIterator:
     :param int | None max_cache_duration: If specified, no single cache will have a time range larger than this duration.
                                            The time range will be split accordingly. The duration must be larger than window_duration_ns.
     :param list patient_history_fields: A list of patient_history fields you would like returned in the Window object.
-    :param bool cache_windows_results: If True, caches the results of _extract_cache_info to speed up future iterations.
+    :param bool cache_dir: A directory, if specified, caches the results of _extract_cache_info to speed up future iterations.
     """
 
     def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
-                 window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
-                 label_threshold=0.5, shuffle=False, max_cache_duration=None,
-                 patient_history_fields: list = None, cache_windows_results=False):
+                 window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None, label_threshold=0.5,
+                 shuffle=False, max_cache_duration=None, patient_history_fields: list = None, cache_dir=None):
         # AtriumSDK object
         self.sdk = sdk
 
@@ -129,8 +128,8 @@ class DatasetIterator:
         # If provided, it uses the given num_windows_prefetch.
         self.max_batch_size = int(10_000_000 // self.row_size) if num_windows_prefetch is None else num_windows_prefetch
 
-        # Cache windows results flag
-        self.cache_windows_results = cache_windows_results
+        # Cache directory
+        self.cache_dir = cache_dir
 
         # Lists containing the starting index for each batch and details about each batch respectively.
         # Also, the total length (number of windows) in the dataset.
@@ -203,14 +202,18 @@ class DatasetIterator:
 
     def _extract_cache_info(self):
         # Check if caching is enabled
-        if self.cache_windows_results:
-            self.sdk.file_api.ensure_cache_dir()
+        if self.cache_dir is not None:
+            self.sdk.file_api.ensure_cache_dir(self.cache_dir)
             cache_key = self._get_cache_key()
             # Check if cache exists
-            if self.sdk.file_api.cache_exists(cache_key):
+            if self.sdk.file_api.cache_exists(cache_key, self.cache_dir):
                 # Load from cache
-                cached_data = self.sdk.file_api.load_cache(cache_key)
-                return cached_data
+                try:
+                    cached_data = self.sdk.file_api.load_cache(cache_key, self.cache_dir)
+                    return cached_data
+                except (EOFError, pickle.UnpicklingError):
+                    # If cache is corrupted, remove it and proceed to recompute
+                    self.sdk.file_api.remove_cache(cache_key, self.cache_dir)
 
         # Flattening the nested dictionary/list structure
         flattened_sources = []
@@ -296,9 +299,9 @@ class DatasetIterator:
         starting_window_index_per_batch.append(total_number_of_windows)
 
         # If caching is enabled, save the results
-        if self.cache_windows_results:
+        if self.cache_dir is not None:
             data_to_cache = (cache_info, starting_window_index_per_batch, total_number_of_windows)
-            self.sdk.file_api.save_cache(cache_key, data_to_cache)
+            self.sdk.file_api.save_cache(cache_key, data_to_cache, self.cache_dir)
 
         return cache_info, starting_window_index_per_batch, total_number_of_windows
 

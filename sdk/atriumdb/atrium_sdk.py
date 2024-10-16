@@ -197,8 +197,7 @@ class AtriumSDK:
             # Initialize the SQLiteHandler with the database file path
             self.sql_handler = SQLiteHandler(db_file)
             self.mode = "local"
-            self.file_api = storage_handler if storage_handler else AtriumFileHandler(
-                tsc_file_location, dataset_location=dataset_location)
+            self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
             self.settings_dict = self._get_all_settings()
 
         # Handle MySQL or MariaDB connections
@@ -226,8 +225,7 @@ class AtriumSDK:
             # Initialize the MariaDBHandler with the connection parameters
             self.sql_handler = MariaDBHandler(host, user, password, database, port, no_pool=no_pool)
             self.mode = "local"
-            self.file_api = storage_handler if storage_handler else AtriumFileHandler(
-                tsc_file_location, dataset_location=dataset_location)
+            self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
             self.settings_dict = self._get_all_settings()
 
         # Handle API connections
@@ -241,8 +239,7 @@ class AtriumSDK:
                 dataset_location = Path.cwd()
             if tsc_file_location is None:
                 tsc_file_location = dataset_location / 'tsc'
-            self.file_api = storage_handler if storage_handler else AtriumFileHandler(
-                tsc_file_location, dataset_location=dataset_location)
+            self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
 
             self.mode = "api"
             self.api_url = api_url
@@ -3920,7 +3917,7 @@ class AtriumSDK:
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
                      time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
                      shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
-                     end_time=None, num_iterators=1, use_cache=False) -> Union[DatasetIterator, List[DatasetIterator]]:
+                     end_time=None, num_iterators=1, cache=None) -> Union[DatasetIterator, List[DatasetIterator]]:
         """
         Constructs and returns a `DatasetIterator` object or a list of `DatasetIterator` objects that allow iteration
         over the dataset according to the specified definition.
@@ -3965,8 +3962,8 @@ class AtriumSDK:
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
-        :param bool use_cache: Whether to use a disk based cache to store intermediate data and speed up subsequent
-            calls with the same parameters.
+        :param bool cache: The directory where you want to store a disk based cache to store intermediate data and
+            speed up subsequent calls with the same parameters.
         :param int num_iterators: Number of iterators to create by partitioning the dataset (default is 1).
 
         :return: A single DatasetIterator object or a list of DatasetIterator objects depending on the value of num_iterators.
@@ -4045,7 +4042,7 @@ class AtriumSDK:
                                              num_windows_prefetch, "ns", label_threshold, iterator_type,
                                              window_filter_fn, shuffle, cached_windows_per_source,
                                              patient_history_fields, start_time_n, end_time_n, num_iterators=1,
-                                             use_cache=use_cache)
+                                             cache=cache)
                 iterators.append(iterator)
 
             return iterators
@@ -4053,7 +4050,7 @@ class AtriumSDK:
         # Validate the definition and create the iterator for a single partition
         validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
             definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n,
-            use_cache=use_cache)
+            cache_dir=cache)
 
         # Create appropriate iterator object based on iterator_type
         if iterator_type == 'random_access':
@@ -4061,7 +4058,7 @@ class AtriumSDK:
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, max_cache_duration=max_cache_duration_per_source,
-                shuffle=shuffle, patient_history_fields=patient_history_fields, cache_windows_results=use_cache)
+                shuffle=shuffle, patient_history_fields=patient_history_fields, cache_dir=cache)
         elif iterator_type == 'filtered':
             if window_filter_fn is None:
                 raise ValueError("window_filter_fn must be provided when iterator_type is 'filtered'")
@@ -4070,14 +4067,13 @@ class AtriumSDK:
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, window_filter_fn=window_filter_fn,
                 max_cache_duration=max_cache_duration_per_source, shuffle=shuffle,
-                patient_history_fields=patient_history_fields, cache_windows_results=use_cache)
+                patient_history_fields=patient_history_fields, cache_dir=cache)
         else:
-            iterator = DatasetIterator(
-                self, validated_measure_list, validated_label_set_list, validated_sources,
-                window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
-                label_threshold=label_threshold, shuffle=shuffle,
-                max_cache_duration=max_cache_duration_per_source, patient_history_fields=patient_history_fields,
-                cache_windows_results=use_cache)
+            iterator = DatasetIterator(self, validated_measure_list, validated_label_set_list, validated_sources,
+                                       window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
+                                       label_threshold=label_threshold, shuffle=shuffle,
+                                       max_cache_duration=max_cache_duration_per_source,
+                                       patient_history_fields=patient_history_fields, cache_dir=cache)
 
         return iterator
 

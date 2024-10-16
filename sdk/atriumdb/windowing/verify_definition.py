@@ -32,7 +32,7 @@ from atriumdb.windowing.map_definition_sources import map_validated_sources
 
 
 def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rule="best", start_time_n=None,
-                      end_time_n=None, use_cache=False):
+                      end_time_n=None, cache_dir=None):
     """
     Verifies and validates a dataset definition against the given AtriumSDK, including measures, label sets, and sources.
 
@@ -42,7 +42,7 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
     :param str measure_tag_match_rule: "best" or "all" as a strategy for dealing with measure tags where there may be multiple measures with the given tag.
     :param start_time_n: Global start time in nanoseconds.
     :param end_time_n: Global end time in nanoseconds.
-    :param bool use_cache: Whether to use a disk based cache to store the verified definition results.
+    :param bool cache_dir: A directory if specified will use a disk based cache to store the verified definition results.
 
     :return: A tuple containing three elements:
         1. validated_measure_list (list of dicts): A list of dictionaries, each representing a validated measure. Each dictionary includes:
@@ -70,18 +70,18 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
     cache_key = compute_cache_key(
         definition.data_dict, gap_tolerance, measure_tag_match_rule, start_time_n, end_time_n)
 
-    if use_cache:
+    if cache_dir is not None:
         # Ensure the cache directory exists
-        sdk.file_api.ensure_cache_dir()
+        sdk.file_api.ensure_cache_dir(cache_dir)
 
         # Check if the result is already cached
-        if sdk.file_api.cache_exists(cache_key):
+        if sdk.file_api.cache_exists(cache_key, cache_dir):
             try:
-                result = sdk.file_api.load_cache(cache_key)
+                result = sdk.file_api.load_cache(cache_key, cache_dir)
                 return result
             except (EOFError, pickle.UnpicklingError):
                 # If cache is corrupted, remove it and proceed to recompute
-                sdk.file_api.remove_cache(cache_key)
+                sdk.file_api.remove_cache(cache_key, cache_dir)
 
     # Validate measures
     validated_measure_list = _validate_measures(definition, sdk, measure_tag_match_rule=measure_tag_match_rule)
@@ -97,8 +97,8 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
 
     result = (validated_measure_list, validated_label_set_list, mapped_sources)
 
-    if use_cache:
-        sdk.file_api.save_cache(cache_key, result)
+    if cache_dir is not None:
+        sdk.file_api.save_cache(cache_key, result, cache_dir)
 
     return result
 

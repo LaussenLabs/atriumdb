@@ -24,10 +24,8 @@ from collections import Counter
 
 
 class AtriumFileHandler:
-    def __init__(self, top_level_dir, dataset_location=None):
+    def __init__(self, top_level_dir):
         self.top_level_dir = top_level_dir
-        self.dataset_location = dataset_location if dataset_location is not None else self.top_level_dir
-        self.cache_dir = os.path.join(self.dataset_location, "meta", "cache")
 
     def generate_tsc_filename(self, measure_id, device_id):
         # Generate a random UUID and convert it to a hexadecimal string
@@ -154,32 +152,32 @@ class AtriumFileHandler:
         # Directory tree generator
         return os.walk(root_path)
 
-    def ensure_cache_dir(self):
+    def ensure_cache_dir(self, cache_dir):
         # Ensure the cache directory exists
-        os.makedirs(self.cache_dir, exist_ok=True)
+        os.makedirs(cache_dir, exist_ok=True)
 
-    def get_cache_filepath(self, cache_key):
+    def get_cache_filepath(self, cache_key, cache_dir):
         # Get the full path to the cache file
-        return os.path.join(self.cache_dir, f'{cache_key}.pkl')
+        return os.path.join(cache_dir, f'{cache_key}.pkl')
 
-    def cache_exists(self, cache_key):
+    def cache_exists(self, cache_key, cache_dir):
         # Check if a cache file exists
-        cache_file = self.get_cache_filepath(cache_key)
+        cache_file = self.get_cache_filepath(cache_key, cache_dir)
         return os.path.exists(cache_file)
 
-    def load_cache(self, cache_key):
+    def load_cache(self, cache_key, cache_dir):
         # Load data from a cache file
-        cache_file = self.get_cache_filepath(cache_key)
+        cache_file = self.get_cache_filepath(cache_key, cache_dir)
         with open(cache_file, 'rb') as f:
             return pickle.load(f)
 
-    def save_cache(self, cache_key, data):
+    def save_cache(self, cache_key, data, cache_dir):
         # Save data to a cache file
-        cache_file = self.get_cache_filepath(cache_key)
+        cache_file = self.get_cache_filepath(cache_key, cache_dir)
         with open(cache_file, 'wb') as f:
             pickle.dump(data, f)
 
-    def remove_cache(self, cache_key):
+    def remove_cache(self, cache_key, cache_dir):
         # Remove a cache file
-        cache_file = self.get_cache_filepath(cache_key)
+        cache_file = self.get_cache_filepath(cache_key, cache_dir)
         os.remove(cache_file)
