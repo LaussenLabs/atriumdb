@@ -421,6 +421,8 @@ class AtriumSDK:
 
         # Get unique file_ids
         file_id_list = list(set([row[3] for row in block_query_result]))
+        if len(file_id_list) == 0:
+            return
         filename_dict = self.get_filename_dict(file_id_list)
 
         # Build caches
