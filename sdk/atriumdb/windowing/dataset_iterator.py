@@ -515,29 +515,6 @@ class DatasetIterator:
                     measure_id, data_start_time, data_end_time, device_id=device_id, patient_id=query_patient_id,
                     return_nan_filled=nan_filled_out)
 
-            # Batch Matrix
-            # Convert times to indices on the matrix using vectorized operations
-            # closest_i_array_matrix = np.floor((measure_sdk_times - batch_start_time) / self.row_period_ns).astype(int)
-            #
-            # # Make sure indices are within bounds
-            # mask = (closest_i_array_matrix >= 0) & (closest_i_array_matrix < batch_size)
-            # closest_i_array_matrix = closest_i_array_matrix[mask]
-            #
-            # # Populate the matrix using vectorized operations
-            # batch_matrix[i, closest_i_array_matrix] = measure_sdk_values[mask]
-            #
-            # # Batch Signals
-            # # Convert times to indices on the matrix using vectorized operations
-            # closest_i_array_signals = np.floor((measure_sdk_times - batch_start_time) / period_ns).astype(int)
-            #
-            # # Make sure indices are within bounds
-            # mask = (closest_i_array_signals >= 0) & (closest_i_array_signals < measure_batch_size)
-            # closest_i_array_signals = closest_i_array_signals[mask]
-
-            # Populate the arrays using vectorized operations
-            # measure_filled_value_array[closest_i_array_signals] = measure_sdk_values[mask]
-            # measure_filled_time_array[closest_i_array_signals] = measure_sdk_times[mask]
-
             # Create Windows
             windowed_measure_times = sliding_window_view(measure_filled_time_array, measure_window_size)
             windowed_measure_values = sliding_window_view(measure_filled_value_array, measure_window_size)
