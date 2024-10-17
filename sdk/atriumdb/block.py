@@ -361,6 +361,11 @@ class Block:
         scale_m_array = np.array([h.scale_m if h.scale_m != 0 else 1.0 for h in headers])
         scale_b_array = np.array([h.scale_b for h in headers])
 
+        # Change scale_m from 0 to 1
+        for i in range(len(headers)):
+            if headers[i].scale_m == 0:
+                headers[i].scale_m = 1.0
+
         if headers[0].v_raw_type == V_TYPE_INT64:
             value_data = np.frombuffer(value_data, dtype=np.int64)
         elif headers[0].v_raw_type == V_TYPE_DOUBLE:
