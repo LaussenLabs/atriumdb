@@ -31,7 +31,7 @@ class WriteBuffer:
         self.flush_all()
         self.sdk._active_buffer = None  # Remove active buffer in the SDK
 
-    def push_messages(self, measure_id, device_id, message_list):
+    def push_segments(self, measure_id, device_id, message_list):
         key = (measure_id, device_id)
         if key not in self.sub_buffers:
             self.sub_buffers[key] = {
@@ -90,7 +90,7 @@ class WriteBuffer:
 
         measure_id, device_id = key
         if sub_buffer['buffered_messages']:
-            self.sdk._write_messages_to_dataset(
+            self.sdk._write_segments_to_dataset(
                 measure_id, device_id, sub_buffer['buffered_messages'], self.gap_tolerance_nano)
 
         if sub_buffer['buffered_time_value_pairs']:

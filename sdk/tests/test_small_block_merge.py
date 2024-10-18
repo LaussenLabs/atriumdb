@@ -145,20 +145,39 @@ def _test_merge_small_block_timestamp(db_type, dataset_location, connection_para
     assert np.array_equal(np.array([151_001, 151_002, 151_003, 151_006, 151_007, 151_008], dtype=np.int64) * 1_000_000_000, r_times)
     assert np.array_equal(np.array([151_001, 151_002, 151_003, 151_006, 151_007, 151_008], dtype=np.int64), r_values)
 
-    # make sure that when the encoded time type is different that the block it wants to merge with an error is raised
-    with pytest.raises(ValueError):
-        sdk.write_data(measure_id, device_id, times, values, 1_000_000_000, time_0=times[0], raw_time_type=1,
+    # make sure that when the encoded time type is different then the block it wants to merge with blocks arnt merged
+    times, values = np.array([151_009, 151_010, 151_011], dtype=np.int64) * 1_000_000_000, np.array([151_009, 151_010, 151_011], dtype=np.int64)
+    sdk.write_data(measure_id, device_id, times, values, 1_000_000_000, time_0=times[0], raw_time_type=1,
                        raw_value_type=1, encoded_time_type=1, encoded_value_type=3, scale_m=0, scale_b=0)
 
-    # make sure that if the encoded value types dont match an error is raised
-    with pytest.raises(ValueError):
-        sdk.write_data(measure_id, device_id, times, values, 1_000_000_000, time_0=times[0], raw_time_type=1,
-                       raw_value_type=1, encoded_time_type=2, encoded_value_type=2, scale_m=0, scale_b=0)
+    headers, r_times, r_values = sdk.get_data(measure_id, 151_000_000_000_000, 152_000_000_000_000, device_id)
 
-    # make sure that when the raw value types are different a value error is raised
-    with pytest.raises(ValueError):
-        sdk.write_data(measure_id, device_id, times, values, 1_000_000_000, time_0=times[0], raw_time_type=1,
-                       raw_value_type=2, encoded_time_type=2, encoded_value_type=2, scale_m=0, scale_b=0)
+    assert len(headers) == 3
+    assert np.array_equal(np.array([151_001, 151_002, 151_003, 151_006, 151_007, 151_008, 151_009, 151_010, 151_011], dtype=np.int64) * 1_000_000_000, r_times)
+    assert np.array_equal(np.array([151_001, 151_002, 151_003, 151_006, 151_007, 151_008, 151_009, 151_010, 151_011], dtype=np.int64), r_values)
+
+    # make sure that if the encoded value types don't match blocks aren't merged
+    times, values = np.array([151_012, 151_013, 151_014], dtype=np.int64) * 1_000_000_000, np.array([151_012.1, 151_013.2, 151_014.3], dtype=np.float64)
+    sdk.write_data(measure_id, device_id, times, values, 1_000_000_000, time_0=times[0], raw_time_type=1,
+                       raw_value_type=2, encoded_time_type=1, encoded_value_type=2, scale_m=0, scale_b=0)
+
+    headers, r_times, r_values = sdk.get_data(measure_id, 151_000_000_000_000, 152_000_000_000_000, device_id)
+
+    assert len(headers) == 4
+    assert np.array_equal(np.array([151_001, 151_002, 151_003, 151_006, 151_007, 151_008, 151_009, 151_010, 151_011, 151_012, 151_013, 151_014], dtype=np.int64) * 1_000_000_000, r_times)
+    assert np.array_equal(np.array([151_001, 151_002, 151_003, 151_006, 151_007, 151_008, 151_009, 151_010, 151_011, 151_012.1, 151_013.2, 151_014.3], dtype=np.float64), r_values)
+
+    # make sure that when the raw value types are different blocks aren't merged
+    times, values = np.array([151_015, 151_016, 151_017], dtype=np.int64) * 1_000_000_000, np.array([151_015, 151_016, 151_017], dtype=np.float64)
+
+    sdk.write_data(measure_id, device_id, times, values, 1_000_000_000, time_0=times[0], raw_time_type=1,
+                       raw_value_type=1, encoded_time_type=1, encoded_value_type=3, scale_m=0, scale_b=0)
+
+    headers, r_times, r_values = sdk.get_data(measure_id, 151_000_000_000_000, 152_000_000_000_000, device_id)
+
+    assert len(headers) == 5
+    assert np.array_equal(np.array([151_001, 151_002, 151_003, 151_006, 151_007, 151_008, 151_009, 151_010, 151_011, 151_012, 151_013, 151_014, 151_015, 151_016, 151_017], dtype=np.int64) * 1_000_000_000, r_times)
+    assert np.array_equal(np.array([151_001, 151_002, 151_003, 151_006, 151_007, 151_008, 151_009, 151_010, 151_011, 151_012.1, 151_013.2, 151_014.3, 151_015, 151_016, 151_017], dtype=np.float64), r_values)
 
 
 def _test_merge_small_block_gap(db_type, dataset_location, connection_params):

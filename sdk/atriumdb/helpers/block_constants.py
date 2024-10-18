@@ -21,3 +21,6 @@ COMPRESSION_LEVELS = {'NONE': [0], "ZSTD": list(range(1, 23)), "LZ4": [0], "LZ4H
 TIME_TYPES = {'TIME_ARRAY_INT64_NS': 1, 'GAP_ARRAY_INT64_INDEX_DURATION_NS': 2, 'GAP_ARRAY_INT64_INDEX_NUM_SAMPLES': 3,
               'START_TIME_NUM_SAMPLES': 4}
 VALUE_TYPES = {'INT64': 1, 'DOUBLE': 2, 'DELTA_INT64': 3, 'XOR_DOUBLE': 4}
+
+TIME_TYPES_STR = {value: key for key, value in TIME_TYPES.items()}
+VALUE_TYPES_STR = {value: key for key, value in VALUE_TYPES.items()}

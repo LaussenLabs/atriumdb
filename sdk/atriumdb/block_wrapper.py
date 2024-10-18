@@ -220,3 +220,30 @@ class WrappedBlockDll:
             analog_block_start_index_array.ctypes.data_as(POINTER(c_uint64)),  # block_start_array as pointer to uint64
             c_uint64(num_blocks)  # num_blocks as uint64
         )
+
+    def fill_nan_array_with_analog(self, value_data: np.ndarray, nan_analog_array: np.ndarray,
+                                   headers: list[BlockMetadata], num_blocks: int, times: np.ndarray,
+                                   start_ns: int, period_ns: float):
+        # Define the array type for BlockMetadata
+        BlockMetadataArray = BlockMetadata * num_blocks
+
+        # Create an array of BlockMetadata
+        headers_array = BlockMetadataArray(*headers)
+
+        analog_block_start_index_array = np.zeros(num_blocks, dtype=np.uint64)
+        total_num_values = 0
+        for i, h in enumerate(headers):
+            analog_block_start_index_array[i] = total_num_values
+            total_num_values += h.num_vals
+
+        self.bc_dll.fill_nan_array_with_analog(
+            value_data.ctypes.data_as(c_void_p),
+            nan_analog_array.ctypes.data_as(POINTER(c_double)),
+            cast(headers_array, POINTER(BlockMetadata)),
+            analog_block_start_index_array.ctypes.data_as(POINTER(c_uint64)),
+            c_uint64(num_blocks),
+            times.ctypes.data_as(POINTER(c_int64)),
+            c_int64(start_ns),
+            c_double(period_ns),
+            c_uint64(len(nan_analog_array))
+        )
