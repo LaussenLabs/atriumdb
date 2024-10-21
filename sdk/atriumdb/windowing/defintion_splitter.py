@@ -78,7 +78,6 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
             return partitioned_definition_objects
 
     # Sort the trials to find the best one.
-    print("best")
     best_trials = sorted(trials_results, key=lambda x: x[0])
 
     # Display the specified number of best trials if verbose is True.
@@ -92,7 +91,6 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
             print("-" * 50)
 
     # Select the best trial based on the metric.
-    print("select")
     best_trial_random_state = best_trials[0][1] if best_trials else random_state
 
     # Rerun the partitioning using the best trial's random state.
