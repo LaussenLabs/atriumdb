@@ -27,6 +27,8 @@ API Reference
    .. automethod:: write_segments
    .. automethod:: write_time_value_pairs
 
+   .. automethod:: load_device
+
    .. automethod:: get_measure_id
    .. automethod:: get_measure_info
    .. automethod:: search_measures
