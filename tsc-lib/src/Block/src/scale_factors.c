@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <omp.h>
 
 
@@ -76,6 +77,75 @@ void convert_value_data_to_analog(const void *value_data, double *analog_values,
                 analog_values[analog_block_start_index_array[i] + j] =
                         (analog_values[analog_block_start_index_array[i] + j] * header.scale_m) + header.scale_b;
             }
+        }
+    }
+}
+
+
+void fill_nan_array_with_analog(const void *value_data, double *nan_analog_array, const block_metadata_t *headers,
+                                const uint64_t *analog_block_start_index_array, uint64_t num_blocks,
+                                const int64_t *times, int64_t start_ns, double period_ns, uint64_t nan_array_length)
+{
+    uint64_t i, j;
+    char *data_pointer;
+    block_metadata_t header;
+    uint64_t analog_index;
+
+    // Parallel processing of blocks
+    #pragma omp parallel for default(none) private(i, j, data_pointer, header, analog_index) \
+        shared(headers, value_data, nan_analog_array, analog_block_start_index_array, num_blocks, times, \
+               start_ns, period_ns, nan_array_length)
+    for(i = 0; i < num_blocks; i++) {
+        header = headers[i];
+        analog_index = analog_block_start_index_array[i];
+
+        // Calculate data_pointer
+        data_pointer = (char*)value_data + (analog_index) * sizeof(int64_t);
+        const int64_t *block_times = times + analog_index;
+
+        if(header.v_raw_type == V_TYPE_INT64) {
+            // Interpret as int64_t
+            for(j = 0; j < header.num_vals; j++) {
+                int64_t int_value;
+                memcpy(&int_value, data_pointer, sizeof(int64_t));
+                double analog_value = (double)int_value;
+                data_pointer += sizeof(int64_t);
+
+                // Apply scale factors
+                analog_value = analog_value * header.scale_m + header.scale_b;
+
+                // Compute index into nan_analog_array
+                int64_t time = block_times[j];
+                int64_t nan_index = (int64_t)round((double)(time - start_ns) / period_ns);
+
+                if(nan_index >= 0 && nan_index < (int64_t)nan_array_length) {
+                    nan_analog_array[nan_index] = analog_value;
+                }
+            }
+        }
+        else if(header.v_raw_type == V_TYPE_DOUBLE) {
+            // Interpret as double
+            for(j = 0; j < header.num_vals; j++) {
+                double double_value;
+                memcpy(&double_value, data_pointer, sizeof(double));
+                double analog_value = double_value;
+                data_pointer += sizeof(double);
+
+                // Apply scale factors
+                analog_value = analog_value * header.scale_m + header.scale_b;
+
+                // Compute index into nan_analog_array
+                int64_t time = block_times[j];
+                int64_t nan_index = (int64_t)round((double)(time - start_ns) / period_ns);
+
+                if(nan_index >= 0 && nan_index < (int64_t)nan_array_length) {
+                    nan_analog_array[nan_index] = analog_value;
+                }
+            }
+        } else {
+            // Unsupported value type
+            printf("ERROR: Header had an unsupported raw value type: %d\n", header.v_raw_type);
+            continue;
         }
     }
 }
