@@ -1079,6 +1079,7 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
     # Cases Taken into account:
     # if scale_m and/or scale_b vary between blocks of the same measure.
     # If the frequency (in nanohertz) of each signal divides 10^18.
+    original_block_size = sdk.block.block_size
     sdk.block.block_size = values_per_block
 
     measures = sdk.get_all_measures()
@@ -1197,6 +1198,8 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
             for filename in filename_dict.values():
                 file_path = sdk.file_api.to_abs_path(filename, measure_id, device_id)
                 sdk.file_api.remove(file_path)
+
+    sdk.block.block_size = original_block_size
 
 
 def group_sorted_block_list(sorted_block_list, num_values_per_group=8388608):
