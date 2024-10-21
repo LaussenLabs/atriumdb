@@ -13,18 +13,27 @@ class FilteredDatasetIterator(DatasetIterator):
     useful in scenarios where specific criteria need to be applied to determine which data windows are relevant for
     further processing or analysis.
 
-    :param window_filter_fn: Function to filter windows during iteration. Takes a window object as input and returns
+    :param function window_filter_fn: Function to filter windows during iteration. Takes a window object as input and returns
         True if the window should be included in the iteration, and False if it should be omitted. This allows for
         customized filtering based on specific criteria set within the function.
-    :type window_filter_fn: function, optional
     """
     def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
-                 label_threshold=0.5, time_units=None, shuffle=False, max_cache_duration=None, window_filter_fn=None,
+                 label_threshold=0.5, shuffle=False, max_cache_duration=None, window_filter_fn=None,
                  patient_history_fields: list = None):
-        super().__init__(sdk, validated_measure_list, validated_label_set_list, validated_sources,
-                         window_duration_ns, window_slide_ns, num_windows_prefetch, label_threshold, time_units,
-                         shuffle, max_cache_duration, patient_history_fields)
+        super().__init__(
+            sdk=sdk,
+            validated_measure_list=validated_measure_list,
+            validated_label_set_list=validated_label_set_list,
+            validated_sources=validated_sources,
+            window_duration_ns=window_duration_ns,
+            window_slide_ns=window_slide_ns,
+            num_windows_prefetch=num_windows_prefetch,
+            label_threshold=label_threshold,
+            shuffle=shuffle,
+            max_cache_duration=max_cache_duration,
+            patient_history_fields=patient_history_fields
+        )
         self.window_filter_fn = window_filter_fn
 
     def _load_batch_matrix(self, idx: int):

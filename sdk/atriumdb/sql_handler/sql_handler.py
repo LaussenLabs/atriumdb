@@ -200,6 +200,40 @@ class SQLHandler(ABC):
             # Delete block data
             cursor.execute("DELETE FROM block_index WHERE id = ?", (int(block_id),))
 
+    def select_blocks_for_device(self, device_id: int, measure_ids: int|List[int] = None):
+        """
+        Fetch block index data for the device (and measures if specified).
+        """
+        # Normalize measure_ids to a list if it's an integer
+        if measure_ids is not None:
+            if isinstance(measure_ids, int):
+                measure_ids = [measure_ids]
+            elif not isinstance(measure_ids, list):
+                raise TypeError("measure_ids must be an int, a list of ints, or None.")
+
+            # Build placeholders for SQL IN clause
+            placeholders = ','.join(['?'] * len(measure_ids))
+            block_query = f"""
+            SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
+            FROM block_index
+            WHERE device_id = ? AND measure_id IN ({placeholders})
+            ORDER BY measure_id, device_id, start_time_n ASC;
+            """
+            args = [int(device_id)] + [int(mid) for mid in measure_ids]
+        else:
+            # Fetch blocks for the device across all measures
+            block_query = """
+            SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
+            FROM block_index
+            WHERE device_id = ?
+            ORDER BY measure_id, device_id, start_time_n ASC;
+            """
+            args = [int(device_id)]
+
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(block_query, args)
+            return cursor.fetchall()
+
     @abstractmethod
     def select_interval(self, interval_id: Optional[int] = None, measure_id: Optional[int] = None, device_id: Optional[int] = None,
                         start_time_n: Optional[int] = None, end_time_n: Optional[int] = None):
