@@ -14,10 +14,9 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import warnings
-
 import numpy as np
-
 import threading
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
@@ -33,15 +32,16 @@ from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_li
     overwrite_default_setting
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME, \
     ALLOWABLE_PROTECTED_MODE_SETTINGS
+from atriumdb.helpers.block_constants import TIME_TYPES_STR, VALUE_TYPES_STR
 from atriumdb.block_wrapper import BlockMetadata
 from atriumdb.intervals.intervals import Intervals
 import time
 import atexit
 from pathlib import Path, PurePath
-from multiprocessing import cpu_count
 import sys
 import os
 from typing import Union, List, Tuple, Optional
+import platform
 
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
@@ -103,6 +103,7 @@ class AtriumSDK:
     :param str tsc_file_location: A file path pointing to the directory in which the TSC (time series compression) files are written for this dataset. Used to customize the TSC directory location, rather than using `dataset_location/tsc`.
     :param str atriumdb_lib_path: A file path pointing to the shared library (CDLL) that powers the compression and decompression. Not required for most users.
     :param bool no_pool: If true disables Mariadb connection pooling, instead using a new connection for each query.
+    :param AtriumFileHandler storage_handler: Advanced feature. If you implement your own atriumdb file handler you can set it here.
 
     Examples:
     -----------
@@ -135,7 +136,7 @@ class AtriumSDK:
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
                  connection_params: dict = None, num_threads: int = 1, api_url: str = None, token: str = None,
                  refresh_token=None, validate_token=True, tsc_file_location: str = None, atriumdb_lib_path: str = None,
-                 no_pool=False):
+                 no_pool=False, storage_handler: AtriumFileHandler = None):
 
         self.dataset_location = dataset_location
 
@@ -146,6 +147,8 @@ class AtriumSDK:
         self.metadata_connection_type = metadata_connection_type
 
         # Set the C DLL path based on the platform if not provided
+        if platform.system() == "Darwin":
+            raise OSError("AtriumSDK is not currently supported on macOS.")
         if atriumdb_lib_path is None:
             if sys.platform == "win32":
                 shared_lib_filename = shared_lib_filename_windows
@@ -159,7 +162,7 @@ class AtriumSDK:
         self.block = Block(atriumdb_lib_path, num_threads)
 
         # Initialize write buffer param
-        self._buffer = {}
+        self._active_buffer = None
 
         # Setup SQL Handler
         self.sql_handler = None
@@ -188,7 +191,7 @@ class AtriumSDK:
             # Initialize the SQLiteHandler with the database file path
             self.sql_handler = SQLiteHandler(db_file)
             self.mode = "local"
-            self.file_api = AtriumFileHandler(tsc_file_location)
+            self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
             self.settings_dict = self._get_all_settings()
 
         # Handle MySQL or MariaDB connections
@@ -216,7 +219,7 @@ class AtriumSDK:
             # Initialize the MariaDBHandler with the connection parameters
             self.sql_handler = MariaDBHandler(host, user, password, database, port, no_pool=no_pool)
             self.mode = "local"
-            self.file_api = AtriumFileHandler(tsc_file_location)
+            self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
             self.settings_dict = self._get_all_settings()
 
         # Handle API connections
@@ -403,7 +406,7 @@ class AtriumSDK:
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
                  freq: Union[int, float] = None, units: str = None, freq_units: str = None,
-                 device_tag: str = None, mrn: int = None):
+                 device_tag: str = None, mrn: int = None, return_nan_filled: bool = False):
         """
         The method for querying data from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
         time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
@@ -429,6 +432,7 @@ class AtriumSDK:
             "Hz", "kHz", "MHz"] default "nHz".
         :param str device_tag: A string identifying the device. Exclusive with device_id.
         :param int mrn: Medical record number for the patient. Exclusive with patient_id.
+        :param bool return_nan_filled: Whether or not to fill missing values from start to end with np.nan.
 
         :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
         :returns: List of Block header objects, 1D numpy array for time data, 1D numpy array for value data.
@@ -481,6 +485,10 @@ class AtriumSDK:
 
             # if no matching block ids
             if len(read_list) == 0:
+                if return_nan_filled:
+                    period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
+                    expected_num_values = round((end_time_n - start_time_n) / period_ns)
+                    return [], np.full(expected_num_values, np.nan, dtype=np.float64)
                 return [], np.array([]), np.array([])
 
             # Map file_ids to filenames and return a dictionary.
@@ -498,6 +506,10 @@ class AtriumSDK:
             # if no matching block ids
             if len(block_list) == 0:
                 return [], np.array([]), np.array([])
+
+        if return_nan_filled:
+            return self.get_data_from_blocks(block_list, filename_dict, start_time_n, end_time_n, analog, time_type,
+                                             return_nan_gap=True)
 
         # Read and decode the blocks.
         headers, r_times, r_values = self.get_data_from_blocks(block_list, filename_dict, start_time_n,
@@ -519,7 +531,7 @@ class AtriumSDK:
         return headers, r_times, r_values
 
     def get_data_from_blocks(self, block_list, filename_dict, start_time_n, end_time_n, analog=True,
-                             time_type=1, sort=True, allow_duplicates=True):
+                             time_type=1, sort=True, allow_duplicates=True, return_nan_gap=False):
         """
         Retrieve data from blocks.
 
@@ -536,14 +548,12 @@ class AtriumSDK:
         :param bool sort: Whether to sort the returned data by time.
         :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
         nothing if sort is false.
+        :param bool return_nan_gap: Whether or not to return values as a list of nans from start to end.
         :return: Tuple containing headers, times, and values.
         :rtype: tuple
         """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this function.")
-
-        # Start performance benchmark
-        start_bench = time.perf_counter()
 
         # Condense the block list for optimized reading
         read_list = condense_byte_read_list(block_list)
@@ -551,10 +561,13 @@ class AtriumSDK:
         # Read the data from the files using the read list
         encoded_bytes = self.file_api.read_file_list(read_list, filename_dict)
 
-        _LOGGER.debug(f"read from disk {round((time.perf_counter() - start_bench) * 1000, 4)} ms")
-
         # Extract the number of bytes for each block
         num_bytes_list = [row[5] for row in block_list]
+
+        if return_nan_gap:
+            return self.block.decode_blocks(
+                encoded_bytes, num_bytes_list, analog=True, time_type=1, return_nan_gap=True,
+                start_time_n=start_time_n, end_time_n=end_time_n)
 
         # Decode the data and separate it into headers, times, and values
         r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
@@ -583,10 +596,7 @@ class AtriumSDK:
         # Get the number of bytes for each block
         num_bytes_list = [row['num_bytes'] for row in block_info_list]
 
-        # tik = time.perf_counter()
         encoded_bytes = self._block_websocket_request(block_info_list)
-        # print(f"Time for {len(block_info_list)} blocks over websocket: {round((time.perf_counter() - tik) * 1000, 4)} ms")
-        # print(f"Mb/s is {(np.sum(num_bytes_list)/(time.perf_counter() - tik))/1_000_000}\n")\
 
         # Decode the concatenated bytes to get headers, request times and request values
         r_times, r_values, headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
@@ -785,10 +795,18 @@ class AtriumSDK:
             raise NotImplementedError("API mode is not supported for writing data.")
 
         # Ensure there is data to be written
-        assert value_data.size > 0, "Cannot write no data."
+        assert value_data.size > 0, "There are no values in the value array to write. Cannot write no data."
 
         # Ensure time data is of integer type
         assert np.issubdtype(time_data.dtype, np.integer), "Time information must be encoded as an integer."
+
+        # check that value types make sense
+        if not ((raw_value_type == 1 and encoded_value_type == 3) or (raw_value_type == encoded_value_type)):
+            raise ValueError(f"Cannot encode raw value type {VALUE_TYPES_STR[raw_value_type]} to encoded value type {VALUE_TYPES_STR[encoded_value_type]}")
+
+        # check that time types make sense
+        if not ((raw_time_type == 1 and encoded_time_type == 2) or (raw_time_type == encoded_time_type)):
+            raise ValueError(f"Cannot encode raw time type {TIME_TYPES_STR[raw_time_type]} to encoded time type {TIME_TYPES_STR[encoded_time_type]}")
 
         # Set default interval index and ensure valid type.
         interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
@@ -859,7 +877,7 @@ class AtriumSDK:
             # find the closest block to the data we are trying to insert
             old_block, end_block = self.sql_handler.select_closest_block(measure_id, device_id, time_0, end_time)
 
-            # if the new block goes on the end and the current end block is full then don't try to merge blocks
+            # if the new block goes on the end and the current end block is full then skip this and don't merge blocks
             if old_block is not None and not (end_block and (old_block[8] > self.block.block_size)):
                 # get the file info for the block we are going to merge these values into
                 file_info = self.sql_handler.select_file(file_id=old_block[3])
@@ -870,23 +888,24 @@ class AtriumSDK:
                 header = self.block.decode_headers(encoded_bytes_old, np.array([0], dtype=np.uint64))
 
                 # make sure the time and value types of the block your merging with match
+                same_type = True
                 if header[0].t_encoded_type != encoded_time_type:
-                    raise ValueError(f"The time type ({encoded_time_type}) you are trying to encode the times as "
-                                     f"doesn't match the encoded time type ({header[0].t_encoded_type}) of the block "
-                                     f"you are trying to merge with. Either change the encoded time type to match or"
-                                     f" set merge_blocks to false.")
+                    same_type = False
+                    _LOGGER.warning(f"The time type ({TIME_TYPES_STR[encoded_time_type]}) you are trying to encode the times as "
+                                     f"doesn't match the encoded time type ({TIME_TYPES_STR[header[0].t_encoded_type]}) of the block "
+                                     f"you are trying to merge with.")
                 elif header[0].v_encoded_type != encoded_value_type:
-                    raise ValueError(f"The value type ({encoded_value_type}) you are trying to encode the values as "
-                                     f"doesn't match the encoded value type ({header[0].v_encoded_type}) of the block "
-                                     f"you are trying to merge with. Either change the encoded value type to match or"
-                                     f" set merge_blocks to false.")
+                    same_type = False
+                    _LOGGER.warning(f"The value type ({VALUE_TYPES_STR[encoded_value_type]}) you are trying to encode the values as "
+                                     f"doesn't match the encoded value type ({VALUE_TYPES_STR[header[0].v_encoded_type]}) of the block "
+                                     f"you are trying to merge with.")
                 elif header[0].v_raw_type != raw_value_type:
-                    raise ValueError(f"The raw value type ({raw_value_type}) doesn't match the raw value type "
-                                     f"({header[0].v_raw_type}) of the block you are trying to merge with. Either "
-                                     f"change the raw value type to match or set merge_blocks to false.")
+                    same_type = False
+                    _LOGGER.warning(f"The raw value type ({VALUE_TYPES_STR[raw_value_type]}) doesn't match the raw value type "
+                                     f"({VALUE_TYPES_STR[header[0].v_raw_type]}) of the block you are trying to merge with.")
 
                 # make sure the scale factors match. If they don't then don't merge the blocks
-                if header[0].scale_m == scale_m and header[0].scale_b == scale_b:
+                if same_type and header[0].scale_m == scale_m and header[0].scale_b == scale_b:
                     # if the original time type of the old block is not the same as the time type of the data we are
                     # trying to save, we need to make them the same
                     if header[0].t_raw_type != raw_time_type:
@@ -952,7 +971,7 @@ class AtriumSDK:
 
             # remove the tsc file from disk if it is no longer needed
             if old_tsc_file_name is not None:
-                os.remove(self.file_api.to_abs_path(filename=old_tsc_file_name, measure_id=measure_id, device_id=device_id))
+                self.file_api.remove(self.file_api.to_abs_path(filename=old_tsc_file_name, measure_id=measure_id, device_id=device_id))
 
         # If data was overwritten
         elif overwrite_file_dict is not None:
@@ -976,59 +995,54 @@ class AtriumSDK:
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
 
-    def write_buffer(self, measure_id: int, device_id: int, max_values_buffered=None, gap_tolerance=0,
+    def write_buffer(self, max_values_per_measure_device=None, max_total_values_buffered=None, gap_tolerance=0,
                      time_units=None):
         """
-        Create a buffer Context Object for the given measure-device pair, to batch incoming messages/signals until they hit some threshold,
-        are manually flushed to the dataset or are automatically flushed by exiting the context opened by this object.
+        Create a buffer Context Object to batch incoming segments/signals until they hit some threshold,
+        are manually flushed to the dataset, or are automatically flushed by exiting the context opened by this object.
 
-        :param int measure_id: The buffer will be specific to this measure_id.
-        :param int device_id: The buffer will be specific to this device_id.
-        :param int max_values_buffered: (Optional) If the buffer ever goes over this number of values, the data will be automatically flushed to the dataset.
+        :param int max_values_per_measure_device: (Optional) If the buffer for a measure-device pair ever goes over this number of values,
+            the data will be automatically flushed to the dataset. Defaults to 100 blocks.
+        :param int max_total_values_buffered: (Optional) If the total number of buffered values across all measure-device pairs
+            exceeds this number, the oldest buffer that has values in it will be automatically flushed. Defaults to 10,000 blocks.
         :param float gap_tolerance: (Optional) Merges sequential intervals from the AtriumSDK.get_interval_array method that have a duration between them
             less than gap_tolerance, specified in `time_units` units (default "s").
-        :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is seconds.
+        :param str time_units: (Optional) Unit for `gap_tolerance`, which can be one of ["s", "ms", "us", "ns"]. Must be specified if gap_tolerance is given.
 
         Example:
 
-            >>> import numpy as np
-            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
-            >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
-            >>> device_id = sdk.insert_device(device_tag="test_device")
-
             >>> # Using write_buffer for batched writes
-            >>> with sdk.write_buffer(measure_id, device_id, max_values_buffered=100) as buffer:
-            ...     # Write multiple small messages to buffer
+            >>> with sdk.write_buffer(max_values_per_measure_device=100, max_total_values_buffered=1000) as buffer:
+            ...     # Write multiple small segments to buffer
             ...     for i in range(5):
             ...         message_values = np.arange(i * 10, (i + 1) * 10)
             ...         start_time = i * 10.0
-            ...         sdk.write_message(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
+            ...         sdk.write_segment(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
             ...     # Buffer auto-flushes when context is exited
 
         **Notes:**
 
-        - Each buffer only works on one measure-device combination. If you must ingest multiple measures or multiple devices at one time, you must use multiple buffers.
+        - The buffer will manage sub-buffers for each measure-device combination used within its context.
 
         """
         return WriteBuffer(
             self,
-            measure_id,
-            device_id,
-            max_values_buffered=max_values_buffered,
+            max_values_per_measure_device=max_values_per_measure_device,
+            max_total_values_buffered=max_total_values_buffered,
             gap_tolerance=gap_tolerance,
             time_units=time_units,
         )
 
-    def write_message(self, measure_id: int, device_id: int, message_values: np.ndarray, start_time: float,
+    def write_segment(self, measure_id: int, device_id: int, segment_values: np.ndarray, start_time: float | int,
                       period: float = None, freq: float = None, time_units: str = None,
                       freq_units: str = None, scale_m: float = None, scale_b: float = None):
         """
-        Write a single message consisting of contiguous values starting at a specific time.
+        Write a single segment consisting of contiguous values starting at a specific time.
 
         :param int measure_id: Identifier for the measure, corresponding to the measures table in the linked relational database.
         :param int device_id: Identifier for the device, corresponding to the devices table in the linked relational database.
-        :param np.ndarray message_values: List or 1D numpy array of contiguous values to write.
-        :param float start_time: Epoch time when the message starts. If `time_units` is specified, `start_time` is assumed to be in those units.
+        :param np.ndarray segment_values: List or 1D numpy array of contiguous values to write.
+        :param float start_time: Epoch time when the segment starts. If `time_units` is specified, `start_time` is assumed to be in those units.
         :param float period: (Optional) Sampling period of the data to be written. Only one of `period` or `freq` should be specified.
                              If units other than the default (seconds) are used, specify the desired unit using the `time_units` parameter.
         :param float freq: (Optional) Sampling frequency of the data to be written. Only one of `period` or `freq` should be specified.
@@ -1045,27 +1059,27 @@ class AtriumSDK:
             >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
             >>> device_id = sdk.insert_device(device_tag="test_device")
 
-            >>> # Inserting a single message
-            >>> message_values = np.arange(50)  # Continuous values from 0 to 49
+            >>> # Inserting a single segment
+            >>> segment_values = np.arange(50)  # Continuous values from 0 to 49
             >>> start_time = 0.0  # Start time in seconds
-            >>> sdk.write_message(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
+            >>> sdk.write_segment(measure_id, device_id, segment_values, start_time, freq=1.0, freq_units="Hz")
 
         **Notes:**
 
         - This method is ideal for writing continuous sequences of data that start at a specific time and have uniform sampling intervals.
         - Output from medical monitors, or wfdb Records from physionet dataset typically have this format.
-        - If you have multiple messages to write, consider using `write_messages` for better performance.
+        - If you have multiple segments to write, consider using `write_segments` for better performance.
 
         """
-        # Wrap the single message and start time into lists to use with write_messages
-        messages = [message_values]
+        # Wrap the single segment and start time into lists to use with write_segments
+        segments = [segment_values]
         start_times = [start_time]
 
-        # Call write_messages with the single message
-        self.write_messages(
+        # Call write_segments with the single segment
+        self.write_segments(
             measure_id=measure_id,
             device_id=device_id,
-            messages=messages,
+            segments=segments,
             start_times=start_times,
             period=period,
             freq=freq,
@@ -1075,18 +1089,18 @@ class AtriumSDK:
             scale_b=scale_b
         )
 
-    def write_messages(self, measure_id: int, device_id: int, messages: list, start_times: list,
+    def write_segments(self, measure_id: int, device_id: int, segments: List[np.ndarray], start_times: List[float | int],
                        period: float = None, freq: float = None, time_units: str = None,
                        freq_units: str = None, scale_m: float = None, scale_b: float = None):
         """
-        Write multiple messages consisting of value arrays and corresponding start times.
+        Write multiple segments consisting of value arrays and corresponding start times.
 
         :param int measure_id: Identifier for the measure, corresponding to the measures table in the linked relational database.
         :param int device_id: Identifier for the device, corresponding to the devices table in the linked relational database.
-        :param List[ndarray] messages: Each list item is a numpy array of contiguous values that corresponds to a `start_time`
+        :param List[ndarray] segments: Each list item is a numpy array of contiguous values that corresponds to a `start_time`
             from an equally sized start_times list.
-        :param List[int|float] start_times: Each list item is a float or int representing a start time corresponds to a `message`
-            from an equally sized messages list.
+        :param List[int|float] start_times: Each list item is a float or int representing a start time that corresponds to a `segment`
+            from an equally sized segments list.
         :param float period: (Optional) Sampling period of the data to be written. Only one of `period` or `freq` should be specified.
             If units other than the default (seconds) are used, specify the desired unit using the `time_units` parameter.
         :param float freq: (Optional) Sampling frequency of the data to be written. Only one of `period` or `freq` should be specified.
@@ -1094,9 +1108,9 @@ class AtriumSDK:
         :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is seconds.
         :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b).
-            It may be a single number or a list with one number per message
+            It may be a single number or a list with one number per segment
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b).
-            It may be a single number or a list with one number per message
+            It may be a single number or a list with one number per segment
 
         Example:
 
@@ -1105,14 +1119,14 @@ class AtriumSDK:
             >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
             >>> device_id = sdk.insert_device(device_tag="test_device")
 
-            >>> # Inserting multiple messages at once
-            >>> messages = [np.arange(10), np.arange(10, 20), np.arange(20, 30)]
-            >>> start_times = [0.0, 10.0, 20.0]  # Start times in seconds for each message
-            >>> sdk.write_messages(measure_id, device_id, messages, start_times, freq=1.0, freq_units="Hz")
+            >>> # Inserting multiple segments at once
+            >>> segments = [np.arange(10), np.arange(10, 20), np.arange(20, 30)]
+            >>> start_times = [0.0, 10.0, 20.0]  # Start times in seconds for each segment
+            >>> sdk.write_segments(measure_id, device_id, segments, start_times, freq=1.0, freq_units="Hz")
 
         **Notes:**
 
-        - This method is optimized for batch writing of messages and is more efficient than calling `write_message` multiple times.
+        - This method is optimized for batch writing of segments and is more efficient than calling `write_segment` multiple times.
 
         """
         if self.metadata_connection_type == "api":
@@ -1150,12 +1164,12 @@ class AtriumSDK:
             freq_nano = measure_info["freq_nhz"]
 
         # Create message list for writing.
-        scale_m_list = scale_m if isinstance(scale_m, list) else [scale_m] * len(messages)
-        scale_b_list = scale_b if isinstance(scale_b, list) else [scale_b] * len(messages)
-        write_messages = []
-        for values, start_time, m, b in zip(messages, start_times, scale_m_list, scale_b_list):
+        scale_m_list = scale_m if isinstance(scale_m, list) else [scale_m] * len(segments)
+        scale_b_list = scale_b if isinstance(scale_b, list) else [scale_b] * len(segments)
+        write_segments = []
+        for values, start_time, m, b in zip(segments, start_times, scale_m_list, scale_b_list):
             if not isinstance(values, np.ndarray):
-                raise ValueError(f"Individual messages must be numpy arrays, not {type(values)}")
+                raise ValueError(f"Individual segments must be numpy arrays, not {type(values)}")
 
             if isinstance(start_time, np.generic):
                 start_time = start_time.item()
@@ -1169,43 +1183,43 @@ class AtriumSDK:
                 'scale_b': b,
                 'freq_nhz': freq_nano,
             }
-            write_messages.append(message_dict)
+            write_segments.append(message_dict)
 
 
-        if self._buffer.get((measure_id, device_id)) is None:
+        if self._active_buffer is None:
             # Write immediately to disk
             interval_gap_tolerance_nano = 0
 
-            self._write_messages_to_dataset(measure_id, device_id, write_messages, interval_gap_tolerance_nano)
+            self._write_segments_to_dataset(measure_id, device_id, write_segments, interval_gap_tolerance_nano)
         else:
-            # Push new messages to the buffer
-            self._buffer[(measure_id, device_id)].push_messages(write_messages)
+            # Push new segments to the buffer
+            self._active_buffer.push_segments(measure_id, device_id, write_segments)
 
-    def _write_messages_to_dataset(self, measure_id, device_id, write_messages, interval_gap_tolerance_nano=0):
-        sorted_messages = sorted(write_messages, key=lambda x: x['start_time_nano'])
+    def _write_segments_to_dataset(self, measure_id, device_id, write_segments, interval_gap_tolerance_nano=0):
+        sorted_segments = sorted(write_segments, key=lambda x: x['start_time_nano'])
         message_start_epoch_array = []
         message_size_array = []
-        freq_nhz = sorted_messages[0]['freq_nhz']
-        scale_m = sorted_messages[0]['scale_m']
-        scale_b = sorted_messages[0]['scale_b']
-        message_dtype = sorted_messages[0]['values'].dtype
-        for message in sorted_messages:
+        freq_nhz = sorted_segments[0]['freq_nhz']
+        scale_m = sorted_segments[0]['scale_m']
+        scale_b = sorted_segments[0]['scale_b']
+        message_dtype = sorted_segments[0]['values'].dtype
+        for message in sorted_segments:
             message_start_epoch_array.append(message['start_time_nano'])
             message_size_array.append(message['values'].size)
 
             if message['freq_nhz'] != freq_nhz:
-                raise ValueError("Messages inserted do not all have the same frequency. "
-                                 "If you want to ingest messages for the same signal with different frequencies, "
+                raise ValueError("Segments inserted do not all have the same frequency. "
+                                 "If you want to ingest segments for the same signal with different frequencies, "
                                  "you must insert them separately.")
             if message['scale_m'] != scale_m or message['scale_b'] != scale_b:
-                raise ValueError("Messages inserted do not all have the same scale factors.")
+                raise ValueError("Segments inserted do not all have the same scale factors.")
             if message['values'].dtype != message_dtype:
-                raise ValueError("Messages inserted do not all have the same dtype.")
-        # Convert messages to gap_data
+                raise ValueError("Segments inserted do not all have the same dtype.")
+        # Convert segments to gap_data
         gap_data = create_gap_arr_from_variable_messages(
             message_start_epoch_array, message_size_array, freq_nhz)
-        value_data = np.concatenate([message['values'] for message in sorted_messages])
-        time_0 = int(sorted_messages[0]['start_time_nano'])
+        value_data = np.concatenate([message['values'] for message in sorted_segments])
+        time_0 = int(sorted_segments[0]['start_time_nano'])
         write_intervals = find_intervals(freq_nhz, 2, gap_data, time_0, int(value_data.size))
         # Encode the block(s)
         if np.issubdtype(value_data.dtype, np.integer):
@@ -1321,13 +1335,13 @@ class AtriumSDK:
             'freq_nhz': freq_nano
         }
 
-        if self._buffer.get((measure_id, device_id)) is None:
+        if self._active_buffer is None:
             # Ingest Immediately
             interval_gap_tolerance_nano = 0
             self._write_time_value_pairs_to_dataset(measure_id, device_id, [data_dict], interval_gap_tolerance_nano)
         else:
             # Push data to buffer
-            self._buffer[(measure_id, device_id)].push_time_value_pair(data_dict)
+            self._active_buffer.push_time_value_pairs(measure_id, device_id, data_dict)
 
     def _write_time_value_pairs_to_dataset(self, measure_id, device_id, data_dicts, interval_gap_tolerance_nano=0):
         # Ensure consistency across data_dicts

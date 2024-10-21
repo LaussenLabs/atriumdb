@@ -58,7 +58,7 @@ def _test_write_message(db_type, dataset_location, connection_params):
     start_time = 0.0  # Start at time 0
 
     # Write the message
-    sdk.write_message(measure_id, device_id, message_values, start_time, freq=freq, freq_units='Hz')
+    sdk.write_segment(measure_id, device_id, message_values, start_time, freq=freq, freq_units='Hz')
 
     # Check the blocks
     blocks = get_all_blocks(sdk, measure_id, device_id)
@@ -91,7 +91,7 @@ def _test_write_messages(db_type, dataset_location, connection_params):
     start_times = [0.0, 10.0, 20.0]  # Start times in seconds
 
     # Write the messages
-    sdk.write_messages(measure_id, device_id, messages, start_times, freq=freq, freq_units='Hz')
+    sdk.write_segments(measure_id, device_id, messages, start_times, freq=freq, freq_units='Hz')
 
     # Check the blocks
     blocks = get_all_blocks(sdk, measure_id, device_id)
@@ -128,13 +128,13 @@ def _test_write_buffer(db_type, dataset_location, connection_params):
     max_values_buffered = 20
 
     # Use write_buffer with max_values_buffered
-    with sdk.write_buffer(measure_id, device_id, max_values_buffered=max_values_buffered) as buffer:
+    with sdk.write_buffer(max_values_per_measure_device=max_values_buffered) as buffer:
         # Write multiple small messages to buffer
         message_values_list = [np.array([i]) for i in range(43)]  # 43 messages of 1 value each
         start_time = 0.0
         for idx, message_values in enumerate(message_values_list):
             current_start_time = start_time + idx  # Each message at a different time
-            sdk.write_message(measure_id, device_id, message_values, current_start_time, freq=freq, freq_units='Hz')
+            sdk.write_segment(measure_id, device_id, message_values, current_start_time, freq=freq, freq_units='Hz')
 
             # Check if buffer has automatically flushed after exceeding max_values_buffered
             if (idx + 1) % max_values_buffered == 0:
@@ -204,7 +204,7 @@ def _test_write_time_value_pairs_buffered(db_type, dataset_location, connection_
     total_pairs = 43
     current_time = 0.0
 
-    with sdk.write_buffer(measure_id, device_id, max_values_buffered=max_values_buffered) as buffer:
+    with sdk.write_buffer(max_values_per_measure_device=max_values_buffered) as buffer:
         for idx in range(total_pairs):
             current_time += period
             time = np.array([current_time])
@@ -297,7 +297,7 @@ def _test_comprehensive(db_type, dataset_location, connection_params):
     start_time = 0.0
 
     # Write the message
-    sdk.write_message(measure_id, device_id, message_values, start_time, freq=freq, freq_units='Hz')
+    sdk.write_segment(measure_id, device_id, message_values, start_time, freq=freq, freq_units='Hz')
 
     # Check blocks after write_message
     blocks = get_all_blocks(sdk, measure_id, device_id)
@@ -321,7 +321,7 @@ def _test_comprehensive(db_type, dataset_location, connection_params):
     start_times = [100.0, 110.0, 120.0]
 
     # Write the messages
-    sdk.write_messages(measure_id, device_id, messages, start_times, freq=freq, freq_units='Hz')
+    sdk.write_segments(measure_id, device_id, messages, start_times, freq=freq, freq_units='Hz')
 
     # Check blocks after write_messages
     blocks = get_all_blocks(sdk, measure_id, device_id)
@@ -342,13 +342,13 @@ def _test_comprehensive(db_type, dataset_location, connection_params):
     # --- Part 3: Test write_buffer with automatic flushing and small write_message calls ---
 
     # Use write_buffer with max_values_buffered
-    with sdk.write_buffer(measure_id, device_id, max_values_buffered=max_values_buffered) as buffer:
+    with sdk.write_buffer(max_values_per_measure_device=max_values_buffered) as buffer:
         # Write multiple small messages to buffer
         message_values_list = [np.array([i]) for i in range(130, 173)]  # 43 messages of 1 value each
         start_time = 130.0
         for idx, message_values in enumerate(message_values_list):
             current_start_time = start_time + idx
-            sdk.write_message(measure_id, device_id, message_values, current_start_time, freq=freq, freq_units='Hz')
+            sdk.write_segment(measure_id, device_id, message_values, current_start_time, freq=freq, freq_units='Hz')
 
             # Check for automatic buffer flush
             if (idx + 1) % max_values_buffered == 0:
@@ -390,3 +390,89 @@ def _test_comprehensive(db_type, dataset_location, connection_params):
     # Create expected values by concatenating all messages
     expected_values = np.arange(total_values)
     assert np.array_equal(value_data, expected_values), "Data mismatch in write_buffer test."
+
+
+def test_multi_buffer():
+    _test_for_both(DB_NAME_COMPREHENSIVE, _test_multi_buffer)
+
+def _test_multi_buffer(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    # Insert multiple measures and devices
+    measure_ids = []
+    device_ids = []
+    num_measures = 2
+    num_devices = 2
+
+    freq = 1.0  # 1 Hz
+    for i in range(num_measures):
+        measure_tag = f'test_measure_{i}'
+
+        measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq, freq_units='Hz')
+        measure_ids.append(measure_id)
+
+    for i in range(num_devices):
+        device_tag = f'test_device_{i}'
+        device_id = sdk.insert_device(device_tag=device_tag)
+        device_ids.append(device_id)
+
+    # Set target block size to 10
+    target_block_size = 10
+    sdk.block.block_size = target_block_size
+
+    max_values_per_measure_device = 20
+
+    max_total_values_buffered = 100
+
+    # Use write_buffer with specified max values
+    with sdk.write_buffer(max_values_per_measure_device=max_values_per_measure_device,
+                          max_total_values_buffered=max_total_values_buffered) as buffer:
+
+        for measure_id in measure_ids:
+            for device_id in device_ids:
+                # Write multiple small messages to buffer
+                message_values_list = [np.array([i]) for i in range(43)]  # 43 messages of 1 value each
+                start_time = 0.0
+                for idx, message_values in enumerate(message_values_list):
+                    current_start_time = start_time + idx  # Each message at a different time
+                    sdk.write_segment(measure_id, device_id, message_values, current_start_time, freq=freq,
+                                      freq_units='Hz')
+
+                    # Check if buffer has automatically flushed after exceeding max_values_buffered
+                    if (idx + 1) % max_values_per_measure_device == 0:
+                        # Buffer should have flushed automatically
+                        blocks = get_all_blocks(sdk, measure_id, device_id)
+                        total_values = sum(block[8] for block in blocks)  # block[8] is num_values
+                        assert total_values == (idx + 1), f"Expected {idx + 1} values, found {total_values}"
+                        print(f"Buffer flushed automatically after {total_values} values.")
+
+                buffer.flush_sub_buffer((measure_id, device_id))
+                # Check the blocks
+                blocks = get_all_blocks(sdk, measure_id, device_id)
+                total_values = sum(block[8] for block in blocks)
+                assert total_values == 43, f"Expected 43 values, found {total_values}"
+
+                # Check that blocks are split according to target_block_size and flushes
+                # We expect flushes at 20 and 40, and the final flush when exiting the context
+                expected_num_values = [10, 10, 10, 10, 3]  # Blocks of sizes based on block_size and remaining values
+                actual_num_values = [block[8] for block in blocks]
+                assert actual_num_values == expected_num_values, f"Expected block sizes {expected_num_values}, got {actual_num_values}"
+
+                # Check file_ids to see if they change upon automatic flushes
+                file_ids = [block[3] for block in blocks]  # block[3] is file_id
+                unique_file_ids = list(set(file_ids))
+                assert len(unique_file_ids) == 3, f"Expected 3 unique file_ids, found {len(unique_file_ids)}"
+
+                # Read back the data
+                _, time_data, value_data = sdk.get_data(
+                    measure_id=measure_id,
+                    device_id=device_id,
+                    start_time_n=0.0,
+                    end_time_n=43.0,
+                    time_units='s'
+                )
+
+                # Verify that value_data matches the concatenated message_values_list
+                expected_values = np.concatenate(message_values_list)
+                assert np.array_equal(value_data, expected_values), "Data read does not match data written."
