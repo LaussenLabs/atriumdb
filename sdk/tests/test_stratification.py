@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import random
 
-from atriumdb.windowing.defintion_splitter import stratified_partition_by_labels
+from atriumdb.windowing.definition_splitter import stratified_partition_by_labels
 
 
 def test_stratified_partition_basic_functionality():

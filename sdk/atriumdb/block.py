@@ -251,7 +251,8 @@ class Block:
         logging.debug("------------------------")
         start_bench_scale = time.perf_counter()
         scale_m_array = np.array([h.scale_m if h.scale_m != 0 else 1.0 for h in headers])
-        if analog and not np.all(scale_m_array == 0):
+        scale_b_array = np.array([h.scale_b for h in headers])
+        if analog and not (np.all(scale_m_array == 1) and np.all(scale_b_array == 0)):
             start_bench = time.perf_counter()
             scale_b_array = np.array([h.scale_b for h in headers])
             end_bench = time.perf_counter()
@@ -357,21 +358,41 @@ class Block:
         if headers[0].t_raw_type == T_TYPE_START_TIME_NUM_SAMPLES:
             time_data = merge_interval_data(time_data, period_ns)
 
-        # Apply the scale factors to the value data if necessary
-        scale_m_array = np.array([h.scale_m if h.scale_m != 0 else 1.0 for h in headers])
-        scale_b_array = np.array([h.scale_b for h in headers])
-
         # Change scale_m from 0 to 1
         for i in range(len(headers)):
             if headers[i].scale_m == 0:
                 headers[i].scale_m = 1.0
 
-        if headers[0].v_raw_type == V_TYPE_INT64:
-            value_data = np.frombuffer(value_data, dtype=np.int64)
-        elif headers[0].v_raw_type == V_TYPE_DOUBLE:
-            value_data = np.frombuffer(value_data, dtype=np.float64)
+        # Apply the scale factors to the value data if necessary
+        scale_m_array = np.array([h.scale_m if h.scale_m != 0 else 1.0 for h in headers])
+        scale_b_array = np.array([h.scale_b for h in headers])
+
+        v_raw_types = set(h.v_raw_type for h in headers)
+        if len(v_raw_types) == 1:
+            # All headers have the same v_raw_type
+            v_raw_type = v_raw_types.pop()
+            if v_raw_type == V_TYPE_INT64:
+                value_data = np.frombuffer(value_data, dtype=np.int64)
+            elif v_raw_type == V_TYPE_DOUBLE:
+                value_data = np.frombuffer(value_data, dtype=np.float64)
+            else:
+                raise ValueError("Header had an unsupported raw value type, {}.".format(v_raw_type))
         else:
-            raise ValueError("Header had an unsupported raw value type, {}.".format(headers[0].v_raw_type))
+            # v_raw_type varies among headers
+            values_list = []
+            idx = 0
+            for h in headers:
+                size_in_bytes = h.v_raw_size
+                data_bytes = value_data[idx: idx + size_in_bytes]
+                if h.v_raw_type == V_TYPE_INT64:
+                    data_array = np.frombuffer(data_bytes, dtype=np.int64)
+                elif h.v_raw_type == V_TYPE_DOUBLE:
+                    data_array = np.frombuffer(data_bytes, dtype=np.float64)
+                else:
+                    raise ValueError("Header had an unsupported raw value type, {}.".format(h.v_raw_type))
+                values_list.append(data_array)
+                idx += size_in_bytes
+            value_data = np.concatenate(values_list)
 
         if isinstance(return_nan_gap, np.ndarray) or return_nan_gap:
             if time_type != 1:
@@ -393,7 +414,7 @@ class Block:
 
             return headers, nan_analog_array
 
-        no_scale_bool = np.all(scale_m_array == 0) or (np.all(scale_m_array == 1) and np.all(scale_b_array == 0))
+        no_scale_bool = np.all(scale_m_array == 1) and np.all(scale_b_array == 0)
         if analog and not no_scale_bool:
             analog_values = np.zeros(sum(h.num_vals for h in headers), dtype=np.float64)
             self.wrapped_dll.convert_value_data_to_analog(value_data, analog_values, headers, len(headers))
