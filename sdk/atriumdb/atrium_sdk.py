@@ -51,7 +51,7 @@ from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
 from atriumdb.windowing.random_access_iterator import RandomAccessDatasetIterator
 from atriumdb.windowing.verify_definition import verify_definition
-from atriumdb.windowing.defintion_splitter import partition_dataset
+from atriumdb.windowing.definition_splitter import partition_dataset
 from atriumdb.write_buffer import WriteBuffer
 
 try:
