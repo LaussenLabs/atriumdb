@@ -68,6 +68,14 @@ def _test_mit_bih(db_type, dataset_location, connection_params):
     write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
     assert_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
 
+    # Test using caching
+    sdk_cached = AtriumSDK(
+        dataset_location=dataset_location, metadata_connection_type=db_type, connection_params=connection_params)
+
+    for device_id in sdk_cached.get_all_devices():
+        sdk_cached.load_device(device_id)
+    assert_mit_bih_to_dataset(sdk_cached, max_records=MAX_RECORDS, seed=SEED)
+
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
     write_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_numpy=True)

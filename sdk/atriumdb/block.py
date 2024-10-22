@@ -360,8 +360,9 @@ class Block:
         logging.debug("Applying Scale Factors")
         logging.debug("------------------------")
         start_bench_scale = time.perf_counter()
-        scale_m_array = np.array([h.scale_m for h in headers])
-        if analog and not np.all(scale_m_array == 0):
+        scale_m_array = np.array([h.scale_m if h.scale_m != 0 else 1.0 for h in headers])
+        scale_b_array = np.array([h.scale_b for h in headers])
+        if analog and not (np.all(scale_m_array == 1) and np.all(scale_b_array == 0)):
             start_bench = time.perf_counter()
             scale_b_array = np.array([h.scale_b for h in headers])
             end_bench = time.perf_counter()
@@ -467,18 +468,43 @@ class Block:
         if headers[0].t_raw_type == T_TYPE_START_TIME_NUM_SAMPLES:
             time_data = merge_interval_data(time_data, period_ns)
 
+        # Change scale_m from 0 to 1
+        for i in range(len(headers)):
+            if headers[i].scale_m == 0:
+                headers[i].scale_m = 1.0
+
         # Apply the scale factors to the value data if necessary
         scale_m_array = np.array([h.scale_m for h in headers])
         scale_b_array = np.array([h.scale_b for h in headers])
 
-        if headers[0].v_raw_type == V_TYPE_INT64:
-            value_data = np.frombuffer(value_data, dtype=np.int64)
-        elif headers[0].v_raw_type == V_TYPE_DOUBLE:
-            value_data = np.frombuffer(value_data, dtype=np.float64)
+        v_raw_types = set(h.v_raw_type for h in headers)
+        if len(v_raw_types) == 1:
+            # All headers have the same v_raw_type
+            v_raw_type = v_raw_types.pop()
+            if v_raw_type == V_TYPE_INT64:
+                value_data = np.frombuffer(value_data, dtype=np.int64)
+            elif v_raw_type == V_TYPE_DOUBLE:
+                value_data = np.frombuffer(value_data, dtype=np.float64)
+            else:
+                raise ValueError("Header had an unsupported raw value type, {}.".format(v_raw_type))
         else:
-            raise ValueError("Header had an unsupported raw value type, {}.".format(headers[0].v_raw_type))
+            # v_raw_type varies among headers
+            values_list = []
+            idx = 0
+            for h in headers:
+                size_in_bytes = h.v_raw_size
+                data_bytes = value_data[idx: idx + size_in_bytes]
+                if h.v_raw_type == V_TYPE_INT64:
+                    data_array = np.frombuffer(data_bytes, dtype=np.int64)
+                elif h.v_raw_type == V_TYPE_DOUBLE:
+                    data_array = np.frombuffer(data_bytes, dtype=np.float64)
+                else:
+                    raise ValueError("Header had an unsupported raw value type, {}.".format(h.v_raw_type))
+                values_list.append(data_array)
+                idx += size_in_bytes
+            value_data = np.concatenate(values_list)
 
-        if return_nan_gap:
+        if isinstance(return_nan_gap, np.ndarray) or return_nan_gap:
             if time_type != 1:
                 raise ValueError("Returning nan gaps is only supported for time type 1.")
             if period_ns is None:
@@ -487,13 +513,18 @@ class Block:
             start_ns = start_time_n if start_time_n is not None else time_data[0]
             end_ns = end_time_n if end_time_n is not None else round(time_data[-1] + period_ns)
             expected_num_values = int(round((end_ns - start_ns) / period_ns))
-            nan_analog_array = np.full(expected_num_values, np.nan, dtype=np.float64)
+            if isinstance(return_nan_gap, np.ndarray):
+                nan_analog_array = return_nan_gap
+                if nan_analog_array.size != expected_num_values:
+                    raise ValueError("input array must be of size int(round((end_time_n - start_time_n) / period_ns))")
+            else:
+                nan_analog_array = np.full(expected_num_values, np.nan, dtype=np.float64)
             self.wrapped_dll.fill_nan_array_with_analog(value_data, nan_analog_array,
                                                         headers, len(headers), time_data, start_ns, float(period_ns))
 
             return headers, nan_analog_array
 
-        no_scale_bool = np.all(scale_m_array == 0) or (np.all(scale_m_array == 1) and np.all(scale_b_array == 0))
+        no_scale_bool = np.all(scale_m_array == 1) and np.all(scale_b_array == 0)
         if analog and not no_scale_bool:
             analog_values = np.zeros(sum(h.num_vals for h in headers), dtype=np.float64)
             self.wrapped_dll.convert_value_data_to_analog(value_data, analog_values, headers, len(headers))
