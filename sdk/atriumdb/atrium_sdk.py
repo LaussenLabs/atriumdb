@@ -4011,19 +4011,39 @@ class AtriumSDK:
         `batch_size` * `num_workers` * `prefetch_factor`. If you do this, then the Dataloader will correctly cooperate
         with the Iterator's cache functionality.
 
-        Additionally, when shuffling we recommend you set `cached_windows_per_source = num_windows_prefetch // 100`
-        for balanced randomness vs performance.
+        For large datasets, it is recommended to run `AtriumSDK.load_device(device_id)` for all devices requested in the definition.
+        This will cache the file locations of all waveform data in RAM which significantly reduces the overhead of each
+        `AtriumSDK.get_data` call internally performed by the iterator.
 
-        - **Caching and Shuffling Logic**: When shuffling, the caching system is designed to control both randomness and efficiency.
-          `cached_windows_per_source` specifies the minimum number of windows retrieved from each source to fill the cache. A good rule of
-          thumb is to make this number enough windows to cover a single block of data (`AtriumSDK.block.block_size` number of values).
-          If you then set `num_windows_prefetch` to a large multiple of your `cached_windows_per_source`,
-          you ensure that the cache is filled with windows from many different sources, enabling randomness. A typical strategy would be to
-          set `num_windows_prefetch` to be at least 100 times larger than `cached_windows_per_source`, ensuring that the cache includes 100
-          random sources. For example, if you request 1,000 total cached windows
-          (`num_windows_prefetch=1000`) and require 100 windows per source (`cached_windows_per_source=100`), you will retrieve windows from 10
-          random sources. The selection of these sources is also randomized, and the seed can be set using the `shuffle` parameter. If `shuffle`
-          is set to True, the seed is random; if set to an integer, that integer is used as the seed.
+        - **Caching and Shuffling Logic**: When shuffling, the caching system is designed to balance randomness and efficiency.
+
+          The parameter `num_windows_prefetch` controls the total number of windows fetched and cached each time a window is
+          requested outside the current cache, while `cached_windows_per_source` specifies
+          the minimum number of windows retrieved from each source (typically patients or devices).
+
+          For example, if you set `num_windows_prefetch=1000` and `cached_windows_per_source=100`, the iterator will randomly select 10 sources
+          (`1000 / 100 = 10`) and retrieve 100 windows from each. Once all 1000 windows are iterated over, another set of 10 random sources will be
+          selected, and 100 windows will be fetched from each. This source selection is randomized, and the seed for randomness can be controlled
+          by the `shuffle` parameter. If `shuffle=True`, the seed is random. If `shuffle` is set to an integer, that integer will be used as the seed for reproducibility.
+
+          If there are fewer sources than needed to fill the `num_windows_prefetch` value, the system will adjust accordingly. For instance, if
+          `num_windows_prefetch=1000` but only 5 sources are available, the system will retrieve 200 windows per source (`1000 / 5 = 200`),
+          even though `cached_windows_per_source=100`. This means `cached_windows_per_source` acts as the **minimum** number of windows fetched per source,
+          but more can be retrieved if necessary to meet the prefetch requirement.
+
+          An efficient strategy is to set `cached_windows_per_source` to cover a single block of data (e.g., the size of a data block in `AtriumSDK.block.block_size`).
+          This will ensure that each read from the dataset is efficiently used (very little data will be discarded)
+          Then, to increase randomness, `num_windows_prefetch` should be a large multiple of `cached_windows_per_source`
+          to ensure that the cache includes windows from many different. For instance, a common approach would be to
+          set `num_windows_prefetch` at least 100 times larger than `cached_windows_per_source`, ensuring that the
+          cache spans 100 randomly chosen sections of the dataset.
+
+          Alternatively, for the highest level of randomness, you can set `cached_windows_per_source` to 1. This means each window in the cache will be independently
+          chosen from every other window. This strategy will yield very poor performance because the iterator must
+          perform a single read per window and discard all read data not within the bounds of the window.
+
+          Regardless of the above parameters if shuffle is True or an int, all windows in the cache will be randomly
+          shuffled before being passed to the user.
 
         :param definition: A DefinitionYAML object or string representation specifying the measures and
                            patients or devices over particular time intervals.
