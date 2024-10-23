@@ -4014,6 +4014,17 @@ class AtriumSDK:
         Additionally, when shuffling we recommend you set `cached_windows_per_source = num_windows_prefetch // 100`
         for balanced randomness vs performance.
 
+        - **Caching and Shuffling Logic**: When shuffling, the caching system is designed to control both randomness and efficiency.
+          `cached_windows_per_source` specifies the minimum number of windows retrieved from each source to fill the cache. A good rule of
+          thumb is to make this number enough windows to cover a single block of data (`AtriumSDK.block.block_size` number of values).
+          If you then set `num_windows_prefetch` to a large multiple of your `cached_windows_per_source`,
+          you ensure that the cache is filled with windows from many different sources, enabling randomness. A typical strategy would be to
+          set `num_windows_prefetch` to be at least 100 times larger than `cached_windows_per_source`, ensuring that the cache includes 100
+          random sources. For example, if you request 1,000 total cached windows
+          (`num_windows_prefetch=1000`) and require 100 windows per source (`cached_windows_per_source=100`), you will retrieve windows from 10
+          random sources. The selection of these sources is also randomized, and the seed can be set using the `shuffle` parameter. If `shuffle`
+          is set to True, the seed is random; if set to an integer, that integer is used as the seed.
+
         :param definition: A DefinitionYAML object or string representation specifying the measures and
                            patients or devices over particular time intervals.
         :param int window_duration: Duration of each window in units time_units (default nanoseconds).
