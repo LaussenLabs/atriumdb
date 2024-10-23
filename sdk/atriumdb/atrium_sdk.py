@@ -4039,7 +4039,7 @@ class AtriumSDK:
             returned in their original order.
         :param int cached_windows_per_source: The maximum number of windows to cache for a single source before moving
             on to a new source, helpful for adding more randomness to the shuffle. Making it too small heavily decreases
-            efficiency, making it too large will make the windows less random when shuffled.
+            efficiency, making it too large will make the windows less random when shuffled. Only used when shuffling.
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
