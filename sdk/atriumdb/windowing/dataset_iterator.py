@@ -51,7 +51,7 @@ class DatasetIterator:
     :param int | None max_cache_duration: If specified, no single cache will have a time range larger than this duration.
                                            The time range will be split accordingly. The duration must be larger than window_duration_ns.
     :param list patient_history_fields: A list of patient_history fields you would like returned in the Window object.
-    :param bool cache_dir: A directory, if specified, caches the results of _extract_cache_info to speed up future iterations.
+    :param str cache_dir: A directory, if specified, caches the results of _extract_cache_info to speed up future iterations.
     """
 
     def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,

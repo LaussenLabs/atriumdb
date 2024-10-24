@@ -42,7 +42,7 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
     :param str measure_tag_match_rule: "best" or "all" as a strategy for dealing with measure tags where there may be multiple measures with the given tag.
     :param start_time_n: Global start time in nanoseconds.
     :param end_time_n: Global end time in nanoseconds.
-    :param bool cache_dir: A directory if specified will use a disk based cache to store the verified definition results.
+    :param str cache_dir: A directory if specified will use a disk based cache to store the verified definition results.
 
     :return: A tuple containing three elements:
         1. validated_measure_list (list of dicts): A list of dictionaries, each representing a validated measure. Each dictionary includes:

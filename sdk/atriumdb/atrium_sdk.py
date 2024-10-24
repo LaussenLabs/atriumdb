@@ -4005,7 +4005,7 @@ class AtriumSDK:
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
                      time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
                      shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
-                     end_time=None, num_iterators=1) -> Union[DatasetIterator, List[DatasetIterator]]:
+                     end_time=None, num_iterators=1, cache=None) -> Union[DatasetIterator, List[DatasetIterator]]:
         """
         Constructs and returns a `DatasetIterator` object or a list of `DatasetIterator` objects that allow iteration
         over the dataset according to the specified definition.
@@ -4050,7 +4050,7 @@ class AtriumSDK:
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
-        :param bool cache: The directory where you want to store a disk based cache to store intermediate data and
+        :param str cache: The directory where you want to store a disk based cache to store intermediate data and
             speed up subsequent calls with the same parameters.
         :param int num_iterators: Number of iterators to create by partitioning the dataset (default is 1).
 
