@@ -51,6 +51,7 @@ from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
 from atriumdb.windowing.random_access_iterator import RandomAccessDatasetIterator
 from atriumdb.windowing.verify_definition import verify_definition
+from atriumdb.windowing.definition_splitter import partition_dataset
 from atriumdb.write_buffer import WriteBuffer
 
 try:
@@ -283,12 +284,19 @@ class AtriumSDK:
 
         # Create these caches early in case they get used in the initial creation of the caches below.
         self._measures, self._devices, self._label_sets = {}, {}, {}
+        self._label_source_ids, self._label_sources = {}, {}
 
         # Initialize measures and devices if not in API mode
         if metadata_connection_type != "api":
             self._measures = self.get_all_measures()
             self._devices = self.get_all_devices()
             self._label_sets = self.get_all_label_names()
+
+            self._label_sources = self.get_all_label_sources()
+            self._label_source_ids = {}
+
+            for source_id, source_info in self._label_sources.items():
+                self._label_source_ids[source_info['name']] = source_id
 
             # Lazy caching, cache only built if patient info requested later
             self._patients = {}
@@ -3074,7 +3082,7 @@ class AtriumSDK:
                 measure_id_list.append(measure_id)
             measure_list = measure_id_list
 
-        labels = self.sql_handler.select_labels(
+        labels = self.sql_handler.select_labels_with_info(
             label_set_id_list=label_name_id_list,
             device_id_list=device_list,
             patient_id_list=patient_id_list,
@@ -3086,8 +3094,8 @@ class AtriumSDK:
         )
 
         # Extract unique label_set_ids and device_ids
-        unique_label_set_ids = {label[1] for label in labels}
-        unique_device_ids = {label[2] for label in labels}
+        unique_label_set_ids = {label[2] for label in labels}
+        unique_device_ids = {label[3] for label in labels}
 
         # Create dictionaries for label set and device info for optimized lookup
         label_set_id_to_info = {label_set_id: self.get_label_name_info(label_set_id) for label_set_id in
@@ -3095,17 +3103,15 @@ class AtriumSDK:
         device_id_to_info = {device_id: self.get_device_info(device_id) for device_id in unique_device_ids}
 
         result = []
-        for label_entry_id, label_set_id, device_id, measure_id, label_source_id, start_time_n, end_time_n in labels:
+        for (label_entry_id, label_name, label_set_id, device_id, measure_id, label_source_name, label_source_id,
+             start_time_n, end_time_n, patient_id) in labels:
+
             requested_id = closest_requested_ancestor_dict.get(label_set_id, label_set_id)
             requested_name = self.get_label_name_info(requested_id)['name']
 
-            # Get label_source_name
-            label_source_info = self.get_label_source_info(label_source_id) if label_source_id else None
-            label_source_name = label_source_info['name'] if label_source_info else None
-
-            patient_id = self.convert_device_to_patient_id(
-                start_time=start_time_n, end_time=end_time_n, device=device_id,
-                conflict_resolution='90_percent_overlap')
+            # patient_id = self.convert_device_to_patient_id(
+            #     start_time=start_time_n, end_time=end_time_n, device=device_id,
+            #     conflict_resolution='90_percent_overlap')
             mrn = None if patient_id is None else self.get_mrn(patient_id)
 
             formatted_label = {
@@ -3714,11 +3720,22 @@ class AtriumSDK:
         :return: The label source ID or None if not found.
         """
 
+        # Check the cache first
+        if name in self._label_source_ids:
+            return self._label_source_ids[name]
+
+        # If not in cache, fetch from the database or API
         if self.metadata_connection_type == 'api':
             params = {'label_source_id': None, 'label_source_name': name}
-            return self._request("GET", "/labels/source", params=params)
+            source_id = self._request("GET", "/labels/source", params=params)
+        else:
+            source_id = self.sql_handler.select_label_source_id_by_name(name)
 
-        return self.sql_handler.select_label_source_id_by_name(name)
+        if source_id is not None:
+            # Update the cache
+            self._label_source_ids[name] = source_id
+            self._label_sources[source_id] = {'id': source_id, 'name': name}
+        return source_id
 
     def get_label_source_info(self, label_source_id: int) -> Optional[dict]:
         """
@@ -3726,11 +3743,46 @@ class AtriumSDK:
         :param label_source_id: The identifier for the label source.
         :return: A dictionary containing information about the label source, or None if not found.
         """
+
+        # Check the cache first
+        if label_source_id in self._label_sources:
+            return self._label_sources[label_source_id]
+
+        # If not in cache, fetch from the database or API
         if self.metadata_connection_type == 'api':
             params = {'label_source_id': label_source_id, 'label_source_name': None}
-            return self._request("GET", "/labels/source", params=params)
+            source_info = self._request("GET", "/labels/source", params=params)
+        else:
+            source_info = self.sql_handler.select_label_source_info_by_id(label_source_id)
 
-        return self.sql_handler.select_label_source_info_by_id(label_source_id)
+        if source_info is not None:
+            # Update the cache
+            self._label_sources[label_source_id] = source_info
+            self._label_source_ids[source_info['name']] = label_source_id
+        return source_info
+
+    def get_all_label_sources(self, limit=None, offset=0) -> dict:
+        """
+        Retrieve all distinct label sources from the database.
+        :param int limit: Maximum number of rows to return.
+        :param int offset: Offset this number of rows before starting to return label sources.
+        :return: A dictionary where keys are label source IDs and values are dictionaries containing 'id' and 'name' keys.
+        :rtype: dict
+        """
+        if self.metadata_connection_type == "api":
+            warnings.warn("API mode cannot cache label_sources, leaving cache empty.")
+            return {}
+
+        source_tuple_list = self.sql_handler.select_all_label_sources(limit=limit, offset=offset)
+
+        source_dict = {}
+        for source_info in source_tuple_list:
+            source_id, source_name = source_info
+            source_dict[source_id] = {
+                'id': source_id,
+                'name': source_name
+            }
+        return source_dict
 
     def insert_label_source(self, name: str, description: str = None) -> int:
         """
@@ -3871,10 +3923,10 @@ class AtriumSDK:
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
                      time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
                      shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
-                     end_time=None) -> DatasetIterator:
+                     end_time=None, num_iterators=1) -> Union[DatasetIterator, List[DatasetIterator]]:
         """
-        Constructs and returns a `DatasetIterator` object that allows iteration over the dataset according to
-        the specified definition.
+        Constructs and returns a `DatasetIterator` object or a list of `DatasetIterator` objects that allow iteration
+        over the dataset according to the specified definition.
 
         The method first verifies the provided definition against the dataset of the calling class object.
         If certain parts of the cohort definition aren't present within the dataset, the method will truncate the
@@ -3916,9 +3968,10 @@ class AtriumSDK:
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
+        :param int num_iterators: Number of iterators to create by partitioning the dataset (default is 1).
 
-        :return: DatasetIterator object to easily iterate over the specified data.
-        :rtype: DatasetIterator
+        :return: A single DatasetIterator object or a list of DatasetIterator objects depending on the value of num_iterators.
+        :rtype: Union[DatasetIterator, List[DatasetIterator]]
 
         **Example**:
 
@@ -3974,6 +4027,31 @@ class AtriumSDK:
             assert cached_windows_per_source > 0, "cached_windows_per_source must be at least 1."
             max_cache_duration_per_source = window_duration + (window_slide * (cached_windows_per_source - 1))
 
+        # Check if we need to partition the dataset
+        if num_iterators > 1:
+            random_state = shuffle if isinstance(shuffle, int) else None
+            definition_list = partition_dataset(
+                definition,
+                self,
+                partition_ratios=[1] * num_iterators,
+                priority_stratification_labels=definition.data_dict['labels'],
+                random_state=random_state,
+                verbose=False,
+                gap_tolerance=gap_tolerance
+            )
+
+            # Create iterators for each partitioned definition
+            iterators = []
+            for partitioned_definition in definition_list:
+                iterator = self.get_iterator(partitioned_definition, window_duration, window_slide, gap_tolerance,
+                                             num_windows_prefetch, "ns", label_threshold, iterator_type,
+                                             window_filter_fn, shuffle, cached_windows_per_source,
+                                             patient_history_fields, start_time_n, end_time_n, num_iterators=1)
+                iterators.append(iterator)
+
+            return iterators
+
+        # Validate the definition and create the iterator for a single partition
         validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
             definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n)
 
