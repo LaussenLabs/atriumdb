@@ -69,7 +69,6 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
 
     # Collect parameters for cache key and info
     hash_parameters = {
-        'definition_data_dict': definition.data_dict,
         'gap_tolerance': gap_tolerance,
         'measure_tag_match_rule': measure_tag_match_rule,
         'start_time_n': start_time_n,

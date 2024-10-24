@@ -185,8 +185,12 @@ class DatasetIterator:
 
     def _get_cache_key(self):
         # Generate a unique cache key based on variables that affect _extract_cache_info's output
+        # Serialize the variables using pickle
+        serialized_sources = pickle.dumps(self.sources)
+        # Compute a SHA256 hash of the serialized variables
+        sources_hash = hashlib.sha256(serialized_sources).hexdigest()
         variables_to_hash = {
-            'sources': self.sources,
+            'sources_hash': sources_hash,
             'shuffle': self.shuffle,
             'max_cache_duration': self.max_cache_duration,
             'window_duration_ns': self.window_duration_ns,
@@ -299,9 +303,11 @@ class DatasetIterator:
             cache_info.append(current_batch)
         starting_window_index_per_batch.append(total_number_of_windows)
 
+        serialized_sources = pickle.dumps(self.sources)
+        sources_hash = hashlib.sha256(serialized_sources).hexdigest()
         # Collect variables for cache key and info
         variables_to_hash = {
-            'sources': self.sources,
+            'sources_hash': sources_hash,
             'shuffle': self.shuffle,
             'max_cache_duration': self.max_cache_duration,
             'window_duration_ns': self.window_duration_ns,
@@ -317,7 +323,7 @@ class DatasetIterator:
             data_to_cache = (cache_info, starting_window_index_per_batch, total_number_of_windows)
 
             date_created = datetime.now().isoformat()
-            cache_info = {
+            window_cache_info = {
                 'cache_file_name': f"{cache_key}_iterator_windows.pkl",
                 'date_created': date_created,
                 'main_process_called': '_extract_cache_info',
@@ -325,7 +331,7 @@ class DatasetIterator:
                 'parameters': variables_to_hash,
             }
             self.sdk.file_api.save_cache(cache_key, data_to_cache, self.cache_dir, cache_type='iterator_windows',
-                                         cache_info=cache_info)
+                                         cache_info=window_cache_info)
 
         return cache_info, starting_window_index_per_batch, total_number_of_windows
 

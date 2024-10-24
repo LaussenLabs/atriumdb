@@ -14,6 +14,7 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -66,8 +67,10 @@ def _test_iterator(db_type, dataset_location, connection_params):
 
 
         # Try while loading the cache
+        cache_path = Path(sdk.dataset_location) / "cache"
+        shutil.rmtree(cache_path, ignore_errors=True)
         iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None,
-                                    cache=Path(sdk.dataset_location) / "cache")
+                                    cache=cache_path)
 
         for window_i, window in enumerate(iterator):
             assert isinstance(window.start_time, int)
