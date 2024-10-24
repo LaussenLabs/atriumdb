@@ -508,8 +508,15 @@ class DatasetIterator:
             data_end_time = min(range_end_time, batch_end_time)
 
             start_index = np.searchsorted(measure_filled_time_array, data_start_time, side='left')
+
             expected_num_values = int(round((data_end_time - data_start_time) / (10**18 / freq_nhz)))
+            if expected_num_values > measure_filled_value_array.size - start_index:
+                data_end_time = data_start_time + int(
+                    round((measure_filled_value_array.size - start_index) * (10**18 / freq_nhz)))
+                expected_num_values = int(round((data_end_time - data_start_time) / (10 ** 18 / freq_nhz)))
+
             nan_filled_out = measure_filled_value_array[start_index:start_index + expected_num_values]
+
             if expected_num_values > 0:
                 self.sdk.get_data(
                     measure_id, data_start_time, data_end_time, device_id=device_id, patient_id=query_patient_id,

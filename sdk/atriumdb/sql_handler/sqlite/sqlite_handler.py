@@ -607,7 +607,7 @@ class SQLiteHandler(SQLHandler):
                 # An error occurred for a different reason, re-raise the exception
                 raise
 
-    def select_label_sources(self, limit=None, offset=None):
+    def select_all_label_sources(self, limit=None, offset=None):
         query = "SELECT id, name FROM label_source ORDER BY id ASC"
 
         # if limit and offset are specified ent add them to query

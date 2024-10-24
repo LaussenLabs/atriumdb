@@ -51,7 +51,7 @@ from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
 from atriumdb.windowing.random_access_iterator import RandomAccessDatasetIterator
 from atriumdb.windowing.verify_definition import verify_definition
-from atriumdb.windowing.defintion_splitter import partition_dataset
+from atriumdb.windowing.definition_splitter import partition_dataset
 from atriumdb.write_buffer import WriteBuffer
 
 try:
@@ -521,6 +521,9 @@ class AtriumSDK:
         :param str device_tag: A string identifying the device. Exclusive with device_id.
         :param int mrn: Medical record number for the patient. Exclusive with patient_id.
         :param bool | ndarray return_nan_filled: Whether or not to fill missing values from start to end with np.nan.
+            This can be floating point numpy array of shape (int(round((end_ns - start_ns) / period_ns),) which works
+            like the `out` param in the numpy library, filling the result into the passed in array instead of creating
+            a new array, which provides a modest performance increase if you already have a result array allocated.
 
         :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
         :returns: List of Block header objects, 1D numpy array for time data, 1D numpy array for value data.
@@ -1476,6 +1479,80 @@ class AtriumSDK:
                         scale_m=scale_m, scale_b=scale_b, interval_index_mode="fast",
                         gap_tolerance=interval_gap_tolerance_nano, merge_blocks=False)
 
+    def load_device(self, device_id: int, measure_id: int|List[int] = None):
+        """
+        Load block metadata into RAM for a given device.
+
+        This method loads block metadata (such as file IDs, byte ranges, and timestamps) for a
+        particular device from the database and caches it locally. The caching improves the performance
+        of future data queries, especially when querying the same device or measure multiple times.
+
+        If a measure_id is specified, only blocks corresponding to that measure (or measures) will be cached.
+        Otherwise, metadata for all measures associated with the device will be loaded and cached.
+
+        :param int device_id: The device identifier. Blocks associated with this device will be fetched.
+        :param int|List[int] measure_id: The measure identifier(s) associated with the metadata you want to cache.
+            If None, blocks for all measures of the device will be fetched.
+
+        """
+        # Fetch block index data for the device (and measures if specified)
+        block_query_result = self.sql_handler.select_blocks_for_device(device_id, measure_id)
+
+        # Get unique file_ids
+        file_id_list = list(set([row[3] for row in block_query_result]))
+        if len(file_id_list) == 0:
+            return
+        filename_dict = self.get_filename_dict(file_id_list)
+
+        # Build caches
+        for block in block_query_result:
+            block_id, measure_id, device_id, file_id, start_byte, num_bytes, start_time, end_time, num_values = block
+            measure_id, device_id = int(measure_id), int(device_id)
+            block = np.array([block_id, measure_id, device_id, file_id, start_byte, num_bytes, start_time, end_time, num_values], dtype=np.int64)
+
+            if measure_id not in self.block_cache:
+                self.block_cache[measure_id] = {}
+                self.start_cache[measure_id] = {}
+                self.end_cache[measure_id] = {}
+
+            if device_id not in self.block_cache[measure_id]:
+                self.block_cache[measure_id][device_id] = []
+                self.start_cache[measure_id][device_id] = []
+                self.end_cache[measure_id][device_id] = []
+
+            self.block_cache[measure_id][device_id].append(block)
+            self.start_cache[measure_id][device_id].append(start_time)
+            self.end_cache[measure_id][device_id].append(end_time)
+
+        for measure_id in self.block_cache:
+            for device_id in self.block_cache[measure_id]:
+                current_cache = self.block_cache[measure_id][device_id]
+                if isinstance(current_cache, list):
+                    self.block_cache[measure_id][device_id] = np.vstack(current_cache)
+                    self.start_cache[measure_id][device_id] = np.array(self.start_cache[measure_id][device_id], dtype=np.int64)
+                    self.end_cache[measure_id][device_id] = np.array(self.end_cache[measure_id][device_id], dtype=np.int64)
+
+        # Update filename dictionary
+        self.filename_dict.update(filename_dict)
+
+    def find_blocks(self, measure_id: int, device_id: int, start_time: int, end_time: int):
+        """
+        Find blocks within the cached data that overlap with the specified time range.
+        """
+        if measure_id not in self.block_cache or device_id not in self.block_cache[measure_id]:
+            return []
+
+        blocks = self.block_cache[measure_id][device_id]
+        starts = self.start_cache[measure_id][device_id]
+        ends = self.end_cache[measure_id][device_id]
+
+        # Find indices where blocks end after start_time
+        start_idx = bisect.bisect_left(ends, start_time)
+        # Find indices where blocks start before end_time
+        end_idx = bisect.bisect_right(starts, end_time)
+
+        # Return the blocks that overlap
+        return blocks[start_idx:end_idx]
 
     def get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None):
         """
@@ -3778,7 +3855,7 @@ class AtriumSDK:
             warnings.warn("API mode cannot cache label_sources, leaving cache empty.")
             return {}
 
-        source_tuple_list = self.sql_handler.select_label_sources(limit=limit, offset=offset)
+        source_tuple_list = self.sql_handler.select_all_label_sources(limit=limit, offset=offset)
 
         source_dict = {}
         for source_info in source_tuple_list:
@@ -3928,7 +4005,7 @@ class AtriumSDK:
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
                      time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
                      shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
-                     end_time=None, num_iterators=1, cache=None) -> Union[DatasetIterator, List[DatasetIterator]]:
+                     end_time=None, num_iterators=1) -> Union[DatasetIterator, List[DatasetIterator]]:
         """
         Constructs and returns a `DatasetIterator` object or a list of `DatasetIterator` objects that allow iteration
         over the dataset according to the specified definition.
@@ -4036,14 +4113,15 @@ class AtriumSDK:
 
         # Check if we need to partition the dataset
         if num_iterators > 1:
+            random_state = shuffle if isinstance(shuffle, int) else None
             definition_list = partition_dataset(
                 definition,
                 self,
                 partition_ratios=[1] * num_iterators,
                 priority_stratification_labels=definition.data_dict['labels'],
-                random_state=42,
+                random_state=random_state,
                 verbose=False,
-                gap_tolerance=10 ** 9  # 1 second
+                gap_tolerance=gap_tolerance
             )
 
             # Create iterators for each partitioned definition

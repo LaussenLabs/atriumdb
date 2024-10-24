@@ -802,7 +802,7 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def select_label_sources(self, limit=None, offset=None):
+    def select_all_label_sources(self, limit=None, offset=None):
         pass
 
     def get_measure_id_with_most_rows(self, tag: str) -> Optional[int]:

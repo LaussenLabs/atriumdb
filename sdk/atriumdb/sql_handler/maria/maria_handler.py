@@ -699,7 +699,7 @@ class MariaDBHandler(SQLHandler):
                 raise
 
 
-    def select_label_sources(self, limit=None, offset=None):
+    def select_all_label_sources(self, limit=None, offset=None):
         # Retrieve all label sources from the database.
         query = "SELECT id, name FROM label_source ORDER BY id ASC"
 
