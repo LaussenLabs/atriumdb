@@ -21,6 +21,7 @@ import warnings
 import random
 import pickle
 import hashlib
+from datetime import datetime
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
@@ -197,7 +198,7 @@ class DatasetIterator:
         # Compute a SHA256 hash of the serialized variables
         cache_hash = hashlib.sha256(serialized_vars).hexdigest()
         # Return the cache key
-        cache_key = f'dataset_iterator_cache_{cache_hash}'
+        cache_key = f'{cache_hash}'
         return cache_key
 
     def _extract_cache_info(self):
@@ -206,14 +207,14 @@ class DatasetIterator:
             self.sdk.file_api.ensure_cache_dir(self.cache_dir)
             cache_key = self._get_cache_key()
             # Check if cache exists
-            if self.sdk.file_api.cache_exists(cache_key, self.cache_dir):
+            if self.sdk.file_api.cache_exists(cache_key, self.cache_dir, cache_type='iterator_windows'):
                 # Load from cache
                 try:
-                    cached_data = self.sdk.file_api.load_cache(cache_key, self.cache_dir)
+                    cached_data = self.sdk.file_api.load_cache(cache_key, self.cache_dir, cache_type='iterator_windows')
                     return cached_data
                 except (EOFError, pickle.UnpicklingError):
                     # If cache is corrupted, remove it and proceed to recompute
-                    self.sdk.file_api.remove_cache(cache_key, self.cache_dir)
+                    self.sdk.file_api.remove_cache(cache_key, self.cache_dir, cache_type='iterator_windows')
 
         # Flattening the nested dictionary/list structure
         flattened_sources = []
@@ -298,10 +299,33 @@ class DatasetIterator:
             cache_info.append(current_batch)
         starting_window_index_per_batch.append(total_number_of_windows)
 
+        # Collect variables for cache key and info
+        variables_to_hash = {
+            'sources': self.sources,
+            'shuffle': self.shuffle,
+            'max_cache_duration': self.max_cache_duration,
+            'window_duration_ns': self.window_duration_ns,
+            'window_slide_ns': self.window_slide_ns,
+            'max_batch_size': self.max_batch_size,
+        }
+
+        # Compute cache key
+        cache_key = self._get_cache_key()
+
         # If caching is enabled, save the results
         if self.cache_dir is not None:
             data_to_cache = (cache_info, starting_window_index_per_batch, total_number_of_windows)
-            self.sdk.file_api.save_cache(cache_key, data_to_cache, self.cache_dir)
+
+            date_created = datetime.now().isoformat()
+            cache_info = {
+                'cache_file_name': f"{cache_key}_iterator_windows.pkl",
+                'date_created': date_created,
+                'main_process_called': '_extract_cache_info',
+                'cache_type': 'iterator_windows',
+                'parameters': variables_to_hash,
+            }
+            self.sdk.file_api.save_cache(cache_key, data_to_cache, self.cache_dir, cache_type='iterator_windows',
+                                         cache_info=cache_info)
 
         return cache_info, starting_window_index_per_batch, total_number_of_windows
 

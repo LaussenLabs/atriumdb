@@ -67,6 +67,15 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
     else:
         raise ValueError("Input must be either a filename or an instance of DatasetDefinition.")
 
+    # Collect parameters for cache key and info
+    hash_parameters = {
+        'definition_data_dict': definition.data_dict,
+        'gap_tolerance': gap_tolerance,
+        'measure_tag_match_rule': measure_tag_match_rule,
+        'start_time_n': start_time_n,
+        'end_time_n': end_time_n,
+    }
+
     cache_key = compute_cache_key(
         definition.data_dict, gap_tolerance, measure_tag_match_rule, start_time_n, end_time_n)
 
@@ -75,13 +84,13 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
         sdk.file_api.ensure_cache_dir(cache_dir)
 
         # Check if the result is already cached
-        if sdk.file_api.cache_exists(cache_key, cache_dir):
+        if sdk.file_api.cache_exists(cache_key, cache_dir, cache_type='definition'):
             try:
-                result = sdk.file_api.load_cache(cache_key, cache_dir)
+                result = sdk.file_api.load_cache(cache_key, cache_dir, cache_type='definition')
                 return result
             except (EOFError, pickle.UnpicklingError):
                 # If cache is corrupted, remove it and proceed to recompute
-                sdk.file_api.remove_cache(cache_key, cache_dir)
+                sdk.file_api.remove_cache(cache_key, cache_dir, cache_type='definition')
 
     # Validate measures
     validated_measure_list = _validate_measures(definition, sdk, measure_tag_match_rule=measure_tag_match_rule)
@@ -98,7 +107,16 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
     result = (validated_measure_list, validated_label_set_list, mapped_sources)
 
     if cache_dir is not None:
-        sdk.file_api.save_cache(cache_key, result, cache_dir)
+        from datetime import datetime
+        date_created = datetime.now().isoformat()
+        cache_info = {
+            'cache_file_name': f"{cache_key}_definition.pkl",
+            'date_created': date_created,
+            'main_process_called': 'verify_definition',
+            'cache_type': 'definition',
+            'parameters': hash_parameters
+        }
+        sdk.file_api.save_cache(cache_key, result, cache_dir, cache_type='definition', cache_info=cache_info)
 
     return result
 

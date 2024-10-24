@@ -21,6 +21,7 @@ import numpy as np
 import pickle
 import os
 from collections import Counter
+import json
 
 
 class AtriumFileHandler:
@@ -156,28 +157,41 @@ class AtriumFileHandler:
         # Ensure the cache directory exists
         os.makedirs(cache_dir, exist_ok=True)
 
-    def get_cache_filepath(self, cache_key, cache_dir):
-        # Get the full path to the cache file
-        return os.path.join(cache_dir, f'{cache_key}.pkl')
+    def get_cache_filepath(self, cache_key, cache_dir, cache_type=None, extension='pkl'):
+        # Get the full path to the cache or info file
+        if cache_type:
+            filename = f"{cache_key}_{cache_type}.{extension}"
+        else:
+            filename = f"{cache_key}.{extension}"
+        return os.path.join(cache_dir, filename)
 
-    def cache_exists(self, cache_key, cache_dir):
+    def cache_exists(self, cache_key, cache_dir, cache_type):
         # Check if a cache file exists
-        cache_file = self.get_cache_filepath(cache_key, cache_dir)
+        cache_file = self.get_cache_filepath(cache_key, cache_dir, cache_type, extension='pkl')
         return os.path.exists(cache_file)
 
-    def load_cache(self, cache_key, cache_dir):
+    def load_cache(self, cache_key, cache_dir, cache_type):
         # Load data from a cache file
-        cache_file = self.get_cache_filepath(cache_key, cache_dir)
+        cache_file = self.get_cache_filepath(cache_key, cache_dir, cache_type, extension='pkl')
         with open(cache_file, 'rb') as f:
             return pickle.load(f)
 
-    def save_cache(self, cache_key, data, cache_dir):
+    def save_cache(self, cache_key, data, cache_dir, cache_type, cache_info):
         # Save data to a cache file
-        cache_file = self.get_cache_filepath(cache_key, cache_dir)
+        cache_file = self.get_cache_filepath(cache_key, cache_dir, cache_type, extension='pkl')
         with open(cache_file, 'wb') as f:
             pickle.dump(data, f)
 
-    def remove_cache(self, cache_key, cache_dir):
-        # Remove a cache file
-        cache_file = self.get_cache_filepath(cache_key, cache_dir)
-        os.remove(cache_file)
+        # Save cache info to a JSON file
+        info_file = self.get_cache_filepath(cache_key, cache_dir, 'info', extension='json')
+        with open(info_file, 'w') as f:
+            json.dump(cache_info, f)
+
+    def remove_cache(self, cache_key, cache_dir, cache_type):
+        # Remove a cache file and its info file
+        cache_file = self.get_cache_filepath(cache_key, cache_dir, cache_type, extension='pkl')
+        if os.path.exists(cache_file):
+            os.remove(cache_file)
+        info_file = self.get_cache_filepath(cache_key, cache_dir, 'info', extension='json')
+        if os.path.exists(info_file):
+            os.remove(info_file)
