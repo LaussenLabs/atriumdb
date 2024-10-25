@@ -4054,7 +4054,7 @@ class AtriumSDK:
         :param int num_windows_prefetch: Number of windows you want to get from AtriumDB at a time. Setting this value
             higher will make decompression faster but at the expense of using more RAM. (default the number of windows
             that gets you closest to 10 million values).
-        :param str time_units: If you would like the window_duration and window_slide to be specified in units other than
+        :param str time_units: If you would like the window_duration, window_slide and gap_tolerance to be specified in units other than
                             nanoseconds you can choose from one of ["s", "ms", "us", "ns"].
         :param float label_threshold: The percentage of the window that must contain a label before the entire window is
             marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
