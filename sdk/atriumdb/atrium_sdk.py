@@ -3848,7 +3848,7 @@ class AtriumSDK:
             warnings.warn("API mode cannot cache label_sources, leaving cache empty.")
             return {}
 
-        source_tuple_list = self.sql_handler.select_label_sources(limit=limit, offset=offset)
+        source_tuple_list = self.sql_handler.select_all_label_sources(limit=limit, offset=offset)
 
         source_dict = {}
         for source_info in source_tuple_list:
@@ -4135,14 +4135,15 @@ class AtriumSDK:
 
         # Check if we need to partition the dataset
         if num_iterators > 1:
+            random_state = shuffle if isinstance(shuffle, int) else None
             definition_list = partition_dataset(
                 definition,
                 self,
                 partition_ratios=[1] * num_iterators,
                 priority_stratification_labels=definition.data_dict['labels'],
-                random_state=42,
+                random_state=random_state,
                 verbose=False,
-                gap_tolerance=10 ** 9  # 1 second
+                gap_tolerance=gap_tolerance
             )
 
             # Create iterators for each partitioned definition

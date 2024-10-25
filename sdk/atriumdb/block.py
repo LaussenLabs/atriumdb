@@ -405,6 +405,9 @@ class Block:
             expected_num_values = int(round((end_ns - start_ns) / period_ns))
             if isinstance(return_nan_gap, np.ndarray):
                 nan_analog_array = return_nan_gap
+                # The code won't break if this requirement isn't met, its just that this is the expected number of
+                # values needed to represent all the data. But if this is causing trouble due to rounding / off-by-one
+                # errors, you can change or remove this requirement.
                 if nan_analog_array.size != expected_num_values:
                     raise ValueError("input array must be of size int(round((end_time_n - start_time_n) / period_ns))")
             else:
