@@ -4055,6 +4055,23 @@ class AtriumSDK:
         validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
             definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n)
 
+        if not isinstance(shuffle, bool) or shuffle:
+            # Set some sensible defaults for pseudorandom yet efficient shuffle
+            if cached_windows_per_source is None:
+                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in validated_measure_list)
+                number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
+                cached_windows_per_source = self.block.block_size // number_of_values_per_window_slide
+            if num_windows_prefetch is None:
+                num_windows_prefetch = 100 * cached_windows_per_source
+
+        else:
+            # Not shuffling
+            cached_windows_per_source = None  # We don't want this doing anything if shuffle is False
+            if num_windows_prefetch is None:
+                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in validated_measure_list)
+                number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
+                num_windows_prefetch = (10 * self.block.block_size) // number_of_values_per_window_slide
+
         # Create appropriate iterator object based on iterator_type
         if iterator_type == 'random_access':
             iterator = RandomAccessDatasetIterator(
