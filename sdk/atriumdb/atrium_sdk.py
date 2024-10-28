@@ -408,62 +408,6 @@ class AtriumSDK:
 
         return sdk_object
 
-    def load_device(self, device_id: int, measure_id: int|List[int] = None):
-        """
-        Load block metadata into RAM for a given device.
-
-        This method loads block metadata (such as file IDs, byte ranges, and timestamps) for a
-        particular device from the database and caches it locally. The caching improves the performance
-        of future data queries, especially when querying the same device or measure multiple times.
-
-        If a measure_id is specified, only blocks corresponding to that measure (or measures) will be cached.
-        Otherwise, metadata for all measures associated with the device will be loaded and cached.
-
-        :param int device_id: The device identifier. Blocks associated with this device will be fetched.
-        :param int|List[int] measure_id: The measure identifier(s) associated with the metadata you want to cache.
-            If None, blocks for all measures of the device will be fetched.
-
-        """
-        # Fetch block index data for the device (and measures if specified)
-        block_query_result = self.sql_handler.select_blocks_for_device(device_id, measure_id)
-
-        # Get unique file_ids
-        file_id_list = list(set([row[3] for row in block_query_result]))
-        if len(file_id_list) == 0:
-            return
-        filename_dict = self.get_filename_dict(file_id_list)
-
-        # Build caches
-        for block in block_query_result:
-            block_id, measure_id, device_id, file_id, start_byte, num_bytes, start_time, end_time, num_values = block
-            measure_id, device_id = int(measure_id), int(device_id)
-            block = np.array([block_id, measure_id, device_id, file_id, start_byte, num_bytes, start_time, end_time, num_values], dtype=np.int64)
-
-            if measure_id not in self.block_cache:
-                self.block_cache[measure_id] = {}
-                self.start_cache[measure_id] = {}
-                self.end_cache[measure_id] = {}
-
-            if device_id not in self.block_cache[measure_id]:
-                self.block_cache[measure_id][device_id] = []
-                self.start_cache[measure_id][device_id] = []
-                self.end_cache[measure_id][device_id] = []
-
-            self.block_cache[measure_id][device_id].append(block)
-            self.start_cache[measure_id][device_id].append(start_time)
-            self.end_cache[measure_id][device_id].append(end_time)
-
-        for measure_id in self.block_cache:
-            for device_id in self.block_cache[measure_id]:
-                current_cache = self.block_cache[measure_id][device_id]
-                if isinstance(current_cache, list):
-                    self.block_cache[measure_id][device_id] = np.vstack(current_cache)
-                    self.start_cache[measure_id][device_id] = np.array(self.start_cache[measure_id][device_id], dtype=np.int64)
-                    self.end_cache[measure_id][device_id] = np.array(self.end_cache[measure_id][device_id], dtype=np.int64)
-
-        # Update filename dictionary
-        self.filename_dict.update(filename_dict)
-
     def find_blocks(self, measure_id: int, device_id: int, start_time: int, end_time: int):
         """
         Find blocks within the cached data that overlap with the specified time range.
