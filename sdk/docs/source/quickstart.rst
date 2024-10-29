@@ -138,7 +138,8 @@ For inserting data of alternate time formats (for example, time-value pairs), se
             scale_b = -baseline / gain
 
             # Write the signal data to AtriumDB
-            sdk.write_segment(measure_id, device_id, digital_signal, start_time_s, freq=freq_hz, scale_m=scale_m, scale_b=scale_b)
+            sdk.write_segment(measure_id, device_id, digital_signal, start_time_s, freq=freq_hz,
+                scale_m=scale_m, scale_b=scale_b, time_unites="s", freq_units="Hz")
 
 Querying Data
 ############################################################################

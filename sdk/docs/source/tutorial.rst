@@ -112,9 +112,9 @@ for each record and handle multiple signals in a single record.
 
                 # Check if a measure with the given tag and frequency already exists in the dataset using the `get_measure_id` function
                 # If it doesn't exist, create a new measure using the `insert_measure` function
-                measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i])
+                measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i], freq_units="nHz")
                 if measure_id is None:
-                    measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i])
+                    measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i], freq_units="nHz")
 
                 # Calculate the digital to analog scale factors.
                 gain = segment.adc_gain[i]
@@ -123,7 +123,8 @@ for each record and handle multiple signals in a single record.
                 scale_b = -baseline / gain
 
                 # Write the data using the `write_segment` function
-                sdk.write_segment(measure_id, device_id, record.d_signal.T[i], start_time_s, freq=record.fs, scale_m=scale_m, scale_b=scale_b)
+                sdk.write_segment(measure_id, device_id, record.d_signal.T[i], start_time_s, freq=record.fs,
+                    scale_m=scale_m, scale_b=scale_b, time_units="s", freq_units="Hz")
 
         # If there is only one signal in the input file, insert it in the same way as for multiple signals
         else:
@@ -140,7 +141,8 @@ for each record and handle multiple signals in a single record.
             scale_b = -baseline / gain
 
             # Write the data using the `write_data_easy` function
-            sdk.write_segment(measure_id, device_id, record.d_signal, start_time_s, freq=record.fs, scale_m=scale_m, scale_b=scale_b)
+            sdk.write_segment(measure_id, device_id, record.d_signal, start_time_s, freq=record.fs, scale_m=scale_m, scale_b=scale_b,
+                time_units="s", freq_units="Hz")
 
 .. _methods_of_inserting_data:
 
@@ -177,12 +179,12 @@ Segments can also be batched piece by piece using :ref:`buffered_inserts`.
     # Inserting a single segment
     segment_values = np.arange(100)  # Continuous values from 0 to 99
     start_time = 0.0  # Start time in seconds
-    sdk.write_segment(measure_id, device_id, segment_values, start_time, freq=1.0, freq_units="Hz")
+    sdk.write_segment(measure_id, device_id, segment_values, start_time, freq=1.0, time_units="s", freq_units="Hz")
 
     # Inserting multiple segments at once
     segments = [np.arange(10), np.arange(10, 20), np.arange(20, 30)]
     start_times = [0.0, 10.0, 20.0]  # Start times in seconds for each segment
-    sdk.write_segments(measure_id, device_id, segments, start_times, freq=1.0, freq_units="Hz")
+    sdk.write_segments(measure_id, device_id, segments, start_times, freq=1.0, time_units="s", freq_units="Hz")
 
 
 Time-Value Pairs
@@ -203,7 +205,7 @@ can be used for inserting time-value pairs, with arrays of values and correspond
     # Inserting time-value pairs
     times = np.array([0.0, 2.0, 4.5])  # Time values in seconds
     values = np.array([100, 200, 300])  # Corresponding values
-    sdk.write_time_value_pairs(measure_id, device_id, times, values)
+    sdk.write_time_value_pairs(measure_id, device_id, times, values, time_units="s")
 
 .. _buffered_inserts:
 
@@ -225,13 +227,15 @@ The buffer organized data by their measure-device pair, and data is automaticall
     device_id = sdk.insert_device(device_tag="test_device")
 
     # Using write_buffer for batched writes
-    with sdk.write_buffer(max_values_per_measure_device=100, max_total_values_buffered=200) as buffer:
+    reasonable_num_values_per_value = 100 * sdk.block.block_size  # 100 blocks
+    with sdk.write_buffer(max_values_per_measure_device=reasonable_num_values_per_value,
+                          max_total_values_buffered=10 * reasonable_num_values_per_value) as buffer:
         # Write multiple small segments to buffer
-        for i in range(43):
-            segment_values = np.arange(i * 10, (i + 1) * 10)
-            start_time = i * 10
-            sdk.write_segment(measure_id, device_id, segment_values, start_time, freq=1.0, freq_units="Hz")
+        for record in record_segments:
+            sdk.write_segment(measure_id, device_id, record.d_signal, start_time_s, freq=record.fs,
+                              scale_m=scale_m, scale_b=scale_b, time_units="s", freq_units="Hz")
 
+        buffer.flush_all()
         # Buffer auto-flushes when the context is exited
 
 Surveying Data in the Dataset
