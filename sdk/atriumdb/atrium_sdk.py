@@ -4034,6 +4034,8 @@ class AtriumSDK:
                 print(window)
 
         """
+        if iterator_type is None:
+            iterator_type = "iterator"
         # check that a correct unit type was entered
         time_units = "ns" if time_units is None else time_units
         if time_units not in time_unit_options.keys():
@@ -4118,12 +4120,14 @@ class AtriumSDK:
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, window_filter_fn=window_filter_fn,
                 max_cache_duration=max_cache_duration_per_source, shuffle=shuffle, patient_history_fields=patient_history_fields)
-        else:
+        elif iterator_type == "iterator":
             iterator = DatasetIterator(
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, shuffle=shuffle,
                 max_cache_duration=max_cache_duration_per_source, patient_history_fields=patient_history_fields)
+        else:
+            raise ValueError("iterator_type must be either 'mapped', 'filtered' or 'iterator'")
 
         return iterator
 
