@@ -4,7 +4,7 @@ from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.window import Window
 
 
-class RandomAccessDatasetIterator(DatasetIterator):
+class MappedIterator(DatasetIterator):
     """
     Subclass of DatasetIterator that allows random access to windowed segments of a dataset.
 
