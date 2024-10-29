@@ -22,6 +22,12 @@ API Reference
    .. automethod:: get_data
    .. automethod:: write_data_easy
    .. automethod:: write_data
+   .. automethod:: write_buffer
+   .. automethod:: write_segment
+   .. automethod:: write_segments
+   .. automethod:: write_time_value_pairs
+
+   .. automethod:: load_device
 
    .. automethod:: get_measure_id
    .. automethod:: get_measure_info

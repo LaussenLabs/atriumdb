@@ -54,23 +54,6 @@ You can also create a dataset with a different metadata database, such as MariaD
    }
    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", database_type="mysql", connection_params=connection_params)
 
-Additionally, you can set the protection mode and overwrite behavior using the `protected_mode` and `overwrite` parameters.
-For example, to create a dataset with protection mode enabled and an overwrite behavior set to "ignore":
-
-.. code-block:: python
-
-   sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", protected_mode=True, overwrite="error")
-
-Protected mode disables any data deletion operations.
-
-Overwrite determines what happens when multiple values are stored for the same signal from the same source at the same time.
-Allowed values are:
-
-- `"error"`: an error will be raised.
-- `"ignore"`: the new data will not be inserted.
-- `"overwrite"`: the old data will be overwritten with the new data.
-
-The default behavior can be changed in the `sdk/atriumdb/helpers/config.toml` file.
 
 Inserting Data into the Dataset
 --------------------------------
@@ -86,12 +69,13 @@ for each record and handle multiple signals in a single record.
     import numpy as np
 
     # Get the list of record names from the MIT-BIH Arrhythmia Database
-    record_names = wfdb.get_record_list('mitdb')
+    pn_dir = 'mitdb'
+    record_names = wfdb.get_record_list(pn_dir)
 
     # Loop through each record in the record_names list and read the record using the `rdrecord` function from the wfdb library
     for n in tqdm(record_names):
-
-        record = wfdb.rdrecord(n, pn_dir="mitdb")
+        # Pull record with digital values
+        record = wfdb.rdrecord(n, pn_dir=pn_dir, return_res=64, physical=False)
 
         # For each record, create a new device in our dataset with the record name as the device tag
         # Check if a device with the given tag already exists using the `get_device_id` function
@@ -100,14 +84,10 @@ for each record and handle multiple signals in a single record.
         if device_id is None:
             device_id = sdk.insert_device(device_tag=record.record_name)
 
-        # Calculate the frequency in nanoseconds for the record and create a time array
-        freq_nano = record.fs * 1_000_000_000
-        time_arr = np.arange(record.sig_len, dtype=np.int64) * int(10 ** 9 // record.fs)
-
         # Read The Record Annotations
         annotation = wfdb.rdann(n, 'atr', pn_dir="mitdb", summarize_labels=True, return_label_elements=['description'])
         label_time_idx_array = annotation.sample
-        label_time_array = time_arr[label_time_idx_array]
+        label_time_array = label_time_idx_array * (1 / record.fs)
         label_value_list = annotation.description
 
         # Define list of labels for the record
@@ -116,25 +96,35 @@ for each record and handle multiple signals in a single record.
         # Create labels for each annotation
         for i in range(len(label_value_list)):
             start_time = label_time_array[i]
-            end_time = start_time + int(10 ** 9 // record.fs)  # Assuming an annotation lasts for one sample
-            labels.append(('Arrhythmia Annotation', device_id, start_time, end_time, label_value_list[i]))
+            end_time = start_time + (1 / record.fs)  # Assuming an annotation lasts for one sample
+            label_name = label_value_list[i]
+            label_measure_id = None  # No specific signal associated with this label.
+            label_source = 'WFDB Arrhythmia Annotation'  # Where the label came from
+            labels.append((label_name, label_source, device_id, label_measure_id, start_time, end_time))
 
         # Insert labels into the database
-        sdk.insert_labels(labels=labels, time_units='ns', source_type='device_id')
+        sdk.insert_labels(labels=labels, time_units='s', source_type='device_id')
 
         # If there are multiple signals in one record, split them into separate dataset entries
+        start_time_s = 0
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
 
                 # Check if a measure with the given tag and frequency already exists in the dataset using the `get_measure_id` function
                 # If it doesn't exist, create a new measure using the `insert_measure` function
-                measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i])
+                measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i], freq_units="nHz")
                 if measure_id is None:
-                    measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i])
+                    measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i], freq_units="nHz")
 
-                # Write the data using the `write_data_easy` function
-                sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal.T[i],
-                                    freq_nano, scale_m=None, scale_b=None)
+                # Calculate the digital to analog scale factors.
+                gain = segment.adc_gain[i]
+                baseline = segment.baseline[i]
+                scale_m = 1 / gain
+                scale_b = -baseline / gain
+
+                # Write the data using the `write_segment` function
+                sdk.write_segment(measure_id, device_id, record.d_signal.T[i], start_time_s, freq=record.fs,
+                    scale_m=scale_m, scale_b=scale_b, time_units="s", freq_units="Hz")
 
         # If there is only one signal in the input file, insert it in the same way as for multiple signals
         else:
@@ -144,10 +134,109 @@ for each record and handle multiple signals in a single record.
             if measure_id is None:
                 measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano, unit=record.units)
 
-            # Write the data using the `write_data_easy` function
-            sdk.write_data_easy(measure_id, device_id, time_arr, record.p_signal,
-                                freq_nano, scale_m=None, scale_b=None)
+            # Calculate the digital to analog scale factors.
+            gain = segment.adc_gain
+            baseline = segment.baseline
+            scale_m = 1 / gain
+            scale_b = -baseline / gain
 
+            # Write the data using the `write_data_easy` function
+            sdk.write_segment(measure_id, device_id, record.d_signal, start_time_s, freq=record.fs, scale_m=scale_m, scale_b=scale_b,
+                time_units="s", freq_units="Hz")
+
+.. _methods_of_inserting_data:
+
+Methods of Inserting Data
+--------------------------
+
+There are multiple ways to insert data into AtriumDB, depending on the format and use case.
+
+The two primary methods are: inserting **segments** and inserting **time-value pairs**, both with the option of using
+**buffered inserts** to batch small pieces of data together.
+
+Understanding these formats helps to select the best approach for your use case.
+
+Segments
+^^^^^^^^^^
+
+Segments are `a sequence of evenly-timed samples <https://en.wikipedia.org/wiki/Sampling_(signal_processing)/>`_ .
+A segment includes a **start time**, a **sampling frequency**, and a sequence of **values**.
+The timestamp of each value can be inferred based on the start time and the frequency.
+
+Segments are often used for high-frequency waveforms or signals.
+
+Segments can be inserted one at a time using `AtriumSDK.write_segment <contents.html#atriumdb.AtriumSDK.write_segment>`_
+or in batches using `AtriumSDK.write_segments <contents.html#atriumdb.AtriumSDK.write_segments>`_.
+
+Segments can also be batched piece by piece using :ref:`buffered_inserts`.
+
+.. code-block:: python
+
+    sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+    measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+    device_id = sdk.insert_device(device_tag="test_device")
+
+    # Inserting a single segment
+    segment_values = np.arange(100)  # Continuous values from 0 to 99
+    start_time = 0.0  # Start time in seconds
+    sdk.write_segment(measure_id, device_id, segment_values, start_time, freq=1.0, time_units="s", freq_units="Hz")
+
+    # Inserting multiple segments at once
+    segments = [np.arange(10), np.arange(10, 20), np.arange(20, 30)]
+    start_times = [0.0, 10.0, 20.0]  # Start times in seconds for each segment
+    sdk.write_segments(measure_id, device_id, segments, start_times, freq=1.0, time_units="s", freq_units="Hz")
+
+
+Time-Value Pairs
+^^^^^^^^^^^^^^^^^^
+
+Time-value pairs allow you to insert irregularly sampled data, where each value has its own specific timestamp.
+This format is common for low-frequency signals, such as metrics or aperiodic signals.
+
+The method `AtriumSDK.write_time_value_pairs <contents.html#atriumdb.AtriumSDK.write_time_value_pairs>`_
+can be used for inserting time-value pairs, with arrays of values and corresponding timestamps passed as arguments.
+
+.. code-block:: python
+
+    sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+    measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+    device_id = sdk.insert_device(device_tag="test_device")
+
+    # Inserting time-value pairs
+    times = np.array([0.0, 2.0, 4.5])  # Time values in seconds
+    values = np.array([100, 200, 300])  # Corresponding values
+    sdk.write_time_value_pairs(measure_id, device_id, times, values, time_units="s")
+
+.. _buffered_inserts:
+
+Buffered Inserts
+^^^^^^^^^^^^^^^^^^^^
+
+Buffered inserts allow for efficient batch writing of data into the database.
+When using the buffer, data is accumulated until a threshold is met (e.g., the number of values exceeds a specified maximum),
+at which point the buffer is automatically flushed. The buffer can also be flushed manually and automatically upon exiting the buffer's context.
+This method is optimal for live ingesting segments as they come from a device or back loading an archive of many small segments.
+
+You can buffer both **segments** and **time-value pairs** using the `AtriumSDK.write_buffer <contents.html#atriumdb.AtriumSDK.write_buffer>`_ method.
+The buffer organized data by their measure-device pair, and data is automatically written once the buffer fills or the context is closed.
+
+.. code-block:: python
+
+    sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+    measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
+    device_id = sdk.insert_device(device_tag="test_device")
+
+    # Using write_buffer for batched writes
+    reasonable_num_values_per_value = 100 * sdk.block.block_size  # 100 blocks
+    with sdk.write_buffer(max_values_per_measure_device=reasonable_num_values_per_value,
+                          max_total_values_buffered=10 * reasonable_num_values_per_value) as buffer:
+        # Write multiple small segments to buffer
+        for record in record_segments:
+            sdk.write_segment(measure_id, device_id, record.d_signal, start_time_s, freq=record.fs,
+                              scale_m=scale_m, scale_b=scale_b, time_units="s", freq_units="Hz")
+
+        buffer.flush_all()
+        # Buffer auto-flushes when the context is exited
 
 Surveying Data in the Dataset
 -----------------------------
@@ -330,8 +419,7 @@ We will iterate through the records in the MIT-BIH Arrhythmia Database and compa
        record = wfdb.rdrecord(n, pn_dir="mitdb")
        # Calculate the sample frequency in nanohertz
        freq_nano = record.fs * 1_000_000_000
-       # Create a time array for the record
-       time_arr = np.arange(record.sig_len, dtype=np.int64) * ((10 ** 9) // record.fs)
+
        # Get the device ID for the current record
        device_id = sdk.get_device_id(device_tag=record.record_name)
 
@@ -339,24 +427,24 @@ We will iterate through the records in the MIT-BIH Arrhythmia Database and compa
        if record.n_sig > 1:
            for i in range(len(record.sig_name)):
                # Get the measure ID for the current signal
-               measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano)
+               measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i])
 
                # Query the data from the dataset
                _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
 
-               # Check that both the signal and time arrays from MIT-BIH and AtriumDB are equal
-               assert np.array_equal(record.p_signal.T[i], read_values) and np.array_equal(time_arr, read_times)
+               # Check that the signal from MIT-BIH and AtriumDB are equal
+               assert np.allclose(record.p_signal.T[i], read_values)
 
        # If there is only one signal in the record
        else:
            # Get the measure ID for the signal
-           measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano)
+           measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, units=record.units)
 
            # Query the data from the dataset
            _, read_times, read_values = sdk.get_data(measure_id, 0, 10 ** 18, device_id=device_id)
 
-           # Check that both the signal and time arrays from MIT-BIH and AtriumDB are equal
-           assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
+           # Check that the signal from MIT-BIH and AtriumDB are equal
+           assert np.allclose(record.p_signal.T[i], read_values)
 
 
 Retrieving Labels from the Dataset
@@ -428,26 +516,12 @@ Reading Dataset With Iterators
 
 Working with large datasets often requires efficient access to smaller windows of data, particularly for tasks such
 as data visualization, pre-processing, or model training. The AtriumSDK provides a convenient method, `get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_,
-to handle these cases effectively. This tutorial will guide you through the end-to-end process of setting up the
-AtriumSDK instance, creating a `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ object, and iterating over data windows.
-
-
-Setting Up the SDK Instance
----------------------------
-
-First things first, let's set up the SDK:
-
-.. code-block:: python
-
-    from atriumdb import AtriumSDK
-
-    local_dataset_location = "/path/to/your/dataset"
-    sdk = AtriumSDK(dataset_location=local_dataset_location)
+to handle these cases effectively.
 
 Creating a Dataset Definition
 -----------------------------
 
-The `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ object specifies the measures, patients, or devices and the time intervals we are interested in querying.
+The `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ object specifies the measures, patients and/or devices, and the time intervals we are interested in querying.
 This definition can be provided in two different ways: by reading from a YAML file or by creating the object in your Python script.
 
 **Option 1: Using a YAML file**
@@ -456,17 +530,15 @@ Suppose you have the following in your `definition.yaml  <dataset.html#definitio
 
 .. code-block:: yaml
 
-    patient_ids:
-      1001: all
-      1002:
-        - start: 1682739200000000000  # nanosecond Unix Epoch Time
-          end: 1682739300000000000    # End time
+    device_ids:
+      1: all
+      2: all
 
     measures:
-      - MDC_ECG_LEAD_I
-      - tag: MDC_TEMP
-        freq_hz: 1.0
-        units: 'MDC_DIM_DEGC'
+      - MLII
+      - tag: V1
+        freq_hz: 360.0
+        units: 'mV'
 
 You can load this into a `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ object as follows:
 
@@ -485,14 +557,14 @@ Alternatively, you can define your dataset programmatically:
 
     from atriumdb import DatasetDefinition
 
-    measures = ['MDC_ECG_LEAD_I',
-                {"tag": "MDC_TEMP", "freq_hz": 1.0, "units": "MDC_DIM_DEGC"},]
-    patient_ids = {
-        1001: 'all',
-        1002: [{'start': 1682739200000000000, 'end': 1682739300000000000}]
+    measures = ['MLII',
+                {"tag": "V1", "freq_hz": 360.0, "units": "mV"},]
+    device_ids = {
+        1: 'all',
+        2: 'all',
     }
 
-    definition = DatasetDefinition(measures=measures, patient_ids=patient_ids)
+    definition = DatasetDefinition(measures=measures, device_ids=device_ids)
 
 If you wanted to create a dataset of all patients born after a certain date, you could setup your patient_ids dictionary like:
 
@@ -502,6 +574,20 @@ If you wanted to create a dataset of all patients born after a certain date, you
     patient_ids = {patient_id: "all" for patient_id, patient_info in
         sdk.get_all_patients().items() if patient_info['dob'] and patient_info['dob'] > min_dob}
 
+    definition = DatasetDefinition(measures=measures, patient_ids=patient_ids)
+
+
+**Generating a DatasetDefinition for WFDB Example**
+
+.. code-block:: python
+
+    measures = [{"tag": measure_info['tag'],
+                 "freq_nhz": measure_info['freq_nhz'],  # Can specify freq_nhz or freq_hz
+                 "units": measure_info['unit']}
+                for measure_info in sdk.get_all_measures().values()]
+    device_ids = {device_id: 'all' for device_id in sdk.get_all_devices().keys()}
+    definition = DatasetDefinition(measures=measures, device_ids=device_ids)
+
 Iterating Over Windows
 ----------------------
 
@@ -509,11 +595,11 @@ Now that we've setup the `DatasetDefinition <contents.html#atriumdb.DatasetDefin
 
 .. code-block:: python
 
-    window_size_nano = 60 * 1_000_000_000  # Define window size in nanoseconds (60 seconds)
-    slide_size_nano = 30 * 1_000_000_000  # Define slide size in nanoseconds for overlapping windows if necessary (30 seconds)
+    window_size = 60
+    slide_size = 30
 
     # Obtain the iterator
-    iterator = sdk.get_iterator(definition, window_size_nano, slide_size_nano)
+    iterator = sdk.get_iterator(definition, window_size, slide_size, time_units="s")
 
     # Now you can iterate over the data windows
     for window_i, window in enumerate(iterator):
@@ -523,15 +609,16 @@ Now that we've setup the `DatasetDefinition <contents.html#atriumdb.DatasetDefin
         print(f"Patient ID: {window.patient_id}")
 
         # Use window.signals to view available signals in their original form
-        for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
-            print(f"Measure: {measure_tag}, Frequency: {measure_freq_nhz}, Units: {measure_units}")
+        for (measure_tag, measure_freq_hz, measure_units), signal_dict in window.signals.items():
+            print(f"Measure: {measure_tag}, Frequency: {measure_freq_hz} Hz, Units: {measure_units}")
             print(f"Times: {signal_dict['times']}")
             print(f"Values: {signal_dict['values']}")
             print(f"Expected Count: {signal_dict['expected_count']}")
             print(f"Actual Count: {signal_dict['actual_count']}")
 
-        # Use the array_matrix for a single matrix containing all signals
-        data_matrix = iterator.get_array_matrix(window_i)
-        print(data_matrix)
 
+***************************************
+Full Tutorial Script
+***************************************
 
+You can view or download the full Python script used in this tutorial here :download:`tutorial_script.py <scripts/tutorial_script.py>`.
