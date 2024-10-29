@@ -80,16 +80,18 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
 
     if cache_dir is not None:
         # Ensure the cache directory exists
-        sdk.file_api.ensure_cache_dir(cache_dir)
-
+        sdk.file_api.makedirs(cache_dir)
+        cache_filepath = sdk.file_api.get_cache_filepath(cache_key, cache_dir, cache_type='definition', extension='pkl')
+        info_filepath = sdk.file_api.get_cache_filepath(cache_key, cache_dir, 'info', extension='json')
         # Check if the result is already cached
-        if sdk.file_api.cache_exists(cache_key, cache_dir, cache_type='definition'):
+        if sdk.file_api.file_exists(cache_filepath):
             try:
-                result = sdk.file_api.load_cache(cache_key, cache_dir, cache_type='definition')
+                result = sdk.file_api.pickle_load_file(cache_filepath)
                 return result
             except (EOFError, pickle.UnpicklingError):
                 # If cache is corrupted, remove it and proceed to recompute
-                sdk.file_api.remove_cache(cache_key, cache_dir, cache_type='definition')
+                sdk.file_api.remove(cache_filepath)
+                sdk.file_api.remove(info_filepath)
 
     # Validate measures
     validated_measure_list = _validate_measures(definition, sdk, measure_tag_match_rule=measure_tag_match_rule)
@@ -115,7 +117,10 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
             'cache_type': 'definition',
             'parameters': hash_parameters
         }
-        sdk.file_api.save_cache(cache_key, result, cache_dir, cache_type='definition', cache_info=cache_info)
+        cache_filepath = sdk.file_api.get_cache_filepath(cache_key, cache_dir, cache_type='definition', extension='pkl')
+        info_filepath = sdk.file_api.get_cache_filepath(cache_key, cache_dir, 'info', extension='json')
+        sdk.file_api.pickle_dump_file(cache_filepath, result)
+        sdk.file_api.json_dump_file(info_filepath, cache_info)
 
     return result
 

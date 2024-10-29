@@ -147,15 +147,16 @@ class AtriumFileHandler:
 
     def remove(self, file_path: str):
         # rm file
-        os.remove(file_path)
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
     def walk(self, root_path: str):
         # Directory tree generator
         return os.walk(root_path)
 
-    def ensure_cache_dir(self, cache_dir):
+    def makedirs(self, target_dir):
         # Ensure the cache directory exists
-        os.makedirs(cache_dir, exist_ok=True)
+        os.makedirs(target_dir, exist_ok=True)
 
     def get_cache_filepath(self, cache_key, cache_dir, cache_type=None, extension='pkl'):
         # Get the full path to the cache or info file
@@ -165,33 +166,19 @@ class AtriumFileHandler:
             filename = f"{cache_key}.{extension}"
         return os.path.join(cache_dir, filename)
 
-    def cache_exists(self, cache_key, cache_dir, cache_type):
-        # Check if a cache file exists
-        cache_file = self.get_cache_filepath(cache_key, cache_dir, cache_type, extension='pkl')
+    def file_exists(self, cache_file):
+        # Check if a file exists
         return os.path.exists(cache_file)
 
-    def load_cache(self, cache_key, cache_dir, cache_type):
-        # Load data from a cache file
-        cache_file = self.get_cache_filepath(cache_key, cache_dir, cache_type, extension='pkl')
-        with open(cache_file, 'rb') as f:
+    def pickle_load_file(self, file_path):
+        # Load data from a pickle file
+        with open(file_path, 'rb') as f:
             return pickle.load(f)
 
-    def save_cache(self, cache_key, data, cache_dir, cache_type, cache_info):
-        # Save data to a cache file
-        cache_file = self.get_cache_filepath(cache_key, cache_dir, cache_type, extension='pkl')
-        with open(cache_file, 'wb') as f:
+    def pickle_dump_file(self, file_path, data):
+        with open(file_path, 'wb') as f:
             pickle.dump(data, f)
 
-        # Save cache info to a JSON file
-        info_file = self.get_cache_filepath(cache_key, cache_dir, 'info', extension='json')
-        with open(info_file, 'w') as f:
-            json.dump(cache_info, f)
-
-    def remove_cache(self, cache_key, cache_dir, cache_type):
-        # Remove a cache file and its info file
-        cache_file = self.get_cache_filepath(cache_key, cache_dir, cache_type, extension='pkl')
-        if os.path.exists(cache_file):
-            os.remove(cache_file)
-        info_file = self.get_cache_filepath(cache_key, cache_dir, 'info', extension='json')
-        if os.path.exists(info_file):
-            os.remove(info_file)
+    def json_dump_file(self, file_path, data):
+        with open(file_path, 'w') as f:
+            json.dump(data, f)

@@ -208,17 +208,20 @@ class DatasetIterator:
     def _extract_cache_info(self):
         # Check if caching is enabled
         if self.cache_dir is not None:
-            self.sdk.file_api.ensure_cache_dir(self.cache_dir)
+            self.sdk.file_api.makedirs(self.cache_dir)
             cache_key = self._get_cache_key()
             # Check if cache exists
-            if self.sdk.file_api.cache_exists(cache_key, self.cache_dir, cache_type='iterator_windows'):
+            cache_filepath = self.sdk.file_api.get_cache_filepath(cache_key, self.cache_dir, cache_type='iterator_windows', extension='pkl')
+            info_filepath = self.sdk.file_api.get_cache_filepath(cache_key, self.cache_dir, 'info', extension='json')
+            if self.sdk.file_api.file_exists(cache_filepath):
                 # Load from cache
                 try:
-                    cached_data = self.sdk.file_api.load_cache(cache_key, self.cache_dir, cache_type='iterator_windows')
+                    cached_data = self.sdk.file_api.pickle_load_file(cache_filepath)
                     return cached_data
                 except (EOFError, pickle.UnpicklingError):
                     # If cache is corrupted, remove it and proceed to recompute
-                    self.sdk.file_api.remove_cache(cache_key, self.cache_dir, cache_type='iterator_windows')
+                    self.sdk.file_api.remove(cache_filepath)
+                    self.sdk.file_api.remove(info_filepath)
 
         # Flattening the nested dictionary/list structure
         flattened_sources = []
@@ -330,8 +333,12 @@ class DatasetIterator:
                 'cache_type': 'iterator_windows',
                 'parameters': variables_to_hash,
             }
-            self.sdk.file_api.save_cache(cache_key, data_to_cache, self.cache_dir, cache_type='iterator_windows',
-                                         cache_info=window_cache_info)
+
+            cache_filepath = self.sdk.file_api.get_cache_filepath(
+                cache_key, self.cache_dir, cache_type='iterator_windows', extension='pkl')
+            info_filepath = self.sdk.file_api.get_cache_filepath(cache_key, self.cache_dir, 'info', extension='json')
+            self.sdk.file_api.pickle_dump_file(cache_filepath, data_to_cache)
+            self.sdk.file_api.json_dump_file(info_filepath, window_cache_info)
 
         return cache_info, starting_window_index_per_batch, total_number_of_windows
 
