@@ -10,19 +10,14 @@ To create a new dataset, you can use the `create_dataset` method. This method al
 
 .. code-block:: python
 
-    import os
-    import shutil
     from atriumdb import AtriumSDK
 
     # Define dataset location
     dataset_location = "./new_dataset"
 
-    # Reset the local database if it exists
-    if os.path.exists(dataset_location):
-        shutil.rmtree(dataset_location)
-
     # Create a new dataset
     sdk = AtriumSDK.create_dataset(dataset_location=dataset_location)
+
 
 Connecting to an Existing Dataset
 #######################################
@@ -55,6 +50,30 @@ If it's a MariaDB dataset, you will also have to specify the connection paramete
     api_url = "http://example.com/v1"
     token = "4e78a93749ead7893"
     sdk = AtriumSDK(api_url=api_url, token=token, metadata_connection_type="api")
+
+
+Deleting a Dataset
+#######################
+
+If you need to delete an existing dataset, you can remove the directory where it’s stored. **Be cautious** when performing this action, as it will permanently delete all data in that location. Make sure you have backups or are certain you want to clear this directory before proceeding.
+
+.. warning::
+
+    The following code will delete all data in the specified directory (`dataset_location`).
+    Ensure you have backups or are certain you want to clear this directory before proceeding.
+
+.. code-block:: python
+
+    import os
+    import shutil
+
+    # Define dataset location
+    dataset_location = "./new_dataset"
+
+    # Delete the dataset directory if it exists
+    if os.path.exists(dataset_location):
+        shutil.rmtree(dataset_location)
+
 
 
 Pulling Example Data from WFDB

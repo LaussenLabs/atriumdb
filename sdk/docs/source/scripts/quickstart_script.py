@@ -6,9 +6,10 @@ import os
 from tqdm import tqdm
 
 dataset_location = "./new_dataset"
-if os.path.exists(dataset_location):
-    # Reset the local database
-    shutil.rmtree(dataset_location)
+# WARNING UNCOMMENTING THIS CODE WILL DELETE THE DIRECTORY POINTED AT BY dataset_location
+# if os.path.exists(dataset_location):
+#     # Reset the local database
+#     shutil.rmtree(dataset_location)
 sdk = AtriumSDK.create_dataset(dataset_location=dataset_location)
 
 # Fetch all records from MITDB
