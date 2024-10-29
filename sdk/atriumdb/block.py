@@ -364,7 +364,7 @@ class Block:
                 headers[i].scale_m = 1.0
 
         # Apply the scale factors to the value data if necessary
-        scale_m_array = np.array([h.scale_m if h.scale_m != 0 else 1.0 for h in headers])
+        scale_m_array = np.array([h.scale_m for h in headers])
         scale_b_array = np.array([h.scale_b for h in headers])
 
         v_raw_types = set(h.v_raw_type for h in headers)
