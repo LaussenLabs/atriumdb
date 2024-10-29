@@ -408,25 +408,6 @@ class AtriumSDK:
 
         return sdk_object
 
-    def find_blocks(self, measure_id: int, device_id: int, start_time: int, end_time: int):
-        """
-        Find blocks within the cached data that overlap with the specified time range.
-        """
-        if measure_id not in self.block_cache or device_id not in self.block_cache[measure_id]:
-            return []
-
-        blocks = self.block_cache[measure_id][device_id]
-        starts = self.start_cache[measure_id][device_id]
-        ends = self.end_cache[measure_id][device_id]
-
-        # Find indices where blocks end after start_time
-        start_idx = bisect.bisect_left(ends, start_time)
-        # Find indices where blocks start before end_time
-        end_idx = bisect.bisect_right(starts, end_time)
-
-        # Return the blocks that overlap
-        return blocks[start_idx:end_idx]
-
     def get_data(self, measure_id: int = None, start_time_n: int = None, end_time_n: int = None,
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
