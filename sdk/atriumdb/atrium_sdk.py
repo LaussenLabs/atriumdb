@@ -1453,6 +1453,113 @@ class AtriumSDK:
         # Update filename dictionary
         self.filename_dict.update(filename_dict)
 
+    def load_definition(self, definition, gap_tolerance=None, measure_tag_match_rule="best", start_time_n=None, end_time_n=None, cache_dir=None):
+        # Verify the dataset definition against the AtriumSDK
+        validated_measure_list, validated_label_set_list, mapped_sources = verify_definition(
+            definition, sdk=self, gap_tolerance=gap_tolerance,
+            measure_tag_match_rule=measure_tag_match_rule, start_time_n=start_time_n,
+            end_time_n=end_time_n,
+            # cache_dir=cache_dir,  # TODO: Uncomment this line when iterator caching is merged with this branch.
+        )
+
+        # Extract measure_ids from the validated measures
+        measure_ids = [measure['id'] for measure in validated_measure_list]
+
+        # Initialize device time ranges
+        device_time_ranges = {}
+
+        # Process device_patient_tuples
+        device_patient_tuples = mapped_sources.get('device_patient_tuples', {})
+        for (device_id, _), time_ranges in device_patient_tuples.items():
+            if device_id not in device_time_ranges:
+                device_time_ranges[device_id] = []
+            device_time_ranges[device_id].extend(time_ranges)
+
+        # Process unmatched device_ids if any
+        unmatched_device_ids = mapped_sources.get('device_ids', {})
+        for device_id, time_ranges in unmatched_device_ids.items():
+            if device_id not in device_time_ranges:
+                device_time_ranges[device_id] = []
+            device_time_ranges[device_id].extend(time_ranges)
+
+        # Merge and sort time ranges for each device_id
+        for device_id in device_time_ranges:
+            time_ranges = device_time_ranges[device_id]
+            # Sort time ranges
+            time_ranges.sort()
+            # Merge overlapping time ranges
+            merged_time_ranges = []
+            for start, end in sorted(time_ranges):
+                if merged_time_ranges and start <= merged_time_ranges[-1][1]:
+                    # Overlapping intervals, merge them
+                    merged_time_ranges[-1][1] = max(merged_time_ranges[-1][1], end)
+                else:
+                    merged_time_ranges.append([start, end])
+            device_time_ranges[device_id] = merged_time_ranges
+
+        # Get list of device_ids
+        device_ids = list(device_time_ranges.keys())
+
+        # Fetch block index data for the devices and measures specified
+        block_query_result = self.sql_handler.select_blocks_for_devices(device_ids, measure_ids)
+
+        # Get unique file_ids
+        file_id_list = list(set([row[3] for row in block_query_result]))
+        if len(file_id_list) == 0:
+            return
+        filename_dict = self.get_filename_dict(file_id_list)
+
+        # Build caches
+        for block in block_query_result:
+            block_id, measure_id, device_id, file_id, start_byte, num_bytes, block_start_time, block_end_time, num_values = block
+            measure_id, device_id = int(measure_id), int(device_id)
+
+            # Check if block's time range intersects any of the time ranges for the device_id
+            device_ranges = device_time_ranges.get(device_id, [])
+            intersects = False
+            for start, end in device_ranges:
+                if block_end_time >= start and block_start_time <= end:
+                    intersects = True
+                    break
+            if not intersects:
+                continue  # Skip this block
+
+            # Include the block
+            block_array = np.array([
+                block_id, measure_id, device_id, file_id, start_byte,
+                num_bytes, block_start_time, block_end_time, num_values
+            ], dtype=np.int64)
+
+            if measure_id not in self.block_cache:
+                self.block_cache[measure_id] = {}
+                self.start_cache[measure_id] = {}
+                self.end_cache[measure_id] = {}
+
+            if device_id not in self.block_cache[measure_id]:
+                self.block_cache[measure_id][device_id] = []
+                self.start_cache[measure_id][device_id] = []
+                self.end_cache[measure_id][device_id] = []
+
+            self.block_cache[measure_id][device_id].append(block_array)
+            self.start_cache[measure_id][device_id].append(block_start_time)
+            self.end_cache[measure_id][device_id].append(block_end_time)
+
+        # Convert lists to numpy arrays
+        for measure_id in self.block_cache:
+            for device_id in self.block_cache[measure_id]:
+                current_cache = self.block_cache[measure_id][device_id]
+                if isinstance(current_cache, list):
+                    self.block_cache[measure_id][device_id] = np.vstack(current_cache)
+                    self.start_cache[measure_id][device_id] = np.array(
+                        self.start_cache[measure_id][device_id], dtype=np.int64
+                    )
+                    self.end_cache[measure_id][device_id] = np.array(
+                        self.end_cache[measure_id][device_id], dtype=np.int64
+                    )
+
+        # Update filename dictionary
+        self.filename_dict.update(filename_dict)
+
     def find_blocks(self, measure_id: int, device_id: int, start_time: int, end_time: int):
         """
         Find blocks within the cached data that overlap with the specified time range.
