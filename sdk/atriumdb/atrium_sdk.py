@@ -16,10 +16,13 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import warnings
+from collections import defaultdict
 import numpy as np
 import bisect
 
 import threading
+
+from atriumdb.intervals.intersection import intervals_intersect
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
     find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz, \
@@ -1466,20 +1469,16 @@ class AtriumSDK:
         measure_ids = [measure['id'] for measure in validated_measure_list]
 
         # Initialize device time ranges
-        device_time_ranges = {}
+        device_time_ranges = defaultdict(list)
 
         # Process device_patient_tuples
         device_patient_tuples = mapped_sources.get('device_patient_tuples', {})
         for (device_id, _), time_ranges in device_patient_tuples.items():
-            if device_id not in device_time_ranges:
-                device_time_ranges[device_id] = []
             device_time_ranges[device_id].extend(time_ranges)
 
         # Process unmatched device_ids if any
         unmatched_device_ids = mapped_sources.get('device_ids', {})
         for device_id, time_ranges in unmatched_device_ids.items():
-            if device_id not in device_time_ranges:
-                device_time_ranges[device_id] = []
             device_time_ranges[device_id].extend(time_ranges)
 
         # Merge and sort time ranges for each device_id
@@ -1516,13 +1515,11 @@ class AtriumSDK:
 
             # Check if block's time range intersects any of the time ranges for the device_id
             device_ranges = device_time_ranges.get(device_id, [])
-            intersects = False
-            for start, end in device_ranges:
-                if block_end_time >= start and block_start_time <= end:
-                    intersects = True
-                    break
-            if not intersects:
-                continue  # Skip this block
+            if not device_ranges:
+                continue  # Skip if no ranges for this device.
+
+            if not intervals_intersect(device_ranges, block_start_time, block_end_time):
+                continue  # Skip this block if no intersection.
 
             # Include the block
             block_array = np.array([

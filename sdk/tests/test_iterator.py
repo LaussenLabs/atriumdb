@@ -14,6 +14,8 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+from collections import defaultdict
+
 import numpy as np
 import pytest
 
@@ -68,21 +70,28 @@ def _test_iterator(db_type, dataset_location, connection_params):
     iterator = sdk.get_iterator(DatasetDefinition(filename="./example_data/mitbih_seed_42_all_devices.yaml"),
                                 window_size_nano, window_size_nano)
 
+    expected_values = {}
     for window_i, window in enumerate(iterator):
-        assert isinstance(window.start_time, int)
-        assert isinstance(window.device_id, expected_device_id_type)
-        assert isinstance(window.patient_id, expected_patient_id_type)
 
-        for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
-            if window.device_id == 1:
-                assert isinstance(signal_dict['times'], np.ndarray)
-                assert isinstance(signal_dict['values'], np.ndarray)
-            else:
-                assert signal_dict['actual_count'] == 0
+        for (measure_tag, measure_freq_hz, measure_units), signal_dict in window.signals.items():
+            measure_id =  sdk.get_measure_id(measure_tag, measure_freq_hz, measure_units, freq_units="Hz")
+            assert isinstance(signal_dict['times'], np.ndarray)
+            assert isinstance(signal_dict['values'], np.ndarray)
+            if (measure_id, window.device_id) not in expected_values:
+                expected_values[(measure_id, window.device_id)] = []
+            expected_values[(measure_id, window.device_id)].append(signal_dict['values'])
 
-        # Labels
-        assert isinstance(window.label_time_series, np.ndarray)
-        assert isinstance(window.label, np.ndarray)
+
+    for measure_id in sdk.get_all_measures():
+        for device_id in sdk.get_all_devices():
+            _, times, values = sdk.get_data(measure_id, 0, 2**62, device_id)
+            if values.size == 0:
+                continue
+            assert (measure_id, device_id) in expected_values
+            actual_values = np.concatenate(expected_values[(measure_id, device_id)])
+            actual_values = actual_values[~np.isnan(actual_values)]
+            assert np.allclose(actual_values, values)
+
 
     # Check for the case of partial windows
     sdk = AtriumSDK(
