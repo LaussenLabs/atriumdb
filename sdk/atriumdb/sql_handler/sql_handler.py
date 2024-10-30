@@ -638,7 +638,7 @@ class SQLHandler(ABC):
                                                       label_source_id_list=label_source_id_list, measure_id_list=measure_id_list))
 
             # Sort the results by start_time_n primarily and then by end_time_n secondarily
-            results.sort(key=lambda x: (x[5], x[6]))
+            results.sort(key=lambda x: (x[5], x[6], x[0]))
             return results
 
         # Construct the query for selecting labels based on the provided criteria.
@@ -679,7 +679,7 @@ class SQLHandler(ABC):
 
         # Sort by start_time_n
         # Used in iterator logic, alter with caution.
-        query += " ORDER BY start_time_n ASC, end_time_n ASC"
+        query += " ORDER BY start_time_n ASC, end_time_n ASC, label.id ASC"
 
         # if limit and offset are specified add them to query
         if limit is not None and offset is not None:
@@ -719,7 +719,7 @@ class SQLHandler(ABC):
                                                      measure_id_list=measure_id_list))
 
             # Sort the results by start_time_n primarily and then by end_time_n secondarily
-            results.sort(key=lambda x: (x[7], x[8]))
+            results.sort(key=lambda x: (x[7], x[8], x[0]))
             return results
 
         # Construct the query with additional joins for label_source, label_set, and device_patient.
@@ -773,7 +773,7 @@ class SQLHandler(ABC):
         query += " WHERE " + " AND ".join(conditions)
 
         # Add sorting.
-        query += " ORDER BY start_time_n ASC, end_time_n ASC"
+        query += " ORDER BY start_time_n ASC, end_time_n ASC, label.id ASC"
 
         # Handle limit and offset.
         if limit is not None:
