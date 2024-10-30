@@ -1456,10 +1456,61 @@ class AtriumSDK:
         # Update filename dictionary
         self.filename_dict.update(filename_dict)
 
-    def load_definition(self, definition, gap_tolerance=None, measure_tag_match_rule="best", start_time_n=None, end_time_n=None, cache_dir=None):
+    def load_definition(self, definition, gap_tolerance=None, measure_tag_match_rule="best",
+                        start_time=None, end_time=None, time_units: str = "ns", cache_dir=None):
+        """
+        Load and validate a dataset definition, then initialize device and time ranges for data fetching.
+
+        This method validates the provided `definition` against dataset attributes to ensure accurate mapping of measures,
+        labels, and devices (or patients). Time ranges for each specified device are merged and cached to optimize
+        data retrieval, with the resulting device-time configuration used to fetch block metadata.
+
+        :param definition: The dataset definition specifying measures, devices, and optional time ranges to include.
+            It should be either a `DefinitionYAML` instance or a dictionary.
+        :type definition: DefinitionYAML or dict
+        :param int gap_tolerance: Tolerance for gaps between consecutive time intervals when "all" is specified in the
+            definition, in the units specified by `time_units`. Defaults to 1 minute (60_000_000_000 nanoseconds).
+        :param str measure_tag_match_rule: Rule for matching tags in measures; defaults to "best".
+        :param int start_time: Minimum global start time for fetching data, in units of `time_units`.
+        :param int end_time: Maximum global end time for fetching data, in units of `time_units`.
+        :param str time_units: Time units to interpret `start_time`, `end_time`, and `gap_tolerance`.
+            One of ["ns", "us", "ms", "s"]. Defaults to "ns".
+        :param str cache_dir: Directory to use for caching processed blocks if caching is enabled.
+
+        :raises ValueError: If the provided `time_units` is invalid.
+
+        Notes:
+        Supported `time_units` are nanoseconds ("ns"), microseconds ("us"), milliseconds ("ms"), and seconds ("s").
+        The `definition` parameter should specify devices or patients with associated time intervals, or the keyword "all".
+
+        Example:
+        sdk = AtriumSDK(dataset_location=local_dataset_location)
+
+        # Define measures, devices, and time ranges
+        definition = {
+            'measures': ["MLII"],
+            'devices': {
+                1: "all",
+                2: [{"start": 1682739250000000000, "end": 1682739350000000000}],
+            }
+        }
+
+        # Load the definition with time units in milliseconds
+        sdk.load_definition(definition, gap_tolerance=1000, start_time=0, end_time=60000, time_units="ms")
+
+        """
+        # Validate and convert time_units
+        time_unit_options = {"s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3, "ns": 1}
+        if time_units not in time_unit_options:
+            raise ValueError(f"Invalid time units. Expected one of: {list(time_unit_options.keys())}")
+
+        # Convert start_time, end_time, and gap_tolerance to nanoseconds
+        start_time_n = None if start_time is None else int(start_time * time_unit_options[time_units])
+        end_time_n = None if end_time is None else int(end_time * time_unit_options[time_units])
+        gap_tolerance_n = None if gap_tolerance is None else int(gap_tolerance * time_unit_options[time_units])
         # Verify the dataset definition against the AtriumSDK
         validated_measure_list, validated_label_set_list, mapped_sources = verify_definition(
-            definition, sdk=self, gap_tolerance=gap_tolerance,
+            definition, sdk=self, gap_tolerance=gap_tolerance_n,
             measure_tag_match_rule=measure_tag_match_rule, start_time_n=start_time_n,
             end_time_n=end_time_n,
             # cache_dir=cache_dir,  # TODO: Uncomment this line when iterator caching is merged with this branch.
