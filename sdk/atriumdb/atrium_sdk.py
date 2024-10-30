@@ -234,12 +234,7 @@ class AtriumSDK:
             if not REQUESTS_INSTALLED:
                 raise ImportError("Remote mode not installed. Please install atriumdb with pip install atriumdb[remote]")
 
-            # Handle file_api for caching
-            if dataset_location is None:
-                dataset_location = Path.cwd()
-            if tsc_file_location is None:
-                tsc_file_location = dataset_location / 'tsc'
-            self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
+            self.file_api = storage_handler if storage_handler else AtriumFileHandler(None)
 
             self.mode = "api"
             self.api_url = api_url
