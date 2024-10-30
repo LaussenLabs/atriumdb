@@ -219,6 +219,20 @@ Import / Export
 
 The AtriumDB CLI provides the ability to export data between different AtriumDB datasets and various popular formats such as CSV, TSC, Numpy, and WFDB.
 
+Import
+------------
+
+The ``import`` command enables you to transfer data into an AtriumDB dataset from various file formats.
+
+The basic syntax for the ``import`` command is as follows:
+
+.. code-block:: bash
+
+    atriumdb import path/to/dataset/ [OPTIONS]
+
+For a complete list of options available for the ``import`` command, refer to the :ref:`Import Command <import_header>` section under "List of Commands and Options."
+
+
 Export
 ------------
 
