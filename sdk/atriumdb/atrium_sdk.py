@@ -3971,7 +3971,9 @@ class AtriumSDK:
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
         :param str cache: The directory where you want to store a disk based cache to store intermediate data and
-            speed up subsequent calls with the same parameters.
+            speed up subsequent calls with the same parameters. Verifying large definition files and index large
+            datasets takes a long time, so using a disk cache will ensure you only need to do that work once.
+            The default value (or setting cache=None) will not use the cache.
         :param int num_iterators: Number of iterators to create by partitioning the dataset (default is 1).
 
         :return: A single DatasetIterator object or a list of DatasetIterator objects depending on the value of num_iterators.
