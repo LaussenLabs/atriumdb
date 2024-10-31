@@ -12,7 +12,7 @@ mypkg = ["*.so", "*.dll"]
 
 [project]
 name = "atriumdb"
-version = "2.3.0"
+version = "2.4.0"
 description = "Timeseries Database"
 readme = "README.md"
 authors = [{name = "Robert Greer, William Dixon, Spencer Vecile"}, { name = "Robert Greer", email = "robert.greer@sickkids.ca"}, { name = "William Dixon", email = "will.dixon@sickkids.ca" }, { name = "Spencer Vecile", email = "spencer.vecile@sickkids.ca"}]
@@ -32,7 +32,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
 ]
 keywords = ["atriumdb", "timeseries", "database", "waveform", "medical data", "machine learning", "data", "data science"]
 dependencies = [

@@ -13,7 +13,7 @@ sys.path.append(os.path.abspath('../..'))
 project = 'AtriumDB'
 copyright = '2024, The Hospital for Sick Children'
 author = 'LaussenLabs'
-release = '2.2.2'
+release = '2.4.0'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -28,6 +28,6 @@ exclude_patterns = []
 
 # html_theme = 'alabaster'
 html_theme = 'sphinx_rtd_theme'
-html_static_path = ['_static']
+html_static_path = ['_static', 'scripts']
 
 smartquotes = False

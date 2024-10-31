@@ -64,8 +64,9 @@ from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
-from atriumdb.windowing.random_access_iterator import RandomAccessDatasetIterator
+from atriumdb.windowing.random_access_iterator import MappedIterator
 from atriumdb.windowing.verify_definition import verify_definition
+from atriumdb.windowing.definition_splitter import partition_dataset
 from atriumdb.write_buffer import WriteBuffer
 
 try:
@@ -298,12 +299,19 @@ class AtriumSDK:
 
         # Create these caches early in case they get used in the initial creation of the caches below.
         self._measures, self._devices, self._label_sets = {}, {}, {}
+        self._label_source_ids, self._label_sources = {}, {}
 
         # Initialize measures and devices if not in API mode
         if metadata_connection_type != "api":
             self._measures = self.get_all_measures()
             self._devices = self.get_all_devices()
             self._label_sets = self.get_all_label_names()
+
+            self._label_sources = self.get_all_label_sources()
+            self._label_source_ids = {}
+
+            for source_id, source_info in self._label_sources.items():
+                self._label_source_ids[source_info['name']] = source_id
 
             # Lazy caching, cache only built if patient info requested later
             self._patients = {}
@@ -3121,7 +3129,7 @@ class AtriumSDK:
                 measure_id_list.append(measure_id)
             measure_list = measure_id_list
 
-        labels = self.sql_handler.select_labels(
+        labels = self.sql_handler.select_labels_with_info(
             label_set_id_list=label_name_id_list,
             device_id_list=device_list,
             patient_id_list=patient_id_list,
@@ -3133,8 +3141,8 @@ class AtriumSDK:
         )
 
         # Extract unique label_set_ids and device_ids
-        unique_label_set_ids = {label[1] for label in labels}
-        unique_device_ids = {label[2] for label in labels}
+        unique_label_set_ids = {label[2] for label in labels}
+        unique_device_ids = {label[3] for label in labels}
 
         # Create dictionaries for label set and device info for optimized lookup
         label_set_id_to_info = {label_set_id: self.get_label_name_info(label_set_id) for label_set_id in
@@ -3142,17 +3150,15 @@ class AtriumSDK:
         device_id_to_info = {device_id: self.get_device_info(device_id) for device_id in unique_device_ids}
 
         result = []
-        for label_entry_id, label_set_id, device_id, measure_id, label_source_id, start_time_n, end_time_n in labels:
+        for (label_entry_id, label_name, label_set_id, device_id, measure_id, label_source_name, label_source_id,
+             start_time_n, end_time_n, patient_id) in labels:
+
             requested_id = closest_requested_ancestor_dict.get(label_set_id, label_set_id)
             requested_name = self.get_label_name_info(requested_id)['name']
 
-            # Get label_source_name
-            label_source_info = self.get_label_source_info(label_source_id) if label_source_id else None
-            label_source_name = label_source_info['name'] if label_source_info else None
-
-            patient_id = self.convert_device_to_patient_id(
-                start_time=start_time_n, end_time=end_time_n, device=device_id,
-                conflict_resolution='90_percent_overlap')
+            # patient_id = self.convert_device_to_patient_id(
+            #     start_time=start_time_n, end_time=end_time_n, device=device_id,
+            #     conflict_resolution='90_percent_overlap')
             mrn = None if patient_id is None else self.get_mrn(patient_id)
 
             formatted_label = {
@@ -3761,11 +3767,22 @@ class AtriumSDK:
         :return: The label source ID or None if not found.
         """
 
+        # Check the cache first
+        if name in self._label_source_ids:
+            return self._label_source_ids[name]
+
+        # If not in cache, fetch from the database or API
         if self.metadata_connection_type == 'api':
             params = {'label_source_id': None, 'label_source_name': name}
-            return self._request("GET", "/labels/source", params=params)
+            source_id = self._request("GET", "/labels/source", params=params)
+        else:
+            source_id = self.sql_handler.select_label_source_id_by_name(name)
 
-        return self.sql_handler.select_label_source_id_by_name(name)
+        if source_id is not None:
+            # Update the cache
+            self._label_source_ids[name] = source_id
+            self._label_sources[source_id] = {'id': source_id, 'name': name}
+        return source_id
 
     def get_label_source_info(self, label_source_id: int) -> Optional[dict]:
         """
@@ -3773,11 +3790,46 @@ class AtriumSDK:
         :param label_source_id: The identifier for the label source.
         :return: A dictionary containing information about the label source, or None if not found.
         """
+
+        # Check the cache first
+        if label_source_id in self._label_sources:
+            return self._label_sources[label_source_id]
+
+        # If not in cache, fetch from the database or API
         if self.metadata_connection_type == 'api':
             params = {'label_source_id': label_source_id, 'label_source_name': None}
-            return self._request("GET", "/labels/source", params=params)
+            source_info = self._request("GET", "/labels/source", params=params)
+        else:
+            source_info = self.sql_handler.select_label_source_info_by_id(label_source_id)
 
-        return self.sql_handler.select_label_source_info_by_id(label_source_id)
+        if source_info is not None:
+            # Update the cache
+            self._label_sources[label_source_id] = source_info
+            self._label_source_ids[source_info['name']] = label_source_id
+        return source_info
+
+    def get_all_label_sources(self, limit=None, offset=0) -> dict:
+        """
+        Retrieve all distinct label sources from the database.
+        :param int limit: Maximum number of rows to return.
+        :param int offset: Offset this number of rows before starting to return label sources.
+        :return: A dictionary where keys are label source IDs and values are dictionaries containing 'id' and 'name' keys.
+        :rtype: dict
+        """
+        if self.metadata_connection_type == "api":
+            warnings.warn("API mode cannot cache label_sources, leaving cache empty.")
+            return {}
+
+        source_tuple_list = self.sql_handler.select_all_label_sources(limit=limit, offset=offset)
+
+        source_dict = {}
+        for source_info in source_tuple_list:
+            source_id, source_name = source_info
+            source_dict[source_id] = {
+                'id': source_id,
+                'name': source_name
+            }
+        return source_dict
 
     def insert_label_source(self, name: str, description: str = None) -> int:
         """
@@ -3918,10 +3970,10 @@ class AtriumSDK:
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
                      time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
                      shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
-                     end_time=None) -> DatasetIterator:
+                     end_time=None, num_iterators=1) -> Union[DatasetIterator, List[DatasetIterator]]:
         """
-        Constructs and returns a `DatasetIterator` object that allows iteration over the dataset according to
-        the specified definition.
+        Constructs and returns a `DatasetIterator` object or a list of `DatasetIterator` objects that allow iteration
+        over the dataset according to the specified definition.
 
         The method first verifies the provided definition against the dataset of the calling class object.
         If certain parts of the cohort definition aren't present within the dataset, the method will truncate the
@@ -3931,23 +3983,54 @@ class AtriumSDK:
         `batch_size` * `num_workers` * `prefetch_factor`. If you do this, then the Dataloader will correctly cooperate
         with the Iterator's cache functionality.
 
-        Additionally, when shuffling we recommend you set `cached_windows_per_source = num_windows_prefetch // 100`
-        for balanced randomness vs performance.
+        For large datasets, it is recommended to run `AtriumSDK.load_device(device_id)` for all devices requested in the definition.
+        This will cache the file locations of all waveform data in RAM which significantly reduces the overhead of each
+        `AtriumSDK.get_data` call internally performed by the iterator.
+
+        - **Caching and Shuffling Logic**: When shuffling, the caching system is designed to balance randomness and efficiency.
+
+          The parameter `num_windows_prefetch` controls the total number of windows fetched and cached each time a window is
+          requested outside the current cache, while `cached_windows_per_source` specifies
+          the minimum number of windows retrieved from each source (typically patients or devices).
+
+          For example, if you set `num_windows_prefetch=1000` and `cached_windows_per_source=100`, the iterator will randomly select 10 sources
+          (`1000 / 100 = 10`) and retrieve 100 windows from each. Once all 1000 windows are iterated over, another set of 10 random sources will be
+          selected, and 100 windows will be fetched from each. This source selection is randomized, and the seed for randomness can be controlled
+          by the `shuffle` parameter. If `shuffle=True`, the seed is random. If `shuffle` is set to an integer, that integer will be used as the seed for reproducibility.
+
+          If there are fewer sources than needed to fill the `num_windows_prefetch` value, the system will adjust accordingly. For instance, if
+          `num_windows_prefetch=1000` but only 5 sources are available, the system will retrieve 200 windows per source (`1000 / 5 = 200`),
+          even though `cached_windows_per_source=100`. This means `cached_windows_per_source` acts as the **minimum** number of windows fetched per source,
+          but more can be retrieved if necessary to meet the prefetch requirement.
+
+          An efficient strategy is to set `cached_windows_per_source` to cover a single block of data (e.g., the size of a data block in `AtriumSDK.block.block_size`).
+          This will ensure that each read from the dataset is efficiently used (very little data will be discarded)
+          Then, to increase randomness, `num_windows_prefetch` should be a large multiple of `cached_windows_per_source`
+          to ensure that the cache includes windows from many different. For instance, a common approach would be to
+          set `num_windows_prefetch` at least 100 times larger than `cached_windows_per_source`, ensuring that the
+          cache spans 100 randomly chosen sections of the dataset.
+
+          Alternatively, for the highest level of randomness, you can set `cached_windows_per_source` to 1. This means each window in the cache will be independently
+          chosen from every other window. This strategy will yield very poor performance because the iterator must
+          perform a single read per window and discard all read data not within the bounds of the window.
+
+          Regardless of the above parameters if shuffle is True or an int, all windows in the cache will be randomly
+          shuffled before being passed to the user.
 
         :param definition: A DefinitionYAML object or string representation specifying the measures and
                            patients or devices over particular time intervals.
         :param int window_duration: Duration of each window in units time_units (default nanoseconds).
         :param int window_slide: Slide duration between consecutive windows in units time_units (default nanoseconds).
         :param int gap_tolerance: Tolerance for gaps in definition intervals auto generated by "all" (optional) in units
-            time_units (default nanoseconds).
+            time_units (default nanoseconds). The default gap_tolerance is 1 minute.
         :param int num_windows_prefetch: Number of windows you want to get from AtriumDB at a time. Setting this value
             higher will make decompression faster but at the expense of using more RAM. (default the number of windows
             that gets you closest to 10 million values).
-        :param str time_units: If you would like the window_duration and window_slide to be specified in units other than
+        :param str time_units: If you would like the window_duration, window_slide and gap_tolerance to be specified in units other than
                             nanoseconds you can choose from one of ["s", "ms", "us", "ns"].
         :param float label_threshold: The percentage of the window that must contain a label before the entire window is
             marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
-        :param str iterator_type: Specify the type of iterator. If set to 'random_access', a RandomAccessDatasetIterator
+        :param str iterator_type: Specify the type of iterator. If set to 'mapped', a RandomAccessDatasetIterator
           will be returned, allowing indexed access to dataset windows. If set to 'filtered',
           a FilteredDatasetIterator will be returned with additional filtering functionality based on
           the `window_filter_fn`. By default or if set to None, a standard DatasetIterator is returned.
@@ -3959,13 +4042,14 @@ class AtriumSDK:
             returned in their original order.
         :param int cached_windows_per_source: The maximum number of windows to cache for a single source before moving
             on to a new source, helpful for adding more randomness to the shuffle. Making it too small heavily decreases
-            efficiency, making it too large will make the windows less random when shuffled.
+            efficiency, making it too large will make the windows less random when shuffled. Only used when shuffling.
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
+        :param int num_iterators: Number of iterators to create by partitioning the dataset (default is 1).
 
-        :return: DatasetIterator object to easily iterate over the specified data.
-        :rtype: DatasetIterator
+        :return: A single DatasetIterator object or a list of DatasetIterator objects depending on the value of num_iterators.
+        :rtype: Union[DatasetIterator, List[DatasetIterator]]
 
         **Example**:
 
@@ -4021,12 +4105,54 @@ class AtriumSDK:
             assert cached_windows_per_source > 0, "cached_windows_per_source must be at least 1."
             max_cache_duration_per_source = window_duration + (window_slide * (cached_windows_per_source - 1))
 
+        # Check if we need to partition the dataset
+        if num_iterators > 1:
+            random_state = shuffle if isinstance(shuffle, int) else None
+            definition_list = partition_dataset(
+                definition,
+                self,
+                partition_ratios=[1] * num_iterators,
+                priority_stratification_labels=definition.data_dict['labels'],
+                random_state=random_state,
+                verbose=False,
+                gap_tolerance=gap_tolerance
+            )
+
+            # Create iterators for each partitioned definition
+            iterators = []
+            for partitioned_definition in definition_list:
+                iterator = self.get_iterator(partitioned_definition, window_duration, window_slide, gap_tolerance,
+                                             num_windows_prefetch, "ns", label_threshold, iterator_type,
+                                             window_filter_fn, shuffle, cached_windows_per_source,
+                                             patient_history_fields, start_time_n, end_time_n, num_iterators=1)
+                iterators.append(iterator)
+
+            return iterators
+
+        # Validate the definition and create the iterator for a single partition
         validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
             definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n)
 
+        if not isinstance(shuffle, bool) or shuffle:
+            # Set some sensible defaults for pseudorandom yet efficient shuffle
+            if cached_windows_per_source is None:
+                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in validated_measure_list)
+                number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
+                cached_windows_per_source = self.block.block_size // number_of_values_per_window_slide
+            if num_windows_prefetch is None:
+                num_windows_prefetch = 100 * cached_windows_per_source
+
+        else:
+            # Not shuffling
+            cached_windows_per_source = None  # We don't want this doing anything if shuffle is False
+            if num_windows_prefetch is None:
+                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in validated_measure_list)
+                number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
+                num_windows_prefetch = (10 * self.block.block_size) // number_of_values_per_window_slide
+
         # Create appropriate iterator object based on iterator_type
-        if iterator_type == 'random_access':
-            iterator = RandomAccessDatasetIterator(
+        if iterator_type == 'mapped':
+            iterator = MappedIterator(
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, max_cache_duration=max_cache_duration_per_source,
