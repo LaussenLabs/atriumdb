@@ -15,32 +15,18 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import atexit
-import os
-import sys
-import threading
-import time
 import warnings
-from pathlib import Path, PurePath
-from typing import Union, List, Tuple, Optional
-
 import numpy as np
 import bisect
 
 import threading
 from atriumdb.windowing.definition import DatasetDefinition
-
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
-    find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz, \
+    find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, reconstruct_messages, \
     ALLOWED_TIME_TYPES, collect_all_descendant_ids, get_best_measure_id, _calc_end_time_from_gap_data, \
     merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns, time_unit_options, \
-    create_gap_arr_from_variable_messages
-from atriumdb.adb_functions import find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, ALLOWED_TIME_TYPES, \
-    collect_all_descendant_ids, get_best_measure_id, _calc_end_time_from_gap_data, \
-    merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns, \
-    reconstruct_messages, sort_message_time_values, create_gap_arr_from_variable_messages
+    create_gap_arr_from_variable_messages, sort_message_time_values
 from atriumdb.block import Block, create_gap_arr
-from atriumdb.block_wrapper import BlockMetadata
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
 from atriumdb.file_api import AtriumFileHandler
@@ -62,7 +48,6 @@ import platform
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 from atriumdb.windowing.dataset_iterator import DatasetIterator
-from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
 from atriumdb.windowing.random_access_iterator import MappedIterator
 from atriumdb.windowing.verify_definition import verify_definition
@@ -553,8 +538,7 @@ class AtriumSDK:
 
         # Sort the data based on the timestamps if sort is true
         if sort and time_type == 1:
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates,
-                                          block_list)
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
         # Convert time data from nanoseconds to unit of choice
         if time_units != 'ns':
@@ -607,8 +591,7 @@ class AtriumSDK:
 
         # Sort the data based on the timestamps if sort is true
         if sort and time_type == 1:
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates,
-                                          block_list)
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
         return headers, r_times, r_values
 
@@ -637,10 +620,7 @@ class AtriumSDK:
 
         # Sort the data based on the timestamps if sort is true
         if sort:
-            block_list = [[b['id'], measure_id, device_id, None, None, b['num_bytes'],
-                           b['start_time_n'], b['end_time_n'], b['num_values']] for b in block_info_list]
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates,
-                                          block_list)
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
         return headers, r_times, r_values
 
@@ -4481,9 +4461,8 @@ class AtriumSDK:
             # Decode the data from the old files
             old_times, old_values, old_headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
                                                                           time_type=1)
-
             old_times, old_values = sort_data(old_times, old_values, old_headers, start_time_n, end_time_n,
-                                              allow_duplicates=False, block_list=file_block_list)
+                                              allow_duplicates=False)
             # Convert old times to int64
             old_times = old_times.astype(np.int64)
 
@@ -4539,7 +4518,7 @@ class AtriumSDK:
 
         # Sort the data based on the timestamps if sort is true
         if sort and time_type == 1:
-            r_times, r_values = sort_data(r_times, r_values, headers, 0, (2 ** 63) - 1, allow_duplicates)
+            r_times, r_values = sort_data(r_times, r_values, headers, 0, (2**63) - 1, allow_duplicates)
 
         return headers, r_times, r_values
 
@@ -4663,8 +4642,7 @@ class AtriumSDK:
 
         # Sort the data based on the timestamps if sort is true
         if sort:
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates,
-                                          current_blocks_meta)
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
         return headers, r_times, r_values
 

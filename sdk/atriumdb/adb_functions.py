@@ -122,9 +122,7 @@ def find_intervals(freq_nhz, raw_time_type, time_data, data_start_time, num_valu
 
 
 # if you want to just use this to sort data will have to add default vals for start/end time and skip bisect
-def sort_data(times, values, headers, start_time, end_time, allow_duplicates=True, block_list=None):
-    if block_list is not None:
-        fix_corrupt_header_times(headers, block_list, times, values)
+def sort_data(times, values, headers, start_time, end_time, allow_duplicates=True):
     start_bench = time.perf_counter()
     if len(headers) == 0:
         return times, values
@@ -934,54 +932,6 @@ def delete_unreferenced_tsc_files(sdk):
     print("Completed removal of unreferenced tsc files")
 
 
-def fix_block_boundaries(sdk, gap_tolerance_nano=0):
-    measures = sdk.get_all_measures()
-    devices = sdk.get_all_devices()
-
-    measure_keys = list(measures.keys())
-    device_keys = list(devices.keys())
-
-    for device_id in tqdm(device_keys, desc="Devices"):
-        for measure_id in tqdm(measure_keys, desc="Measures"):
-            block_query_result = get_all_blocks(sdk, measure_id, device_id)
-
-            file_id_list = list(set([row[3] for row in block_query_result]))
-            filename_dict = sdk.get_filename_dict(file_id_list)
-
-            interval_list = []
-
-            for one_block in block_query_result:
-                block_id = one_block[0]
-                block_start_time = one_block[6]
-                block_end_time = one_block[7]
-
-                block_list = [one_block]
-
-                headers, timestamp_arr, r_values = sdk.get_data_from_blocks(block_list, filename_dict, 0,
-                                                                            2 ** 62, False, 1, sort=False,
-                                                                            allow_duplicates=True)
-
-                if timestamp_arr.size == 0:
-                    continue
-
-                # Sort the block data
-                timestamp_arr, sorted_time_indices = np.unique(timestamp_arr, return_index=True)
-                r_values = r_values[sorted_time_indices]
-
-                period_ns = (10 ** 18) // headers[0].freq_nhz
-                true_start = round(timestamp_arr[0])
-                true_end = round(timestamp_arr[-1])
-
-                if true_start < block_start_time or true_end > block_end_time:
-                    sdk.sql_handler.update_block_times(block_id, true_start, true_end)
-
-                interval_array = find_continuous_intervals(timestamp_arr, period_ns, gap_tolerance_nano)
-                interval_list.append(interval_array)
-
-            recalculated_intervals = combine_interval_array_list(interval_list, gap_tolerance_nano)
-            sdk.sql_handler.update_intervals(measure_id, device_id, recalculated_intervals)
-
-
 def get_all_blocks(sdk, measure_id, device_id):
     query = """
         SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values 
@@ -997,88 +947,10 @@ def get_all_blocks(sdk, measure_id, device_id):
     return block_query_result
 
 
-def find_continuous_intervals(timestamps, period_ns, gap_tolerance_nano):
-    # Step 1: Compute the difference between consecutive timestamps
-    diffs = np.diff(timestamps)
-
-    # Step 2: Identify the indices where the difference exceeds period_ns + gap_tolerance_nano
-    breaks = np.where(diffs > (period_ns + gap_tolerance_nano))[0]
-
-    # Step 3: Determine the start and end of continuous intervals
-    # Include start and end points
-    break_points = np.concatenate(([0], breaks + 1, [len(timestamps)]))
-
-    # Step 4: Create the interval array without explicit loops
-    start_times = timestamps[break_points[:-1]]
-    end_indices = break_points[1:] - 1
-    end_times = timestamps[end_indices] + period_ns
-
-    intervals = np.vstack((start_times, end_times)).T
-
-    return intervals
-
-
-def combine_interval_array_list(interval_arrays, gap_tolerance_nano):
-    if len(interval_arrays) == 0:
-        return np.array([], dtype=np.int64)
-
-    # Concatenate all 2D arrays into one large array
-    combined_intervals = np.vstack(interval_arrays)
-    if combined_intervals.size == 0:
-        return np.array([], dtype=np.int64)
-
-    # Sort intervals by start times
-    combined_intervals = combined_intervals[np.argsort(combined_intervals[:, 0])]
-
-    # Initialize merged_intervals with the first interval
-    merged_intervals = [combined_intervals[0]]
-
-    # Loop through the intervals and merge as needed
-    for cur_row in combined_intervals[1:]:
-        last_end = int(merged_intervals[-1][1])
-        cur_start, cur_end = int(cur_row[0]), int(cur_row[1])
-
-        if cur_start <= last_end + gap_tolerance_nano:
-            merged_intervals[-1][1] = max(last_end, cur_end)
-        else:
-            merged_intervals.append(cur_row)
-
-    return np.array(merged_intervals, dtype=np.int64)
-
-
-def is_corrupt_header_times(headers, block_list):
-    for h, b in zip(headers, block_list):
-        if h.start_n != b[6] or h.end_n != b[7]:
-            return True
-    return False
-
-
-def fix_corrupt_header_times(headers, block_list, times, values):
-    block_start_value = 0
-
-    for h, b in zip(headers, block_list):
-        block_num_values = b[8]
-        if h.start_n != b[6] or h.end_n != b[7]:
-            # Fix header times
-            h.start_n = b[6]
-            h.end_n = b[7]
-
-            # Sort the relevant arrays parts
-            block_times = times[block_start_value:block_start_value + block_num_values]
-            block_values = values[block_start_value:block_start_value + block_num_values]
-            sorted_inds = np.argsort(block_times)
-            times[block_start_value:block_start_value + block_num_values] = block_times[sorted_inds]
-            values[block_start_value:block_start_value + block_num_values] = block_values[sorted_inds]
-
-        block_start_value += block_num_values
-
-
 def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interval_gap_tolerance_nano=0):
     # WARNING:
-    # This function does not preserve duplicate values, nor is it deterministic in which duplicate value it keeps.
-    # Cases Taken into account:
-    # if scale_m and/or scale_b vary between blocks of the same measure.
-    # If the frequency (in nanohertz) of each signal divides 10^18.
+    # This function does not preserve duplicate values. (uses np.unique)
+    # Only works if the frequency (in nanohertz) of each signal divides 10^18.
     original_block_size = sdk.block.block_size
     sdk.block.block_size = values_per_block
 

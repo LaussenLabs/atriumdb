@@ -19,7 +19,7 @@ import time
 import pytest
 from atriumdb import AtriumSDK, T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, create_gap_arr
-from atriumdb.adb_functions import fix_block_boundaries, get_block_and_interval_data, merge_gap_data, \
+from atriumdb.adb_functions import get_block_and_interval_data, merge_gap_data, \
     merge_timestamp_data, create_timestamps_from_gap_data, _calc_end_time_from_gap_data, find_intervals, \
     allowed_interval_index_modes, convert_to_nanoseconds, convert_to_nanohz, reencode_dataset
 from atriumdb.helpers.block_calculations import freq_nhz_to_period_ns
