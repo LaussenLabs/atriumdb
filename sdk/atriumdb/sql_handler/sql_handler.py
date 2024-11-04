@@ -144,14 +144,6 @@ class SQLHandler(ABC):
                                for (start_time, end_time) in interval_list]
             cursor.executemany(insert_query, interval_tuples)
 
-    def delete_files_by_ids(self, file_ids: List[int]):
-        if len(file_ids) == 0:
-            return
-
-        with self.connection(begin=True) as (conn, cursor):
-            delete_query = "DELETE FROM file_index WHERE id = ?;"
-            cursor.executemany(delete_query, [(file_id,) for file_id in file_ids])
-
     @abstractmethod
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
                              file_ids_to_delete: List[int], gap_tolerance: int = 0):
@@ -1033,7 +1025,13 @@ class SQLHandler(ABC):
                            "ON t1.id = t2.file_id WHERE t2.file_id IS NULL")
             return cursor.fetchall()
 
-    def delete_tsc_files(self, file_ids_to_delete: List[tuple]):
+
+    def delete_files_by_ids(self, file_ids_to_delete: List[int | tuple]):
+        if len(file_ids_to_delete) == 0:
+            return
+        if isinstance(file_ids_to_delete[0], int):
+            file_ids_to_delete = [(file_id,) for file_id in file_ids_to_delete]
+
         with self.connection(begin=False) as (conn, cursor):
             # if you put too many rows in the delete statement mariadb will fail. So we split it up
             for i in range(math.ceil(len(file_ids_to_delete) / 100_000)):

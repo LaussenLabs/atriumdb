@@ -928,7 +928,7 @@ def delete_unreferenced_tsc_files(sdk):
     del file_names
 
     # remove them from the file_index
-    sdk.sql_handler.delete_tsc_files(file_ids)
+    sdk.sql_handler.delete_files_by_ids(file_ids)
     print("Completed removal of unreferenced tsc files")
 
 
