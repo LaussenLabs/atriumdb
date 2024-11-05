@@ -18,8 +18,10 @@
 from pathlib import Path
 import uuid
 import numpy as np
+import pickle
 import os
 from collections import Counter
+import json
 
 
 class AtriumFileHandler:
@@ -145,8 +147,38 @@ class AtriumFileHandler:
 
     def remove(self, file_path: str):
         # rm file
-        os.remove(file_path)
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
     def walk(self, root_path: str):
         # Directory tree generator
         return os.walk(root_path)
+
+    def makedirs(self, target_dir):
+        # Ensure the cache directory exists
+        os.makedirs(target_dir, exist_ok=True)
+
+    def get_cache_filepath(self, cache_key, cache_dir, cache_type=None, extension='pkl'):
+        # Get the full path to the cache or info file
+        if cache_type:
+            filename = f"{cache_key}_{cache_type}.{extension}"
+        else:
+            filename = f"{cache_key}.{extension}"
+        return os.path.join(cache_dir, filename)
+
+    def file_exists(self, cache_file):
+        # Check if a file exists
+        return os.path.exists(cache_file)
+
+    def pickle_load_file(self, file_path):
+        # Load data from a pickle file
+        with open(file_path, 'rb') as f:
+            return pickle.load(f)
+
+    def pickle_dump_file(self, file_path, data):
+        with open(file_path, 'wb') as f:
+            pickle.dump(data, f)
+
+    def json_dump_file(self, file_path, data):
+        with open(file_path, 'w') as f:
+            json.dump(data, f)
