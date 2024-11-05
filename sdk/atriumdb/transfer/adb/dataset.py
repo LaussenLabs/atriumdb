@@ -179,9 +179,10 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                 file_path_dicts[(source_type, source_id, start_time_nano, end_time_nano)] = {}
                 for src_measure_id, dest_measure_id in measure_id_map.items():
                     # Insert Waveforms
-                    if not reencode_waveforms and export_format == "tsc":
+                    if export_format == "tsc":
                         freq_nhz = src_sdk.get_measure_info(src_measure_id)['freq_nhz']
-                        # If we aren't re-encoding, just read the encoded blocks and insert them.
+
+                        # Fetch the encoded blocks for the entire range
                         block_list = src_sdk.sql_handler.select_blocks(
                             int(src_measure_id), int(start_time_nano), int(end_time_nano), src_device_id, None)
 
@@ -193,19 +194,22 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                             measure_id=src_measure_id, device_id=src_device_id,
                             start=int(start_time_nano), end=int(end_time_nano)).tolist()
 
-                        for block in block_list:
-                            block_s = block[6]
-                            block_e = block[7]
-                            if start_time_nano <= block_s and block_e <= end_time_nano:
-                                within_time_blocks.append(block)
-                            else:
-                                remaining_blocks.append(block)
-
-                        # if no matching block ids
-                        if len(within_time_blocks) + len(remaining_blocks) == 0:
-                            continue
+                        if not reencode_waveforms:
+                            # Split the blocks into within and remaining based on time range
+                            for block in block_list:
+                                block_s = block[6]
+                                block_e = block[7]
+                                if start_time_nano <= block_s and block_e <= end_time_nano:
+                                    within_time_blocks.append(block)
+                                else:
+                                    remaining_blocks.append(block)
+                        else:
+                            # If we're reencoding, all blocks are added to remaining_blocks
+                            remaining_blocks = block_list
 
                         if within_time_blocks:
+                            # Sort blocks by start time
+                            within_time_blocks.sort(key=lambda x: x[6])
                             # Concatenate continuous byte intervals to cut down on total number of reads.
                             read_list = condense_byte_read_list(within_time_blocks)
 
@@ -237,7 +241,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
                             # if no matching block ids
                             if len(read_list) == 0:
-                                continue
+                                pass
 
                             # Map file_ids to filenames and return a dictionary.
                             file_id_list = [row[2] for row in read_list]
@@ -250,7 +254,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                                 headers[h_i].t_raw_type = 1
 
                             if values.size == 0:
-                                continue
+                                pass
 
                             file_path = ingest_data(dest_sdk, dest_measure_id, dest_device_id, headers, times, values,
                                                     export_format=export_format, export_time_format=export_time_format,
@@ -295,7 +299,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                         label_dict['start_time_n'] += time_shift
                         label_dict['end_time_n'] += time_shift
 
-                # make the list of label tuples to insert to the other dataset
+                # Make the list of label tuples to insert to the other dataset
                 dest_labels = [(label['label_name'], device_id_map[label['device_id']],
                                 measure_id_map[label['measure_id']], label['start_time_n'], label['end_time_n'],
                                 label['label_source_id']) for label in labels]
