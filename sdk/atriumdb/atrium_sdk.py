@@ -234,6 +234,8 @@ class AtriumSDK:
             if not REQUESTS_INSTALLED:
                 raise ImportError("Remote mode not installed. Please install atriumdb with pip install atriumdb[remote]")
 
+            self.file_api = storage_handler if storage_handler else AtriumFileHandler(None)
+
             self.mode = "api"
             self.api_url = api_url
             self.validate_token = validate_token
@@ -3923,7 +3925,7 @@ class AtriumSDK:
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
                      time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
                      shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
-                     end_time=None, num_iterators=1) -> Union[DatasetIterator, List[DatasetIterator]]:
+                     end_time=None, num_iterators=1, cache=None) -> Union[DatasetIterator, List[DatasetIterator]]:
         """
         Constructs and returns a `DatasetIterator` object or a list of `DatasetIterator` objects that allow iteration
         over the dataset according to the specified definition.
@@ -3999,6 +4001,10 @@ class AtriumSDK:
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
+        :param str cache: The directory where you want to store a disk based cache to store intermediate data and
+            speed up subsequent calls with the same parameters. Verifying large definition files and index large
+            datasets takes a long time, so using a disk cache will ensure you only need to do that work once.
+            The default value (or setting cache=None) will not use the cache.
         :param int num_iterators: Number of iterators to create by partitioning the dataset (default is 1).
 
         :return: A single DatasetIterator object or a list of DatasetIterator objects depending on the value of num_iterators.
@@ -4077,14 +4083,16 @@ class AtriumSDK:
                 iterator = self.get_iterator(partitioned_definition, window_duration, window_slide, gap_tolerance,
                                              num_windows_prefetch, "ns", label_threshold, iterator_type,
                                              window_filter_fn, shuffle, cached_windows_per_source,
-                                             patient_history_fields, start_time_n, end_time_n, num_iterators=1)
+                                             patient_history_fields, start_time_n, end_time_n, num_iterators=1,
+                                             cache=cache)
                 iterators.append(iterator)
 
             return iterators
 
         # Validate the definition and create the iterator for a single partition
         validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
-            definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n)
+            definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n,
+            cache_dir=cache)
 
         if not isinstance(shuffle, bool) or shuffle:
             # Set some sensible defaults for pseudorandom yet efficient shuffle
@@ -4109,7 +4117,7 @@ class AtriumSDK:
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, max_cache_duration=max_cache_duration_per_source,
-                shuffle=shuffle, patient_history_fields=patient_history_fields)
+                shuffle=shuffle, patient_history_fields=patient_history_fields, cache_dir=cache)
         elif iterator_type == 'filtered':
             if window_filter_fn is None:
                 raise ValueError("window_filter_fn must be provided when iterator_type is 'filtered'")
@@ -4117,13 +4125,14 @@ class AtriumSDK:
                 self, validated_measure_list, validated_label_set_list, validated_sources,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, window_filter_fn=window_filter_fn,
-                max_cache_duration=max_cache_duration_per_source, shuffle=shuffle, patient_history_fields=patient_history_fields)
+                max_cache_duration=max_cache_duration_per_source, shuffle=shuffle,
+                patient_history_fields=patient_history_fields, cache_dir=cache)
         else:
-            iterator = DatasetIterator(
-                self, validated_measure_list, validated_label_set_list, validated_sources,
-                window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
-                label_threshold=label_threshold, shuffle=shuffle,
-                max_cache_duration=max_cache_duration_per_source, patient_history_fields=patient_history_fields)
+            iterator = DatasetIterator(self, validated_measure_list, validated_label_set_list, validated_sources,
+                                       window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
+                                       label_threshold=label_threshold, shuffle=shuffle,
+                                       max_cache_duration=max_cache_duration_per_source,
+                                       patient_history_fields=patient_history_fields, cache_dir=cache)
 
         return iterator
 
