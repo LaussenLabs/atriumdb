@@ -1,3 +1,20 @@
+# AtriumDB is a timeseries database software designed to best handle the unique features and
+# challenges that arise from clinical waveform data.
+#     Copyright (C) 2023  The Hospital for Sick Children
+#
+#     This program is free software: you can redistribute it and/or modify
+#     it under the terms of the GNU General Public License as published by
+#     the Free Software Foundation, either version 3 of the License, or
+#     (at your option) any later version.
+#
+#     This program is distributed in the hope that it will be useful,
+#     but WITHOUT ANY WARRANTY; without even the implied warranty of
+#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#     GNU General Public License for more details.
+#
+#     You should have received a copy of the GNU General Public License
+#     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import warnings
 
 import numpy as np
@@ -65,6 +82,7 @@ class LightMappedIterator(DatasetIterator):
         self.row_period_ns = int((10 ** 18) // self.highest_freq_nhz)
 
         # Process the sources to compute window counts
+        self.total_windows = None
         self._process_sources()
 
         # Shuffle the window indices if shuffle is True
@@ -72,6 +90,11 @@ class LightMappedIterator(DatasetIterator):
         self.random_gen = None
         if self.shuffle:
             self.random_gen = random.Random(shuffle) if isinstance(shuffle, int) else random.Random()
+            # Create a shuffled array of indices
+            self.shuffled_indices = np.arange(self.total_windows, dtype=np.uint64)
+            self.random_gen.shuffle(self.shuffled_indices)
+        else:
+            self.shuffled_indices = None
 
         # Initialize the iterator index
         self._current_idx = 0
@@ -116,6 +139,9 @@ class LightMappedIterator(DatasetIterator):
     def __getitem__(self, idx):
         if idx < 0 or idx >= self.total_windows:
             raise IndexError(f"Index {idx} out of bounds for mapped iterator of size {self.total_windows}")
+        # Swap idx with shuffled index if shuffling is enabled
+        if self.shuffled_indices is not None:
+            idx = self.shuffled_indices[idx]
         # Find which source the idx corresponds to
         source_idx = np.searchsorted(self.window_indices, idx, side='right') - 1
         source_info = self.sources_info[source_idx]
