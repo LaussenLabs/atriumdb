@@ -4145,7 +4145,7 @@ class AtriumSDK:
                                        max_cache_duration=max_cache_duration_per_source,
                                        patient_history_fields=patient_history_fields, cache_dir=cache)
         else:
-            raise ValueError("iterator_type must be either 'mapped', 'filtered' or 'iterator'")
+            raise ValueError("iterator_type must be either 'mapped', 'lightmapped','filtered' or 'iterator'")
 
         return iterator
 
