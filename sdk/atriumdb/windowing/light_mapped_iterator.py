@@ -81,6 +81,10 @@ class LightMappedIterator(DatasetIterator):
         # Time duration between consecutive data points, given the highest frequency.
         self.row_period_ns = int((10 ** 18) // self.highest_freq_nhz)
 
+        # cache for patient data
+        self.patient_info_cache = {}
+        self.patient_history_cache = {}
+
         # Process the sources to compute window counts
         self.total_windows = None
         self._process_sources()
@@ -180,15 +184,42 @@ class LightMappedIterator(DatasetIterator):
                 'measure_id': measure_id,
             }
 
+        self._load_patient_cache(patient_id, self.patient_info_cache, self.patient_history_cache)
+        window_patient_info = self._get_patient_info_from_cache(
+            patient_id, window_start_time, self.patient_info_cache, self.patient_history_cache)
+
+        label, label_time_series = np.array([]), np.array([])
+
+        if len(self.label_sets) > 0:
+            # Preallocate label matrix
+            label_time_series_num_samples = (int(self.window_duration_ns) * int(self.highest_freq_nhz)) // (10 ** 18)
+            label_time_series = np.zeros((len(self.label_sets), label_time_series_num_samples), dtype=np.int8)
+            period_ns = (10 ** 18) / self.highest_freq_nhz
+            label_timestamp_array = np.arange(window_start_time, window_end_time, period_ns, dtype=np.int64)
+
+            # Populate label matrix
+            for idx, label_set_id in enumerate(self.label_sets):
+                self.sdk.get_label_time_series(
+                    label_name_id=label_set_id,
+                    device_id=device_id if device_id else None,
+                    patient_id=query_patient_id if query_patient_id else None,
+                    start_time=window_start_time,
+                    end_time=window_start_time + self.window_duration_ns,
+                    timestamp_array=label_timestamp_array,
+                    out=label_time_series[idx]
+                )
+            label = (np.mean(label_time_series, axis=1) > self.label_threshold).astype(np.int8)
+
         # Create Window object
         window = Window(
             signals=signals,
             start_time=window_start_time,
             device_id=device_id,
             patient_id=patient_id,
-            label_time_series=np.array([]),
-            label=np.array([]),
-            patient_info={})
+            label_time_series=label_time_series,
+            label=label,
+            patient_info=window_patient_info)
+
         return window
 
     def __iter__(self):
