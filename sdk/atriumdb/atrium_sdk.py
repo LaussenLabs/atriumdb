@@ -3989,8 +3989,9 @@ class AtriumSDK:
         :param str iterator_type: Specify the type of iterator. If set to 'mapped', a RandomAccessDatasetIterator
           will be returned, allowing indexed access to dataset windows. If set to 'filtered',
           a FilteredDatasetIterator will be returned with additional filtering functionality based on
-          the `window_filter_fn`. If set to `lightmapped` a mapped iterator, lower than 'mapped' but suitable for true
-          random access is returned.
+          the `window_filter_fn`. If set to `lightmapped` a lightweight low RAM mapped iterator is returned.
+          'lightmapped' is most suitable when you want true random shuffles and/or you're going to be jumping around
+          the indices in no particular order.
           By default or if set to None, a standard DatasetIterator is returned.
         :param callable window_filter_fn: If provided, only windows for which this function returns True will be included in the
              iteration. This function should accept a window as its argument. This is only applicable
