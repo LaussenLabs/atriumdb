@@ -1467,7 +1467,7 @@ class AtriumSDK:
         labels, and devices (or patients). Time ranges for each specified device are merged and cached to optimize
         data retrieval, with the resulting device-time configuration used to fetch block metadata.
 
-        :param definition: The dataset definition specifying measures, devices, and optional time ranges to include.
+        :param definition: The dataset definition specifying measures, devices (or patients), and optional time ranges to include.
             It should be either a `DefinitionYAML` instance or a dictionary.
         :type definition: DefinitionYAML or dict
         :param int gap_tolerance: Tolerance for gaps between consecutive time intervals when "all" is specified in the
