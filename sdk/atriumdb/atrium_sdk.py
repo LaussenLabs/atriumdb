@@ -234,12 +234,7 @@ class AtriumSDK:
             if not REQUESTS_INSTALLED:
                 raise ImportError("Remote mode not installed. Please install atriumdb with pip install atriumdb[remote]")
 
-            # Handle file_api for caching
-            if dataset_location is None:
-                dataset_location = Path.cwd()
-            if tsc_file_location is None:
-                tsc_file_location = dataset_location / 'tsc'
-            self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
+            self.file_api = storage_handler if storage_handler else AtriumFileHandler(None)
 
             self.mode = "api"
             self.api_url = api_url
@@ -4007,7 +4002,9 @@ class AtriumSDK:
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
         :param str cache: The directory where you want to store a disk based cache to store intermediate data and
-            speed up subsequent calls with the same parameters.
+            speed up subsequent calls with the same parameters. Verifying large definition files and index large
+            datasets takes a long time, so using a disk cache will ensure you only need to do that work once.
+            The default value (or setting cache=None) will not use the cache.
         :param int num_iterators: Number of iterators to create by partitioning the dataset (default is 1).
 
         :return: A single DatasetIterator object or a list of DatasetIterator objects depending on the value of num_iterators.
@@ -4043,6 +4040,8 @@ class AtriumSDK:
                 print(window)
 
         """
+        if iterator_type is None:
+            iterator_type = "iterator"
         # check that a correct unit type was entered
         time_units = "ns" if time_units is None else time_units
         if time_units not in time_unit_options.keys():
@@ -4130,12 +4129,14 @@ class AtriumSDK:
                 label_threshold=label_threshold, window_filter_fn=window_filter_fn,
                 max_cache_duration=max_cache_duration_per_source, shuffle=shuffle,
                 patient_history_fields=patient_history_fields, cache_dir=cache)
-        else:
+        elif iterator_type == "iterator":
             iterator = DatasetIterator(self, validated_measure_list, validated_label_set_list, validated_sources,
                                        window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                                        label_threshold=label_threshold, shuffle=shuffle,
                                        max_cache_duration=max_cache_duration_per_source,
                                        patient_history_fields=patient_history_fields, cache_dir=cache)
+        else:
+            raise ValueError("iterator_type must be either 'mapped', 'filtered' or 'iterator'")
 
         return iterator
 
