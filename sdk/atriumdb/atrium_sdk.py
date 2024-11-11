@@ -1515,7 +1515,7 @@ class AtriumSDK:
             definition, sdk=self, gap_tolerance=gap_tolerance_n,
             measure_tag_match_rule=measure_tag_match_rule, start_time_n=start_time_n,
             end_time_n=end_time_n,
-            # cache_dir=cache_dir,  # TODO: Uncomment this line when iterator caching is merged with this branch.
+            cache_dir=cache_dir,
         )
 
         # Extract measure_ids from the validated measures
