@@ -68,6 +68,7 @@ class LightMappedIterator(DatasetIterator):
         self._process_sources()
 
         # Shuffle the window indices if shuffle is True
+        self.shuffle = shuffle
         self.random_gen = None
         if self.shuffle:
             self.random_gen = random.Random(shuffle) if isinstance(shuffle, int) else random.Random()
