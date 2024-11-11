@@ -16,6 +16,9 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from collections import defaultdict
 
+import shutil
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -50,6 +53,43 @@ def _test_iterator(db_type, dataset_location, connection_params):
     window_size_nano = 1_024 * 1_000_000_000
     for definition, expected_device_id_type, expected_patient_id_type in test_parameters:
         iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None)
+
+        for window_i, window in enumerate(iterator):
+            assert isinstance(window.start_time, int)
+            assert isinstance(window.device_id, expected_device_id_type)
+            assert isinstance(window.patient_id, expected_patient_id_type)
+
+            for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
+                assert isinstance(signal_dict['times'], np.ndarray)
+                assert isinstance(signal_dict['values'], np.ndarray)
+
+            # Labels
+            assert isinstance(window.label_time_series, np.ndarray)
+            assert isinstance(window.label, np.ndarray)
+
+
+        # Try while loading the cache
+        cache_path = Path(sdk.dataset_location) / "cache"
+        shutil.rmtree(cache_path, ignore_errors=True)
+        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None,
+                                    cache=cache_path)
+
+        for window_i, window in enumerate(iterator):
+            assert isinstance(window.start_time, int)
+            assert isinstance(window.device_id, expected_device_id_type)
+            assert isinstance(window.patient_id, expected_patient_id_type)
+
+            for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
+                assert isinstance(signal_dict['times'], np.ndarray)
+                assert isinstance(signal_dict['values'], np.ndarray)
+
+            # Labels
+            assert isinstance(window.label_time_series, np.ndarray)
+            assert isinstance(window.label, np.ndarray)
+
+        # Try while reading the cache
+        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None,
+                                    cache=Path(sdk.dataset_location) / "cache")
 
         for window_i, window in enumerate(iterator):
             assert isinstance(window.start_time, int)
