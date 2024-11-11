@@ -113,37 +113,48 @@ def test_get_time_regions():
 
 
 # Mock header class
+# Mock header class with num_gaps added
 class MockHeader:
-    def __init__(self, scale_m, scale_b, num_vals):
+    def __init__(self, scale_m, scale_b, num_vals, num_gaps):
         self.scale_m = scale_m
         self.scale_b = scale_b
         self.num_vals = num_vals
+        self.num_gaps = num_gaps
 
-def test_group_headers_by_scale_factor():
+def test_group_headers_by_scale_factor_time_type_2():
     # Test case 1: Consecutive headers with the same scale factors
     headers1 = [
-        MockHeader(1.0, 2.0, 3),
-        MockHeader(1.0, 2.0, 2),
-        MockHeader(1.0, 2.0, 4),
+        MockHeader(1.0, 2.0, 3, 1),  # 1 gap
+        MockHeader(1.0, 2.0, 2, 0),  # 0 gaps
+        MockHeader(1.0, 2.0, 4, 2),  # 2 gaps
     ]
-    times_array1 = list(range(9))  # times from 0 to 8
-    values_array1 = list(range(100, 109))  # values from 100 to 108
+    # Adjusted times_array with relative indices for each header block
+    times_array1 = [
+        0, 1,  # Gap for first header
+        # No gaps for second header
+        0, 2, 3, 3  # Gaps for third header
+    ]
+    values_array1 = list(range(9))  # values from 0 to 8
     expected_groups1 = [
         (headers1, times_array1, values_array1)
     ]
 
     # Test case 2: Headers with different scale factors
     headers2 = [
-        MockHeader(1.0, 2.0, 3),
-        MockHeader(1.1, 2.0, 2),
-        MockHeader(1.0, 2.0, 4),
+        MockHeader(1.0, 2.0, 3, 1),
+        MockHeader(1.1, 2.0, 2, 0),
+        MockHeader(1.0, 2.0, 4, 1),
     ]
-    times_array2 = list(range(9))
-    values_array2 = list(range(200, 209))
+    times_array2 = [
+        0, 1,  # Gap for first header
+        # No gaps for second header
+        0, 2  # Gap for third header
+    ]
+    values_array2 = list(range(9))
     expected_groups2 = [
-        ([headers2[0]], times_array2[0:3], values_array2[0:3]),
-        ([headers2[1]], times_array2[3:5], values_array2[3:5]),
-        ([headers2[2]], times_array2[5:9], values_array2[5:9]),
+        ([headers2[0]], times_array2[0:2], values_array2[0:3]),
+        ([headers2[1]], [], values_array2[3:5]),
+        ([headers2[2]], times_array2[2:4], values_array2[5:9]),
     ]
 
     # Test case 3: Empty headers list
@@ -154,45 +165,56 @@ def test_group_headers_by_scale_factor():
 
     # Test case 4: Non-consecutive headers with same scale factors
     headers4 = [
-        MockHeader(1.0, 2.0, 3),
-        MockHeader(1.1, 2.0, 2),
-        MockHeader(1.0, 2.0, 4),
-        MockHeader(1.0, 2.0, 1),
+        MockHeader(1.0, 2.0, 3, 1),
+        MockHeader(1.1, 2.0, 2, 1),
+        MockHeader(1.0, 2.0, 4, 1),
+        MockHeader(1.0, 2.0, 1, 0),
     ]
-    times_array4 = list(range(10))
-    values_array4 = list(range(300, 310))
+    times_array4 = [
+        0, 1,  # Gap for first header
+        0, 2,  # Gap for second header
+        0, 1  # Gap for third header
+        # No gaps for fourth header
+    ]
+    values_array4 = list(range(10))
     expected_groups4 = [
-        ([headers4[0]], times_array4[0:3], values_array4[0:3]),
-        ([headers4[1]], times_array4[3:5], values_array4[3:5]),
-        ([headers4[2], headers4[3]], times_array4[5:10], values_array4[5:10]),
+        ([headers4[0]], times_array4[0:2], values_array4[0:3]),
+        ([headers4[1]], times_array4[2:4], values_array4[3:5]),
+        ([headers4[2], headers4[3]], times_array4[4:6], values_array4[5:10]),
     ]
 
     # Test case 5: All headers have different scale factors
     headers5 = [
-        MockHeader(1.0, 2.0, 1),
-        MockHeader(1.1, 2.1, 2),
-        MockHeader(1.2, 2.2, 3),
+        MockHeader(1.0, 2.0, 1, 0),
+        MockHeader(1.1, 2.1, 2, 1),
+        MockHeader(1.2, 2.2, 3, 0),
     ]
-    times_array5 = list(range(6))
-    values_array5 = list(range(400, 406))
+    times_array5 = [
+        # No gaps for first header
+        0, 2  # Gap for second header
+        # No gaps for third header
+    ]
+    values_array5 = list(range(6))
     expected_groups5 = [
-        ([headers5[0]], times_array5[0:1], values_array5[0:1]),
-        ([headers5[1]], times_array5[1:3], values_array5[1:3]),
-        ([headers5[2]], times_array5[3:6], values_array5[3:6]),
+        ([headers5[0]], [], values_array5[0:1]),
+        ([headers5[1]], times_array5[0:2], values_array5[1:3]),
+        ([headers5[2]], [], values_array5[3:6]),
     ]
 
     # Test case 6: Only one header
-    headers6 = [MockHeader(1.0, 2.0, 3)]
-    times_array6 = list(range(3))
-    values_array6 = list(range(500, 503))
+    headers6 = [MockHeader(1.0, 2.0, 3, 1)]
+    times_array6 = [
+        0, 2  # Gap for the header
+    ]
+    values_array6 = list(range(3))
     expected_groups6 = [
         (headers6, times_array6, values_array6)
     ]
 
     # Test case 7: Headers with zero num_vals
     headers7 = [
-        MockHeader(1.0, 2.0, 0),
-        MockHeader(1.0, 2.0, 0),
+        MockHeader(1.0, 2.0, 0, 0),
+        MockHeader(1.0, 2.0, 0, 0),
     ]
     times_array7 = []
     values_array7 = []
@@ -213,7 +235,7 @@ def test_group_headers_by_scale_factor():
 
     # Run tests
     for idx, (headers, times_array, values_array, expected_groups) in enumerate(test_cases, 1):
-        result = list(group_headers_by_scale_factor(headers, times_array, values_array))
+        result = list(group_headers_by_scale_factor(headers, times_array, values_array, 2))
         assert len(result) == len(expected_groups), f"Test case {idx}: Number of groups does not match expected."
 
         for i, (group, times_slice, values_slice) in enumerate(result):
@@ -221,4 +243,109 @@ def test_group_headers_by_scale_factor():
             assert group == expected_group, f"Test case {idx}, group {i+1}: Headers do not match expected."
             assert times_slice == expected_times, f"Test case {idx}, group {i+1}: Times slice does not match expected."
             assert values_slice == expected_values, f"Test case {idx}, group {i+1}: Values slice does not match expected."
+
+
+def test_group_headers_by_scale_factor():
+    # Test case 1: Consecutive headers with the same scale factors
+    headers1 = [
+        MockHeader(1.0, 2.0, 3, 0),
+        MockHeader(1.0, 2.0, 2, 0),
+        MockHeader(1.0, 2.0, 4, 0),
+    ]
+    times_array1 = list(range(9))  # times from 0 to 8
+    values_array1 = list(range(100, 109))  # values from 100 to 108
+    expected_groups1 = [
+        (headers1, times_array1, values_array1)
+    ]
+
+    # Test case 2: Headers with different scale factors
+    headers2 = [
+        MockHeader(1.0, 2.0, 3, 0),
+        MockHeader(1.1, 2.0, 2, 0),
+        MockHeader(1.0, 2.0, 4, 0),
+    ]
+    times_array2 = list(range(9))
+    values_array2 = list(range(200, 209))
+    expected_groups2 = [
+        ([headers2[0]], times_array2[0:3], values_array2[0:3]),
+        ([headers2[1]], times_array2[3:5], values_array2[3:5]),
+        ([headers2[2]], times_array2[5:9], values_array2[5:9]),
+    ]
+
+    # Test case 3: Empty headers list
+    headers3 = []
+    times_array3 = []
+    values_array3 = []
+    expected_groups3 = []
+
+    # Test case 4: Non-consecutive headers with same scale factors
+    headers4 = [
+        MockHeader(1.0, 2.0, 3, 0),
+        MockHeader(1.1, 2.0, 2, 0),
+        MockHeader(1.0, 2.0, 4, 0),
+        MockHeader(1.0, 2.0, 1, 0),
+    ]
+    times_array4 = list(range(10))
+    values_array4 = list(range(300, 310))
+    expected_groups4 = [
+        ([headers4[0]], times_array4[0:3], values_array4[0:3]),
+        ([headers4[1]], times_array4[3:5], values_array4[3:5]),
+        ([headers4[2], headers4[3]], times_array4[5:10], values_array4[5:10]),
+    ]
+
+    # Test case 5: All headers have different scale factors
+    headers5 = [
+        MockHeader(1.0, 2.0, 1, 0),
+        MockHeader(1.1, 2.1, 2, 0),
+        MockHeader(1.2, 2.2, 3, 0),
+    ]
+    times_array5 = list(range(6))
+    values_array5 = list(range(400, 406))
+    expected_groups5 = [
+        ([headers5[0]], times_array5[0:1], values_array5[0:1]),
+        ([headers5[1]], times_array5[1:3], values_array5[1:3]),
+        ([headers5[2]], times_array5[3:6], values_array5[3:6]),
+    ]
+
+    # Test case 6: Only one header
+    headers6 = [MockHeader(1.0, 2.0, 3, 0)]
+    times_array6 = list(range(3))
+    values_array6 = list(range(500, 503))
+    expected_groups6 = [
+        (headers6, times_array6, values_array6)
+    ]
+
+    # Test case 7: Headers with zero num_vals
+    headers7 = [
+        MockHeader(1.0, 2.0, 0, 0),
+        MockHeader(1.0, 2.0, 0, 0),
+    ]
+    times_array7 = []
+    values_array7 = []
+    expected_groups7 = [
+        (headers7, times_array7, values_array7)
+    ]
+
+    # Collect all test cases
+    test_cases = [
+        (headers1, times_array1, values_array1, expected_groups1),
+        (headers2, times_array2, values_array2, expected_groups2),
+        (headers3, times_array3, values_array3, expected_groups3),
+        (headers4, times_array4, values_array4, expected_groups4),
+        (headers5, times_array5, values_array5, expected_groups5),
+        (headers6, times_array6, values_array6, expected_groups6),
+        (headers7, times_array7, values_array7, expected_groups7),
+    ]
+
+    # Run tests
+    for idx, (headers, times_array, values_array, expected_groups) in enumerate(test_cases, 1):
+        result = list(group_headers_by_scale_factor(headers, times_array, values_array, 1))
+        assert len(result) == len(expected_groups), f"Test case {idx}: Number of groups does not match expected."
+
+        for i, (group, times_slice, values_slice) in enumerate(result):
+            expected_group, expected_times, expected_values = expected_groups[i]
+            assert group == expected_group, f"Test case {idx}, group {i+1}: Headers do not match expected."
+            assert times_slice == expected_times, f"Test case {idx}, group {i+1}: Times slice does not match expected."
+            assert values_slice == expected_values, f"Test case {idx}, group {i+1}: Values slice does not match expected."
+
 

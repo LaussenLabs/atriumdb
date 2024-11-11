@@ -990,7 +990,7 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
 
                     # Group data by scale factor
                     for group_headers, group_times, group_values in group_headers_by_scale_factor(
-                            r_headers, timestamp_arr, r_values):
+                            r_headers, timestamp_arr, r_values, time_type):
 
                         # Sort the group data
                         group_times, sorted_time_indices = np.unique(group_times, return_index=True)
@@ -1092,10 +1092,11 @@ def group_sorted_block_list(sorted_block_list, num_values_per_group=8388608):
         yield next_group
 
 
-def group_headers_by_scale_factor(headers, times_array, values_array):
+def group_headers_by_scale_factor(headers, times_array, values_array, time_type):
     if len(headers) == 0:
         return
-    start_idx = 0
+    start_idx_vals = 0
+    start_idx_times = 0
     current_scale_m, current_scale_b = headers[0].scale_m, headers[0].scale_b
     current_group = [headers[0]]
 
@@ -1105,18 +1106,34 @@ def group_headers_by_scale_factor(headers, times_array, values_array):
             current_group.append(h)
         else:
             # Different scale factors, yield current group
-            end_idx = start_idx + sum(header.num_vals for header in current_group)
-            yield current_group, times_array[start_idx:end_idx], values_array[start_idx:end_idx]
+            end_idx_vals = start_idx_vals + sum(header.num_vals for header in current_group)
+            if time_type == 1:
+                end_idx_times = start_idx_times + sum(header.num_vals for header in current_group)
+            elif time_type == 2:
+                end_idx_times = start_idx_times + sum(header.num_gaps * 2 for header in current_group)
+            else:
+                raise ValueError(f"Unknown time_type: {time_type}")
+
+            yield current_group, times_array[start_idx_times:end_idx_times], values_array[start_idx_vals:end_idx_vals]
 
             # Start new group
-            start_idx = end_idx
+            start_idx_vals = end_idx_vals
+            start_idx_times = end_idx_times
             current_scale_m, current_scale_b = h.scale_m, h.scale_b
             current_group = [h]
 
     # After loop ends, yield any remaining group
     if current_group:
-        end_idx = start_idx + sum(header.num_vals for header in current_group)
-        yield current_group, times_array[start_idx:end_idx], values_array[start_idx:end_idx]
+        end_idx_vals = start_idx_vals + sum(header.num_vals for header in current_group)
+        if time_type == 1:
+            end_idx_times = start_idx_times + sum(header.num_vals for header in current_group)
+        elif time_type == 2:
+            end_idx_times = start_idx_times + sum(header.num_gaps * 2 for header in current_group)
+        else:
+            raise ValueError(f"Unknown time_type: {time_type}")
+
+        yield current_group, times_array[start_idx_times:end_idx_times], values_array[start_idx_vals:end_idx_vals]
+
 
 
 def get_interval_list_from_ordered_timestamps(timestamps, period_ns):

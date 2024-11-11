@@ -34,7 +34,8 @@ from atriumdb.transfer.adb.tsc import _ingest_data_tsc
 from atriumdb.transfer.adb.wfdb import _ingest_data_wfdb
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.atrium_sdk import AtriumSDK
-from atriumdb.adb_functions import convert_value_to_nanoseconds, condense_byte_read_list, get_block_and_interval_data
+from atriumdb.adb_functions import convert_value_to_nanoseconds, condense_byte_read_list, get_block_and_interval_data, \
+    group_sorted_block_list
 from atriumdb.transfer.adb.devices import transfer_devices
 from atriumdb.transfer.adb.measures import transfer_measures
 from atriumdb.windowing.verify_definition import verify_definition
@@ -208,8 +209,6 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                             remaining_blocks = block_list
 
                         if within_time_blocks:
-                            # Sort blocks by start time
-                            within_time_blocks.sort(key=lambda x: x[6])
                             # Concatenate continuous byte intervals to cut down on total number of reads.
                             read_list = condense_byte_read_list(within_time_blocks)
 
@@ -236,16 +235,22 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
                         if remaining_blocks:
                             # If there were partial blocks, we need to re-encode them.
+                            # Sort blocks by start time
+                            remaining_blocks.sort(key=lambda x: x[6])
                             # Concatenate continuous byte intervals to cut down on total number of reads.
                             read_list = condense_byte_read_list(remaining_blocks)
 
                             # if no matching block ids
                             if len(read_list) == 0:
-                                pass
+                                continue
 
                             # Map file_ids to filenames and return a dictionary.
                             file_id_list = [row[2] for row in read_list]
                             filename_dict = src_sdk.get_filename_dict(file_id_list)
+
+                            for block_group in group_sorted_block_list(remaining_blocks, num_values_per_group=dest_sdk.block.block_size * 2048):
+                                pass
+                            pass
                             headers, times, values = src_sdk.get_data_from_blocks(
                                 remaining_blocks, filename_dict, int(start_time_nano), int(end_time_nano),
                                 analog_values, time_type=1, sort=True, allow_duplicates=allow_duplicates)
