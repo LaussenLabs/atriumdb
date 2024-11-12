@@ -67,6 +67,21 @@ def _test_iterator(db_type, dataset_location, connection_params):
             assert isinstance(window.label_time_series, np.ndarray)
             assert isinstance(window.label, np.ndarray)
 
+        # Try light mapped
+        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, iterator_type="lightmapped")
+        for window_i, window in enumerate(iterator):
+            assert isinstance(window.start_time, int)
+            assert isinstance(window.device_id, expected_device_id_type)
+            assert isinstance(window.patient_id, expected_patient_id_type)
+
+            for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
+                assert isinstance(signal_dict['times'], np.ndarray)
+                assert isinstance(signal_dict['values'], np.ndarray)
+
+            # Labels
+            assert isinstance(window.label_time_series, np.ndarray)
+            assert isinstance(window.label, np.ndarray)
+
 
         # Try while loading the cache
         cache_path = Path(sdk.dataset_location) / "cache"

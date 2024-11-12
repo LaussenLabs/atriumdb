@@ -52,6 +52,7 @@ from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
+from atriumdb.windowing.light_mapped_iterator import LightMappedIterator
 from atriumdb.windowing.random_access_iterator import MappedIterator
 from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.definition_splitter import partition_dataset
@@ -4170,7 +4171,10 @@ class AtriumSDK:
         :param str iterator_type: Specify the type of iterator. If set to 'mapped', a RandomAccessDatasetIterator
           will be returned, allowing indexed access to dataset windows. If set to 'filtered',
           a FilteredDatasetIterator will be returned with additional filtering functionality based on
-          the `window_filter_fn`. By default or if set to None, a standard DatasetIterator is returned.
+          the `window_filter_fn`. If set to `lightmapped` a lightweight low RAM mapped iterator is returned.
+          'lightmapped' is most suitable when you want true random shuffles and/or you're going to be jumping around
+          the indices in no particular order.
+          By default or if set to None, a standard DatasetIterator is returned.
         :param callable window_filter_fn: If provided, only windows for which this function returns True will be included in the
              iteration. This function should accept a window as its argument. This is only applicable
              if `iterator_type` is set to 'filtered'.
@@ -4302,6 +4306,12 @@ class AtriumSDK:
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, max_cache_duration=max_cache_duration_per_source,
                 shuffle=shuffle, patient_history_fields=patient_history_fields, cache_dir=cache)
+        elif iterator_type == 'lightmapped':
+            iterator = LightMappedIterator(
+                self, validated_measure_list, validated_label_set_list, validated_sources,
+                window_duration, window_slide,
+                label_threshold=label_threshold, shuffle=shuffle,
+                patient_history_fields=patient_history_fields)
         elif iterator_type == 'filtered':
             if window_filter_fn is None:
                 raise ValueError("window_filter_fn must be provided when iterator_type is 'filtered'")
@@ -4318,7 +4328,7 @@ class AtriumSDK:
                                        max_cache_duration=max_cache_duration_per_source,
                                        patient_history_fields=patient_history_fields, cache_dir=cache)
         else:
-            raise ValueError("iterator_type must be either 'mapped', 'filtered' or 'iterator'")
+            raise ValueError("iterator_type must be either 'mapped', 'lightmapped','filtered' or 'iterator'")
 
         return iterator
 
