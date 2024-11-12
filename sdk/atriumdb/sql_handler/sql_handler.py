@@ -103,6 +103,47 @@ class SQLHandler(ABC):
         # Insert interval_index rows.
         pass
 
+    def insert_and_delete_tsc_file_data(self, file_path: str, block_data: List[Dict], block_ids_to_delete: List[int]):
+        with self.connection(begin=True) as (conn, cursor):
+            # Insert file_path into file_index and get id
+            cursor.execute("INSERT INTO file_index (path) VALUES (?);", (file_path,))
+            file_id = cursor.lastrowid
+
+            # Insert into block_index
+            block_tuples = [(block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
+                             block["start_time_n"], block["end_time_n"], block["num_values"])
+                            for block in block_data]
+
+            insert_block_query = """INSERT INTO block_index (measure_id, device_id, file_id, start_byte, num_bytes, 
+                start_time_n, end_time_n, num_values) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
+            cursor.executemany(insert_block_query, block_tuples)
+
+            # Delete blocks with matching block ids in the block_ids list
+            if block_ids_to_delete:
+                delete_query = "DELETE FROM block_index WHERE id = ?;"
+                cursor.executemany(delete_query, [(block_id,) for block_id in block_ids_to_delete])
+
+    def replace_intervals(self, measure_id: int, device_id: int, interval_list: List[List[int]]):
+        if len(interval_list) == 0:
+            raise ValueError("This function deletes and replaces all intervals. `interval_list` cannot be empty")
+
+        with self.connection(begin=True) as (conn, cursor):
+            # Delete existing intervals for the given measure_id and device_id
+            delete_query = """
+                DELETE FROM interval_index
+                WHERE measure_id = ? AND device_id = ?;
+            """
+            cursor.execute(delete_query, (measure_id, device_id))
+
+            # Insert new intervals into the interval_index table
+            insert_query = """
+                INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n)
+                VALUES (?, ?, ?, ?);
+            """
+            interval_tuples = [(int(measure_id), int(device_id), int(start_time), int(end_time))
+                               for (start_time, end_time) in interval_list]
+            cursor.executemany(insert_query, interval_tuples)
+
     @abstractmethod
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
                              file_ids_to_delete: List[int], gap_tolerance: int = 0):
@@ -1003,7 +1044,13 @@ class SQLHandler(ABC):
                            "ON t1.id = t2.file_id WHERE t2.file_id IS NULL")
             return cursor.fetchall()
 
-    def delete_tsc_files(self, file_ids_to_delete: List[tuple]):
+
+    def delete_files_by_ids(self, file_ids_to_delete: List[int | tuple]):
+        if len(file_ids_to_delete) == 0:
+            return
+        if isinstance(file_ids_to_delete[0], int):
+            file_ids_to_delete = [(file_id,) for file_id in file_ids_to_delete]
+
         with self.connection(begin=False) as (conn, cursor):
             # if you put too many rows in the delete statement mariadb will fail. So we split it up
             for i in range(math.ceil(len(file_ids_to_delete) / 100_000)):

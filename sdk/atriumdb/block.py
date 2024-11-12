@@ -51,21 +51,15 @@ class Block:
     def encode_blocks(self, times, values, freq_nhz: int, start_ns: int,
                       raw_time_type=None, raw_value_type=None, encoded_time_type=None,
                       encoded_value_type=None, scale_m: float = None, scale_b: float = None):
-        # Choose the raw time type if not provided
-        if raw_time_type is None:
-            raw_time_type = t_type_raw_choose(len(times), len(values), freq_nhz)
 
-        # Choose the raw value type if not provided
-        if raw_value_type is None:
-            raw_value_type = v_type_raw_choose(values[0])
+        scale_m = 1.0 if scale_m is None else scale_m
+        scale_b = 0.0 if scale_b is None else scale_b
 
-        # Choose the encoded time type if not provided
-        if encoded_time_type is None:
-            encoded_time_type = t_type_encoded_choose(raw_time_type, freq_nhz)
-
-        # Choose the encoded value type if not provided
-        if encoded_value_type is None:
-            encoded_value_type = v_type_encoded_choose(raw_value_type)
+        # Raise ValueError if any of the types are None
+        if None in (raw_time_type, raw_value_type, encoded_time_type, encoded_value_type):
+            raise ValueError(
+                "All type parameters (raw_time_type, raw_value_type, encoded_time_type, encoded_value_type) "
+                "must be specified.")
 
         # Convert times and values to numpy arrays with appropriate data types
         times = np.array(times, dtype=np.int64)
@@ -93,6 +87,122 @@ class Block:
 
         # Return the encoded bytes, headers, and byte start array
         return encoded_bytes, headers, byte_start_array
+
+    def prepare_encode_blocks_inputs(self, times, values, freq_nhz, start_ns,
+                                     raw_time_type, raw_value_type, encoded_time_type, encoded_value_type,
+                                     scale_m=None, scale_b=None):
+        scale_m = 1.0 if scale_m is None else scale_m
+        scale_b = 0.0 if scale_b is None else scale_b
+
+        # Raise ValueError if any of the types are None
+        if None in (raw_time_type, raw_value_type, encoded_time_type, encoded_value_type):
+            raise ValueError(
+                "All type parameters (raw_time_type, raw_value_type, encoded_time_type, encoded_value_type) "
+                "must be specified.")
+
+        # Convert times and values to numpy arrays with appropriate data types
+        times = np.array(times, dtype=np.int64)
+        values = np.array(values, dtype=np.int64) if raw_value_type == VALUE_TYPES['INT64'] else \
+            np.array(values, dtype=np.float64)
+
+        # Calculate the number of blocks needed to store the data
+        num_blocks = max(1, values.size // self.block_size)
+
+        # Initialize time_info_data variable
+        time_info_data = None
+        # Check if raw time type is START_TIME_NUM_SAMPLES and process accordingly
+        if raw_time_type == TIME_TYPES['START_TIME_NUM_SAMPLES']:
+            times, time_info_data = self.blockify_intervals(freq_nhz, num_blocks, times, values.size)
+
+        # Generate metadata for the blocks
+        times, headers, options, t_block_start, v_block_start = \
+            self._gen_metadata(times, values, freq_nhz, start_ns, num_blocks,
+                               raw_time_type, raw_value_type, encoded_time_type, encoded_value_type,
+                               scale_m=scale_m, scale_b=scale_b, time_data=time_info_data)
+
+        # Return the prepared inputs
+        return times, values, num_blocks, t_block_start, v_block_start, headers, options, time_info_data
+
+    def encode_blocks_from_multiple_segments(self, segments):
+        # segments is a list of dictionaries, each containing the parameters for encode_blocks
+
+        if len(segments) == 0:
+            return np.array([], dtype=np.uint8), [], np.array([], dtype=np.uint64)
+
+        times_list = []
+        values_list = []
+        t_block_start_list = []
+        v_block_start_list = []
+        headers_list = []
+        num_blocks_total = 0
+
+        cumulative_time_length = 0
+        cumulative_value_length = 0
+
+        options_s = None
+        for segment in segments:
+            # Extract parameters from segment
+            times = segment['times']
+            values = segment['values']
+            freq_nhz = segment['freq_nhz']
+            start_ns = segment['start_ns']
+            raw_time_type = segment['raw_time_type']
+            raw_value_type = segment['raw_value_type']
+            encoded_time_type = segment['encoded_time_type']
+            encoded_value_type = segment['encoded_value_type']
+            scale_m = segment.get('scale_m', None)
+            scale_b = segment.get('scale_b', None)
+
+            # Call helper method
+            times_s, values_s, num_blocks_s, t_block_start_s, v_block_start_s, headers_s, options_s, time_info_data_s = \
+                self.prepare_encode_blocks_inputs(times, values, freq_nhz, start_ns,
+                                                  raw_time_type, raw_value_type,
+                                                  encoded_time_type, encoded_value_type,
+                                                  scale_m=scale_m, scale_b=scale_b)
+
+            # Adjust t_block_start and v_block_start
+            if raw_time_type == TIME_TYPES['TIME_ARRAY_INT64_NS']:
+                t_block_start_s += cumulative_time_length * times_s.itemsize
+            elif raw_time_type == TIME_TYPES['START_TIME_NUM_SAMPLES']:
+                # Adjust interval_block_start_s
+                interval_block_start_s = time_info_data_s[2]
+                interval_block_start_s += cumulative_time_length * times_s.itemsize
+                # Update t_block_start_s
+                t_block_start_s = interval_block_start_s
+            else:
+                raise ValueError(
+                    "raw_time_type {} not supported in encode_blocks_from_multiple_segments.".format(raw_time_type))
+
+            v_block_start_s += cumulative_value_length * values_s.itemsize
+
+            # Append to lists
+            times_list.append(times_s)
+            values_list.append(values_s)
+            t_block_start_list.append(t_block_start_s)
+            v_block_start_list.append(v_block_start_s)
+            headers_list.extend(headers_s)
+
+            # Update cumulative lengths
+            cumulative_time_length += len(times_s)
+            cumulative_value_length += len(values_s)
+            num_blocks_total += num_blocks_s
+
+        # Concatenate times and values
+        times_total = np.concatenate(times_list)
+        values_total = np.concatenate(values_list)
+        t_block_start_total = np.concatenate(t_block_start_list)
+        v_block_start_total = np.concatenate(v_block_start_list)
+        headers_total = (BlockMetadata * num_blocks_total)(*headers_list)
+
+        # Use options from the last segment (assuming options are the same)
+        options_total = options_s
+
+        # Now call wrapped_dll.encode_blocks_sdk
+        encoded_bytes, byte_start_array = self.wrapped_dll.encode_blocks_sdk(
+            times_total, values_total, num_blocks_total, t_block_start_total, v_block_start_total,
+            cast(headers_total, POINTER(BlockMetadata)), options_total)
+
+        return encoded_bytes, headers_total, byte_start_array
 
     def blockify_intervals(self, freq_nhz, num_blocks, times, value_size):
         # Calculate the period in nanoseconds based on the input frequency

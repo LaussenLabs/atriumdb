@@ -19,6 +19,7 @@ import os
 import shutil
 from pathlib import Path
 from dotenv import load_dotenv
+import numpy as np
 
 from atriumdb import AtriumSDK
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
@@ -72,3 +73,19 @@ def create_sibling_sdk(connection_params, dataset_location, db_type):
     sdk_2 = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
     return sdk_2
+
+
+def slice_times_values(times, values, start_time, end_time):
+    # Ensure times are unique and sorted
+    unique_times, unique_indices = np.unique(times, return_index=True)
+    unique_values = values[unique_indices]
+
+    # Find the insertion points for start_time and end_time
+    start_idx = np.searchsorted(unique_times, start_time, side='left') if start_time is not None else 0
+    end_idx = np.searchsorted(unique_times, end_time, side='left') if end_time is not None else unique_times.shape[0]
+
+    # Slice the arrays based on the indices
+    sliced_times = unique_times[start_idx:end_idx]
+    sliced_values = unique_values[start_idx:end_idx]
+
+    return sliced_times, sliced_values
