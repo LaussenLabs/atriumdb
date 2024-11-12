@@ -16,10 +16,13 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import warnings
+from collections import defaultdict
 import numpy as np
 import bisect
 
 import threading
+
+from atriumdb.intervals.intersection import intervals_intersect
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
     find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, convert_from_nanohz, \
@@ -1451,6 +1454,158 @@ class AtriumSDK:
                     self.block_cache[measure_id][device_id] = np.vstack(current_cache)
                     self.start_cache[measure_id][device_id] = np.array(self.start_cache[measure_id][device_id], dtype=np.int64)
                     self.end_cache[measure_id][device_id] = np.array(self.end_cache[measure_id][device_id], dtype=np.int64)
+
+        # Update filename dictionary
+        self.filename_dict.update(filename_dict)
+
+    def load_definition(self, definition, gap_tolerance=None, measure_tag_match_rule="best",
+                        start_time=None, end_time=None, time_units: str = "ns", cache_dir=None):
+        """
+        Load and validate a dataset definition, then initialize device and time ranges for data fetching.
+
+        This method validates the provided `definition` against dataset attributes to ensure accurate mapping of measures,
+        labels, and devices (or patients). Time ranges for each specified device are merged and cached to optimize
+        data retrieval, with the resulting device-time configuration used to fetch block metadata.
+
+        :param definition: The dataset definition specifying measures, devices (or patients), and optional time ranges to include.
+            It should be either a `DefinitionYAML` instance or a dictionary.
+        :type definition: DefinitionYAML or dict
+        :param int gap_tolerance: Tolerance for gaps between consecutive time intervals when "all" is specified in the
+            definition, in the units specified by `time_units`. Defaults to 1 minute (60_000_000_000 nanoseconds).
+        :param str measure_tag_match_rule: Rule for matching tags in measures; defaults to "best".
+        :param int start_time: Minimum global start time for fetching data, in units of `time_units`.
+        :param int end_time: Maximum global end time for fetching data, in units of `time_units`.
+        :param str time_units: Time units to interpret `start_time`, `end_time`, and `gap_tolerance`.
+            One of ["ns", "us", "ms", "s"]. Defaults to "ns".
+        :param str cache_dir: Directory to use for caching processed blocks if caching is enabled.
+
+        :raises ValueError: If the provided `time_units` is invalid.
+
+        Notes:
+        Supported `time_units` are nanoseconds ("ns"), microseconds ("us"), milliseconds ("ms"), and seconds ("s").
+        The `definition` parameter should specify devices or patients with associated time intervals, or the keyword "all".
+
+        Example:
+        sdk = AtriumSDK(dataset_location=local_dataset_location)
+
+        # Define measures, devices, and time ranges
+        definition = {
+            'measures': ["MLII"],
+            'devices': {
+                1: "all",
+                2: [{"start": 1682739250000000000, "end": 1682739350000000000}],
+            }
+        }
+
+        # Load the definition with time units in milliseconds
+        sdk.load_definition(definition, gap_tolerance=1000, start_time=0, end_time=60000, time_units="ms")
+
+        """
+        # Validate and convert time_units
+        time_unit_options = {"s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3, "ns": 1}
+        if time_units not in time_unit_options:
+            raise ValueError(f"Invalid time units. Expected one of: {list(time_unit_options.keys())}")
+
+        # Convert start_time, end_time, and gap_tolerance to nanoseconds
+        start_time_n = None if start_time is None else int(start_time * time_unit_options[time_units])
+        end_time_n = None if end_time is None else int(end_time * time_unit_options[time_units])
+        gap_tolerance_n = None if gap_tolerance is None else int(gap_tolerance * time_unit_options[time_units])
+        # Verify the dataset definition against the AtriumSDK
+        validated_measure_list, validated_label_set_list, mapped_sources = verify_definition(
+            definition, sdk=self, gap_tolerance=gap_tolerance_n,
+            measure_tag_match_rule=measure_tag_match_rule, start_time_n=start_time_n,
+            end_time_n=end_time_n,
+            cache_dir=cache_dir,
+        )
+
+        # Extract measure_ids from the validated measures
+        measure_ids = [measure['id'] for measure in validated_measure_list]
+
+        # Initialize device time ranges
+        device_time_ranges = defaultdict(list)
+
+        # Process device_patient_tuples
+        device_patient_tuples = mapped_sources.get('device_patient_tuples', {})
+        for (device_id, _), time_ranges in device_patient_tuples.items():
+            device_time_ranges[device_id].extend(time_ranges)
+
+        # Process unmatched device_ids if any
+        unmatched_device_ids = mapped_sources.get('device_ids', {})
+        for device_id, time_ranges in unmatched_device_ids.items():
+            device_time_ranges[device_id].extend(time_ranges)
+
+        # Merge and sort time ranges for each device_id
+        for device_id in device_time_ranges:
+            time_ranges = device_time_ranges[device_id]
+            # Sort time ranges
+            time_ranges.sort()
+            # Merge overlapping time ranges
+            merged_time_ranges = []
+            for start, end in sorted(time_ranges):
+                if merged_time_ranges and start <= merged_time_ranges[-1][1]:
+                    # Overlapping intervals, merge them
+                    merged_time_ranges[-1][1] = max(merged_time_ranges[-1][1], end)
+                else:
+                    merged_time_ranges.append([start, end])
+            device_time_ranges[device_id] = merged_time_ranges
+
+        # Get list of device_ids
+        device_ids = list(device_time_ranges.keys())
+
+        # Fetch block index data for the devices and measures specified
+        block_query_result = self.sql_handler.select_blocks_for_devices(device_ids, measure_ids)
+
+        # Get unique file_ids
+        file_id_list = list(set([row[3] for row in block_query_result]))
+        if len(file_id_list) == 0:
+            return
+        filename_dict = self.get_filename_dict(file_id_list)
+
+        # Build caches
+        for block in block_query_result:
+            block_id, measure_id, device_id, file_id, start_byte, num_bytes, block_start_time, block_end_time, num_values = block
+            measure_id, device_id = int(measure_id), int(device_id)
+
+            # Check if block's time range intersects any of the time ranges for the device_id
+            device_ranges = device_time_ranges.get(device_id, [])
+            if not device_ranges:
+                continue  # Skip if no ranges for this device.
+
+            if not intervals_intersect(device_ranges, block_start_time, block_end_time):
+                continue  # Skip this block if no intersection.
+
+            # Include the block
+            block_array = np.array([
+                block_id, measure_id, device_id, file_id, start_byte,
+                num_bytes, block_start_time, block_end_time, num_values
+            ], dtype=np.int64)
+
+            if measure_id not in self.block_cache:
+                self.block_cache[measure_id] = {}
+                self.start_cache[measure_id] = {}
+                self.end_cache[measure_id] = {}
+
+            if device_id not in self.block_cache[measure_id]:
+                self.block_cache[measure_id][device_id] = []
+                self.start_cache[measure_id][device_id] = []
+                self.end_cache[measure_id][device_id] = []
+
+            self.block_cache[measure_id][device_id].append(block_array)
+            self.start_cache[measure_id][device_id].append(block_start_time)
+            self.end_cache[measure_id][device_id].append(block_end_time)
+
+        # Convert lists to numpy arrays
+        for measure_id in self.block_cache:
+            for device_id in self.block_cache[measure_id]:
+                current_cache = self.block_cache[measure_id][device_id]
+                if isinstance(current_cache, list):
+                    self.block_cache[measure_id][device_id] = np.vstack(current_cache)
+                    self.start_cache[measure_id][device_id] = np.array(
+                        self.start_cache[measure_id][device_id], dtype=np.int64
+                    )
+                    self.end_cache[measure_id][device_id] = np.array(
+                        self.end_cache[measure_id][device_id], dtype=np.int64
+                    )
 
         # Update filename dictionary
         self.filename_dict.update(filename_dict)

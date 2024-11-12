@@ -234,6 +234,25 @@ class SQLHandler(ABC):
             cursor.execute(block_query, args)
             return cursor.fetchall()
 
+    def select_blocks_for_devices(self, device_ids: List[int], measure_ids: List[int]):
+        # Build placeholders for SQL IN clauses
+        device_placeholders = ','.join(['?'] * len(device_ids))
+        measure_placeholders = ','.join(['?'] * len(measure_ids))
+
+        block_query = f"""
+        SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
+        FROM block_index
+        WHERE device_id IN ({device_placeholders}) AND measure_id IN ({measure_placeholders})
+        ORDER BY measure_id, device_id, start_time_n ASC;
+        """
+
+        # Prepare arguments for the SQL query
+        args = [int(did) for did in device_ids] + [int(mid) for mid in measure_ids]
+
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(block_query, args)
+            return cursor.fetchall()
+
     @abstractmethod
     def select_interval(self, interval_id: Optional[int] = None, measure_id: Optional[int] = None, device_id: Optional[int] = None,
                         start_time_n: Optional[int] = None, end_time_n: Optional[int] = None):

@@ -28,6 +28,7 @@ API Reference
    .. automethod:: write_time_value_pairs
 
    .. automethod:: load_device
+   .. automethod:: load_definition
 
    .. automethod:: get_measure_id
    .. automethod:: get_measure_info
