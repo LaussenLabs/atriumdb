@@ -14,6 +14,11 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+from collections import defaultdict
+
+import shutil
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -62,7 +67,90 @@ def _test_iterator(db_type, dataset_location, connection_params):
             assert isinstance(window.label_time_series, np.ndarray)
             assert isinstance(window.label, np.ndarray)
 
+        # Try light mapped
+        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, iterator_type="lightmapped")
+        for window_i, window in enumerate(iterator):
+            assert isinstance(window.start_time, int)
+            assert isinstance(window.device_id, expected_device_id_type)
+            assert isinstance(window.patient_id, expected_patient_id_type)
+
+            for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
+                assert isinstance(signal_dict['times'], np.ndarray)
+                assert isinstance(signal_dict['values'], np.ndarray)
+
+            # Labels
+            assert isinstance(window.label_time_series, np.ndarray)
+            assert isinstance(window.label, np.ndarray)
+
+
+        # Try while loading the cache
+        cache_path = Path(sdk.dataset_location) / "cache"
+        shutil.rmtree(cache_path, ignore_errors=True)
+        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None,
+                                    cache=cache_path)
+
+        for window_i, window in enumerate(iterator):
+            assert isinstance(window.start_time, int)
+            assert isinstance(window.device_id, expected_device_id_type)
+            assert isinstance(window.patient_id, expected_patient_id_type)
+
+            for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
+                assert isinstance(signal_dict['times'], np.ndarray)
+                assert isinstance(signal_dict['values'], np.ndarray)
+
+            # Labels
+            assert isinstance(window.label_time_series, np.ndarray)
+            assert isinstance(window.label, np.ndarray)
+
+        # Try while reading the cache
+        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None,
+                                    cache=Path(sdk.dataset_location) / "cache")
+
+        for window_i, window in enumerate(iterator):
+            assert isinstance(window.start_time, int)
+            assert isinstance(window.device_id, expected_device_id_type)
+            assert isinstance(window.patient_id, expected_patient_id_type)
+
+            for (measure_tag, measure_freq_nhz, measure_units), signal_dict in window.signals.items():
+                assert isinstance(signal_dict['times'], np.ndarray)
+                assert isinstance(signal_dict['values'], np.ndarray)
+
+            # Labels
+            assert isinstance(window.label_time_series, np.ndarray)
+            assert isinstance(window.label, np.ndarray)
+
+    # Test Definition Loader
+    definition_to_load = DatasetDefinition(filename="./example_data/mitbih_seed_42_device_one_only.yaml")
+    sdk.load_definition(definition_to_load)
+    iterator = sdk.get_iterator(DatasetDefinition(filename="./example_data/mitbih_seed_42_all_devices.yaml"),
+                                window_size_nano, window_size_nano)
+
+    expected_values = {}
+    for window_i, window in enumerate(iterator):
+
+        for (measure_tag, measure_freq_hz, measure_units), signal_dict in window.signals.items():
+            measure_id =  sdk.get_measure_id(measure_tag, measure_freq_hz, measure_units, freq_units="Hz")
+            assert isinstance(signal_dict['times'], np.ndarray)
+            assert isinstance(signal_dict['values'], np.ndarray)
+            if (measure_id, window.device_id) not in expected_values:
+                expected_values[(measure_id, window.device_id)] = []
+            expected_values[(measure_id, window.device_id)].append(signal_dict['values'])
+
+
+    for measure_id in sdk.get_all_measures():
+        for device_id in sdk.get_all_devices():
+            _, times, values = sdk.get_data(measure_id, 0, 2**62, device_id)
+            if values.size == 0:
+                continue
+            assert (measure_id, device_id) in expected_values
+            actual_values = np.concatenate(expected_values[(measure_id, device_id)])
+            actual_values = actual_values[~np.isnan(actual_values)]
+            assert np.allclose(actual_values, values)
+
+
     # Check for the case of partial windows
+    sdk = AtriumSDK(
+        dataset_location=dataset_location, metadata_connection_type=db_type, connection_params=connection_params)
     partial_freq_nano = 1_000_000_000
     partial_period_nano = (10 ** 18) // partial_freq_nano
     partial_device_id = sdk.insert_device(device_tag="partial_device")

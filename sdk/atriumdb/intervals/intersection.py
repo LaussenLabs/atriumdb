@@ -33,3 +33,19 @@ def list_intersection(first, second):
             j += 1
 
     return result
+
+def intervals_intersect(intervals, block_start_time, block_end_time):
+    lo = 0
+    hi = len(intervals) - 1
+
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        start_i, end_i = intervals[mid]
+
+        if block_end_time < start_i:
+            hi = mid - 1
+        elif block_start_time > end_i:
+            lo = mid + 1
+        else:
+            return True
+    return False

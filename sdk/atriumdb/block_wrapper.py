@@ -132,21 +132,27 @@ class BlockOptions(Structure):
 class WrappedBlockDll:
 
     def __init__(self, abs_path_to_dll: str, num_threads: int):
+        self.abs_path_to_dll = abs_path_to_dll
         self.num_threads = num_threads
+        self.bc_dll = None
+
+    def load_dll(self):
+        # lazy load the dll so that when you're using multiprocessing,
+        # the CDLL object doesn't get passed before its used.
         if platform.system() == "Windows":
             # Windows
-            os.add_dll_directory(Path(abs_path_to_dll).parent)
-            self.bc_dll = WinDLL(abs_path_to_dll)
+            os.add_dll_directory(Path(self.abs_path_to_dll).parent)
+            self.bc_dll = WinDLL(self.abs_path_to_dll)
         elif platform.system() == "Linux":
             # Linux
-            self.bc_dll = CDLL(abs_path_to_dll)
+            self.bc_dll = CDLL(self.abs_path_to_dll)
 
         else:
             # MACOS
-            self.bc_dll = CDLL(abs_path_to_dll)
+            self.bc_dll = CDLL(self.abs_path_to_dll)
 
         self.bc_dll.block_get_buffer_size.argtypes = [c_void_p, c_uint64, POINTER(c_uint64), POINTER(c_uint64),
-                                                            POINTER(BlockMetadata)]
+                                                      POINTER(BlockMetadata)]
         self.bc_dll.block_get_buffer_size.restype = c_size_t
 
         self.bc_dll.encode_blocks.argtypes = [c_void_p, c_void_p, c_void_p, c_uint64, POINTER(c_uint64),
@@ -159,17 +165,19 @@ class WrappedBlockDll:
 
         # Set up 'convert_value_data_to_analog' method
         self.bc_dll.convert_value_data_to_analog.argtypes = [
-            c_void_p,                # void *value_data
-            POINTER(c_double),       # double *analog_values
+            c_void_p,  # void *value_data
+            POINTER(c_double),  # double *analog_values
             POINTER(BlockMetadata),  # block_metadata_t *headers
-            POINTER(c_uint64),       # uint64 *analog_values
-            c_uint64                 # uint64_t num_blocks
+            POINTER(c_uint64),  # uint64 *analog_values
+            c_uint64  # uint64_t num_blocks
         ]
         self.bc_dll.convert_value_data_to_analog.restype = None
 
     def encode_blocks_sdk(self, time_data: np.ndarray, value_data: np.ndarray, num_blocks: int,
                           t_block_start: np.ndarray, v_block_start: np.ndarray, headers: POINTER(BlockMetadata),
                           options: BlockOptions) -> Tuple[np.ndarray, np.ndarray]:
+        if self.bc_dll is None:
+            self.load_dll()
         byte_start = np.zeros(num_blocks, dtype=np.uint64)
         time_data.ctypes.data_as(c_void_p), num_blocks, t_block_start.ctypes.data_as(POINTER(c_uint64)),
         byte_start.ctypes.data_as(POINTER(c_uint64)), headers
@@ -191,6 +199,8 @@ class WrappedBlockDll:
     def decode_blocks_sdk(self, time_data: np.ndarray, value_data: np.ndarray, encoded_bytes: np.ndarray,
                           num_blocks: int, t_block_start: np.ndarray, v_block_start: np.ndarray,
                           byte_start: np.ndarray, t_byte_start: np.ndarray):
+        if self.bc_dll is None:
+            self.load_dll()
         self.bc_dll.decode_blocks(
             time_data.ctypes.data_as(c_void_p), value_data.ctypes.data_as(c_void_p),
             encoded_bytes.ctypes.data_as(c_void_p),
@@ -201,6 +211,8 @@ class WrappedBlockDll:
 
     def convert_value_data_to_analog(self, value_data: np.ndarray, analog_values: np.ndarray,
                                      headers: list[BlockMetadata], num_blocks: int):
+        if self.bc_dll is None:
+            self.load_dll()
         # Define the array type for BlockMetadata
         BlockMetadataArray = BlockMetadata * num_blocks
 
@@ -224,6 +236,8 @@ class WrappedBlockDll:
     def fill_nan_array_with_analog(self, value_data: np.ndarray, nan_analog_array: np.ndarray,
                                    headers: list[BlockMetadata], num_blocks: int, times: np.ndarray,
                                    start_ns: int, period_ns: float):
+        if self.bc_dll is None:
+            self.load_dll()
         # Define the array type for BlockMetadata
         BlockMetadataArray = BlockMetadata * num_blocks
 

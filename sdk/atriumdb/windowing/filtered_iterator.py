@@ -1,3 +1,20 @@
+# AtriumDB is a timeseries database software designed to best handle the unique features and
+# challenges that arise from clinical waveform data.
+#     Copyright (C) 2023  The Hospital for Sick Children
+#
+#     This program is free software: you can redistribute it and/or modify
+#     it under the terms of the GNU General Public License as published by
+#     the Free Software Foundation, either version 3 of the License, or
+#     (at your option) any later version.
+#
+#     This program is distributed in the hope that it will be useful,
+#     but WITHOUT ANY WARRANTY; without even the implied warranty of
+#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#     GNU General Public License for more details.
+#
+#     You should have received a copy of the GNU General Public License
+#     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
@@ -20,7 +37,7 @@ class FilteredDatasetIterator(DatasetIterator):
     def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
                  label_threshold=0.5, shuffle=False, max_cache_duration=None, window_filter_fn=None,
-                 patient_history_fields: list = None):
+                 patient_history_fields: list = None, cache_dir=None):
         super().__init__(
             sdk=sdk,
             validated_measure_list=validated_measure_list,
@@ -32,7 +49,8 @@ class FilteredDatasetIterator(DatasetIterator):
             label_threshold=label_threshold,
             shuffle=shuffle,
             max_cache_duration=max_cache_duration,
-            patient_history_fields=patient_history_fields
+            patient_history_fields=patient_history_fields,
+            cache_dir=cache_dir,
         )
         self.window_filter_fn = window_filter_fn
 
