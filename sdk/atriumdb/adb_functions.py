@@ -629,6 +629,33 @@ def reconstruct_messages(start_time_nano_epoch, gap_data_array, sample_freq, num
 
     return message_starts, message_sizes
 
+def reconstruct_messages_multi(headers, gap_data, sample_freq):
+    message_starts_list = []
+    message_sizes_list = []
+
+    gap_idx = 0
+    for header in headers:
+        num_vals = header.num_vals
+        num_gaps = header.num_gaps
+        start_n = header.start_n  # starting time in nanoseconds since epoch
+
+        gap_data_block = gap_data[gap_idx: gap_idx + 2 * num_gaps]
+
+        # Process the block to get message_starts and message_sizes
+        message_starts, message_sizes = reconstruct_messages(start_n, gap_data_block, sample_freq, num_vals)
+
+        message_starts_list.append(message_starts)
+        message_sizes_list.append(message_sizes)
+
+        # Update indices for the next block
+        gap_idx += 2 * num_gaps
+
+    # Concatenate all message starts and sizes from all blocks
+    all_message_starts = np.concatenate(message_starts_list)
+    all_message_sizes = np.concatenate(message_sizes_list)
+
+    return all_message_starts, all_message_sizes
+
 
 def sort_message_time_values(message_starts: np.ndarray, message_sizes: np.ndarray, value_array: np.ndarray):
     # The start and end index of each message within the value_array
@@ -977,65 +1004,79 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                     # Perfect Precision Time-Value Pairs are Possible
                     period_ns = (10 ** 18) // measure_info['freq_nhz']
                     time_type = 1
-                    r_headers, timestamp_arr, r_values = sdk.get_data_from_blocks(block_group, filename_dict, 0,
-                                                                                2 ** 62, False, time_type, sort=False,
-                                                                                allow_duplicates=True)
+                else:
+                    period_ns = None
+                    time_type = 2
 
-                    if timestamp_arr.size == 0:
-                        continue
+                r_headers, timestamp_arr, r_values = sdk.get_data_from_blocks(block_group, filename_dict, 0,
+                                                                            2 ** 62, False, time_type, sort=False,
+                                                                            allow_duplicates=True)
 
-                    # Prepare segments for encode_blocks_from_multiple_segments
-                    segments = []
-                    block_group_interval_data = []
+                if timestamp_arr.size == 0:
+                    continue
 
-                    # Group data by scale factor
-                    for group_headers, group_times, group_values in group_headers_by_scale_factor(
-                            r_headers, timestamp_arr, r_values, time_type):
+                # Prepare segments for encode_blocks_from_multiple_segments
+                segments = []
+                block_group_interval_data = []
 
-                        # Sort the group data
+                # Group data by scale factor
+                for group_headers, group_times, group_values in group_headers_by_scale_factor(
+                        r_headers, timestamp_arr, r_values, time_type):
+
+                    # Sort and merge the group data
+                    if time_type == 1:
                         group_times, sorted_time_indices = np.unique(group_times, return_index=True)
                         group_values = group_values[sorted_time_indices]
-
-                        # Get interval data
                         group_interval_data = get_interval_list_from_ordered_timestamps(group_times, period_ns)
-                        block_group_interval_data.append(group_interval_data)
+                    elif time_type == 2:
+                        # Merge the gap data into messages (segments)
+                        message_starts, message_sizes = reconstruct_messages_multi(group_headers, group_times, int(group_headers[0].freq_nhz))
+                        # Sort the message data
+                        sort_message_time_values(message_starts, message_sizes, group_values)
+                        # Revert back to gap array
+                        gap_data = create_gap_arr_from_variable_messages(
+                            message_starts, message_sizes, int(group_headers[0].freq_nhz))
+                        group_times = gap_data
 
-                        if np.issubdtype(group_values.dtype, np.integer):
-                            raw_value_type = 1
-                            encoded_value_type = 3
-                        else:
-                            raw_value_type = 2
-                            encoded_value_type = 2
+                        group_interval_data = get_interval_list_from_message_starts_and_sizes(message_starts, message_sizes, int(group_headers[0].freq_nhz))
+                    else:
+                        raise ValueError("time_type must be 1 or 2")
 
-                        # Create segment dictionary
-                        segment = {
-                            'times': group_times,
-                            'values': group_values,
-                            'freq_nhz': measure_info['freq_nhz'],
-                            'start_ns': group_times[0],
-                            'raw_time_type': 1,
-                            'encoded_time_type': 2,
-                            'raw_value_type': raw_value_type,
-                            'encoded_value_type': encoded_value_type,
-                            'scale_m': group_headers[0].scale_m,
-                            'scale_b': group_headers[0].scale_b
-                        }
-                        segments.append(segment)
+                    block_group_interval_data.append(group_interval_data)
 
-                    # Now, call encode_blocks_from_multiple_segments
-                    encoded_bytes, encoded_headers, byte_start_array = (
-                        sdk.block.encode_blocks_from_multiple_segments(segments))
+                    if np.issubdtype(group_values.dtype, np.integer):
+                        raw_value_type = 1
+                        encoded_value_type = 3
+                    else:
+                        raw_value_type = 2
+                        encoded_value_type = 2
 
-                    # Handle the outputs
-                    total_encoded_bytes = encoded_bytes
-                    total_encoded_headers = encoded_headers
-                    total_byte_start_array = byte_start_array
+                    # Create segment dictionary
+                    segment = {
+                        'times': group_times,
+                        'values': group_values,
+                        'freq_nhz': measure_info['freq_nhz'],
+                        'start_ns': group_times[0],
+                        'raw_time_type': 1,
+                        'encoded_time_type': 2,
+                        'raw_value_type': raw_value_type,
+                        'encoded_value_type': encoded_value_type,
+                        'scale_m': group_headers[0].scale_m,
+                        'scale_b': group_headers[0].scale_b
+                    }
+                    segments.append(segment)
 
-                    # Process the intervals
-                    block_group_interval_data = intervals_union_list(block_group_interval_data)
-                else:
-                    # Perfect Precision Time-Value Pairs Not Possible: Use Message/Gap Format.
-                    raise NotImplementedError("Not Implemented For Nanohertz Frequencies That Don't Divide 10^18")
+                # Now, call encode_blocks_from_multiple_segments
+                encoded_bytes, encoded_headers, byte_start_array = (
+                    sdk.block.encode_blocks_from_multiple_segments(segments))
+
+                # Handle the outputs
+                total_encoded_bytes = encoded_bytes
+                total_encoded_headers = encoded_headers
+                total_byte_start_array = byte_start_array
+
+                # Process the intervals
+                block_group_interval_data = intervals_union_list(block_group_interval_data)
 
                 # Write the encoded bytes to disk
                 filename = sdk.file_api.write_bytes(measure_id, device_id, total_encoded_bytes)
@@ -1135,7 +1176,6 @@ def group_headers_by_scale_factor(headers, times_array, values_array, time_type)
         yield current_group, times_array[start_idx_times:end_idx_times], values_array[start_idx_vals:end_idx_vals]
 
 
-
 def get_interval_list_from_ordered_timestamps(timestamps, period_ns):
     if timestamps.size == 0:
         return []
@@ -1154,3 +1194,24 @@ def get_interval_list_from_ordered_timestamps(timestamps, period_ns):
     regions = np.column_stack((start_times, end_times))
 
     return regions
+
+
+def get_interval_list_from_message_starts_and_sizes(message_starts, message_sizes, freq_nhz):
+    if message_starts.size == 0:
+        return np.array([], dtype=np.int64)
+
+    merged_intervals = []
+    current_start = message_starts[0]
+    current_end = current_start + _message_size_to_duration_ns(int(message_sizes[0]), freq_nhz)
+    for start, message_size in zip(message_starts[1:], message_sizes[1:]):
+        end = start + _message_size_to_duration_ns(int(message_size), freq_nhz)
+        if start <= current_end:
+            # Overlapping intervals, update the end if needed
+            current_end = max(current_end, end)
+        else:
+            # No overlap, append the current interval and reset
+            merged_intervals.append([current_start, current_end])
+            current_start, current_end = start, end
+    merged_intervals.append([current_start, current_end])
+
+    return np.array(merged_intervals, dtype=np.int64)
