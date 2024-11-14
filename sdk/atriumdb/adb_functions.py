@@ -999,9 +999,17 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
 
             for block_group in group_sorted_block_list(
                     sorted_block_list_by_time, num_values_per_group=values_per_block * blocks_per_file):
-                r_headers, timestamp_arr, r_values = sdk.get_data_from_blocks(block_group, filename_dict, 0,
-                                                                            2 ** 62, False, "encoded", sort=False,
-                                                                            allow_duplicates=True)
+
+                r_headers, timestamp_arr, r_values = sdk.get_data_from_blocks(
+                    block_list=block_group,
+                    filename_dict=filename_dict,
+                    start_time_n=0,
+                    end_time_n=2 ** 62,
+                    analog=False,
+                    time_type="encoded",
+                    sort=False,
+                    allow_duplicates=True
+                )
 
                 if timestamp_arr.size == 0:
                     continue
@@ -1015,25 +1023,27 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                         r_headers, timestamp_arr, r_values):
                     group_time_type = int(group_headers[0].t_raw_type)
                     group_freq_nhz = int(group_headers[0].freq_nhz)
+                    group_encoded_time_type = int(group_headers[0].t_encoded_type)
+
 
                     # Sort and merge the group data
                     if group_time_type == 1:
-                        period_ns = (10 ** 18) // measure_info['freq_nhz']
+                        period_ns = (10 ** 18) // group_freq_nhz
                         group_times, sorted_time_indices = np.unique(group_times, return_index=True)
                         group_values = group_values[sorted_time_indices]
                         group_interval_data = get_interval_list_from_ordered_timestamps(group_times, period_ns)
                         group_start_time = int(group_times[0])
                     elif group_time_type == 2:
                         # Merge the gap data into messages (segments)
-                        message_starts, message_sizes = reconstruct_messages_multi(group_headers, group_times, int(group_headers[0].freq_nhz))
+                        message_starts, message_sizes = reconstruct_messages_multi(group_headers, group_times, group_freq_nhz)
                         # Sort the message data
                         sort_message_time_values(message_starts, message_sizes, group_values)
                         # Revert back to gap array
                         gap_data = create_gap_arr_from_variable_messages(
-                            message_starts, message_sizes, int(group_headers[0].freq_nhz))
+                            message_starts, message_sizes, group_freq_nhz)
                         group_times = gap_data
 
-                        group_interval_data = get_interval_list_from_message_starts_and_sizes(message_starts, message_sizes, int(group_headers[0].freq_nhz))
+                        group_interval_data = get_interval_list_from_message_starts_and_sizes(message_starts, message_sizes, group_freq_nhz)
                         group_start_time = int(group_interval_data[0][0])
                     else:
                         raise ValueError("time_type must be 1 or 2")
@@ -1054,7 +1064,7 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                         'freq_nhz': int(group_headers[0].freq_nhz),
                         'start_ns': group_start_time,
                         'raw_time_type': group_time_type,
-                        'encoded_time_type': 2,
+                        'encoded_time_type': group_encoded_time_type,
                         'raw_value_type': raw_value_type,
                         'encoded_value_type': encoded_value_type,
                         'scale_m': group_headers[0].scale_m,
@@ -1132,23 +1142,28 @@ def group_sorted_block_list(sorted_block_list, num_values_per_group=8388608):
 def group_headers_by_scale_factor_freq_time_type(headers, times_array, values_array):
     if len(headers) == 0:
         return
+
+    # Initialize the first header group variables
     start_idx_vals = 0
     start_idx_times = 0
     current_scale_m = headers[0].scale_m
     current_scale_b = headers[0].scale_b
     current_t_raw_type = headers[0].t_raw_type
     current_freq_nhz = headers[0].freq_nhz
+    current_t_encoded_type = headers[0].t_encoded_type
     current_group = [headers[0]]
 
     for h in headers[1:]:
+        # Check if header properties match the current group's properties
         if (h.scale_m == current_scale_m and
-            h.scale_b == current_scale_b and
-            h.t_raw_type == current_t_raw_type and
-            h.freq_nhz == current_freq_nhz):
+                h.scale_b == current_scale_b and
+                h.t_raw_type == current_t_raw_type and
+                h.freq_nhz == current_freq_nhz and
+                h.t_encoded_type == current_t_encoded_type):
             # Same grouping factors, add to current group
             current_group.append(h)
         else:
-            # Different grouping factors, yield current group
+            # Different grouping factors, yield the current group
             end_idx_vals = start_idx_vals + sum(header.num_vals for header in current_group)
             if current_t_raw_type == 1:
                 end_idx_times = start_idx_times + sum(header.num_vals for header in current_group)
@@ -1161,16 +1176,17 @@ def group_headers_by_scale_factor_freq_time_type(headers, times_array, values_ar
                    times_array[start_idx_times:end_idx_times],
                    values_array[start_idx_vals:end_idx_vals])
 
-            # Start new group
+            # Start a new group
             start_idx_vals = end_idx_vals
             start_idx_times = end_idx_times
             current_scale_m = h.scale_m
             current_scale_b = h.scale_b
             current_t_raw_type = h.t_raw_type
             current_freq_nhz = h.freq_nhz
+            current_t_encoded_type = h.t_encoded_type
             current_group = [h]
 
-    # After loop ends, yield any remaining group
+    # After the loop, yield any remaining group
     if current_group:
         end_idx_vals = start_idx_vals + sum(header.num_vals for header in current_group)
         if current_t_raw_type == 1:
