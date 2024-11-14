@@ -18,7 +18,7 @@ import pytest
 import numpy as np
 
 from atriumdb.adb_functions import group_sorted_block_list, get_interval_list_from_ordered_timestamps, \
-    group_headers_by_scale_factor
+    group_headers_by_scale_factor_freq_time_type
 
 
 def test_group_sorted_block_list():
@@ -235,7 +235,7 @@ def test_group_headers_by_scale_factor_time_type_2():
 
     # Run tests
     for idx, (headers, times_array, values_array, expected_groups) in enumerate(test_cases, 1):
-        result = list(group_headers_by_scale_factor(headers, times_array, values_array, 2))
+        result = list(group_headers_by_scale_factor_freq_time_type(headers, times_array, values_array))
         assert len(result) == len(expected_groups), f"Test case {idx}: Number of groups does not match expected."
 
         for i, (group, times_slice, values_slice) in enumerate(result):
@@ -339,7 +339,7 @@ def test_group_headers_by_scale_factor():
 
     # Run tests
     for idx, (headers, times_array, values_array, expected_groups) in enumerate(test_cases, 1):
-        result = list(group_headers_by_scale_factor(headers, times_array, values_array, 1))
+        result = list(group_headers_by_scale_factor_freq_time_type(headers, times_array, values_array))
         assert len(result) == len(expected_groups), f"Test case {idx}: Number of groups does not match expected."
 
         for i, (group, times_slice, values_slice) in enumerate(result):

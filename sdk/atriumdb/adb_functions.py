@@ -977,7 +977,6 @@ def get_all_blocks(sdk, measure_id, device_id):
 def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interval_gap_tolerance_nano=0):
     # WARNING:
     # This function does not preserve duplicate values. (uses np.unique)
-    # Only works if the frequency (in nanohertz) of each signal divides 10^18.
     original_block_size = sdk.block.block_size
     sdk.block.block_size = values_per_block
 
@@ -1000,16 +999,8 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
 
             for block_group in group_sorted_block_list(
                     sorted_block_list_by_time, num_values_per_group=values_per_block * blocks_per_file):
-                if (10 ** 18) % measure_info['freq_nhz'] == 0:
-                    # Perfect Precision Time-Value Pairs are Possible
-                    period_ns = (10 ** 18) // measure_info['freq_nhz']
-                    time_type = 1
-                else:
-                    period_ns = None
-                    time_type = 2
-
                 r_headers, timestamp_arr, r_values = sdk.get_data_from_blocks(block_group, filename_dict, 0,
-                                                                            2 ** 62, False, time_type, sort=False,
+                                                                            2 ** 62, False, "encoded", sort=False,
                                                                             allow_duplicates=True)
 
                 if timestamp_arr.size == 0:
@@ -1019,16 +1010,20 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                 segments = []
                 block_group_interval_data = []
 
-                # Group data by scale factor
-                for group_headers, group_times, group_values in group_headers_by_scale_factor(
-                        r_headers, timestamp_arr, r_values, time_type):
+                # Group data by scale factor, freq, time type
+                for group_headers, group_times, group_values in group_headers_by_scale_factor_freq_time_type(
+                        r_headers, timestamp_arr, r_values):
+                    group_time_type = int(group_headers[0].t_raw_type)
+                    group_freq_nhz = int(group_headers[0].freq_nhz)
 
                     # Sort and merge the group data
-                    if time_type == 1:
+                    if group_time_type == 1:
+                        period_ns = (10 ** 18) // measure_info['freq_nhz']
                         group_times, sorted_time_indices = np.unique(group_times, return_index=True)
                         group_values = group_values[sorted_time_indices]
                         group_interval_data = get_interval_list_from_ordered_timestamps(group_times, period_ns)
-                    elif time_type == 2:
+                        group_start_time = int(group_times[0])
+                    elif group_time_type == 2:
                         # Merge the gap data into messages (segments)
                         message_starts, message_sizes = reconstruct_messages_multi(group_headers, group_times, int(group_headers[0].freq_nhz))
                         # Sort the message data
@@ -1039,6 +1034,7 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                         group_times = gap_data
 
                         group_interval_data = get_interval_list_from_message_starts_and_sizes(message_starts, message_sizes, int(group_headers[0].freq_nhz))
+                        group_start_time = int(group_interval_data[0][0])
                     else:
                         raise ValueError("time_type must be 1 or 2")
 
@@ -1055,9 +1051,9 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                     segment = {
                         'times': group_times,
                         'values': group_values,
-                        'freq_nhz': measure_info['freq_nhz'],
-                        'start_ns': group_times[0],
-                        'raw_time_type': 1,
+                        'freq_nhz': int(group_headers[0].freq_nhz),
+                        'start_ns': group_start_time,
+                        'raw_time_type': group_time_type,
                         'encoded_time_type': 2,
                         'raw_value_type': raw_value_type,
                         'encoded_value_type': encoded_value_type,
@@ -1133,47 +1129,60 @@ def group_sorted_block_list(sorted_block_list, num_values_per_group=8388608):
         yield next_group
 
 
-def group_headers_by_scale_factor(headers, times_array, values_array, time_type):
+def group_headers_by_scale_factor_freq_time_type(headers, times_array, values_array):
     if len(headers) == 0:
         return
     start_idx_vals = 0
     start_idx_times = 0
-    current_scale_m, current_scale_b = headers[0].scale_m, headers[0].scale_b
+    current_scale_m = headers[0].scale_m
+    current_scale_b = headers[0].scale_b
+    current_t_raw_type = headers[0].t_raw_type
+    current_freq_nhz = headers[0].freq_nhz
     current_group = [headers[0]]
 
     for h in headers[1:]:
-        if h.scale_m == current_scale_m and h.scale_b == current_scale_b:
-            # Same scale factors, add to current group
+        if (h.scale_m == current_scale_m and
+            h.scale_b == current_scale_b and
+            h.t_raw_type == current_t_raw_type and
+            h.freq_nhz == current_freq_nhz):
+            # Same grouping factors, add to current group
             current_group.append(h)
         else:
-            # Different scale factors, yield current group
+            # Different grouping factors, yield current group
             end_idx_vals = start_idx_vals + sum(header.num_vals for header in current_group)
-            if time_type == 1:
+            if current_t_raw_type == 1:
                 end_idx_times = start_idx_times + sum(header.num_vals for header in current_group)
-            elif time_type == 2:
+            elif current_t_raw_type == 2:
                 end_idx_times = start_idx_times + sum(header.num_gaps * 2 for header in current_group)
             else:
-                raise ValueError(f"Unknown time_type: {time_type}")
+                raise ValueError(f"Unknown t_raw_type: {current_t_raw_type}")
 
-            yield current_group, times_array[start_idx_times:end_idx_times], values_array[start_idx_vals:end_idx_vals]
+            yield (current_group,
+                   times_array[start_idx_times:end_idx_times],
+                   values_array[start_idx_vals:end_idx_vals])
 
             # Start new group
             start_idx_vals = end_idx_vals
             start_idx_times = end_idx_times
-            current_scale_m, current_scale_b = h.scale_m, h.scale_b
+            current_scale_m = h.scale_m
+            current_scale_b = h.scale_b
+            current_t_raw_type = h.t_raw_type
+            current_freq_nhz = h.freq_nhz
             current_group = [h]
 
     # After loop ends, yield any remaining group
     if current_group:
         end_idx_vals = start_idx_vals + sum(header.num_vals for header in current_group)
-        if time_type == 1:
+        if current_t_raw_type == 1:
             end_idx_times = start_idx_times + sum(header.num_vals for header in current_group)
-        elif time_type == 2:
+        elif current_t_raw_type == 2:
             end_idx_times = start_idx_times + sum(header.num_gaps * 2 for header in current_group)
         else:
-            raise ValueError(f"Unknown time_type: {time_type}")
+            raise ValueError(f"Unknown t_raw_type: {current_t_raw_type}")
 
-        yield current_group, times_array[start_idx_times:end_idx_times], values_array[start_idx_vals:end_idx_vals]
+        yield (current_group,
+               times_array[start_idx_times:end_idx_times],
+               values_array[start_idx_vals:end_idx_vals])
 
 
 def get_interval_list_from_ordered_timestamps(timestamps, period_ns):
