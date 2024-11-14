@@ -431,17 +431,20 @@ class AtriumSDK:
         :param int end_time_n: The end epoch in nanoseconds. The end time is not inclusive.
         :param int device_id: The device identifier. If None, device_tag must be provided.
         :param int patient_id: The patient identifier. If None, mrn must be provided.
-        :param int time_type: The type of time returned. Time_type=1 for timestamps.
+        :param time_type: The type of time returned. Options are:
+            - 1: Timestamps (default).
+            - 2: Gap array (advanced users only).
+            - 'raw': Return as was originally stored.
+            - 'encoded': Return in the format currently encoded (usually 2 for periodic signals).
         :param bool analog: Convert value return type to analog signal.
         :param block_info: Custom block_info list to skip metadata table check.
         :param str time_units: Unit for the time array returned. Options: ["s", "ms", "us", "ns"].
-        :param bool sort: Whether to sort the returned data by time.
+        :param bool sort: Whether to sort the returned data by time. Sorting is only applied when time_type is 1.
         :param bool allow_duplicates: Allow duplicate times in returned data. Affects performance if false.
         :param str measure_tag: A short string identifying the signal. Required if measure_id is None.
         :param freq: The sample frequency of the signal. Helpful with measure_tag.
         :param str units: The units of the signal. Helpful with measure_tag.
-        :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz",
-            "Hz", "kHz", "MHz"] default "nHz".
+        :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz", "Hz", "kHz", "MHz"] default "nHz".
         :param str device_tag: A string identifying the device. Exclusive with device_id.
         :param int mrn: Medical record number for the patient. Exclusive with patient_id.
         :param bool | ndarray return_nan_filled: Whether or not to fill missing values from start to end with np.nan.
@@ -564,12 +567,14 @@ class AtriumSDK:
         :param int start_time_n: Start time of the data to read.
         :param int end_time_n: End time of the data to read.
         :param bool analog: Whether the data is analog or not, defaults to True.
-        :param int time_type: The time type returned to you. Time_type=1 is time stamps, which is what most people will
-         want. Time_type=2 is gap array and should only be used by advanced users. Note that sorting will not work for
-        time type 2 and you may receive more values than you asked for because of this.
-        :param bool sort: Whether to sort the returned data by time.
+        :param time_type: The type of time returned. Options are:
+            - 1: Timestamps (default).
+            - 2: Gap array (advanced users only).
+            - 'raw': Return as was originally stored.
+            - 'encoded': Return in the format currently encoded (usually 2 for periodic signals).
+        :param bool sort: Whether to sort the returned data by time. Sorting is only applied when time_type is 1.
         :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
-        nothing if sort is false.
+            nothing if sort is false.
         :param bool | ndarray return_nan_gap: Whether or not to return values as a list of nans from start to end.
         :return: Tuple containing headers, times, and values.
         :rtype: tuple
