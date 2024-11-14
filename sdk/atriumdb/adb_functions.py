@@ -1000,7 +1000,7 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
             for block_group in group_sorted_block_list(
                     sorted_block_list_by_time, num_values_per_group=values_per_block * blocks_per_file):
 
-                r_headers, timestamp_arr, r_values = sdk.get_data_from_blocks(
+                r_headers, r_times, r_values = sdk.get_data_from_blocks(
                     block_list=block_group,
                     filename_dict=filename_dict,
                     start_time_n=0,
@@ -1011,7 +1011,7 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                     allow_duplicates=True
                 )
 
-                if timestamp_arr.size == 0:
+                if r_values.size == 0:
                     continue
 
                 # Prepare segments for encode_blocks_from_multiple_segments
@@ -1020,7 +1020,7 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
 
                 # Group data by scale factor, freq, time type
                 for group_headers, group_times, group_values in group_headers_by_scale_factor_freq_time_type(
-                        r_headers, timestamp_arr, r_values):
+                        r_headers, r_times, r_values):
                     group_time_type = int(group_headers[0].t_raw_type)
                     group_freq_nhz = int(group_headers[0].freq_nhz)
                     group_encoded_time_type = int(group_headers[0].t_encoded_type)
