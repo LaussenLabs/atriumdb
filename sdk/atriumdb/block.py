@@ -161,7 +161,7 @@ class Block:
                                                   scale_m=scale_m, scale_b=scale_b)
 
             # Adjust t_block_start and v_block_start
-            if raw_time_type == TIME_TYPES['TIME_ARRAY_INT64_NS']:
+            if raw_time_type in [TIME_TYPES['TIME_ARRAY_INT64_NS'], TIME_TYPES['GAP_ARRAY_INT64_INDEX_DURATION_NS']]:
                 t_block_start_s += cumulative_time_length * times_s.itemsize
             elif raw_time_type == TIME_TYPES['START_TIME_NUM_SAMPLES']:
                 # Adjust interval_block_start_s
