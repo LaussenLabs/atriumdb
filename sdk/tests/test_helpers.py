@@ -18,7 +18,7 @@ import pytest
 import numpy as np
 
 from atriumdb.adb_functions import group_sorted_block_list, get_interval_list_from_ordered_timestamps, \
-    group_headers_by_scale_factor_freq_time_type
+    group_headers_by_scale_factor_freq_time_type, truncate_messages
 
 
 def test_group_sorted_block_list():
@@ -246,3 +246,28 @@ def test_group_headers_by_scale_factor_time_type():
             assert values_slice == expected_values, f"Test case {idx}, group {i+1}: Values slice does not match expected."
 
 
+def test_truncate_messages():
+    # Sample data
+    value_data = np.arange(40)
+    message_starts = np.array([10_000_000_000, 50_000_000_000])
+    message_sizes = np.array([20, 20])
+    freq_nhz = 10 ** 9 # (1 Hz)
+    trunc_start_nano = 20_000_000_000
+    trunc_end_nano = 60_000_000_000
+
+    expected_truncated_value_data = value_data[10:30]
+    expected_truncated_message_starts = np.array([20_000_000_000, 50_000_000_000])
+    expected_truncated_message_sizes = np.array([10, 10])
+
+    # Run the function with the sample data
+    truncated_value_data, truncated_message_starts, truncated_message_sizes = truncate_messages(
+        value_data, message_starts, message_sizes, freq_nhz, trunc_start_nano, trunc_end_nano
+    )
+
+    # Verify if the actual outputs match the expected outputs
+    assert np.array_equal(truncated_value_data,
+                          expected_truncated_value_data), "Value data does not match expected output."
+    assert np.array_equal(truncated_message_starts,
+                          expected_truncated_message_starts), "Message starts do not match expected output."
+    assert np.array_equal(truncated_message_sizes,
+                          expected_truncated_message_sizes), "Message sizes do not match expected output."

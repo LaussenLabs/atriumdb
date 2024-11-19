@@ -686,6 +686,62 @@ def _get_message_indices(message_sizes):
     return message_end_indices, message_start_indices
 
 
+def truncate_messages(value_data, message_starts, message_sizes, freq_nhz, trunc_start_nano, trunc_end_nano):
+    truncated_value_data = []
+    truncated_message_starts = []
+    truncated_message_sizes = []
+    cumulative_sample_index = 0  # To track the index in value_data
+
+    period_ns = 10 ** 18 // freq_nhz  # Period in nanoseconds per sample
+
+    for i in range(len(message_starts)):
+        msg_start_ns = message_starts[i]
+        msg_size = message_sizes[i]
+        msg_duration_ns = _message_size_to_duration_ns(msg_size, freq_nhz)
+        msg_end_ns = msg_start_ns + msg_duration_ns
+
+        # Calculate overlapping region with truncation window
+        overlap_start_ns = max(msg_start_ns, trunc_start_nano)
+        overlap_end_ns = min(msg_end_ns, trunc_end_nano)
+
+        if overlap_end_ns <= overlap_start_ns:
+            # No overlap with the truncation window
+            cumulative_sample_index += msg_size
+            continue
+
+        # Calculate the sample indices within the message
+        samples_before_overlap_start = ((overlap_start_ns - msg_start_ns) + period_ns - 1) // period_ns
+        samples_until_overlap_end = (overlap_end_ns - msg_start_ns) // period_ns
+
+        num_samples_to_keep = samples_until_overlap_end - samples_before_overlap_start
+
+        if num_samples_to_keep <= 0:
+            cumulative_sample_index += msg_size
+            continue
+
+        # Calculate the indices in value_data
+        start_idx = cumulative_sample_index + samples_before_overlap_start
+        end_idx = start_idx + num_samples_to_keep
+
+        # Truncate the value_data
+        truncated_value_data.append(value_data[start_idx:end_idx])
+
+        # Adjust message start time
+        adjusted_msg_start_ns = msg_start_ns + samples_before_overlap_start * period_ns
+
+        truncated_message_starts.append(adjusted_msg_start_ns)
+        truncated_message_sizes.append(num_samples_to_keep)
+
+        cumulative_sample_index += msg_size
+
+    # Concatenate all truncated data
+    truncated_value_data = np.concatenate(truncated_value_data) if truncated_value_data else np.array([])
+    truncated_message_starts = np.array(truncated_message_starts)
+    truncated_message_sizes = np.array(truncated_message_sizes)
+
+    return truncated_value_data, truncated_message_starts, truncated_message_sizes
+
+
 def merge_sorted_messages(message_starts_1, message_sizes_1, values_1,
                           message_starts_2, message_sizes_2, values_2, freq_nhz):
     # Find the smallest start time from both inputs
