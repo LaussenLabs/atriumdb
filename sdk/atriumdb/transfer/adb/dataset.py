@@ -46,7 +46,7 @@ time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 
 
 def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDefinition, export_format='tsc',
-                  start_time=None, end_time=None, gap_tolerance=None, deidentify=True, patient_info_to_transfer=None,
+                  start_time=None, end_time=None, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
                   include_labels=True, measure_tag_match_rule=None, deidentification_functions=None, time_shift=None,
                   time_units=None, export_time_format=None, parquet_engine=None, timezone_str=None,
                   reencode_waveforms=False, **kwargs):
@@ -64,7 +64,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     :param Optional[int] gap_tolerance: A tolerance period for gaps in data, units specified in `time_units` (defaults to 5 minutes if not specified).
         Helps to optimize the waveform transfer by transferring large chunks at a time.
     :param bool deidentify: If True or a filename, scrambles patient_ids during the transfer. patient IDs are replaced with randomly generated IDs or according to provided de-identification csv
-        with source ids as column 1 and destination ids as column 2. The the file doesn't exist, then a new one is created with randomly assigned ids.
+        with source ids as column 1 and destination ids as column 2. The the file doesn't exist, then a new one is created with randomly assigned ids. Exported datasets will remain identified with full patient info by default.
     :param Optional[list] patient_info_to_transfer: Specific patient information fields to transfer. If not provided or set to None, all available information will be considered.
     :param bool include_labels: Specifies whether labels should be included in the transfer process.
     :param Optional[str] measure_tag_match_rule: Determines how to match the measures by tags. One of ['all', 'best'].
