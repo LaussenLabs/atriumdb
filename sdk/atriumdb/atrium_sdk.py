@@ -1530,7 +1530,6 @@ class AtriumSDK:
 
         """
         # Validate and convert time_units
-        time_unit_options = {"s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3, "ns": 1}
         if time_units not in time_unit_options:
             raise ValueError(f"Invalid time units. Expected one of: {list(time_unit_options.keys())}")
 
@@ -2918,7 +2917,6 @@ class AtriumSDK:
         ...                                                    end_time=end_time,
         ...                                                    time_units=time_units)
         """
-        time_unit_options = {'s': 1e9, 'ms': 1e6, 'us': 1e3, 'ns': 1}
         time_units = "ns" if time_units is None else time_units
 
         if time_units not in time_unit_options.keys():
@@ -2964,7 +2962,6 @@ class AtriumSDK:
                                      mrn_list: List[int] = None, start_time: int = None, end_time: int = None,
                                      time_units: str = None):
 
-        time_unit_options = {'s': 1e9, 'ms': 1e6, 'us': 1e3, 'ns': 1}
         time_units = "ns" if time_units is None else time_units
 
         if time_units not in time_unit_options.keys():
@@ -3045,7 +3042,6 @@ class AtriumSDK:
         (1, 2, 1609455600.0, 1609462800.0)
         """
         # Define time unit options
-        time_unit_options = {'s': 1e9, 'ms': 1e6, 'us': 1e3, 'ns': 1}
         time_units = "ns" if time_units is None else time_units
 
         if time_units not in time_unit_options.keys():
@@ -3118,8 +3114,6 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
 
-        # Define time unit options
-        time_unit_options = {'s': 1e9, 'ms': 1e6, 'us': 1e3, 'ns': 1}
         time_units = "ns" if time_units is None else time_units
 
         if time_units not in time_unit_options.keys():
