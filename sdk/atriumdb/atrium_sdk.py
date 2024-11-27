@@ -3093,17 +3093,6 @@ class AtriumSDK:
             patients = set([patient_id_result for device_id_result, patient_id_result, _, _ in encounters if device_id_result == device_id])
             if len(patients) > 1:
                 warnings.warn(f"Device {device_id} is mapped to multiple patients at the given time.")
-        else:
-            # If device_id is None, check for each device in the results
-            device_patient_map = {}
-            for device_id_result, patient_id_result, _, _ in encounters:
-                if device_id_result not in device_patient_map:
-                    device_patient_map[device_id_result] = set()
-                device_patient_map[device_id_result].add(patient_id_result)
-
-            for device_id_result, patients in device_patient_map.items():
-                if len(patients) > 1:
-                    warnings.warn(f"Device {device_id_result} is mapped to multiple patients at the given time.")
 
         return encounters
 
