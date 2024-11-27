@@ -16,6 +16,7 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import pytest
 import time
+import warnings
 from atriumdb import AtriumSDK
 from tests.testing_framework import _test_for_both
 
@@ -38,6 +39,8 @@ def _test_device_patient(db_type, dataset_location, connection_params):
         (2, 200, 1647094800, 1647105600),  # Device 2 associated with patient 200 from T2 to T3
         (3, 400, 1647084000, current_time_s),  # Device 3 associated with patient 400 starting at T1, no end time
         (1, 300, 1647105600, 1647116400),  # Device 1 associated with patient 300 from T3 to T4
+        # Overlapping device-patient mapping to test warning
+        (1, 500, 1647105600, 1647116400),  # Device 1 also associated with patient 500 from T3 to T4
     ]
     time_units = 's'  # Seconds
 
@@ -47,6 +50,7 @@ def _test_device_patient(db_type, dataset_location, connection_params):
         {'patient_id': 200, 'mrn': 23456},
         {'patient_id': 300, 'mrn': 34567},
         {'patient_id': 400, 'mrn': 45678},
+        {'patient_id': 500, 'mrn': 56789},
     ]
 
     for patient_dict in patient_data:
@@ -71,6 +75,7 @@ def _test_device_patient(db_type, dataset_location, connection_params):
     expected_all_data = [
         (1, 100, 1647084000.0, 1647094800.0),
         (1, 300, 1647105600.0, 1647116400.0),
+        (1, 500, 1647105600.0, 1647116400.0),
         (2, 200, 1647094800.0, 1647105600.0),
         (3, 400, 1647084000.0, current_time_s),
     ]
@@ -90,6 +95,7 @@ def _test_device_patient(db_type, dataset_location, connection_params):
     expected_device_1_data = [
         (1, 100, 1647084000.0, 1647094800.0),
         (1, 300, 1647105600.0, 1647116400.0),
+        (1, 500, 1647105600.0, 1647116400.0),
     ]
     assert sorted(device_1_data) == sorted(expected_device_1_data)
 
@@ -135,6 +141,7 @@ def _test_device_patient(db_type, dataset_location, connection_params):
     expected_data_in_ms = [
         (1, 100, 1647084000.0 * 1e3, 1647094800.0 * 1e3),
         (1, 300, 1647105600.0 * 1e3, 1647116400.0 * 1e3),
+        (1, 500, 1647105600.0 * 1e3, 1647116400.0 * 1e3),
         (2, 200, 1647094800.0 * 1e3, 1647105600.0 * 1e3),
         (3, 400, 1647084000.0 * 1e3, current_time_s * 1e3),
     ]
@@ -147,22 +154,32 @@ def _test_device_patient(db_type, dataset_location, connection_params):
         else:
             assert expected[3] == actual[3]
 
-    # Test get_device_patient_encounter with device_id and time
-    encounter = sdk.get_device_patient_encounter(timestamp=1647085000, device_id=1, time_units=time_units)
-    expected_encounter = (1, 100, 1647084000.0, 1647094800.0)
-    assert encounter == expected_encounter
+    # Test get_device_patient_encounters with device_id and time
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        encounters = sdk.get_device_patient_encounters(timestamp=1647106000, device_id=1, time_units=time_units)
+        expected_encounters = [
+            (1, 300, 1647105600.0, 1647116400.0),
+            (1, 500, 1647105600.0, 1647116400.0),
+        ]
+        assert sorted(encounters) == sorted(expected_encounters)
+        # Check if warning was raised
+        assert len(w) == 1
 
-    # Test get_device_patient_encounter with device_tag and time
-    encounter = sdk.get_device_patient_encounter(timestamp=1647085000, device_tag='device1', time_units=time_units)
-    assert encounter == expected_encounter
+    # Test get_device_patient_encounters with device_tag and time
+    encounters = sdk.get_device_patient_encounters(timestamp=1647085000, device_tag='device1', time_units=time_units)
+    expected_encounters = [
+        (1, 100, 1647084000.0, 1647094800.0),
+    ]
+    assert encounters == expected_encounters
 
-    # Test get_device_patient_encounter with device_id, mrn, and time
-    encounter = sdk.get_device_patient_encounter(timestamp=1647085000, device_id=1, mrn=12345, time_units=time_units)
-    assert encounter == expected_encounter
+    # Test get_device_patient_encounters with device_id, mrn, and time
+    encounters = sdk.get_device_patient_encounters(timestamp=1647085000, device_id=1, mrn=12345, time_units=time_units)
+    assert encounters == expected_encounters
 
-    # Test get_device_patient_encounter with no encounter found
-    encounter_none = sdk.get_device_patient_encounter(timestamp=1647120000, device_id=2, time_units=time_units)
-    assert encounter_none is None
+    # Test get_device_patient_encounters with no encounter found
+    encounters_none = sdk.get_device_patient_encounters(timestamp=1647120000, device_id=2, time_units=time_units)
+    assert encounters_none == []
 
     # Test error handling for invalid time units
     with pytest.raises(ValueError):
@@ -172,8 +189,8 @@ def _test_device_patient(db_type, dataset_location, connection_params):
         sdk.get_device_patient_data(time_units='invalid_unit')
 
     with pytest.raises(ValueError):
-        sdk.get_device_patient_encounter(timestamp=1647085000, device_id=1, time_units='invalid_unit')
+        sdk.get_device_patient_encounters(timestamp=1647085000, device_id=1, time_units='invalid_unit')
 
     # Test error handling when neither device nor patient info is provided
     with pytest.raises(ValueError):
-        sdk.get_device_patient_encounter(timestamp=1647085000, time_units=time_units)
+        sdk.get_device_patient_encounters(timestamp=1647085000, time_units=time_units)

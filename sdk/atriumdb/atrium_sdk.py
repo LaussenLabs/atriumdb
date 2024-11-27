@@ -3016,30 +3016,30 @@ class AtriumSDK:
 
         return result
 
-    def get_device_patient_encounter(self, timestamp: int, device_id: int = None, device_tag: str = None,
-                                     patient_id: int = None, mrn: int = None, time_units: str = None):
+    def get_device_patient_encounters(self, timestamp: int, device_id: int = None, device_tag: str = None,
+                                      patient_id: int = None, mrn: int = None, time_units: str = None):
         """
-        Retrieve the device-patient encounter active at a specific time.
+        Retrieve device-patient encounters active at a specific time.
 
-        This method returns the device-patient mapping (encounter) that was active at the given timestamp.
+        This method returns a list of device-patient mappings (encounters) that were active at the given timestamp.
         You can provide either device_id or device_tag, and/or patient_id or mrn. Providing at least one of
         device or patient identifiers is required.
 
-        :param int timestamp: The timestamp at which to find the device-patient encounter.
+        :param int timestamp: The timestamp at which to find the device-patient encounters.
         :param int device_id: (Optional) The device identifier. If None, device_tag can be provided.
         :param str device_tag: (Optional) A string identifying the device. Used if device_id is None.
         :param int patient_id: (Optional) The patient identifier. If None, mrn can be provided.
         :param int mrn: (Optional) Medical record number for the patient. Used if patient_id is None.
         :param str time_units: (Optional) Units for the time parameters. Valid options are 'ns', 's', 'ms', and 'us'. Default is 'ns'.
 
-        :return: A tuple containing device_id, patient_id, encounter_start, and encounter_end, where encounter_start
-                 and encounter_end are in units specified by time_units. Returns None if no encounter is found.
-        :rtype: Tuple[int, int, float, float] or None
+        :return: A list of tuples containing device_id, patient_id, encounter_start, and encounter_end, where encounter_start
+                 and encounter_end are in units specified by time_units. Returns an empty list if no encounters are found.
+        :rtype: List[Tuple[int, int, float, float]]
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
-        >>> encounter = sdk.get_device_patient_encounter(timestamp=1609459200,device_tag="device123",mrn=123456,time_units="s")
-        >>> print(encounter)
-        (1, 2, 1609455600.0, 1609462800.0)
+        >>> encounters = sdk.get_device_patient_encounters(timestamp=1609459200, device_tag="device123", mrn=123456, time_units="s")
+        >>> print(encounters)
+        [(1, 2, 1609455600.0, 1609462800.0)]
         """
         # Define time unit options
         time_units = "ns" if time_units is None else time_units
@@ -3066,23 +3066,46 @@ class AtriumSDK:
         if device_id is None and patient_id is None:
             raise ValueError("At least one of device_id/device_tag or patient_id/mrn must be provided.")
 
-        # Call SQLHandler to get the encounter
-        result = self.sql_handler.select_device_patient_encounter(
-            time=time_n, device_id=device_id, patient_id=patient_id)
+        # Call SQLHandler to get the encounters
+        results = self.sql_handler.select_device_patient_encounters(timestamp=time_n, device_id=device_id,
+                                                                    patient_id=patient_id)
 
-        if result is None:
-            return None
+        if not results:
+            return []
 
-        device_id_result, patient_id_result, start_time_n, end_time_n = result
+        # Process results
+        encounters = []
+        for result in results:
+            device_id_result, patient_id_result, start_time_n, end_time_n = result
 
-        if end_time_n is None:
-            end_time_n = timestamp.time_ns()
+            if end_time_n is None:
+                end_time_n = time.time_ns()
 
-        # Convert times to desired units
-        encounter_start = start_time_n / time_unit_options[time_units]
-        encounter_end = end_time_n / time_unit_options[time_units]
+            # Convert times to desired units
+            encounter_start = start_time_n / time_unit_options[time_units]
+            encounter_end = end_time_n / time_unit_options[time_units]
 
-        return device_id_result, patient_id_result, encounter_start, encounter_end
+            encounters.append((device_id_result, patient_id_result, encounter_start, encounter_end))
+
+        # Check for devices mapped to multiple patients
+        if device_id is not None:
+            # Check if device is mapped to multiple patients at the given time
+            patients = set([patient_id_result for device_id_result, patient_id_result, _, _ in encounters if device_id_result == device_id])
+            if len(patients) > 1:
+                warnings.warn(f"Device {device_id} is mapped to multiple patients at the given time.")
+        else:
+            # If device_id is None, check for each device in the results
+            device_patient_map = {}
+            for device_id_result, patient_id_result, _, _ in encounters:
+                if device_id_result not in device_patient_map:
+                    device_patient_map[device_id_result] = set()
+                device_patient_map[device_id_result].add(patient_id_result)
+
+            for device_id_result, patients in device_patient_map.items():
+                if len(patients) > 1:
+                    warnings.warn(f"Device {device_id_result} is mapped to multiple patients at the given time.")
+
+        return encounters
 
     def insert_device_patient_data(self, device_patient_data: List[Tuple[int, int, int, int]], time_units: str = None):
         """

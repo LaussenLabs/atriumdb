@@ -497,10 +497,12 @@ class SQLHandler(ABC):
             cursor.execute(sqlite_select_device_patient_query, arg_tuple)
             return cursor.fetchall()
 
-    def select_device_patient_encounter(self, time: int, device_id: int = None, patient_id: int = None):
-        arg_tuple = (time, time)
-        sql_select_query = \
-            "SELECT device_id, patient_id, start_time, end_time FROM device_patient WHERE start_time <= ? AND (end_time > ? OR end_time IS NULL)"
+    def select_device_patient_encounters(self, timestamp: int, device_id: int = None, patient_id: int = None):
+        arg_tuple = (timestamp, timestamp)
+        sql_select_query = (
+            "SELECT device_id, patient_id, start_time, end_time "
+            "FROM device_patient WHERE start_time <= ? AND (end_time > ? OR end_time IS NULL)"
+        )
 
         where_clauses = []
         if device_id is not None:
@@ -513,12 +515,12 @@ class SQLHandler(ABC):
         if where_clauses:
             sql_select_query += " AND " + " AND ".join(where_clauses)
 
-        sql_select_query += " ORDER BY id DESC LIMIT 1"
+        sql_select_query += " ORDER BY id DESC"
 
         with self.connection() as (conn, cursor):
             cursor.execute(sql_select_query, arg_tuple)
-            result = cursor.fetchone()
-            return result
+            results = cursor.fetchall()
+            return results
 
     @abstractmethod
     def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
