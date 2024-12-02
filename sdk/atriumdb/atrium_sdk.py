@@ -2916,6 +2916,7 @@ class AtriumSDK:
         ...                                                    start_time=start_time,
         ...                                                    end_time=end_time,
         ...                                                    time_units=time_units)
+        [(1, 2, 1609455600.0, 1609462800.0)]
         """
         time_units = "ns" if time_units is None else time_units
 
