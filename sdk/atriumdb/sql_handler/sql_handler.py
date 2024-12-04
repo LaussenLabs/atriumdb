@@ -476,28 +476,41 @@ class SQLHandler(ABC):
         sqlite_select_device_patient_query = \
             "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
         where_clauses = []
+
+        # Handle device_id_list
         if device_id_list is not None and len(device_id_list) > 0:
             where_clauses.append("device_id IN ({})".format(
                 ','.join(['?'] * len(device_id_list))))
             arg_tuple += tuple(int(device_id) for device_id in device_id_list)
+
+        # Handle patient_id_list
         if patient_id_list is not None and len(patient_id_list) > 0:
             where_clauses.append("patient_id IN ({})".format(
                 ','.join(['?'] * len(patient_id_list))))
             arg_tuple += tuple(int(patient_id) for patient_id in patient_id_list)
+
+        # Handle start_time
         if start_time is not None:
             where_clauses.append("(end_time > ? OR end_time IS NULL)")
             arg_tuple += (int(start_time),)
+
+        # Handle end_time
         if end_time is not None:
             where_clauses.append("start_time < ?")
             arg_tuple += (int(end_time),)
-        sqlite_select_device_patient_query += join_sql_and_bools(where_clauses)
+
+        # Combine where clauses
+        if where_clauses:
+            sqlite_select_device_patient_query += " WHERE " + " AND ".join(where_clauses)
+
         sqlite_select_device_patient_query += " ORDER BY id ASC"
 
         with self.connection() as (conn, cursor):
             cursor.execute(sqlite_select_device_patient_query, arg_tuple)
             return cursor.fetchall()
 
-    def select_device_patient_encounters(self, timestamp: int, device_id: int = None, patient_id: int = None):
+    def select_device_patient_encounters(self, timestamp: int, device_id_list: List[int] = None,
+                                         patient_id_list: List[int] = None):
         arg_tuple = (timestamp, timestamp)
         sql_select_query = (
             "SELECT device_id, patient_id, start_time, end_time "
@@ -505,13 +518,20 @@ class SQLHandler(ABC):
         )
 
         where_clauses = []
-        if device_id is not None:
-            where_clauses.append("device_id = ?")
-            arg_tuple += (device_id,)
-        if patient_id is not None:
-            where_clauses.append("patient_id = ?")
-            arg_tuple += (patient_id,)
 
+        # Handle device_id_list
+        if device_id_list is not None and len(device_id_list) > 0:
+            where_clauses.append("device_id IN ({})".format(
+                ','.join(['?'] * len(device_id_list))))
+            arg_tuple += tuple(int(device_id) for device_id in device_id_list)
+
+        # Handle patient_id_list
+        if patient_id_list is not None and len(patient_id_list) > 0:
+            where_clauses.append("patient_id IN ({})".format(
+                ','.join(['?'] * len(patient_id_list))))
+            arg_tuple += tuple(int(patient_id) for patient_id in patient_id_list)
+
+        # Combine where clauses
         if where_clauses:
             sql_select_query += " AND " + " AND ".join(where_clauses)
 

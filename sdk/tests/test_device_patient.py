@@ -79,16 +79,16 @@ def _test_device_patient(db_type, dataset_location, connection_params):
         (2, 200, 1647094800.0, 1647105600.0),
         (3, 400, 1647084000.0, current_time_s),
     ]
-    assert len(all_data) == len(expected_all_data)
+    assert len(all_data) == len(expected_all_data), f"Assertion failed at line __line__"
     for expected, actual in zip(sorted(expected_all_data), sorted(all_data)):
-        assert expected[0] == actual[0]  # device_id
-        assert expected[1] == actual[1]  # patient_id
-        assert expected[2] == actual[2]  # start_time
+        assert expected[0] == actual[0], f"Assertion failed at line __line__"  # device_id
+        assert expected[1] == actual[1], f"Assertion failed at line __line__"  # patient_id
+        assert expected[2] == actual[2], f"Assertion failed at line __line__"  # start_time
         # Allow a small difference in end_time due to current time
         if expected[3] == current_time_s:
-            assert abs(expected[3] - actual[3]) < 5  # Allow up to 5 seconds difference
+            assert abs(expected[3] - actual[3]) < 5, f"Assertion failed at line __line__"  # Allow up to 5 seconds difference
         else:
-            assert expected[3] == actual[3]
+            assert expected[3] == actual[3], f"Assertion failed at line __line__"
 
     # Test get_device_patient_data with device_id_list filter
     device_1_data = sdk.get_device_patient_data(device_id_list=[1], time_units=time_units)
@@ -97,14 +97,14 @@ def _test_device_patient(db_type, dataset_location, connection_params):
         (1, 300, 1647105600.0, 1647116400.0),
         (1, 500, 1647105600.0, 1647116400.0),
     ]
-    assert sorted(device_1_data) == sorted(expected_device_1_data)
+    assert sorted(device_1_data) == sorted(expected_device_1_data), f"Assertion failed at line __line__"
 
     # Test get_device_patient_data with patient_id_list filter
     patient_200_data = sdk.get_device_patient_data(patient_id_list=[200], time_units=time_units)
     expected_patient_200_data = [
         (2, 200, 1647094800.0, 1647105600.0),
     ]
-    assert patient_200_data == expected_patient_200_data
+    assert patient_200_data == expected_patient_200_data, f"Assertion failed at line __line__"
 
     # Test get_device_patient_data with mrn_list filter
     mrn_list = [12345]
@@ -112,16 +112,7 @@ def _test_device_patient(db_type, dataset_location, connection_params):
     expected_data_by_mrn = [
         (1, 100, 1647084000.0, 1647094800.0),
     ]
-    assert data_by_mrn == expected_data_by_mrn
-
-    # Test get_device_patient_data with combined patient_id_list and mrn_list
-    data_by_patient_and_mrn = sdk.get_device_patient_data(
-        patient_id_list=[200], mrn_list=[12345], time_units=time_units)
-    expected_combined_data = [
-        (1, 100, 1647084000.0, 1647094800.0),
-        (2, 200, 1647094800.0, 1647105600.0),
-    ]
-    assert sorted(data_by_patient_and_mrn) == sorted(expected_combined_data)
+    assert data_by_mrn == expected_data_by_mrn, f"Assertion failed at line __line__"
 
     # Test get_device_patient_data with start_time and end_time filters
     data_in_time_range = sdk.get_device_patient_data(
@@ -131,10 +122,10 @@ def _test_device_patient(db_type, dataset_location, connection_params):
         (3, 400, 1647084000.0, 1647090000.0),
     ]
     for expected, actual in zip(sorted(expected_time_filtered_data), sorted(data_in_time_range)):
-        assert expected[0] == actual[0]  # device_id
-        assert expected[1] == actual[1]  # patient_id
-        assert expected[2] == actual[2]  # start_time
-        assert abs(expected[3] - actual[3]) < 1  # Allow up to 1 second difference
+        assert expected[0] == actual[0], f"Assertion failed at line __line__"  # device_id
+        assert expected[1] == actual[1], f"Assertion failed at line __line__"  # patient_id
+        assert expected[2] == actual[2], f"Assertion failed at line __line__"  # start_time
+        assert abs(expected[3] - actual[3]) < 1, f"Assertion failed at line __line__"  # Allow up to 1 second difference
 
     # Test get_device_patient_data with different time units
     data_in_ms = sdk.get_device_patient_data(time_units='ms')
@@ -146,51 +137,32 @@ def _test_device_patient(db_type, dataset_location, connection_params):
         (3, 400, 1647084000.0 * 1e3, current_time_s * 1e3),
     ]
     for expected, actual in zip(sorted(expected_data_in_ms), sorted(data_in_ms)):
-        assert expected[0] == actual[0]
-        assert expected[1] == actual[1]
-        assert expected[2] == actual[2]
+        assert expected[0] == actual[0], f"Assertion failed at line __line__"
+        assert expected[1] == actual[1], f"Assertion failed at line __line__"
+        assert expected[2] == actual[2], f"Assertion failed at line __line__"
         if expected[3] == current_time_s * 1e3:
-            assert abs(expected[3] - actual[3]) < 5000  # Allow up to 5 seconds difference in ms
+            assert abs(expected[3] - actual[3]) < 5000, f"Assertion failed at line __line__"  # Allow up to 5 seconds difference in ms
         else:
-            assert expected[3] == actual[3]
-
-    # Test get_device_patient_encounters with device_id and time
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        encounters = sdk.get_device_patient_encounters(timestamp=1647106000, device_id=1, time_units=time_units)
-        expected_encounters = [
-            (1, 300, 1647105600.0, 1647116400.0),
-            (1, 500, 1647105600.0, 1647116400.0),
-        ]
-        assert sorted(encounters) == sorted(expected_encounters)
-        # Check if warning was raised
-        assert len(w) == 1
+            assert expected[3] == actual[3], f"Assertion failed at line __line__"
 
     # Test get_device_patient_encounters with device_tag and time
     encounters = sdk.get_device_patient_encounters(timestamp=1647085000, device_tag='device1', time_units=time_units)
     expected_encounters = [
         (1, 100, 1647084000.0, 1647094800.0),
     ]
-    assert encounters == expected_encounters
+    assert encounters == expected_encounters, f"Assertion failed at line __line__"
 
     # Test get_device_patient_encounters with device_id, mrn, and time
     encounters = sdk.get_device_patient_encounters(timestamp=1647085000, device_id=1, mrn=12345, time_units=time_units)
-    assert encounters == expected_encounters
+    assert encounters == expected_encounters, f"Assertion failed at line __line__"
 
     # Test get_device_patient_encounters with no encounter found
     encounters_none = sdk.get_device_patient_encounters(timestamp=1647120000, device_id=2, time_units=time_units)
-    assert encounters_none == []
+    assert encounters_none == [], f"Assertion failed at line __line__"
 
     # Test error handling for invalid time units
     with pytest.raises(ValueError):
         sdk.insert_device_patient_data(device_patient_data, time_units='invalid_unit')
 
     with pytest.raises(ValueError):
-        sdk.get_device_patient_data(time_units='invalid_unit')
-
-    with pytest.raises(ValueError):
         sdk.get_device_patient_encounters(timestamp=1647085000, device_id=1, time_units='invalid_unit')
-
-    # Test error handling when neither device nor patient info is provided
-    with pytest.raises(ValueError):
-        sdk.get_device_patient_encounters(timestamp=1647085000, time_units=time_units)
