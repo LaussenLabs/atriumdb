@@ -61,9 +61,9 @@ def _test_encounters(db_type, dataset_location, connection_params):
     # 1. A completed encounter for patient 101 in BedA (from T1 to T2)
     # 2. An ongoing encounter for patient 102 in BedB (from T2 to now, no end time)
     # 3. Another completed encounter for patient 103 in BedA (from T3 to T4)
-    sdk.insert_encounter(patient_id=101, bed_id=10, start_time=T1, end_time=T2, time_units='s', visit_number='VISIT101')
-    sdk.insert_encounter(patient_id=102, bed_id=20, start_time=T2, end_time=None, time_units='s', visit_number='VISIT102')
-    sdk.insert_encounter(patient_id=103, bed_id=10, start_time=T3, end_time=T4, time_units='s', visit_number='VISIT103')
+    sdk.insert_encounter(start_time=T1, end_time=T2, patient_id=101, bed_id=10, visit_number='VISIT101', time_units='s')
+    sdk.insert_encounter(start_time=T2, end_time=None, patient_id=102, bed_id=20, visit_number='VISIT102', time_units='s')
+    sdk.insert_encounter(start_time=T3, end_time=T4, patient_id=103, bed_id=10, visit_number='VISIT103', time_units='s')
 
     # Test get_encounters() without filters - should return all encounters
     all_encounters = sdk.get_encounters(time_units='s')
@@ -143,7 +143,7 @@ def _test_encounters(db_type, dataset_location, connection_params):
 
     # Test error handling for invalid time units in insert_encounter()
     with pytest.raises(ValueError):
-        sdk.insert_encounter(patient_id=101, bed_id=10, start_time=T1, end_time=T2, time_units='invalid_unit')
+        sdk.insert_encounter(start_time=T1, end_time=T2, patient_id=101, bed_id=10, time_units='invalid_unit')
 
     # Test error handling for invalid time units in get_encounters()
     with pytest.raises(ValueError):

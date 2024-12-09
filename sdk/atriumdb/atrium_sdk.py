@@ -3167,18 +3167,18 @@ class AtriumSDK:
             truncate=False
         )
 
-    def insert_encounter(self, patient_id: int = None, bed_id: int = None, start_time: float = None,
-                         end_time: float = None, source_id: int = 1, visit_number: str = None,
-                         last_updated: float = None, time_units: str = 'ns', bed_name=None, mrn=None):
+    def insert_encounter(self, start_time: float = None, end_time: float = None, patient_id: int = None,
+                         mrn: int = None, bed_id: int = None, bed_name: str = None, source_id: int = 1,
+                         visit_number: str = None, last_updated: float = None, time_units: str = 'ns'):
         """
-        Inserts a new encounter into the database with time values converted to nanoseconds.
+        Inserts a new encounter into the database that represents a mapping between a patient and a bed over an interval of time.
 
+        :param start_time: The start time of the encounter in the units specified by `time_units`.
+        :param end_time: The end time of the encounter in the units specified by `time_units`, optional.
         :param patient_id: The ID of the patient.
         :param mrn: The medical record number of the patient (mutually exclusive with `patient_id`).
         :param bed_id: The ID of the bed.
         :param bed_name: The name of the bed (mutually exclusive with `bed_id`).
-        :param start_time: The start time of the encounter in the units specified by `time_units`.
-        :param end_time: The end time of the encounter in the units specified by `time_units`, optional.
         :param source_id: The source ID for the encounter, default is 1.
         :param visit_number: An optional visit number for the encounter.
         :param last_updated: The timestamp of the last update in the units specified by `time_units`,
@@ -3188,13 +3188,7 @@ class AtriumSDK:
 
         **Example:**
         >>> # Insert an encounter starting at timestamp 1609459200 seconds and ending 1 hour later
-        >>> sdk.insert_encounter(
-        ...     patient_id=123,
-        ...     bed_name='BedA',
-        ...     start_time=1609459200,
-        ...     end_time=1609462800,
-        ...     time_units='s'
-        ... )
+        >>> sdk.insert_encounter(start_time=1609459200, end_time=1609462800, patient_id=123, bed_name='BedA', time_units='s')
         """
         if time_units not in time_unit_options:
             raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
@@ -3233,8 +3227,7 @@ class AtriumSDK:
                        bed_id: int = None, bed_name: str = None, patient_id: int = None, mrn: int = None,
                        time_units: str = 'ns'):
         """
-        Queries encounters from the database based on various criteria. Times can be specified and returned
-        in the provided `time_units`.
+        Queries encounters from the database based on any of the given params.
 
         :param timestamp: A specific timestamp in `time_units` at which to find active encounters.
         :param start_time: The start time in `time_units` of the range to filter encounters.
