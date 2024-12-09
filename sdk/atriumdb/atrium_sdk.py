@@ -3167,46 +3167,16 @@ class AtriumSDK:
             truncate=False
         )
 
-    def _api_get_device_patient_encounters(self, timestamp: int, device_id: int = None, patient_id: int = None):
-        # Prepare device_id_list and patient_id_list
-        device_id_list = [device_id] if device_id is not None else None
-        patient_id_list = [patient_id] if patient_id is not None else None
-
-        # Call _api_get_device_patient_data with start_time and end_time set to timestamp
-        device_patient_data = self._api_get_device_patient_data(
-            device_id_list=device_id_list,
-            patient_id_list=patient_id_list,
-            start_time=timestamp,
-            end_time=timestamp,
-        )
-
-        encounters = []
-
-        for dev_id, pat_id, start_time_result, end_time_result in device_patient_data:
-            # If end_time_result is None, set it to current time
-            if end_time_result is None:
-                end_time_result = time.time_ns() / time_unit_options[time_units]
-
-            # Check if timestamp falls within start_time_result and end_time_result
-            if start_time_result <= timestamp <= end_time_result:
-                encounters.append((dev_id, pat_id, start_time_result, end_time_result))
-
-        # Check for devices mapped to multiple patients
-        if device_id is not None:
-            patients = set([pat_id for dev_id_result, pat_id, _, _ in encounters if dev_id_result == device_id])
-            if len(patients) > 1:
-                warnings.warn(f"Device {device_id} is mapped to multiple patients at the given time.")
-
-        return encounters
-
-    def insert_encounter(self, patient_id: int, bed_id: int, start_time: float, end_time: float = None,
-                         source_id: int = 1, visit_number: str = None, last_updated: float = None,
-                         time_units: str = 'ns'):
+    def insert_encounter(self, patient_id: int = None, bed_id: int = None, start_time: float = None,
+                         end_time: float = None, source_id: int = 1, visit_number: str = None,
+                         last_updated: float = None, time_units: str = 'ns', bed_name=None, mrn=None):
         """
         Inserts a new encounter into the database with time values converted to nanoseconds.
 
         :param patient_id: The ID of the patient.
+        :param mrn: The medical record number of the patient (mutually exclusive with `patient_id`).
         :param bed_id: The ID of the bed.
+        :param bed_name: The name of the bed (mutually exclusive with `bed_id`).
         :param start_time: The start time of the encounter in the units specified by `time_units`.
         :param end_time: The end time of the encounter in the units specified by `time_units`, optional.
         :param source_id: The source ID for the encounter, default is 1.
@@ -3220,7 +3190,7 @@ class AtriumSDK:
         >>> # Insert an encounter starting at timestamp 1609459200 seconds and ending 1 hour later
         >>> sdk.insert_encounter(
         ...     patient_id=123,
-        ...     bed_id=10,
+        ...     bed_name='BedA',
         ...     start_time=1609459200,
         ...     end_time=1609462800,
         ...     time_units='s'
@@ -3230,6 +3200,8 @@ class AtriumSDK:
             raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
 
         # Convert times to nanoseconds
+        if start_time is None:
+            raise ValueError("start_time must be provided")
         start_time_n = int(start_time * time_unit_options[time_units])
         end_time_n = int(end_time * time_unit_options[time_units]) if end_time is not None else None
 
@@ -3237,6 +3209,22 @@ class AtriumSDK:
             last_updated = time.time_ns()
         else:
             last_updated = int(last_updated * time_unit_options[time_units])
+
+        if mrn is not None:
+            patient_id = self.get_patient_id(mrn)
+            if patient_id is None:
+                raise ValueError(f"MRN {mrn} not found in the dataset, insert it with AtriumSDK.insert_patient")
+
+        if patient_id is None:
+            raise ValueError("patient_id or mrn must be provided")
+
+        if bed_name is not None:
+            bed_id = self.get_bed_id(bed_name)
+            if bed_id is None:
+                raise ValueError(f"bed_id {bed_id} not found in the dataset.")
+
+        if bed_id is None:
+            raise ValueError("bed_id or bed_name must be provided")
 
         self.sql_handler.insert_encounter_row(patient_id, bed_id, start_time_n, end_time_n, source_id, visit_number,
                                               last_updated)
@@ -3297,9 +3285,13 @@ class AtriumSDK:
 
         if mrn is not None:
             patient_id = self.get_patient_id(mrn)
+            if patient_id is None:
+                raise ValueError(f"MRN {mrn} not found in the dataset, insert it with AtriumSDK.insert_patient")
 
         if bed_name is not None:
             bed_id = self.get_bed_id(bed_name)
+            if bed_id is None:
+                raise ValueError(f"bed_id {bed_id} not found in the dataset.")
 
         results = self.sql_handler.select_encounters_from_range_or_timestamp(
             timestamp_n, start_time_n, end_time_n, bed_id, patient_id
