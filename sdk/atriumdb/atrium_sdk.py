@@ -3199,6 +3199,125 @@ class AtriumSDK:
 
         return encounters
 
+    def insert_encounter(self, patient_id: int, bed_id: int, start_time: float, end_time: float = None,
+                         source_id: int = 1, visit_number: str = None, last_updated: float = None,
+                         time_units: str = 'ns'):
+        """
+        Inserts a new encounter into the database with time values converted to nanoseconds.
+
+        :param patient_id: The ID of the patient.
+        :param bed_id: The ID of the bed.
+        :param start_time: The start time of the encounter in the units specified by `time_units`.
+        :param end_time: The end time of the encounter in the units specified by `time_units`, optional.
+        :param source_id: The source ID for the encounter, default is 1.
+        :param visit_number: An optional visit number for the encounter.
+        :param last_updated: The timestamp of the last update in the units specified by `time_units`,
+                             defaults to the current time if not provided.
+        :param time_units: The units for the time parameters. Valid options are 'ns', 'us', 'ms', 's'.
+                           Default is 'ns'.
+
+        **Example:**
+        >>> # Insert an encounter starting at timestamp 1609459200 seconds and ending 1 hour later
+        >>> sdk.insert_encounter(
+        ...     patient_id=123,
+        ...     bed_id=10,
+        ...     start_time=1609459200,
+        ...     end_time=1609462800,
+        ...     time_units='s'
+        ... )
+        """
+        if time_units not in time_unit_options:
+            raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
+
+        # Convert times to nanoseconds
+        start_time_n = int(start_time * time_unit_options[time_units])
+        end_time_n = int(end_time * time_unit_options[time_units]) if end_time is not None else None
+
+        if last_updated is None:
+            last_updated = time.time_ns()
+        else:
+            last_updated = int(last_updated * time_unit_options[time_units])
+
+        self.sql_handler.insert_encounter_row(patient_id, bed_id, start_time_n, end_time_n, source_id, visit_number,
+                                              last_updated)
+
+    def get_encounters(self, timestamp: float = None, start_time: float = None, end_time: float = None,
+                       bed_id: int = None, bed_name: str = None, patient_id: int = None, mrn: int = None,
+                       time_units: str = 'ns'):
+        """
+        Queries encounters from the database based on various criteria. Times can be specified and returned
+        in the provided `time_units`.
+
+        :param timestamp: A specific timestamp in `time_units` at which to find active encounters.
+        :param start_time: The start time in `time_units` of the range to filter encounters.
+        :param end_time: The end time in `time_units` of the range to filter encounters.
+        :param bed_id: The ID of the bed.
+        :param bed_name: The name of the bed, resolved to an ID internally.
+        :param patient_id: The ID of the patient.
+        :param mrn: The medical record number of the patient, resolved to an ID internally.
+        :param time_units: The units for the time parameters and returned times. Valid options: 'ns', 'us', 'ms', 's'.
+                           Default is 'ns'.
+
+        **Return Type:**
+        A list of tuples representing encounters. Each tuple is of the form:
+        `(id, patient_id, bed_id, start_time, end_time, source_id, visit_number, last_updated)`
+
+        - `id` (int): The encounter ID.
+        - `patient_id` (int): The ID of the patient.
+        - `bed_id` (int): The ID of the bed.
+        - `start_time` (float): The start time of the encounter in `time_units`.
+        - `end_time` (float or None): The end time of the encounter in `time_units`, or `None` if ongoing.
+        - `source_id` (int): The source ID of the encounter.
+        - `visit_number` (str or None): The visit number of the encounter, if available.
+        - `last_updated` (float): The last updated timestamp of the encounter in `time_units`.
+
+        **Example:**
+        >>> # Retrieve encounters active at a specific second-based timestamp
+        >>> encounters = sdk.get_encounters(timestamp=1609459200, time_units='s')
+        >>> print(encounters)
+        [(1, 123, 10, 1609455600.0, 1609462800.0, 1, 'VISIT001', 1609459200.0)]
+
+        >>> # Retrieve encounters within a time range (in ms), filtered by bed name
+        >>> encounters = sdk.get_encounters(
+        ...     start_time=1609459200000,
+        ...     end_time=1609462800000,
+        ...     bed_name='BedA',
+        ...     time_units='ms'
+        ... )
+        >>> print(encounters)
+        [(2, 456, 20, 1609455600000.0, 1609462800000.0, 1, None, 1609459200000.0)]
+        """
+        if time_units not in time_unit_options:
+            raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
+
+        # Convert input times to nanoseconds for querying
+        timestamp_n = int(timestamp * time_unit_options[time_units]) if timestamp is not None else None
+        start_time_n = int(start_time * time_unit_options[time_units]) if start_time is not None else None
+        end_time_n = int(end_time * time_unit_options[time_units]) if end_time is not None else None
+
+        if mrn is not None:
+            patient_id = self.get_patient_id(mrn)
+
+        if bed_name is not None:
+            bed_id = self.get_bed_id(bed_name)
+
+        results = self.sql_handler.select_encounters_from_range_or_timestamp(
+            timestamp_n, start_time_n, end_time_n, bed_id, patient_id
+        )
+
+        # Convert times back from nanoseconds to the requested time_units
+        converted_results = []
+        for (enc_id, p_id, b_id, s_time, e_time, src_id, v_num, l_updated) in results:
+            start_time_converted = s_time / time_unit_options[time_units] if s_time is not None else None
+            end_time_converted = e_time / time_unit_options[time_units] if e_time is not None else None
+            last_updated_converted = l_updated / time_unit_options[time_units] if l_updated is not None else None
+
+            converted_results.append(
+                (enc_id, p_id, b_id, start_time_converted, end_time_converted, src_id, v_num, last_updated_converted)
+            )
+
+        return converted_results
+
     def insert_device_patient_data(self, device_patient_data: List[Tuple[int, int, int, int]], time_units: str = None):
         """
         .. _insert_device_patient_data_label:
