@@ -2889,30 +2889,33 @@ class AtriumSDK:
         """
         Retrieves device-patient mappings based on the provided search criteria.
 
-        This method allows you to obtain mappings between devices and patients, active either at a specific timestamp or within a given time range.
-        It supports querying with device IDs or tags, and patient IDs or MRNs, and can handle single or multiple identifiers.
-        You can also specify whether to truncate the mappings to fit within the provided time range.
+        This method allows you to obtain mappings between devices and patients, active either at a specific timestamp
+        or within a given time range. It supports querying with device IDs or tags, and patient IDs or MRNs, and can
+        handle single or multiple identifiers. You can also specify whether to truncate the mappings to fit within
+        the provided time range.
 
-        **Parameters:**
+        :param List[int] optional device_id_list: A list of device IDs.
+        :param List[str] optional device_tag_list: A list of device tags.
+        :param List[int] optional patient_id_list: A list of patient IDs.
+        :param List[int] optional mrn_list: A list of MRNs (medical record numbers).
+        :param int optional timestamp: A specific timestamp at which to find active device-patient mappings,
+            in units specified by `time_units`.
+        :param int optional start_time: The start time of the desired time range, in units specified by `time_units`.
+        :param int optional end_time: The end time of the desired time range, in units specified by `time_units`.
+        :param str optional time_units: Units for the time parameters. Valid options are `'ns'`, `'us'`, `'ms'`, and `'s'`.
+            Default is `'ns'`.
+        :param bool optional truncate: If `True`, the returned mappings will be truncated to fit within the specified
+            time range.
+        :return: A list of tuples, where each tuple contains four values in the following order:
+            - device_id (int): The ID of the device associated with the patient.
+            - patient_id (int): The ID of the patient associated with the device.
+            - start_time (float | int): The start time of the association, in the specified time units.
+            - end_time (float | int): The end time of the association, in the specified time units.
+        :rtype: List[Tuple[int, int, float | int, float | int]]
 
-        - **device_id_list** (`List[int]`, optional): A list of device IDs.
-        - **device_tag_list** (`List[str]`, optional): A list of device tags.
-        - **patient_id_list** (`List[int]`, optional): A list of patient IDs.
-        - **mrn_list** (`List[int]`, optional): A list of MRNs (medical record numbers).
-        - **timestamp** (`int`, optional): A specific timestamp at which to find active device-patient mappings.
-        - **start_time** (`int`, optional): The start time of the desired time range.
-        - **end_time** (`int`, optional): The end time of the desired time range.
-        - **time_units** (`str`, optional): Units for the time parameters. Valid options are `'ns'`, `'us'`, `'ms'`, `'s'`. Default is `'ns'`.
-        - **truncate** (`bool`, optional): If `True`, the returned mappings will be truncated to fit within the specified time range.
+        :Example:
 
-        **Returns:**
-
-        - `List[Tuple[int, int, float, float]]`: A list of tuples, each containing `device_id`, `patient_id`, `start_time`, and `end_time`.
-          The times are in the units specified by `time_units`.
-
-        **Examples:**
-
-        >>> # Example to retrieve mappings active at a specific timestamp
+        >>> # Retrieve mappings active at a specific timestamp
         >>> mappings = sdk.get_device_patient_mapping(
         ...     timestamp=1609459200,
         ...     device_tag_list=['device123'],
@@ -2922,7 +2925,7 @@ class AtriumSDK:
         >>> print(mappings)
         [(1, 2, 1609455600.0, 1609462800.0)]
 
-        >>> # Example to retrieve mappings within a time range
+        >>> # Retrieve mappings within a time range
         >>> mappings = sdk.get_device_patient_mapping(
         ...     start_time=1609455600,
         ...     end_time=1609462800,
@@ -3229,13 +3232,13 @@ class AtriumSDK:
         """
         Queries encounters from the database based on any of the given params.
 
-        :param timestamp: A specific timestamp in `time_units` at which to find active encounters.
-        :param start_time: The start time in `time_units` of the range to filter encounters.
-        :param end_time: The end time in `time_units` of the range to filter encounters.
+        :param timestamp: A specific timestamp in `time_units` to find all encounters that overlap the given time.
+        :param start_time: The start time in `time_units` to find all encounters after (or overlapping) the given time.
+        :param end_time: The end time in `time_units` to find all encounters before (or overlapping) the given time.
         :param bed_id: The ID of the bed.
-        :param bed_name: The name of the bed, resolved to an ID internally.
+        :param bed_name: The name of the bed, inplace of an id.
         :param patient_id: The ID of the patient.
-        :param mrn: The medical record number of the patient, resolved to an ID internally.
+        :param mrn: The medical record number of the patient, inplace of the patient_id.
         :param time_units: The units for the time parameters and returned times. Valid options: 'ns', 'us', 'ms', 's'.
                            Default is 'ns'.
 
