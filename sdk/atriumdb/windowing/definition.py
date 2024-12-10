@@ -305,6 +305,8 @@ class DatasetDefinition:
         else:
             self.data_dict['measures'].append(measure_tag)
 
+        return self
+
     def add_label(self, label_name):
         """
         Adds a new label to the definition.
@@ -330,6 +332,8 @@ class DatasetDefinition:
             raise ValueError(f"The label '{label_name}' is already present in the definition.")
         else:
             self.data_dict['labels'].append(label_name)
+
+        return self
 
     def add_region(self, patient_id=None, mrn=None, device_id=None, device_tag=None, start=None, end=None, time0=None,
                    pre=None, post=None):
@@ -403,6 +407,8 @@ class DatasetDefinition:
                 target_dict[key] = [region_data] if region_data else 'all'
         else:
             raise ValueError("One of patient_id, mrn, device_id, device_tag must be specified.")
+
+        return self
 
     def save(self, filepath, force=False):
         """
