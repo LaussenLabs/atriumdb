@@ -23,13 +23,27 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 from atriumdb.windowing.window import Window
 from atriumdb.windowing.dataset_iterator import DatasetIterator
+from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.windowing.windowing_functions import get_threshold_labels, find_closest_measurement
 
 
 class LightMappedIterator(DatasetIterator):
-    def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
+    def __init__(self, sdk, definition: DatasetDefinition,
                  window_duration_ns: int, window_slide_ns: int, label_threshold=0.5,
                  shuffle=False, patient_history_fields: list = None):
+        if not definition.is_validated:
+            definition.validate(sdk=sdk)
+
+        # Extract validated data from the definition
+        validated_data = definition.validated_data_dict
+        # List of validated measures. Each item is a "measure_info" from sdk data.
+        self.measures = validated_data['measures']
+        # List of validated label sets. Each item is a label_set id from the label_set table.
+        self.label_sets = validated_data['labels']
+        # Dictionary containing sources. Each source type contains identifiers (device_id/patient_id)
+        # and have associated time ranges.
+        self.sources = validated_data['sources']
+
         # AtriumSDK object
         self.sdk = sdk
 
@@ -37,13 +51,6 @@ class LightMappedIterator(DatasetIterator):
         self.label_threshold = label_threshold
 
         self.patient_history_fields = patient_history_fields
-
-        # List of validated measures. Each item is a "measure_info" from sdk data.
-        self.measures = validated_measure_list
-
-        # List of validated label sets. Each item is a label_set id from the label_set table.
-        self.label_sets = validated_label_set_list
-        self.sources = validated_sources
 
         # Duration of each window in nanoseconds. Represents the time span of each data segment.
         self.window_duration_ns = int(window_duration_ns)

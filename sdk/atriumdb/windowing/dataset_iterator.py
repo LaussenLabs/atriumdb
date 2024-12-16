@@ -27,6 +27,7 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
 from atriumdb.windowing.window import Window
+from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.windowing.windowing_functions import get_threshold_labels, find_closest_measurement
 
 
@@ -38,9 +39,7 @@ class DatasetIterator:
     by organizing data into batches and loading one batch at a time.
 
     :param AtriumSDK sdk: SDK object to fetch data
-    :param list validated_measure_list: List of validated measures with information about each measure
-    :param validated_sources: Dictionary containing sources with associated time ranges
-    :type validated_sources: dict
+    :param DatasetDefinition definition: DatasetDefinition of
     :param int window_duration_ns: Duration of each window in nanoseconds
     :param int window_slide_ns: Interval in nanoseconds by which the window advances in time
     :param int num_windows_prefetch: Number of windows you want to get from AtriumDB at a time. Setting this value
@@ -54,9 +53,22 @@ class DatasetIterator:
     :param str cache_dir: A directory, if specified, caches the results of _extract_cache_info to speed up future iterations. Setting to None will disable the cache.
     """
 
-    def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
+    def __init__(self, sdk, definition: DatasetDefinition,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None, label_threshold=0.5,
                  shuffle=False, max_cache_duration=None, patient_history_fields: list = None, cache_dir=None):
+        if not definition.is_validated:
+            definition.validate(sdk=sdk)
+
+        # Extract validated data from the definition
+        validated_data = definition.validated_data_dict
+        # List of validated measures. Each item is a "measure_info" from sdk data.
+        self.measures = validated_data['measures']
+        # List of validated label sets. Each item is a label_set id from the label_set table.
+        self.label_sets = validated_data['labels']
+        # Dictionary containing sources. Each source type contains identifiers (device_id/patient_id)
+        # and have associated time ranges.
+        self.sources = validated_data['sources']
+
         # AtriumSDK object
         self.sdk = sdk
 
@@ -72,15 +84,6 @@ class DatasetIterator:
 
         self.patient_history_fields = patient_history_fields
 
-        # List of validated measures. Each item is a "measure_info" from sdk data.
-        self.measures = validated_measure_list
-
-        # List of validated label sets. Each item is a label_set id from the label_set table.
-        self.label_sets = validated_label_set_list
-
-        # Dictionary containing sources. Each source type contains identifiers (device_id/patient_id)
-        # and have associated time ranges (or "all").
-        self.sources = validated_sources
         self.max_cache_duration = max_cache_duration
         if shuffle is not False and max_cache_duration is not None:
             assert max_cache_duration >= window_duration_ns, \

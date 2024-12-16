@@ -49,7 +49,7 @@ from atriumdb.windowing.definition import DatasetDefinition
         ("./example_data/mitbih_seed_42_all_tags.yaml", None, None, None),
     ],
 )
-def test_definition_file_validation(filename, expected_exception, expected_warning, expected_message):
+def test_definition_file_formatting(filename, expected_exception, expected_warning, expected_message):
     if expected_exception is None and expected_warning is None:
         try:
             DatasetDefinition(filename=filename)

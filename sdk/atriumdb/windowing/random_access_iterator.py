@@ -2,6 +2,7 @@ import numpy as np
 
 from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.window import Window
+from atriumdb.windowing.definition import DatasetDefinition
 
 
 class MappedIterator(DatasetIterator):
@@ -28,15 +29,13 @@ class MappedIterator(DatasetIterator):
     :param float label_threshold: Threshold for labeling in classification tasks.
     """
 
-    def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
+    def __init__(self, sdk, definition: DatasetDefinition,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
                  label_threshold=0.5, shuffle=False, max_cache_duration=None,
                  patient_history_fields: list = None, cache_dir=None):
         super().__init__(
             sdk=sdk,
-            validated_measure_list=validated_measure_list,
-            validated_label_set_list=validated_label_set_list,
-            validated_sources=validated_sources,
+            definition=definition,
             window_duration_ns=window_duration_ns,
             window_slide_ns=window_slide_ns,
             num_windows_prefetch=num_windows_prefetch,

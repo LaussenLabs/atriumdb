@@ -1489,15 +1489,11 @@ class AtriumSDK:
     def load_definition(self, definition, gap_tolerance=None, measure_tag_match_rule="best",
                         start_time=None, end_time=None, time_units: str = "ns", cache_dir=None):
         """
-        Load and validate a dataset definition, then initialize device and time ranges for data fetching.
+        Preloads the metadata blocks for a dataset definition, then initialize device and time ranges for data fetching.
 
-        This method validates the provided `definition` against dataset attributes to ensure accurate mapping of measures,
-        labels, and devices (or patients). Time ranges for each specified device are merged and cached to optimize
-        data retrieval, with the resulting device-time configuration used to fetch block metadata.
+        This method validates the provided DatasetDefinition object if its not already validated.
 
-        :param definition: The dataset definition specifying measures, devices (or patients), and optional time ranges to include.
-            It should be either a `DefinitionYAML` instance or a dictionary.
-        :type definition: DefinitionYAML or dict
+        :param DatasetDefinition definition: The dataset definition specifying measures, devices (or patients), and optional time ranges to include.
         :param int gap_tolerance: Tolerance for gaps between consecutive time intervals when "all" is specified in the
             definition, in the units specified by `time_units`. Defaults to 1 minute (60_000_000_000 nanoseconds).
         :param str measure_tag_match_rule: Rule for matching tags in measures; defaults to "best".
@@ -1507,11 +1503,8 @@ class AtriumSDK:
             One of ["ns", "us", "ms", "s"]. Defaults to "ns".
         :param str cache_dir: Directory to use for caching processed blocks if caching is enabled.
 
-        :raises ValueError: If the provided `time_units` is invalid.
-
         Notes:
         Supported `time_units` are nanoseconds ("ns"), microseconds ("us"), milliseconds ("ms"), and seconds ("s").
-        The `definition` parameter should specify devices or patients with associated time intervals, or the keyword "all".
 
         Example:
         sdk = AtriumSDK(dataset_location=local_dataset_location)
@@ -1530,7 +1523,6 @@ class AtriumSDK:
 
         """
         # Validate and convert time_units
-        time_unit_options = {"s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3, "ns": 1}
         if time_units not in time_unit_options:
             raise ValueError(f"Invalid time units. Expected one of: {list(time_unit_options.keys())}")
 
@@ -1538,13 +1530,14 @@ class AtriumSDK:
         start_time_n = None if start_time is None else int(start_time * time_unit_options[time_units])
         end_time_n = None if end_time is None else int(end_time * time_unit_options[time_units])
         gap_tolerance_n = None if gap_tolerance is None else int(gap_tolerance * time_unit_options[time_units])
-        # Verify the dataset definition against the AtriumSDK
-        validated_measure_list, validated_label_set_list, mapped_sources = verify_definition(
-            definition, sdk=self, gap_tolerance=gap_tolerance_n,
-            measure_tag_match_rule=measure_tag_match_rule, start_time_n=start_time_n,
-            end_time_n=end_time_n,
-            cache_dir=cache_dir,
-        )
+
+        if not definition.is_validated:
+            definition.validate(sdk=self, gap_tolerance=gap_tolerance_n,
+                                measure_tag_match_rule=measure_tag_match_rule, start_time=start_time_n,
+                                end_time=end_time_n)
+
+        validated_measure_list = definition.validated_data_dict['measures']
+        mapped_sources = definition.validated_data_dict['sources']
 
         # Extract measure_ids from the validated measures
         measure_ids = [measure['id'] for measure in validated_measure_list]
@@ -4277,15 +4270,13 @@ class AtriumSDK:
 
             return iterators
 
-        # Validate the definition and create the iterator for a single partition
-        validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
-            definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n,
-            cache_dir=cache)
+        if not definition.is_validated:
+            definition.validate(sdk=self, gap_tolerance=gap_tolerance, start_time=start_time_n, end_time=end_time_n)
 
         if not isinstance(shuffle, bool) or shuffle:
             # Set some sensible defaults for pseudorandom yet efficient shuffle
             if cached_windows_per_source is None:
-                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in validated_measure_list)
+                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
                 number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
                 cached_windows_per_source = self.block.block_size // number_of_values_per_window_slide
             if num_windows_prefetch is None:
@@ -4295,20 +4286,20 @@ class AtriumSDK:
             # Not shuffling
             cached_windows_per_source = None  # We don't want this doing anything if shuffle is False
             if num_windows_prefetch is None:
-                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in validated_measure_list)
+                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
                 number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
                 num_windows_prefetch = (10 * self.block.block_size) // number_of_values_per_window_slide
 
         # Create appropriate iterator object based on iterator_type
         if iterator_type == 'mapped':
             iterator = MappedIterator(
-                self, validated_measure_list, validated_label_set_list, validated_sources,
+                self, definition,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, max_cache_duration=max_cache_duration_per_source,
                 shuffle=shuffle, patient_history_fields=patient_history_fields, cache_dir=cache)
         elif iterator_type == 'lightmapped':
             iterator = LightMappedIterator(
-                self, validated_measure_list, validated_label_set_list, validated_sources,
+                self, definition,
                 window_duration, window_slide,
                 label_threshold=label_threshold, shuffle=shuffle,
                 patient_history_fields=patient_history_fields)
@@ -4316,13 +4307,13 @@ class AtriumSDK:
             if window_filter_fn is None:
                 raise ValueError("window_filter_fn must be provided when iterator_type is 'filtered'")
             iterator = FilteredDatasetIterator(
-                self, validated_measure_list, validated_label_set_list, validated_sources,
+                self, definition,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, window_filter_fn=window_filter_fn,
                 max_cache_duration=max_cache_duration_per_source, shuffle=shuffle,
                 patient_history_fields=patient_history_fields, cache_dir=cache)
         elif iterator_type == "iterator":
-            iterator = DatasetIterator(self, validated_measure_list, validated_label_set_list, validated_sources,
+            iterator = DatasetIterator(self, definition,
                                        window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                                        label_threshold=label_threshold, shuffle=shuffle,
                                        max_cache_duration=max_cache_duration_per_source,

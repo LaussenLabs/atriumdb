@@ -17,65 +17,59 @@
 
 import yaml
 import os
+import pickle
 import warnings
 import json
 import numpy as np
 
+from atriumdb.adb_functions import time_unit_options
 from atriumdb.windowing.definition_builder import build_source_intervals
+from atriumdb.windowing.verify_definition import verify_definition
 
 
 class DatasetDefinition:
     """
-    Encapsulates the Dataset Definition in a YAML format.
+    Encapsulates the Dataset Definition in YAML or binary format.
 
-    The ``DefinitionYAML`` class represents the definition of dataset sources
+    The ``DatasetDefinition`` class represents the definition of dataset sources
     (devices or patients), their associated time regions, and the available signals
     over those time regions for the respective sources, along with any labels
-    associated with these sources.
+    associated with these sources. It also supports validation of the dataset
+    definition, which can then be saved in a binary format using pickle.
 
     :ivar data_dict: A dictionary containing the structured data from the YAML file
                      or passed parameters. The keys include 'measures', 'patient_ids',
                      'mrns', 'device_ids', 'device_tags', and 'labels'.
+    :ivar validated_data_dict: A dictionary containing validated data after a successful validation process.
+                               Populated only after calling the `validate` method.
+    :ivar is_validated: A boolean flag indicating whether the dataset has been successfully validated.
 
-    :param filename: Path to the YAML file containing the dataset definition. If
-                     provided, the contents of the file will populate `data_dict`. The
-                     YAML format is described in detail at :ref:`definition_file_format`.
-    :type filename: str, optional
-
-    :param measures: List of requested measures to be considered. Measures can be:
+    :param filename: (str, optional) Path to the YAML or pickle file containing the dataset definition. If
+                     provided, the contents of the file will populate `data_dict`. If the file extension is
+                     `.pkl`, the validated dataset definition is loaded instead.
+    :param measures: (list, optional) List of requested measures to be considered. Measures can be:
                      1. Just a tag (string) representing the measure.
                      2. A dictionary specifying the measure tag, its frequency in Hertz, and its units.
                      Example: [{"tag": "ECG", "freq_hz": 300, "units": "mV"}]
-    :type measures: list, optional
-
-    :param patient_ids: Dictionary containing patient identifiers with their associated
+    :param patient_ids: (dict, optional) Dictionary containing patient identifiers with their associated
                         time specifications. The specifications can be interval-based, event-based,
                         or the keyword 'all' to indicate all available time data for the given patient.
                         Example: {1234567: "all", 7654321: [{'start': 123456000 * 10**9, 'end': 123457000 * 10**9}]}
-    :type patient_ids: dict, optional
-
-    :param mrns: Dictionary containing medical record numbers. Each MRN can have associated
+    :param mrns: (dict, optional) Dictionary containing medical record numbers. Each MRN can have associated
                  time specifications (interval-based, event-based) or 'all' indicating all available
                  time data for the given MRN.
                  Example: {1234567: "all", 7654321: [{'start': 123456000 * 10**9, 'end': 123457000 * 10**9}]}
-    :type mrns: dict, optional
-
-    :param device_ids: Dictionary containing device identifiers, each associated with its time
+    :param device_ids: (dict, optional) Dictionary containing device identifiers, each associated with its time
                        specifications. The specifications can be interval, event, or 'all' for all
                        available time data.
                        Example: {1: "all", 14: [{'time0': 123456000 * 10**9, 'pre': 1000 * 10**9, 'post': 3000 * 10**9}]}
-    :type device_ids: dict, optional
-
-    :param device_tags: Dictionary containing device tags. Each tag is mapped to its respective
+    :param device_tags: (dict, optional) Dictionary containing device tags. Each tag is mapped to its respective
                         time specifications, which can be interval-based, event-based, or simply 'all'.
                         Example: {"dev_1": "all", "dev_2b": [{'start': 123456000 * 10**9}]}
-    :type device_tags: dict, optional
-
-    :param labels: List of strings, each representing a unique label associated with the dataset elements
+    :param labels: (list, optional) List of strings, each representing a unique label associated with the dataset elements
                    (such as patient conditions or device states). These labels can be used for classification,
                    segmentation, or other forms of analysis.
                    Example: ["Sinus rhythm", "Junctional ectopic tachycardia (JET)", "arrhythmia"]
-    :type labels: list, optional
 
     .. note:: For more details on the format expectations, see :ref:`definition_file_format`.
 
@@ -84,6 +78,10 @@ class DatasetDefinition:
     **Reading from an existing YAML file**:
 
     >>> dataset_definition = DatasetDefinition(filename="/path/to/my_definition.yaml")
+
+    **Reading from an existing validated pickle file**:
+
+    >>> dataset_definition = DatasetDefinition(filename="/path/to/my_validated_definition.pkl")
 
     **Creating an empty definition**:
 
@@ -99,9 +97,19 @@ class DatasetDefinition:
 
     >>> dataset_definition.add_label("new_label")
 
+    **Validating a definition**:
+
+    >>> dataset_definition.validate(sdk=my_sdk)
+    >>> print(dataset_definition.is_validated)
+    ... True
+
     **Saving the definition to a YAML file**:
 
     >>> dataset_definition.save(filepath="path/to/saved/definition.yaml")
+
+    **Saving a validated definition to a pickle file**:
+
+    >>> dataset_definition.save(filepath="path/to/saved/definition.pkl")
     """
 
     def __init__(self, filename=None, measures=None, patient_ids=None, mrns=None, device_ids=None,
@@ -115,11 +123,20 @@ class DatasetDefinition:
             'labels': labels if labels is not None else [],
         }
 
-        if filename:
-            self.read_yaml(filename)
+        self.validated_data_dict = {}
+        self.is_validated = False
 
-        # Validate and convert the data
-        self._validate_and_convert_data()
+        if filename:
+            _, ext = os.path.splitext(filename)
+            if ext == '.pkl':
+                # Load from pickle
+                self._load_validated_pickle(filename)
+            else:
+                # Assume YAML
+                self.read_yaml(filename)
+
+        # Check format and convert data as before
+        self._check_format_and_convert_data()
 
     @classmethod
     def build_from_intervals(cls, sdk, build_from_signal_type, measures=None, labels=None, patient_id_list=None,
@@ -180,6 +197,37 @@ class DatasetDefinition:
         dataset_def = cls(**kwargs)
         return dataset_def
 
+    def validate(self, sdk, gap_tolerance=None, measure_tag_match_rule="best", start_time=None, end_time=None,
+                 time_units: str = "ns"):
+        """
+        Verifies and validates a dataset definition against the given AtriumSDK, including measures, label sets, and sources.
+
+        :param AtriumSDK sdk: An AtriumSDK object pointing at the dataset to validate the requested definition against.
+        :param Optional[int] gap_tolerance: The minimum allowed gap (in nanoseconds) in any generated time ranges (time ranges are explained below).
+        :param str measure_tag_match_rule: "best" or "all" as a strategy for dealing with measure tags where there may be multiple measures with the given tag.
+        :param start_time: Global start time in nanoseconds.
+        :param end_time: Global end time in nanoseconds.
+        :param str time_units: Time units to interpret `start_time`, `end_time`, and `gap_tolerance`.
+            One of ["ns", "us", "ms", "s"]. Defaults to "ns".
+        """
+        start_time_n = None if start_time is None else int(start_time * time_unit_options[time_units])
+        end_time_n = None if end_time is None else int(end_time * time_unit_options[time_units])
+        gap_tolerance_n = None if gap_tolerance is None else int(gap_tolerance * time_unit_options[time_units])
+
+        validated_measure_list, validated_label_set_list, mapped_sources = verify_definition(self, sdk=sdk,
+                                                                                             gap_tolerance=gap_tolerance_n,
+                                                                                             measure_tag_match_rule=measure_tag_match_rule,
+                                                                                             start_time_n=start_time_n,
+                                                                                             end_time_n=end_time_n)
+
+        self.validated_data_dict = {
+            "measures": validated_measure_list,
+            "labels": validated_label_set_list,
+            "sources": mapped_sources,
+        }
+
+        self.is_validated = True
+
     def read_yaml(self, filename):
         try:
             with open(filename, 'r') as file:
@@ -194,7 +242,7 @@ class DatasetDefinition:
         except yaml.YAMLError as err:
             raise ValueError("An error occurred while reading the YAML file.") from err
 
-    def _validate_and_convert_data(self):
+    def _check_format_and_convert_data(self):
         # Convert any numpy types to native Python
         self.data_dict = convert_numpy_types(self.data_dict)
 
@@ -412,7 +460,9 @@ class DatasetDefinition:
 
     def save(self, filepath, force=False):
         """
-        Saves the definition to a YAML file.
+        Saves the definition to a file. If the extension is `.yaml` or `.yml`,
+        saves the original data_dict as YAML. If the extension is `.pkl`,
+        saves the validated dataset definition using pickle.
 
         :param filepath: Path where the YAML file should be saved.
         :type filepath: str
@@ -430,16 +480,45 @@ class DatasetDefinition:
         if os.path.exists(filepath) and not force:
             raise OSError("File already exists, to overwrite set force=True")
 
-        # Check file extension
         _, ext = os.path.splitext(filepath)
-        if ext not in ['.yaml', '.yml']:
-            raise ValueError("File extension must be yaml/yml.")
+        if ext in ['.yaml', '.yml']:
+            # YAML save
+            converted_data = convert_numpy_types(self.data_dict)
+            with open(filepath, 'w') as file:
+                yaml.dump(converted_data, file, sort_keys=False)
+        elif ext == '.pkl':
+            # Pickle save
+            if not self.is_validated:
+                raise ValueError("Dataset can't be saved as a validated dataset because it has not been validated "
+                                 "yet, call DatasetDefinition.validate() in order to validate it.")
+            data_to_save = {
+                "data_dict": self.data_dict,
+                "validated_data_dict": self.validated_data_dict,
+                "is_validated": self.is_validated,
+            }
+            with open(filepath, 'wb') as f:
+                pickle.dump(data_to_save, f)
+        else:
+            raise ValueError("File extension must be yaml/yml or pkl.")
 
-        # Save the dataset definition to a YAML file
-        converted_data = convert_numpy_types(self.data_dict)
-        with open(filepath, 'w') as file:
-            yaml.dump(converted_data, file, sort_keys=False)
+    def _load_validated_pickle(self, filename):
+        """
+        Internal method to load a validated dataset definition from a pickle file.
+        """
+        if not os.path.exists(filename):
+            raise FileNotFoundError("The specified file does not exist.")
 
+        with open(filename, 'rb') as f:
+            loaded_data = pickle.load(f)
+
+        required_keys = ["data_dict", "validated_data_dict", "is_validated"]
+        for key in required_keys:
+            if key not in loaded_data:
+                raise ValueError(f"Loaded pickle does not contain required key '{key}'")
+
+        self.data_dict = loaded_data["data_dict"]
+        self.validated_data_dict = loaded_data["validated_data_dict"]
+        self.is_validated = loaded_data["is_validated"]
 
 def convert_numpy_types(data):
     if isinstance(data, dict):

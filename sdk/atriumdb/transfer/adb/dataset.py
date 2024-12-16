@@ -142,9 +142,14 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     gap_tolerance = DEFAULT_GAP_TOLERANCE if gap_tolerance is None else gap_tolerance
     measure_tag_match_rule = "all" if measure_tag_match_rule is None else measure_tag_match_rule
 
-    validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
-        definition, src_sdk, gap_tolerance=gap_tolerance, measure_tag_match_rule=measure_tag_match_rule,
-        start_time_n=start_time_n, end_time_n=end_time_n)
+    if not definition.is_validated:
+        definition.validate(sdk=src_sdk, gap_tolerance=gap_tolerance,
+                            measure_tag_match_rule=measure_tag_match_rule, start_time=start_time_n,
+                            end_time=end_time_n)
+
+    validated_measure_list = definition.validated_data_dict['measures']
+    validated_label_set_list = definition.validated_data_dict['labels']
+    validated_sources = definition.validated_data_dict['sources']
 
     src_measure_id_list = [measure_info["id"] for measure_info in validated_measure_list]
     src_device_id_list, src_patient_id_list = extract_src_device_and_patient_id_list(validated_sources)

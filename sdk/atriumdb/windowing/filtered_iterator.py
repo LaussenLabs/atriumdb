@@ -20,6 +20,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 from atriumdb.windowing.window import Window
 from atriumdb.windowing.dataset_iterator import DatasetIterator
+from atriumdb.windowing.definition import DatasetDefinition
 
 
 class FilteredDatasetIterator(DatasetIterator):
@@ -34,15 +35,13 @@ class FilteredDatasetIterator(DatasetIterator):
         True if the window should be included in the iteration, and False if it should be omitted. This allows for
         customized filtering based on specific criteria set within the function.
     """
-    def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
+    def __init__(self, sdk, definition: DatasetDefinition,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
                  label_threshold=0.5, shuffle=False, max_cache_duration=None, window_filter_fn=None,
                  patient_history_fields: list = None, cache_dir=None):
         super().__init__(
             sdk=sdk,
-            validated_measure_list=validated_measure_list,
-            validated_label_set_list=validated_label_set_list,
-            validated_sources=validated_sources,
+            definition=definition,
             window_duration_ns=window_duration_ns,
             window_slide_ns=window_slide_ns,
             num_windows_prefetch=num_windows_prefetch,
