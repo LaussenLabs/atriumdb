@@ -16,8 +16,12 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import pytest
+import numpy as np
 
-from atriumdb.windowing.definition import DatasetDefinition
+from atriumdb import AtriumSDK, DatasetDefinition
+from tests.testing_framework import _test_for_both
+
+DB_NAME = 'definition'
 
 
 @pytest.mark.parametrize(
@@ -61,3 +65,43 @@ def test_definition_file_formatting(filename, expected_exception, expected_warni
     else:
         with pytest.warns(expected_warning, match=expected_message):
             DatasetDefinition(filename=filename)
+
+
+def test_advanced_definition():
+    _test_for_both(DB_NAME, _test_advanced_definition)
+
+
+def _test_advanced_definition(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    highest_number = 10_000
+    repetitions_per_number = 20
+    repeated_data = np.repeat(np.arange(highest_number), repetitions_per_number)
+
+    measure_id = sdk.insert_measure("example_measure", 1, "units", freq_units="Hz")
+    device_id = sdk.insert_device("example_device")
+
+    sdk.write_segment(measure_id, device_id, repeated_data, 0, freq=1, time_units="s", freq_units="Hz",
+                      scale_m=1.0, scale_b=0.0)
+
+    measures = ['example_measure']
+    device_ids = {device_id: "all"}
+    definition = DatasetDefinition(measures=measures, device_ids=device_ids)
+
+    definition.validate(sdk)
+
+    filter_fn = lambda window: not np.any(np.round(window.signals[("example_measure", 1.0, "units")]['values']) % 2 == 0)
+    definition.filter(sdk, filter_fn=filter_fn, window_duration=repetitions_per_number, window_slide=repetitions_per_number, time_units="s", allow_partial_windows=True)
+
+    filtered_data = []
+    for window in sdk.get_iterator(definition, window_duration=repetitions_per_number, window_slide=repetitions_per_number, time_units="s"):
+        filtered_data.append(window.signals[("example_measure", 1.0, "units")]['values'])
+
+    result_data = np.concatenate(filtered_data)
+    result_data = result_data[~np.isnan(result_data)]
+
+    floating_repeated_data = (repeated_data * 1.0) + 0.0
+    floating_odd_numbers = floating_repeated_data[repeated_data % 2 == 1]
+
+    assert np.allclose(floating_odd_numbers, result_data)
