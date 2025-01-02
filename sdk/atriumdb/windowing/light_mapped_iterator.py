@@ -23,14 +23,14 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 from atriumdb.windowing.window import Window
 from atriumdb.windowing.dataset_iterator import DatasetIterator
-from atriumdb.windowing.definition import DatasetDefinition
-from atriumdb.windowing.windowing_functions import get_threshold_labels, find_closest_measurement
+from atriumdb.windowing.windowing_functions import get_threshold_labels, find_closest_measurement, \
+    _get_patient_info_from_cache, _load_patient_cache
 
 
 class LightMappedIterator(DatasetIterator):
-    def __init__(self, sdk, definition: DatasetDefinition,
+    def __init__(self, sdk, definition,
                  window_duration_ns: int, window_slide_ns: int, label_threshold=0.5,
-                 shuffle=False, patient_history_fields: list = None):
+                 shuffle=False, patient_history_fields: list = None, allow_partial_windows = True):
         if not definition.is_validated:
             definition.validate(sdk=sdk)
 
@@ -51,6 +51,7 @@ class LightMappedIterator(DatasetIterator):
         self.label_threshold = label_threshold
 
         self.patient_history_fields = patient_history_fields
+        self.allow_partial_windows = allow_partial_windows
 
         # Duration of each window in nanoseconds. Represents the time span of each data segment.
         self.window_duration_ns = int(window_duration_ns)
@@ -119,11 +120,13 @@ class LightMappedIterator(DatasetIterator):
             for source_id, time_ranges in sources.items():
                 for start_time, end_time in time_ranges:
                     duration = end_time - start_time
-                    if duration < self.window_duration_ns:
-                        # Time range too short, skip
+                    if duration <= 0 or (not self.allow_partial_windows and duration < self.window_duration_ns):
                         continue
                     # Calculate number of windows
                     num_windows = int((duration - self.window_duration_ns) // self.window_slide_ns) + 1
+                    if self.allow_partial_windows and ((duration - self.window_duration_ns) % self.window_slide_ns > 0):
+                        num_windows += 1
+
                     if num_windows <= 0:
                         continue
                     # Append info
@@ -173,8 +176,8 @@ class LightMappedIterator(DatasetIterator):
             measure_id = measure['id']
             freq_nhz = measure['freq_nhz']
             period_ns = int((10 ** 18) // freq_nhz)
-            measure_expected_count = int(self.window_duration_ns // period_ns)
-            measure_times = np.arange(window_start_time, window_end_time, period_ns)
+            measure_expected_count = int((freq_nhz * self.window_duration_ns) // (10 ** 18))
+            measure_times = (np.arange(measure_expected_count) * period_ns) + window_start_time
             measure_values = np.full(measure_times.shape, np.nan)
             if len(measure_values) > 0:
                 self.sdk.get_data(
@@ -191,8 +194,8 @@ class LightMappedIterator(DatasetIterator):
                 'measure_id': measure_id,
             }
 
-        self._load_patient_cache(patient_id, self.patient_info_cache, self.patient_history_cache)
-        window_patient_info = self._get_patient_info_from_cache(
+        _load_patient_cache(patient_id, self.patient_info_cache, self.patient_history_cache, self.sdk, self.patient_history_fields)
+        window_patient_info = _get_patient_info_from_cache(
             patient_id, window_start_time, self.patient_info_cache, self.patient_history_cache)
 
         label, label_time_series = np.array([]), np.array([])

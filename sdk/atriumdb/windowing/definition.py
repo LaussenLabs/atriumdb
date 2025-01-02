@@ -209,15 +209,20 @@ class DatasetDefinition:
     def validate(self, sdk, gap_tolerance=None, measure_tag_match_rule="best", start_time=None, end_time=None,
                  time_units: str = "ns"):
         """
-        Verifies and validates a dataset definition against the given AtriumSDK, including measures, label sets, and sources.
+        Verifies and validates a dataset definition against the given SDK, ensuring the data specified actually exists.
 
-        :param AtriumSDK sdk: An AtriumSDK object pointing at the dataset to validate the requested definition against.
-        :param Optional[int] gap_tolerance: The minimum allowed gap (in nanoseconds) in any generated time ranges (time ranges are explained below).
-        :param str measure_tag_match_rule: "best" or "all" as a strategy for dealing with measure tags where there may be multiple measures with the given tag.
-        :param start_time: Global start time in nanoseconds.
-        :param end_time: Global end time in nanoseconds.
-        :param str time_units: Time units to interpret `start_time`, `end_time`, and `gap_tolerance`.
-            One of ["ns", "us", "ms", "s"]. Defaults to "ns".
+        :param sdk: SDK object to validate the definition against.
+        :param gap_tolerance: (int, optional) Minimum allowed gap size in nanoseconds for continuous time ranges.
+        :param measure_tag_match_rule: (str, optional) "best" or "all" to determine matching strategy for measure tags.
+        :param start_time: (int, optional) Global start time in the specified `time_units`.
+        :param end_time: (int, optional) Global end time in the specified `time_units`.
+        :param time_units: (str, optional) Units for interpreting time parameters. Defaults to "ns".
+        :raises ValueError: If validation fails or input parameters are invalid.
+
+        **Examples**:
+
+        >>> my_sdk = AtriumSDK(dataset_location)
+        >>> dataset_definition.validate(sdk=my_sdk, gap_tolerance=100, start_time=1735845426, end_time=1737236445, time_units="s")
         """
         start_time_n = None if start_time is None else int(start_time * time_unit_options[time_units])
         end_time_n = None if end_time is None else int(end_time * time_unit_options[time_units])
@@ -238,6 +243,30 @@ class DatasetDefinition:
 
     def filter(self, sdk, filter_fn, window_duration=None, window_slide=None, time_units='ns',
                allow_partial_windows=True, label_threshold=0.5, patient_history_fields=None):
+        """
+        Filters the dataset definition using a custom filter function.
+
+        Your custom filter function must take a window object like those passed by AtriumSDK.get_iterator
+        It should return True to accept the Window, and False to reject the Window.
+
+        :param sdk: SDK object to retrieve and process data for filtering.
+        :param filter_fn: Callable to filter dataset windows. Should return True for accepted windows.
+        :param window_duration: (int, optional) Duration of each window in specified `time_units`.
+        :param window_slide: (int, optional) Sliding interval for the windows in specified `time_units`.
+        :param time_units: (str, optional) Units for window size and slide. One of "ns", "us", "ms", or "s".
+        :param allow_partial_windows: (bool, optional) Whether to include partially filled windows. Defaults to True.
+        :param label_threshold: (float, optional) Minimum label coverage threshold for inclusion. Defaults to 0.5.
+        :param patient_history_fields: (list, optional) Additional fields from patient history to include in the window object.
+        :raises ValueError: If the definition is not validated or parameters are invalid.
+
+        **Examples**:
+
+        >>> my_sdk = AtriumSDK(dataset_location)
+        >>> def my_filter_fn(window):
+        ...     # Require more than 5 values from example_measure
+        ...     return window.signals[("example_measure", 1.0, "units")]['actual_count'] > 5
+        >>> dataset_definition.filter(sdk=my_sdk, filter_fn=my_filter_fn, window_duration=1_000_000_000, window_slide=1_000_000_000)
+        """
         if not self.is_validated:
             raise ValueError("Definition must be validated before filtering, run DatasetDefinition.validate()")
         time_units = "ns" if time_units is None else time_units
@@ -612,6 +641,9 @@ class DatasetDefinition:
         **Examples**:
 
         >>> dataset_definition.save(filepath="path/to/saved/definition.yaml")
+        >>> dataset_definition.validate(sdk=my_sdk)
+        >>> # Save validated binary dataset definition.
+        >>> dataset_definition.save(filepath="path/to/definition.pkl", force=True)  # force=True overwrites file.
         """
         # Check if the file already exists
         if os.path.exists(filepath) and not force:

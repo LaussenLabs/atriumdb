@@ -4162,15 +4162,10 @@ class AtriumSDK:
         :param float label_threshold: The percentage of the window that must contain a label before the entire window is
             marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
         :param str iterator_type: Specify the type of iterator. If set to 'mapped', a RandomAccessDatasetIterator
-          will be returned, allowing indexed access to dataset windows. If set to 'filtered',
-          a FilteredDatasetIterator will be returned with additional filtering functionality based on
-          the `window_filter_fn`. If set to `lightmapped` a lightweight low RAM mapped iterator is returned.
+          will be returned, allowing indexed access to dataset windows. If set to `lightmapped` a lightweight low RAM mapped iterator is returned.
           'lightmapped' is most suitable when you want true random shuffles and/or you're going to be jumping around
           the indices in no particular order.
           By default or if set to None, a standard DatasetIterator is returned.
-        :param callable window_filter_fn: If provided, only windows for which this function returns True will be included in the
-             iteration. This function should accept a window as its argument. This is only applicable
-             if `iterator_type` is set to 'filtered'.
         :param bool | int shuffle: If True, the order of windows will be randomized before iteration. If set to an integer, this
             value will seed the random number generator for reproducible shuffling. If False, windows are
             returned in their original order.
@@ -4214,7 +4209,7 @@ class AtriumSDK:
             slide_size_nano = window_size_nano = 60_000_000_000  # 1 minute nano
             iterator = sdk.get_iterator(definition, window_size_nano, slide_size_nano)
 
-            # Loop over all windows (numpy.ndarray)
+            # Loop over all windows (Window objects)
             for window in iterator:
                 print(window)
 
@@ -4272,6 +4267,16 @@ class AtriumSDK:
 
         if not definition.is_validated:
             definition.validate(sdk=self, gap_tolerance=gap_tolerance, start_time=start_time_n, end_time=end_time_n)
+
+        if definition.filtered_window_size is not None and definition.filtered_window_size != window_duration:
+            warnings.warn(f"definition was filtered with window duration {definition.filtered_window_size} ns which is "
+                          f"different from your requested iterator window duration {window_duration} ns. Windows will "
+                          f"not be the same as the filter function's windows.")
+
+        if definition.filtered_window_slide is not None:
+            warnings.warn(f"definition was filtered with window slide {definition.filtered_window_size} ns which is "
+                          f"different from your requested iterator window slide {window_duration} ns. Windows will "
+                          f"not be the same as the filter function's windows.")
 
         if not isinstance(shuffle, bool) or shuffle:
             # Set some sensible defaults for pseudorandom yet efficient shuffle
