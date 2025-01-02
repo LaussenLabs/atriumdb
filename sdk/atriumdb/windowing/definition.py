@@ -25,6 +25,8 @@ import numpy as np
 from atriumdb.adb_functions import time_unit_options
 from atriumdb.windowing.definition_builder import build_source_intervals
 from atriumdb.windowing.verify_definition import verify_definition
+from atriumdb.windowing.windowing_functions import get_signal_dictionary, get_label_dictionary, get_window_list, \
+    _load_patient_cache
 
 
 class DatasetDefinition:
@@ -122,21 +124,28 @@ class DatasetDefinition:
             'device_tags': device_tags if device_tags is not None else {},
             'labels': labels if labels is not None else [],
         }
+        # Check format and convert data as before
+        self._check_format_and_convert_data()
 
         self.validated_data_dict = {}
         self.is_validated = False
+        self.validated_gap_tolerance = None
+        self.filtered_window_size = None
+        self.filtered_window_slide = None
 
         if filename:
             _, ext = os.path.splitext(filename)
             if ext == '.pkl':
                 # Load from pickle
                 self._load_validated_pickle(filename)
-            else:
+            elif ext in ['.yaml', '.yml']:
                 # Assume YAML
                 self.read_yaml(filename)
+                self._check_format_and_convert_data()
+            else:
+                raise ValueError("Unsupported file extension '{}', must be .pkl, .yaml or .yml".format(ext))
 
-        # Check format and convert data as before
-        self._check_format_and_convert_data()
+
 
     @classmethod
     def build_from_intervals(cls, sdk, build_from_signal_type, measures=None, labels=None, patient_id_list=None,
@@ -214,11 +223,9 @@ class DatasetDefinition:
         end_time_n = None if end_time is None else int(end_time * time_unit_options[time_units])
         gap_tolerance_n = None if gap_tolerance is None else int(gap_tolerance * time_unit_options[time_units])
 
-        validated_measure_list, validated_label_set_list, mapped_sources = verify_definition(self, sdk=sdk,
-                                                                                             gap_tolerance=gap_tolerance_n,
-                                                                                             measure_tag_match_rule=measure_tag_match_rule,
-                                                                                             start_time_n=start_time_n,
-                                                                                             end_time_n=end_time_n)
+        validated_measure_list, validated_label_set_list, mapped_sources = verify_definition(
+            self, sdk=sdk, gap_tolerance=gap_tolerance_n, measure_tag_match_rule=measure_tag_match_rule,
+            start_time_n=start_time_n, end_time_n=end_time_n)
 
         self.validated_data_dict = {
             "measures": validated_measure_list,
@@ -227,6 +234,136 @@ class DatasetDefinition:
         }
 
         self.is_validated = True
+        self.validated_gap_tolerance = gap_tolerance_n
+
+    def filter(self, sdk, filter_fn, window_duration=None, window_slide=None, time_units='ns',
+               allow_partial_windows=True, label_threshold=0.5, patient_history_fields=None):
+        if not self.is_validated:
+            raise ValueError("Definition must be validated before filtering, run DatasetDefinition.validate()")
+        time_units = "ns" if time_units is None else time_units
+        if time_units not in time_unit_options.keys():
+            raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
+
+        if window_duration is None or window_slide is None:
+            raise ValueError("Both window duration and window slide must be specified.")
+
+        # convert to nanoseconds
+        window_duration = int(window_duration * time_unit_options[time_units])
+        window_slide = int(window_slide * time_unit_options[time_units])
+
+        if self.filtered_window_size is not None and self.filtered_window_size != window_duration:
+            warnings.warn(f"Definition has already been filtered with different window duration "
+                          f"{self.filtered_window_size} ns. Refiltering will alter the window positions.")
+
+        # Warn if the new window slide differs from a previously set one
+        if self.filtered_window_slide is not None and self.filtered_window_slide != window_slide:
+            warnings.warn(
+                f"Definition has already been filtered with a different window slide "
+                f"({self.filtered_window_slide} ns). Refiltering will alter the window positions."
+            )
+
+        highest_freq_nhz = max([measure['freq_nhz'] for measure in self.validated_data_dict['measures']])
+        row_size = int((highest_freq_nhz * window_duration) // (10 ** 18))
+        slide_size = int((highest_freq_nhz * window_slide) // (10 ** 18))
+        row_period_ns = int((10 ** 18) // highest_freq_nhz)
+
+        filtered_sources = {}
+        patient_info_cache = {}
+        patient_history_cache = {}
+        for source_type, sources in self.validated_data_dict['sources'].items():
+            if source_type == "patient_ids":
+                # Can't filter without device information
+                filtered_sources[source_type] = sources
+                continue
+
+            filtered_sources[source_type] = {}
+            for source_id, time_ranges in sources.items():
+                if source_type == "device_ids":
+                    device_id = source_id
+                    patient_id = None
+                elif source_type == "device_patient_tuples":
+                    device_id, patient_id = source_id
+                else:
+                    raise ValueError(
+                        f"Source type must be either device_ids or device_patient_tuples, not {source_type}")
+                filtered_sources[source_type][source_id] = []
+                if patient_id is not None:
+                    _load_patient_cache(patient_id, patient_info_cache, patient_history_cache, sdk, patient_history_fields)
+
+                for start_time, end_time in time_ranges:
+                    duration = end_time - start_time
+                    if duration <= 0 or (not allow_partial_windows and duration < window_duration):
+                        continue
+
+                    # Calculate number of windows
+                    num_windows = int((duration - window_duration) // window_slide) + 1
+                    if allow_partial_windows and ((duration - window_duration) % window_slide > 0):
+                        num_windows += 1
+
+                    if num_windows <= 0:
+                        continue
+
+                    # Get data for each measure
+                    data_dictionary = get_signal_dictionary(
+                        sdk, device_id, None, window_duration, window_slide,
+                        self.validated_data_dict['measures'], start_time, end_time, num_windows, start_time, end_time)
+
+                    sliced_labels, threshold_labels = get_label_dictionary(
+                        sdk, device_id, None, start_time, end_time,
+                        self.validated_data_dict['labels'],
+                        label_threshold, num_windows, row_period_ns, row_size, slide_size)
+
+                    batch_window_list = get_window_list(device_id, patient_id, self.validated_data_dict['measures'], data_dictionary,
+                                                        start_time, num_windows, window_duration,
+                                                        threshold_labels, sliced_labels, patient_history_cache,
+                                                        patient_history_fields, patient_info_cache)
+
+                    accepted_intervals = []
+                    current_interval_start = None
+                    current_interval_end = None
+
+                    for window in batch_window_list:
+                        window_start_time = window.start_time
+                        window_end_time = window_start_time + window_duration
+                        if window_end_time > end_time:
+                            window_end_time = end_time
+
+                        if filter_fn(window):
+                            # If we have no active interval, start one
+                            if current_interval_start is None:
+                                current_interval_start = window_start_time
+                                current_interval_end = window_end_time
+                            else:
+                                # Check if contiguous or overlapping with the last accepted interval
+                                if window_start_time <= current_interval_end:
+                                    # Merge intervals if overlapping or contiguous
+                                    if window_end_time > current_interval_end:
+                                        current_interval_end = window_end_time
+                                else:
+                                    # Non-contiguous, finalize the previous interval
+                                    accepted_intervals.append([current_interval_start, current_interval_end])
+                                    # Start a new interval
+                                    current_interval_start = window_start_time
+                                    current_interval_end = window_end_time
+                        else:
+                            # Rejected window breaks any ongoing accepted interval
+                            if current_interval_start is not None:
+                                accepted_intervals.append([current_interval_start, current_interval_end])
+                                current_interval_start = None
+                                current_interval_end = None
+
+                    # If we ended with an active interval, finalize it
+                    if current_interval_start is not None:
+                        accepted_intervals.append([current_interval_start, current_interval_end])
+
+                    # accepted_intervals now holds all sub-intervals from [start_time, end_time]
+                    # that passed the filter. We add these intervals to filtered_sources.
+                    filtered_sources[source_type][source_id].extend(accepted_intervals)
+
+        # Update the filtered_window_size and filtered_window_slide
+        self.validated_data_dict['sources'] = filtered_sources
+        self.filtered_window_size = window_duration
+        self.filtered_window_slide = window_slide
 
     def read_yaml(self, filename):
         try:
@@ -491,10 +628,14 @@ class DatasetDefinition:
             if not self.is_validated:
                 raise ValueError("Dataset can't be saved as a validated dataset because it has not been validated "
                                  "yet, call DatasetDefinition.validate() in order to validate it.")
+
             data_to_save = {
                 "data_dict": self.data_dict,
                 "validated_data_dict": self.validated_data_dict,
                 "is_validated": self.is_validated,
+                "validated_gap_tolerance": self.validated_gap_tolerance,
+                "filtered_window_size": self.filtered_window_size,
+                "filtered_window_slide": self.filtered_window_slide,
             }
             with open(filepath, 'wb') as f:
                 pickle.dump(data_to_save, f)
@@ -519,6 +660,9 @@ class DatasetDefinition:
         self.data_dict = loaded_data["data_dict"]
         self.validated_data_dict = loaded_data["validated_data_dict"]
         self.is_validated = loaded_data["is_validated"]
+        self.validated_gap_tolerance = loaded_data["validated_gap_tolerance"]
+        self.filtered_window_size = loaded_data["filtered_window_size"]
+        self.filtered_window_slide = loaded_data["filtered_window_slide"]
 
 def convert_numpy_types(data):
     if isinstance(data, dict):
