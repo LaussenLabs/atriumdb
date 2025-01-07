@@ -192,8 +192,11 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
             # Loop through each time range for this source
             for start_time, end_time in time_ranges:
                 # Fetch labels within this time range
-                range_labels = find_labels(
-                    device_labels[device_id], label_starts[device_id], label_ends[device_id], start_time, end_time)
+                if device_id not in device_labels:
+                    range_labels = []
+                else:
+                    range_labels = find_labels(
+                        device_labels[device_id], label_starts[device_id], label_ends[device_id], start_time, end_time)
                 durations[0] += end_time - start_time
 
                 # Calculate the duration for each priority label within this time range

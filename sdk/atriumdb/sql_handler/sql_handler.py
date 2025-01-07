@@ -476,25 +476,116 @@ class SQLHandler(ABC):
         sqlite_select_device_patient_query = \
             "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
         where_clauses = []
+
+        # Handle device_id_list
         if device_id_list is not None and len(device_id_list) > 0:
             where_clauses.append("device_id IN ({})".format(
                 ','.join(['?'] * len(device_id_list))))
             arg_tuple += tuple(int(device_id) for device_id in device_id_list)
+
+        # Handle patient_id_list
         if patient_id_list is not None and len(patient_id_list) > 0:
             where_clauses.append("patient_id IN ({})".format(
                 ','.join(['?'] * len(patient_id_list))))
             arg_tuple += tuple(int(patient_id) for patient_id in patient_id_list)
+
+        # Handle start_time
         if start_time is not None:
             where_clauses.append("(end_time > ? OR end_time IS NULL)")
             arg_tuple += (int(start_time),)
+
+        # Handle end_time
         if end_time is not None:
             where_clauses.append("start_time < ?")
             arg_tuple += (int(end_time),)
-        sqlite_select_device_patient_query += join_sql_and_bools(where_clauses)
+
+        # Combine where clauses
+        if where_clauses:
+            sqlite_select_device_patient_query += " WHERE " + " AND ".join(where_clauses)
+
         sqlite_select_device_patient_query += " ORDER BY id ASC"
 
         with self.connection() as (conn, cursor):
             cursor.execute(sqlite_select_device_patient_query, arg_tuple)
+            return cursor.fetchall()
+
+    def select_device_patient_encounters(self, timestamp: int, device_id_list: List[int] = None,
+                                         patient_id_list: List[int] = None):
+        arg_tuple = (timestamp, timestamp)
+        sql_select_query = (
+            "SELECT device_id, patient_id, start_time, end_time "
+            "FROM device_patient WHERE start_time <= ? AND (end_time > ? OR end_time IS NULL)"
+        )
+
+        where_clauses = []
+
+        # Handle device_id_list
+        if device_id_list is not None and len(device_id_list) > 0:
+            where_clauses.append("device_id IN ({})".format(
+                ','.join(['?'] * len(device_id_list))))
+            arg_tuple += tuple(int(device_id) for device_id in device_id_list)
+
+        # Handle patient_id_list
+        if patient_id_list is not None and len(patient_id_list) > 0:
+            where_clauses.append("patient_id IN ({})".format(
+                ','.join(['?'] * len(patient_id_list))))
+            arg_tuple += tuple(int(patient_id) for patient_id in patient_id_list)
+
+        # Combine where clauses
+        if where_clauses:
+            sql_select_query += " AND " + " AND ".join(where_clauses)
+
+        sql_select_query += " ORDER BY id DESC"
+
+        with self.connection() as (conn, cursor):
+            cursor.execute(sql_select_query, arg_tuple)
+            results = cursor.fetchall()
+            return results
+
+    def insert_encounter_row(self, patient_id: int, bed_id: int, start_time: int, end_time: int = None,
+                         source_id: int = 1, visit_number: str = None, last_updated: int = None):
+        query = """
+            INSERT INTO encounter (patient_id, bed_id, start_time, end_time, source_id, visit_number, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, (patient_id, bed_id, start_time, end_time, source_id, visit_number, last_updated))
+            conn.commit()
+
+    def select_encounters_from_range_or_timestamp(
+            self, timestamp: int = None, start_time: int = None, end_time: int = None,
+            bed_id: int = None, patient_id: int = None):
+        query = "SELECT id, patient_id, bed_id, start_time, end_time, source_id, visit_number, last_updated FROM encounter"
+        where_clauses = []
+        args = []
+
+        if timestamp is not None:
+            where_clauses.append("start_time <= ? AND (end_time > ? OR end_time IS NULL)")
+            args.extend([timestamp, timestamp])
+
+        if start_time is not None:
+            where_clauses.append("(end_time > ? OR end_time IS NULL)")
+            args.append(start_time)
+
+        if end_time is not None:
+            where_clauses.append("start_time < ?")
+            args.append(end_time)
+
+        if bed_id is not None:
+            where_clauses.append("bed_id = ?")
+            args.append(bed_id)
+
+        if patient_id is not None:
+            where_clauses.append("patient_id = ?")
+            args.append(patient_id)
+
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+
+        query += " ORDER BY start_time ASC"
+
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, args)
             return cursor.fetchall()
 
     @abstractmethod
@@ -1015,12 +1106,18 @@ class SQLHandler(ABC):
             cursor.execute(query, params)
             return cursor.fetchone()
 
-    def insert_bed(self, unit_id: int, name: str) -> int:
-        query = "INSERT INTO bed (unit_id, name) VALUES (?, ?)"
+    def insert_bed(self, unit_id: int, name: str, bed_id: Optional[int] = None) -> int:
+        if bed_id is not None:
+            query = "INSERT INTO bed (id, unit_id, name) VALUES (?, ?, ?)"
+            params = (int(bed_id), int(unit_id), name)
+        else:
+            query = "INSERT INTO bed (unit_id, name) VALUES (?, ?)"
+            params = (int(unit_id), name)
+
         with self.connection() as (conn, cursor):
-            cursor.execute(query, (int(unit_id), name))
+            cursor.execute(query, params)
             conn.commit()
-            return cursor.lastrowid
+            return bed_id if bed_id is not None else cursor.lastrowid
 
     def select_bed(self, bed_id: Optional[int] = None, name: Optional[str] = None) -> Optional[Tuple[int, int, str]]:
         query = "SELECT id, unit_id, name FROM bed WHERE "
