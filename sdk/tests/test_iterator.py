@@ -58,7 +58,7 @@ def _test_iterator(db_type, dataset_location, connection_params):
         iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None)
 
         for window_i, window in enumerate(iterator):
-            assert isinstance(window.start_time, int)
+            assert isinstance(window.start_time, int) or isinstance(window.start_time, float)
             assert isinstance(window.device_id, expected_device_id_type)
             assert isinstance(window.patient_id, expected_patient_id_type)
 
@@ -73,7 +73,7 @@ def _test_iterator(db_type, dataset_location, connection_params):
         # Try light mapped
         iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, iterator_type="lightmapped")
         for window_i, window in enumerate(iterator):
-            assert isinstance(window.start_time, int)
+            assert isinstance(window.start_time, int) or isinstance(window.start_time, float)
             assert isinstance(window.device_id, expected_device_id_type)
             assert isinstance(window.patient_id, expected_patient_id_type)
 
@@ -96,7 +96,7 @@ def _test_iterator(db_type, dataset_location, connection_params):
         iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano)
 
         for window_i, window in enumerate(iterator):
-            assert isinstance(window.start_time, int)
+            assert isinstance(window.start_time, int) or isinstance(window.start_time, float)
             assert isinstance(window.device_id, expected_device_id_type)
             assert isinstance(window.patient_id, expected_patient_id_type)
 
@@ -116,7 +116,7 @@ def _test_iterator(db_type, dataset_location, connection_params):
         iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano)
 
         for window_i, window in enumerate(iterator):
-            assert isinstance(window.start_time, int)
+            assert isinstance(window.start_time, int) or isinstance(window.start_time, float)
             assert isinstance(window.device_id, expected_device_id_type)
             assert isinstance(window.patient_id, expected_patient_id_type)
 

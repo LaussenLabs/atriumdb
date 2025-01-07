@@ -50,3 +50,5 @@ measures:
   - tag: temperature
     freq_hz: 62.5
     units: C
+  - [II, 500.0, mV]
+  - [DIA_BP, 1, mmHG]

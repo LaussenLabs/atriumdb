@@ -399,6 +399,12 @@ class DatasetDefinition:
             with open(filename, 'r') as file:
                 loaded_data = yaml.load(file, Loader=yaml.FullLoader)
                 for key, value in loaded_data.items():
+                    if key == "measures":
+                        # Convert measure lists to tuples
+                        value = [
+                            tuple(item) if isinstance(item, list) else item
+                            for item in value
+                        ]
                     if key in self.data_dict:
                         self.data_dict[key] = value
                     else:
@@ -415,23 +421,38 @@ class DatasetDefinition:
         # Validate measures
         seen = set()
         for measure in self.data_dict['measures']:
-            # convert dict to string to make it hashable
-            measure_str = json.dumps(measure, sort_keys=True) if isinstance(measure, dict) else measure
-            if measure_str in seen:
-                raise ValueError(f"Duplicate measure found: {measure}")
-            seen.add(measure_str)
-            if not isinstance(measure, (str, dict)):
-                raise ValueError("Measure must be a string or a dictionary")
-            if isinstance(measure, dict):
+            if isinstance(measure, tuple):
+                # Ensure tuple has the format (str, float|int, str)
+                if len(measure) != 3 or not isinstance(measure[0], str) or \
+                   not isinstance(measure[1], (float, int)) or not isinstance(measure[2], str):
+                    raise ValueError(
+                        f"Invalid measure tuple: {measure}. Must be (str, float|int, str)"
+                    )
+            elif isinstance(measure, dict):
+                # Validate measure dictionary
                 if 'tag' not in measure or ('freq_hz' not in measure and 'freq_nhz' not in measure) or 'units' not in measure:
-                    raise ValueError("Measure dictionary must contain 'tag', 'freq_hz' (or 'freq_nhz'), and 'units' keys")
+                    raise ValueError(
+                        "Measure dictionary must contain 'tag', 'freq_hz' (or 'freq_nhz'), and 'units' keys"
+                    )
+                # Convert dict to string to make it hashable
+                measure_str = json.dumps(measure, sort_keys=True)
+                if measure_str in seen:
+                    raise ValueError(f"Duplicate measure found: {measure}")
+                seen.add(measure_str)
+            elif isinstance(measure, str):
+                # Handle measure as string
+                if measure in seen:
+                    raise ValueError(f"Duplicate measure found: {measure}")
+                seen.add(measure)
+            else:
+                raise ValueError("Measure must be a string, dictionary, or tuple (str, float|int, str)")
 
         # Validate labels
         if not isinstance(self.data_dict['labels'], list):
             raise ValueError("labels must be a list or None.")
         for label_name in self.data_dict['labels']:
-            if not isinstance(self.data_dict['labels'], list):
-                raise ValueError("labels must be a list or None.")
+            if not isinstance(label_name, str):
+                raise ValueError(f"Label {label_name} must be a string")
 
         # Validate and convert patient_ids
         for patient_id, times in self.data_dict['patient_ids'].items():

@@ -1,9 +1,7 @@
 measures:
-- tag: MLII
-  freq_nhz: 500000000000
-  units: mV
+- [MLII, 500, mV]
 - tag: V5
-  freq_nhz: 500000000000
+  freq_hz: 500
   units: mV
 - tag: V1
   freq_nhz: 500000000000

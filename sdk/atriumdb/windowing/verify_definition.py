@@ -41,7 +41,8 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
     :param str measure_tag_match_rule: "best" or "all" as a strategy for dealing with measure tags where there may be multiple measures with the given tag.
     :param start_time_n: Global start time in nanoseconds.
     :param end_time_n: Global end time in nanoseconds.
- each representing a validated measure. Each dictionary includes:
+
+    each representing a validated measure. Each dictionary includes:
            - 'id': The unique identifier of the measure.
            - 'tag': A string tag associated with the measure.
            - 'freq_nhz': The frequency of the measure in nanohertz (optional).
@@ -52,7 +53,6 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
            - 'patient_ids' (optional): A dictionary present only if there are unmatched patient IDs. Each key is a patient ID, and each value is a list of time ranges where data could not be matched to devices.
            - 'device_ids' (optional): A dictionary present only if there are unmatched device IDs. Each key is a device ID, and each value is a list of time ranges where data could not be matched to patients.
 
-    :raises ValueError: If the input 'definition' is neither a filename (str) nor an instance of DatasetDefinition, or if specified measures or label sets are not found in the AtriumSDK.
     """
     gap_tolerance = 60_000_000_000 if gap_tolerance is None else gap_tolerance  # 1 minute nano default
 
