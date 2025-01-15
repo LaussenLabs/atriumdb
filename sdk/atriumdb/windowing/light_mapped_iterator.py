@@ -180,6 +180,9 @@ class LightMappedIterator(DatasetIterator):
             measure_times = (np.arange(measure_expected_count) * period_ns) + window_start_time
             measure_values = np.full(measure_times.shape, np.nan)
             if len(measure_values) > 0:
+                if measure_expected_count != int(round((window_end_time - window_start_time) / period_ns)):
+                    window_end_time = window_start_time + int(
+                        round(measure_expected_count * (10 ** 18 / freq_nhz)))
                 self.sdk.get_data(
                     measure_id, window_start_time, window_end_time, device_id=device_id, patient_id=query_patient_id,
                     return_nan_filled=measure_values)
