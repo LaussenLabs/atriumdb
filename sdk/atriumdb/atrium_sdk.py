@@ -2991,10 +2991,11 @@ class AtriumSDK:
                     end_time_result = min(end_time_result, timestamp_n)
 
                 # Convert times to desired units
-                start_time_converted = start_time_result / time_unit_options[time_units]
-                end_time_converted = end_time_result / time_unit_options[time_units]
+                if time_units != "ns":
+                    start_time_result = start_time_result / time_unit_options[time_units]
+                    end_time_result = end_time_result / time_unit_options[time_units]
 
-                mappings.append((device_id_result, patient_id_result, start_time_converted, end_time_converted))
+                mappings.append((device_id_result, patient_id_result, start_time_result, end_time_result))
 
             return mappings
 
@@ -3020,10 +3021,11 @@ class AtriumSDK:
                         end_time_result = min(end_time_result, end_time_n)
 
                 # Convert times to desired units
-                start_time_converted = start_time_result / time_unit_options[time_units]
-                end_time_converted = end_time_result / time_unit_options[time_units]
+                if time_units != "ns":
+                    start_time_result = start_time_result / time_unit_options[time_units]
+                    end_time_result = end_time_result / time_unit_options[time_units]
 
-                mappings.append((device_id_result, patient_id_result, start_time_converted, end_time_converted))
+                mappings.append((device_id_result, patient_id_result, start_time_result, end_time_result))
 
             return mappings
 
