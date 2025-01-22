@@ -4612,9 +4612,9 @@ class AtriumSDK:
                           f"different from your requested iterator window duration {window_duration} ns. Windows will "
                           f"not be the same as the filter function's windows.")
 
-        if definition.filtered_window_slide is not None:
-            warnings.warn(f"definition was filtered with window slide {definition.filtered_window_size} ns which is "
-                          f"different from your requested iterator window slide {window_duration} ns. Windows will "
+        if definition.filtered_window_slide is not None and definition.filtered_window_slide != window_slide:
+            warnings.warn(f"definition was filtered with window slide {definition.filtered_window_slide} ns which is "
+                          f"different from your requested iterator window slide {window_slide} ns. Windows will "
                           f"not be the same as the filter function's windows.")
 
         if not isinstance(shuffle, bool) or shuffle:
