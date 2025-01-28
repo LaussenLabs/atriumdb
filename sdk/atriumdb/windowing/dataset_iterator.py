@@ -666,3 +666,14 @@ class DatasetIterator:
                 ...
         """
         return self
+
+    def __len__(self):
+        """
+        Returns the total number of Window objects available in the dataset. This method can be accessed using
+        Python's built-in `len()` function.
+
+        :return: The total number of Window objects in the dataset.
+        :rtype: int
+
+        """
+        return self._length
