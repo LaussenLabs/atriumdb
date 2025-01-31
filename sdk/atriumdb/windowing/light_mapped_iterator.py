@@ -103,7 +103,7 @@ class LightMappedIterator(DatasetIterator):
         if self.shuffle:
             self.random_gen = random.Random(shuffle) if isinstance(shuffle, int) else random.Random()
             # Create a shuffled array of indices
-            self.shuffled_indices = np.arange(self.total_windows, dtype=np.uint64)
+            self.shuffled_indices = np.arange(self.total_windows, dtype=np.int64)
             self.random_gen.shuffle(self.shuffled_indices)
         else:
             self.shuffled_indices = None
@@ -156,6 +156,7 @@ class LightMappedIterator(DatasetIterator):
         # Swap idx with shuffled index if shuffling is enabled
         if self.shuffled_indices is not None:
             idx = self.shuffled_indices[idx]
+        idx = int(idx)
         # Find which source the idx corresponds to
         source_idx = np.searchsorted(self.window_indices, idx, side='right') - 1
         source_info = self.sources_info[source_idx]
