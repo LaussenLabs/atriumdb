@@ -3932,7 +3932,7 @@ class AtriumSDK:
 
         if label_id_list == "*":
             all_labels = self.get_labels()
-            all_label_ids = [label_info['label_id'] for label_info in all_labels]
+            all_label_ids = [label_info['label_entry_id'] for label_info in all_labels]
             return self.sql_handler.delete_labels(all_label_ids)
 
         elif label_id_list is not None:
