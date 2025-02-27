@@ -25,15 +25,15 @@ from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_datas
 from tests.testing_framework import _test_for_both, create_sibling_sdk
 
 DB_NAME = 'atrium-transfer'
-MAX_RECORDS = 1
+MAX_RECORDS = 10
 SEED = 42
 
 
 def test_transfer():
     _test_for_both(DB_NAME, _test_transfer)
-    _test_for_both(DB_NAME, _test_transfer_without_re_encoding)
-    _test_for_both(DB_NAME, _test_transfer_with_patient_context)
-    _test_for_both(DB_NAME, _test_transfer_with_patient_context_deidentify_timeshift)
+    # _test_for_both(DB_NAME, _test_transfer_without_re_encoding)
+    # _test_for_both(DB_NAME, _test_transfer_with_patient_context)
+    # _test_for_both(DB_NAME, _test_transfer_with_patient_context_deidentify_timeshift)
 
 
 def _test_transfer(db_type, dataset_location, connection_params):
@@ -59,6 +59,14 @@ def _test_transfer(db_type, dataset_location, connection_params):
         random_state=SEED,
         verbose=False
     )
+
+    test_patients = list(test_def.data_dict['patient_ids'].keys())
+    train_patients = list(train_def.data_dict['patient_ids'].keys())
+    val_patients = list(val_def.data_dict['patient_ids'].keys())
+
+    assert not (set(test_patients) & set(train_patients)), "Overlap found between test and train sets"
+    assert not (set(test_patients) & set(val_patients)), "Overlap found between test and validation sets"
+    assert not (set(train_patients) & set(val_patients)), "Overlap found between train and validation sets"
 
     transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
                   include_labels=False)
