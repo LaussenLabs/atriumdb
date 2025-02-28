@@ -7,24 +7,26 @@ import copy
 from tqdm import tqdm
 
 
-def partition_dataset(definition, sdk, partition_ratios, priority_stratification_labels=None, random_state=None,
-                      verbose=False, n_trials=None, num_show_best_trials=None, gap_tolerance=60_000_000_000):
+def partition_dataset(definition, sdk, partition_ratios, priority_stratification_labels=None, additional_labels=None,
+                      random_state=None, verbose=False, n_trials=None, num_show_best_trials=None,
+                      gap_tolerance=60_000_000_000):
     """
-    Partition a dataset into training, testing, and optionally validation sets, with an option for stratified splitting based on priority labels.
+    Partition a dataset into training, testing, and optionally validation sets.
 
-    This function processes a dataset, validating its components and splitting it according to specified criteria. It is designed to work with health-related data, focusing on ensuring balanced representation of important categories in each split dataset.
-
-    :param definition: An instance of the DatasetDefinition class from the atriumdb library. This object contains the specifications and parameters of the dataset to be partitioned.
-    :param sdk: An instance of the AtriumSDK used to interact with the dataset and perform necessary conversions or validations.
-    :param partition_ratios: A list of N integers representing the distribution of stratified variables over N partitions.
-    :param priority_stratification_labels: Optional. A list of labels (either as integers or strings) given priority in the stratification process. If integers, they are treated as label set IDs. If strings, they are converted to IDs using the SDK.
-    :param random_state: Optional. An integer that seeds the random number generator for reproducible splits.
-    :param verbose: Optional. A boolean flag that, when set to True, enables the function to print detailed information about the splitting process.
-    :param n_trials: Optional. An integer specifying the number of trials to run with different random states in order to find the most balanced partitioning. If None, the function runs only once using the provided or default random state.
-    :param num_show_best_trials: Optional. An integer specifying the number of best trials to display if verbose is True and multiple trials (n_trials > 1) are run. If None or 0, no trials are displayed.
-    :param gap_tolerance: Optional. An integer specifying the minimum allowed gap (in nanoseconds) in any time ranges generated from a dataset defintition source id being set to "all". (Default 1 minute)
-
-    :return: A tuple of DatasetDefinition instances for the training, testing, and optionally validation sets. The tuple will contain two or three elements depending on whether a validation set is created.
+    :param definition: An instance of the DatasetDefinition class from the atriumdb library.
+    :param sdk: An instance of the AtriumSDK used to interact with the dataset.
+    :param partition_ratios: A list of N integers representing the distribution over N partitions.
+    :param priority_stratification_labels: Optional. A list of labels (ints or strs) used for stratification.
+    :param additional_labels: Optional. A list of labels (ints or strs) that are not used for stratification but whose
+                              durations will be tallied per patient and added to the duration_info.
+    :param random_state: Optional. An integer seed for reproducibility.
+    :param verbose: Optional. If True, prints detailed partitioning information.
+    :param n_trials: Optional. Number of random trials to find the most balanced partitioning.
+    :param num_show_best_trials: Optional. Number of best trials to display if verbose is True.
+    :param gap_tolerance: Optional. An integer specifying the minimum allowed gap in nanoseconds for time ranges.
+    :return: A tuple of DatasetDefinition objects (one per partition). If verbose and n_trials is None, also returns
+             the duration_info (a list of dicts containing duration and count info, including unique patients and
+             additional label tallies).
 
     Example:
     --------
@@ -57,28 +59,59 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     priority_stratification_label_set_ids = get_priority_stratification_label_set_ids(
         priority_stratification_labels, validated_label_set_list, sdk)
 
-    # Calculate the duration for each label in each data source.
-    label_duration_list = get_label_duration_list(validated_sources, priority_stratification_label_set_ids, sdk)
+    # Convert additional labels (for reporting only) similarly.
+    additional_label_set_ids = get_priority_stratification_label_set_ids(
+        additional_labels, validated_label_set_list, sdk)
+
+    # Calculate the duration for each patient for both priority and additional labels.
+    label_duration_list, patient_additional_results = get_label_duration_list(
+        validated_sources,
+        priority_stratification_label_set_ids,
+        sdk,
+        additional_label_set_ids=additional_label_set_ids
+    )
 
     trials_results = []
     # Generate list of random states if n_trials is given
+    if n_trials in [0, 1]:
+        n_trials = None
     random_states = get_random_states(n_trials, random_state) if n_trials else [random_state]
 
     for trial_random_state in tqdm(random_states, desc="Running partition distribution trials", unit="trial"):
-        # Perform stratified partitioning of the dataset based on the labels.
+        # Perform stratified partitioning using only waveform and priority label durations.
         partitioned_source_list, partitioned_durations, partition_source_counts = stratified_partition_by_labels(
             label_duration_list, partition_ratios, random_state=trial_random_state)
 
-        # Gather information about the distribution of durations across different partitions.
-        duration_info = get_duration_info(partitioned_durations, priority_stratification_labels, partition_source_counts)
+        # Compute additional label totals for each partition (they are not used for partitioning).
+        additional_totals = None
+        if additional_label_set_ids:
+            additional_totals = []
+            for partition in partitioned_source_list:
+                total = np.zeros(len(additional_label_set_ids), dtype=np.int64)
+                for item in partition:
+                    patient_id = item[1]
+                    if patient_id in patient_additional_results:
+                        total += np.array(patient_additional_results[patient_id], dtype=np.int64)
+                additional_totals.append(total)
+
+        # Gather information about the distribution of durations across partitions.
+        duration_info = get_duration_info(partitioned_durations, priority_stratification_labels,
+                                          partition_source_counts,
+                                          partitioned_source_list=partitioned_source_list,
+                                          additional_durations=additional_totals,
+                                          additional_labels=additional_labels)
         ratio_obedience_metric = evaluate_ratio_obedience_metric(duration_info, partition_ratios)
         trials_results.append((ratio_obedience_metric, trial_random_state, duration_info))
 
         if n_trials is None:
-            # If we're not using trials, return immediately.
-            # Convert the partitioned source lists into DatasetDefinition objects.
+            # If we're not using multiple trials, return immediately.
             partitioned_definition_objects = convert_source_lists_to_definitions(partitioned_source_list, definition)
             if verbose:
+                print(f"Random State: {random_state}")
+                print('-' * 50)
+                for partition in duration_info:
+                    print(partition)
+                print("-" * 50 + "\n")
                 return partitioned_definition_objects, duration_info
             return partitioned_definition_objects
 
@@ -102,12 +135,27 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     partitioned_source_list, partitioned_durations, partition_source_counts = stratified_partition_by_labels(
         label_duration_list, partition_ratios, random_state=best_trial_random_state)
 
+    if additional_label_set_ids:
+        additional_totals = []
+        for partition in partitioned_source_list:
+            total = np.zeros(len(additional_label_set_ids), dtype=np.int64)
+            for item in partition:
+                patient_id = item[1]
+                if patient_id in patient_additional_results:
+                    total += np.array(patient_additional_results[patient_id], dtype=np.int64)
+            additional_totals.append(total)
+    else:
+        additional_totals = None
+
     # Convert the partitioned source lists into DatasetDefinition objects.
     final_partitioned_definition_objects = convert_source_lists_to_definitions(partitioned_source_list, definition)
 
-    # Gather final information about the distribution of durations across different partitions.
+    # Gather final information about the distribution of durations across partitions.
     final_duration_info = get_duration_info(partitioned_durations, priority_stratification_labels,
-                                            partition_source_counts)
+                                            partition_source_counts,
+                                            partitioned_source_list=partitioned_source_list,
+                                            additional_durations=additional_totals,
+                                            additional_labels=additional_labels)
 
     if verbose:
         print("Final partitioning using best trial's random state:")
@@ -130,10 +178,10 @@ def get_priority_stratification_label_set_ids(priority_labels, validated_label_s
     elif all(isinstance(label, str) for label in priority_labels):
         label_set_ids = [sdk.get_label_name_id(label) for label in priority_labels]
     else:
-        raise ValueError("Priority stratification labels must be all integers or all strings.")
+        raise ValueError("Labels must be all integers or all strings.")
 
     if not all(label_id in validated_label_set_list for label_id in label_set_ids):
-        raise ValueError("One or more priority stratification labels are not in the validated label set list.")
+        raise ValueError("One or more labels are not in the validated label set list.")
 
     return label_set_ids
 
@@ -154,7 +202,8 @@ def merge_intervals(intervals):
     return [tuple(interval) for interval in merged]
 
 
-def get_label_duration_list(validated_sources, priority_stratification_label_set_ids, sdk):
+def get_label_duration_list(validated_sources, priority_stratification_label_set_ids, sdk,
+                            additional_label_set_ids=None):
     if "device_patient_tuples" not in validated_sources or not validated_sources["device_patient_tuples"]:
         raise ValueError(
             "There is no patient-mapped data in the dataset and so it is impossible to stratify by patient."
@@ -163,12 +212,12 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
     label_duration_list = []
     label_to_index_dict = {label: label_i for label_i, label in enumerate(priority_stratification_label_set_ids)}
 
-    # Get all the label results
+    # Get all the priority label results
     label_result = sdk.sql_handler.select_labels(
         label_set_id_list=priority_stratification_label_set_ids,
     )
 
-    # Sort them by device
+    # Group priority labels by device.
     device_labels = {}
     for (label_entry_id, label_set_id, device_id, measure_id, label_source_id,
          start_time_n, end_time_n) in label_result:
@@ -185,7 +234,7 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
         }
         device_labels[device_id].append(formatted_label)
 
-    # Sort the device results by time
+    # Sort the priority labels by time per device.
     label_starts = {}
     label_ends = {}
     for device_id in device_labels.keys():
@@ -193,24 +242,60 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
         label_starts[device_id] = [entry['start_time_n'] for entry in device_labels[device_id]]
         label_ends[device_id] = [entry['end_time_n'] for entry in device_labels[device_id]]
 
+    # Process additional labels if provided.
+    additional_device_labels = {}
+    additional_label_starts = {}
+    additional_label_ends = {}
+    additional_label_to_index_dict = {}
+    if additional_label_set_ids:
+        additional_label_to_index_dict = {label: idx for idx, label in enumerate(additional_label_set_ids)}
+        additional_label_result = sdk.sql_handler.select_labels(
+            label_set_id_list=additional_label_set_ids,
+        )
+        for (label_entry_id, label_set_id, device_id, measure_id, label_source_id,
+             start_time_n, end_time_n) in additional_label_result:
+            if device_id not in additional_device_labels:
+                additional_device_labels[device_id] = []
+            formatted_label = {
+                'label_entry_id': label_entry_id,
+                'label_name_id': label_set_id,
+                'device_id': device_id,
+                'start_time_n': start_time_n,
+                'end_time_n': end_time_n,
+                'label_source_id': label_source_id,
+                'measure_id': measure_id
+            }
+            additional_device_labels[device_id].append(formatted_label)
+        for device_id in additional_device_labels.keys():
+            additional_device_labels[device_id] = sorted(additional_device_labels[device_id],
+                                                         key=lambda x: (x['start_time_n'], x['end_time_n']))
+            additional_label_starts[device_id] = [entry['start_time_n'] for entry in
+                                                  additional_device_labels[device_id]]
+            additional_label_ends[device_id] = [entry['end_time_n'] for entry in additional_device_labels[device_id]]
+
     patient_results = {}
+    # This will hold additional label durations per patient.
+    patient_additional_results = {}
 
     for source_key, time_ranges in list(validated_sources["device_patient_tuples"].items()):
         device_id, patient_id = source_key
         if patient_id not in patient_results:
             patient_results[patient_id] = {
                 "time_ranges": [],
-                # durations[0] will be waveform duration; each subsequent index corresponds to a label
+                # durations[0] will be waveform duration; subsequent indices correspond to priority labels.
                 "durations": [0] * (len(priority_stratification_label_set_ids) + 1)
             }
-        for start_time, end_time in time_ranges:
-            # Fetch labels within this time range
-            patient_results[patient_id]["time_ranges"].append((start_time, end_time))
+        # Initialize additional durations for this patient.
+        if additional_label_set_ids and patient_id not in patient_additional_results:
+            patient_additional_results[patient_id] = [0] * len(additional_label_set_ids)
 
+        for start_time, end_time in time_ranges:
+            # Append the time range.
+            patient_results[patient_id]["time_ranges"].append((start_time, end_time))
             # Add waveform duration.
             patient_results[patient_id]["durations"][0] += (end_time - start_time)
 
-            # Fetch labels within this time range
+            # Fetch priority labels within this time range.
             if device_id not in device_labels:
                 range_labels = []
             else:
@@ -221,12 +306,30 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
                     start_time,
                     end_time
                 )
-            # Calculate the duration for each priority label within this time range
+            # Tally priority label durations.
             for label in range_labels:
                 if label['label_name_id'] in label_to_index_dict:
                     label_index = label_to_index_dict[label['label_name_id']]
                     label_duration = label['end_time_n'] - label['start_time_n']
                     patient_results[patient_id]["durations"][label_index + 1] += label_duration
+
+            # Fetch and tally additional labels if applicable.
+            if additional_label_set_ids:
+                if device_id not in additional_device_labels:
+                    range_additional_labels = []
+                else:
+                    range_additional_labels = find_labels(
+                        additional_device_labels[device_id],
+                        additional_label_starts[device_id],
+                        additional_label_ends[device_id],
+                        start_time,
+                        end_time
+                    )
+                for label in range_additional_labels:
+                    if label['label_name_id'] in additional_label_to_index_dict:
+                        label_index = additional_label_to_index_dict[label['label_name_id']]
+                        label_duration = label['end_time_n'] - label['start_time_n']
+                        patient_additional_results[patient_id][label_index] += label_duration
 
     # Merge and sort the time ranges per patient.
     for patient_id, result in patient_results.items():
@@ -235,7 +338,7 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
     for patient_id, result in patient_results.items():
         label_duration_list.append(["patient_ids", patient_id, result["time_ranges"]] + result["durations"])
 
-    return label_duration_list
+    return label_duration_list, patient_additional_results
 
 
 def stratified_partition_by_labels(data_list, partition_ratios, random_state=None):
@@ -248,7 +351,7 @@ def stratified_partition_by_labels(data_list, partition_ratios, random_state=Non
     # Set random state for reproducibility
     random_gen = random.Random(random_state) if random_state is not None else random.Random()
 
-    # Calculate total sums for each label
+    # Calculate total sums for each duration (waveform + priority labels only)
     total_sums = np.array([sum(item[i] for item in data_list) for i in range(3, len(data_list[0]))])
 
     # Normalize the partition ratios
@@ -260,7 +363,7 @@ def stratified_partition_by_labels(data_list, partition_ratios, random_state=Non
     partition_sums = [np.zeros(len(total_sums), dtype=np.int64) for _ in range(len(ratios))]
     partition_source_counts = [0 for _ in range(len(ratios))]
 
-    # Function to find the best partition for the current item
+    # Function to find the best partition for the current item.
     def find_best_partition(item):
         item_sums = np.array(item[3:], dtype=np.int64)
         deficits = target_sums - partition_sums
@@ -268,10 +371,10 @@ def stratified_partition_by_labels(data_list, partition_ratios, random_state=Non
         scores = np.sum(deficits - item_sums, axis=1)
         return np.argmin(scores)
 
-    # Randomly shuffle the data list for more randomness in partitioning
+    # Randomly shuffle the data list.
     random_gen.shuffle(data_list)
 
-    # Distribute items into partitions
+    # Distribute items into partitions.
     for item in data_list:
         best_partition = find_best_partition(item)
         partitions[best_partition].append(item)
@@ -282,7 +385,7 @@ def stratified_partition_by_labels(data_list, partition_ratios, random_state=Non
 
 
 def convert_source_lists_to_definitions(partitioned_source_list, original_definition):
-    # Get measures and labels from the original definition
+    # Get measures and labels from the original definition.
     measures = original_definition.data_dict['measures']
     labels = original_definition.data_dict['labels']
 
@@ -363,6 +466,7 @@ def merge_time_ranges(time_ranges):
 
 
 def get_duration_info(partitioned_durations, priority_stratification_labels, partition_source_counts,
+                      partitioned_source_list=None, additional_durations=None, additional_labels=None,
                       convert_to_hours=True):
     duration_info_list = []
     time_units = "hours" if convert_to_hours else "nanoseconds"
@@ -374,9 +478,24 @@ def get_duration_info(partitioned_durations, priority_stratification_labels, par
             f"total waveform {time_units}": total_waveform_duration,
             "num_sources": source_count
         }
+        # If partitioned_source_list is provided, compute unique patients.
+        if partitioned_source_list is not None:
+            unique_patients = len(set(item[1] for item in partitioned_source_list[partition_index]))
+            duration_info["unique_patients"] = unique_patients
+
+        # Add priority label durations.
         for label_index, label in enumerate(priority_stratification_labels, start=1):
             label_key = f"{label} {time_units}"
-            duration_info[label_key] = round(durations[label_index] / (3600 * 1e9), 3) if convert_to_hours else durations[label_index]
+            duration_info[label_key] = round(durations[label_index] / (3600 * 1e9), 3) if convert_to_hours else \
+            durations[label_index]
+
+        # Add additional label durations if provided.
+        if additional_durations is not None and additional_labels:
+            add_dur = additional_durations[partition_index]
+            for idx, label in enumerate(additional_labels):
+                label_key = f"{label} (additional) {time_units}"
+                val = round(add_dur[idx] / (3600 * 1e9), 3) if convert_to_hours else add_dur[idx]
+                duration_info[label_key] = val
 
         duration_info_list.append(duration_info)
 
@@ -384,45 +503,24 @@ def get_duration_info(partitioned_durations, priority_stratification_labels, par
 
 
 def evaluate_ratio_obedience_metric(duration_info, target_ratios):
-    """
-    Evaluate how well the partitions divided the total waveform time and each label according to the target ratios.
-
-    :param duration_info: List of dictionaries containing information about partition durations.
-    :param target_ratios: The target ratios used for splitting, a list of integers like [1, 2, 3].
-    :return: The computed ratio_obedience_metric.
-    """
-    # Convert target ratios to proportions
     total_target_ratio = sum(target_ratios)
     target_proportions = [r / total_target_ratio for r in target_ratios]
+    error_sums = {key: 0 for key in duration_info[0] if key not in ['partition', 'num_sources', 'unique_patients']}
 
-    # Initialize variables to store sums of squared errors for each category
-    error_sums = {key: 0 for key in duration_info[0] if key not in ['partition', 'num_sources']}
     num_partitions = len(duration_info)
-
-    # Calculate sums of squared errors
     for key in error_sums:
         actual_durations = [partition[key] for partition in duration_info]
         total_duration = sum(actual_durations)
         expected_durations = [total_duration * prop for prop in target_proportions]
-
         for actual, expected in zip(actual_durations, expected_durations):
             error_sums[key] += (actual - expected) ** 2
 
-    # Calculate RMSE for each category and combine them
     rmses = [np.sqrt(error_sum / num_partitions) for error_sum in error_sums.values()]
-    combined_metric = np.mean(rmses)  # or use np.sum(rmses) for a cumulative error
-
+    combined_metric = np.mean(rmses)
     return combined_metric
 
 
 def get_random_states(n_trials, random_state=None):
-    """
-    Generate a list of random states.
-
-    :param n_trials: Number of random states to generate.
-    :param random_state: Seed for the random number generator.
-    :return: A list of random states.
-    """
     rng = np.random.default_rng(random_state)
     return rng.choice(np.iinfo(np.int32).max, size=n_trials, replace=False).tolist()
 
