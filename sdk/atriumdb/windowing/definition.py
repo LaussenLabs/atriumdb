@@ -122,16 +122,17 @@ class DatasetDefinition:
         self._validate_and_convert_data()
 
     @classmethod
-    def build_from_intervals(cls, sdk, build_from_signal_type, measures=None, labels=None, patient_id_list=None,
-                             mrn_list=None, device_id_list=None, device_tag_list=None, start_time=None, end_time=None,
-                             gap_tolerance=None, merge_strategy=None):
+    def build_from_intervals(cls, sdk, build_from_signal_type, measures=None, labels=None, build_labels=None,
+                             patient_id_list=None, mrn_list=None, device_id_list=None, device_tag_list=None,
+                             start_time=None, end_time=None, gap_tolerance=None, merge_strategy=None):
         """
         Class method that builds a DatasetDefinition object using signal-based intervals.
 
         :param sdk: Data SDK used to interact with the database or data service
         :param build_from_signal_type: Signal type to build from, either "measures" or "labels"
         :param measures: List of measures to build from, if applicable
-        :param labels: List of labels to build from, if applicable
+        :param labels: List of labels for the definition (used to build by labels, if build_labels is not provided).
+        :param build_labels: Optional alternative list of labels to use for building intervals when build_from_signal_type is "labels".
         :param patient_id_list: List of patient IDs
         :param mrn_list: List of medical record numbers
         :param device_id_list: List of device IDs
@@ -150,23 +151,34 @@ class DatasetDefinition:
         if build_from_signal_type not in ["measures", "labels"]:
             raise ValueError("build_from_signal_type must be either 'measures' or 'labels'")
 
-        # Build the source intervals using the build_source_intervals function
+        # Determine which signals to build from based on build_from_signal_type
         if build_from_signal_type == "measures":
             assert measures, "If you are building on measures, you must provide measures"
             build_measures = measures
-            build_labels = None
-        else:
-            # "labels"
-            assert labels, "If you are building on labels, you must provide labels"
+            build_labels_value = None
+        else:  # "labels"
+            # Prefer build_labels if provided; otherwise, fall back to labels
+            if build_labels is not None:
+                build_labels_value = build_labels
+            else:
+                assert labels, "If you are building on labels, you must provide labels"
+                build_labels_value = labels
             build_measures = None
-            build_labels = labels
 
-        source_intervals = build_source_intervals(sdk, measures=build_measures, labels=build_labels,
-                                                  patient_id_list=patient_id_list,
-                                                  mrn_list=mrn_list, device_id_list=device_id_list,
-                                                  device_tag_list=device_tag_list, start_time=start_time,
-                                                  end_time=end_time, gap_tolerance=gap_tolerance,
-                                                  merge_strategy=merge_strategy)
+        # Build the source intervals using the build_source_intervals function
+        source_intervals = build_source_intervals(
+            sdk,
+            measures=build_measures,
+            labels=build_labels_value,
+            patient_id_list=patient_id_list,
+            mrn_list=mrn_list,
+            device_id_list=device_id_list,
+            device_tag_list=device_tag_list,
+            start_time=start_time,
+            end_time=end_time,
+            gap_tolerance=gap_tolerance,
+            merge_strategy=merge_strategy
+        )
 
         # Create a DatasetDefinition instance
         kwargs = {
