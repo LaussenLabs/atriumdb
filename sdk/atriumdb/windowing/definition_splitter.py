@@ -112,10 +112,9 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
             partitioned_definition_objects = convert_source_lists_to_definitions(partitioned_source_list, definition)
             if verbose:
                 print(f"Random State: {random_state}")
-                print('-' * 50)
-                for partition in duration_info:
-                    print(partition)
-                print("-" * 50 + "\n")
+                pretty_print_duration_info(duration_info, header="Partition Duration Info",
+                                           priority_labels=priority_stratification_labels,
+                                           additional_labels=additional_labels)
                 return partitioned_definition_objects, duration_info
             return partitioned_definition_objects
 
@@ -128,9 +127,9 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
         for i, trial in enumerate(best_trials[:num_show_best_trials]):
             trial_random_state, trial_ratio_obedience_metric, trial_duration_info = trial[1], trial[0], trial[2]
             print(f"\nTrial {i + 1} - Random State: {trial_random_state}, RMSE: {trial_ratio_obedience_metric}")
-            for partition_info in trial_duration_info:
-                print(partition_info)
-            print("-" * 50)
+            pretty_print_duration_info(trial_duration_info, header=f"Trial {i + 1} Partition Duration Info",
+                                       priority_labels=priority_stratification_labels,
+                                       additional_labels=additional_labels)
 
     # Select the best trial based on the metric.
     best_trial_random_state = best_trials[0][1] if best_trials else random_state
@@ -168,10 +167,9 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     if verbose:
         print("Final partitioning using best trial's random state:")
         print(f"Random State: {best_trial_random_state}")
-        print('-' * 50)
-        for partition in final_duration_info:
-            print(partition)
-        print("-" * 50 + "\n")
+        pretty_print_duration_info(final_duration_info, header="Final Partition Duration Info",
+                                   priority_labels=priority_stratification_labels,
+                                   additional_labels=additional_labels)
         return final_partitioned_definition_objects, final_duration_info
 
     return final_partitioned_definition_objects
@@ -564,3 +562,75 @@ def find_labels(sorted_labels, starts, ends, start_time, end_time):
         end_idx = max(0, end_idx - 1)
 
     return sorted_labels[start_idx:end_idx + 1]
+
+
+def pretty_print_duration_info(duration_info, header=None, priority_labels=None, additional_labels=None,
+                               convert_to_hours=True):
+    # Define fixed column widths.
+    label_width = 50
+    duration_width = 15
+    unique_patients_width = 20
+    # Compute overall line length for separators.
+    line_length = label_width + duration_width + unique_patients_width
+
+    # Determine the time unit string.
+    time_unit = "hours" if convert_to_hours else "nanoseconds"
+
+    if header:
+        print("=" * line_length)
+        print(header.center(line_length))
+        print("=" * line_length)
+
+    for partition in duration_info:
+        partition_id = partition.get("partition", "N/A")
+        print(f"\nPartition {partition_id}".center(line_length))
+        # Print the header row for the table.
+        header_label = "Label"
+        header_duration = f"Duration ({time_unit})"
+        header_unique = "Unique Patients"
+        print(f"{header_label:<{label_width}}{header_duration:>{duration_width}}{header_unique:>{unique_patients_width}}")
+        print("-" * line_length)
+
+        total_priority_duration = 0
+        # Print priority label durations and unique patient counts.
+        if priority_labels:
+            for label in priority_labels:
+                duration_key = f"{label} {time_unit}"
+                unique_patients_key = f"unique patients {label}"
+                duration_val = partition.get(duration_key, 0)
+                unique_patients_val = partition.get(unique_patients_key, 0)
+                # Round duration values to 3 decimal places
+                duration_val = round(duration_val, 3)
+                print(f"{label:<{label_width}}{duration_val:>{duration_width}}{unique_patients_val:>{unique_patients_width}}")
+                total_priority_duration += duration_val
+            overall_priority_unique = partition.get("unique_patients", 0)
+            print(f"{'Total Labelled Data':<{label_width}}{round(total_priority_duration, 3):>{duration_width}}{overall_priority_unique:>{unique_patients_width}}")
+
+        # Print additional label durations and unique patient counts if provided.
+        if additional_labels:
+            print("\nAdditional Labels:")
+            # Optionally print a header for additional labels too.
+            print(f"{header_label:<{label_width}}{header_duration:>{duration_width}}{header_unique:>{unique_patients_width}}")
+            print("-" * line_length)
+            total_additional_duration = 0
+            for label in additional_labels:
+                duration_key = f"{label} (additional) {time_unit}"
+                unique_patients_key = f"unique patients {label} (additional)"
+                duration_val = partition.get(duration_key, 0)
+                unique_patients_val = partition.get(unique_patients_key, 0)
+                # Round duration values to 3 decimal places
+                duration_val = round(duration_val, 3)
+                print(f"{label:<{label_width}}{duration_val:>{duration_width}}{unique_patients_val:>{unique_patients_width}}")
+                total_additional_duration += duration_val
+            # Here, we print only the total duration for additional labels.
+            print(f"{'Total Additional Labelled Data':<{label_width}}{round(total_additional_duration, 3):>{duration_width}}{'':>{unique_patients_width}}")
+
+        # Print total waveform (raw) data info.
+        waveform_key = f"total waveform {time_unit}"
+        total_waveform = partition.get(waveform_key, 0)
+        num_sources = partition.get("num_sources", 0)
+        # Round total waveform duration to 3 decimal places
+        total_waveform = round(total_waveform, 3)
+        print("\n" + "-" * line_length)
+        print(f"{'Total Data':<{label_width}}{total_waveform:>{duration_width}}{num_sources:>{unique_patients_width}}")
+        print("=" * line_length)
