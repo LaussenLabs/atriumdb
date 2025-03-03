@@ -95,11 +95,15 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
                 additional_totals.append(total)
 
         # Gather information about the distribution of durations across partitions.
-        duration_info = get_duration_info(partitioned_durations, priority_stratification_labels,
-                                          partition_source_counts,
-                                          partitioned_source_list=partitioned_source_list,
-                                          additional_durations=additional_totals,
-                                          additional_labels=additional_labels)
+        duration_info = get_duration_info(
+            partitioned_durations,
+            priority_stratification_labels,
+            partition_source_counts,
+            partitioned_source_list=partitioned_source_list,
+            additional_durations=additional_totals,
+            additional_labels=additional_labels,
+            patient_additional_results=patient_additional_results  # NEW parameter for unique patient counts
+        )
         ratio_obedience_metric = evaluate_ratio_obedience_metric(duration_info, partition_ratios)
         trials_results.append((ratio_obedience_metric, trial_random_state, duration_info))
 
@@ -151,11 +155,15 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     final_partitioned_definition_objects = convert_source_lists_to_definitions(partitioned_source_list, definition)
 
     # Gather final information about the distribution of durations across partitions.
-    final_duration_info = get_duration_info(partitioned_durations, priority_stratification_labels,
-                                            partition_source_counts,
-                                            partitioned_source_list=partitioned_source_list,
-                                            additional_durations=additional_totals,
-                                            additional_labels=additional_labels)
+    final_duration_info = get_duration_info(
+        partitioned_durations,
+        priority_stratification_labels,
+        partition_source_counts,
+        partitioned_source_list=partitioned_source_list,
+        additional_durations=additional_totals,
+        additional_labels=additional_labels,
+        patient_additional_results=patient_additional_results  # NEW parameter for unique patient counts
+    )
 
     if verbose:
         print("Final partitioning using best trial's random state:")
@@ -467,6 +475,7 @@ def merge_time_ranges(time_ranges):
 
 def get_duration_info(partitioned_durations, priority_stratification_labels, partition_source_counts,
                       partitioned_source_list=None, additional_durations=None, additional_labels=None,
+                      patient_additional_results=None,
                       convert_to_hours=True):
     duration_info_list = []
     time_units = "hours" if convert_to_hours else "nanoseconds"
@@ -496,6 +505,21 @@ def get_duration_info(partitioned_durations, priority_stratification_labels, par
                 label_key = f"{label} (additional) {time_units}"
                 val = round(add_dur[idx] / (3600 * 1e9), 3) if convert_to_hours else add_dur[idx]
                 duration_info[label_key] = val
+
+        # Add unique patient counts per priority label.
+        if partitioned_source_list is not None:
+            for label_index, label in enumerate(priority_stratification_labels, start=1):
+                unique_patients_label = len(
+                    {item[1] for item in partitioned_source_list[partition_index] if item[3 + label_index] > 0})
+                duration_info[f"unique patients {label}"] = unique_patients_label
+
+            # Add unique patient counts per additional label if available.
+            if additional_labels and patient_additional_results is not None:
+                for idx, label in enumerate(additional_labels):
+                    unique_patients_additional = len({item[1] for item in partitioned_source_list[partition_index]
+                                                      if item[1] in patient_additional_results and
+                                                      patient_additional_results[item[1]][idx] > 0})
+                    duration_info[f"unique patients {label} (additional)"] = unique_patients_additional
 
         duration_info_list.append(duration_info)
 
