@@ -1692,7 +1692,7 @@ class AtriumSDK:
 
         # If metadata connection type is "api", use API method to get the measure ID
         if self.metadata_connection_type == "api":
-            return self._api_get_measure_id(measure_tag, freq_nhz, units, freq_units)
+            return self._api_get_measure_id(measure_tag, freq_nhz, units, "nHz")
 
         # If measure ID is already in the cache, return it
         if (measure_tag, freq_nhz, units) in self._measure_ids:
