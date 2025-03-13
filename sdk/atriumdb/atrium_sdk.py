@@ -4316,7 +4316,8 @@ class AtriumSDK:
                               device_id=None, patient_id=None, start_time=None, end_time=None,
                               timestamp_array=None, sample_period=None, time_units: str = None,
                               out: np.ndarray = None, label_source_list: Optional[List[Union[str, int]]] = None,
-                              measure: Union[int, tuple[str, int | float, str]] = None):
+                              measure: Union[int, tuple[str, int | float, str]] = None,
+                              include_descendants: bool = True):
         """
         Retrieve a time series representation for labels from the database based on specified criteria.
 
@@ -4337,6 +4338,7 @@ class AtriumSDK:
             the results are written into this array in-place. It should be initialized with zeros.
             Otherwise, a new array is allocated.
         :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter by.
+        :param bool include_descendants: Whether to include descendant labels when querying the database.
 
         :return: An array representing the presence of a label for each timestamp. If a label is present at a given timestamp, the value is 1, otherwise 0.
         :rtype: np.ndarray
@@ -4409,7 +4411,8 @@ class AtriumSDK:
         labels = self.get_labels(label_name_id_list=[label_name_id] if label_name_id is not None else None,
                                  device_list=[device_id] if device_id is not None else None, start_time=start_time,
                                  end_time=end_time, patient_id_list=[patient_id] if patient_id is not None else None,
-                                 label_source_list=label_source_list, measure_list=[measure] if measure is not None else None)
+                                 label_source_list=label_source_list, measure_list=[measure] if measure is not None else None,
+                                 include_descendants=include_descendants)
 
         # Create a binary array to indicate presence of a label for each timestamp, if not provided.
         if out is not None:
