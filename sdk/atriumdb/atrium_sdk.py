@@ -4443,7 +4443,8 @@ class AtriumSDK:
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
                      time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
                      shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
-                     end_time=None, num_iterators=1, cache=None) -> Union[DatasetIterator, List[DatasetIterator]]:
+                     end_time=None, num_iterators=1, cache=None, label_exact_match=False) -> Union[
+        DatasetIterator, List[DatasetIterator]]:
         """
         Constructs and returns a `DatasetIterator` object or a list of `DatasetIterator` objects that allow iteration
         over the dataset according to the specified definition.
@@ -4522,6 +4523,8 @@ class AtriumSDK:
             datasets takes a long time, so using a disk cache will ensure you only need to do that work once.
             The default value (or setting cache=None) will not use the cache.
         :param int num_iterators: Number of iterators to create by partitioning the dataset (default is 1).
+        :param bool label_exact_match: If True, labels will be matched exactly as requested, and child labels will not be returned
+            when their parent is requested. If False, child labels will be included when their parent is requested.
 
         :return: A single DatasetIterator object or a list of DatasetIterator objects depending on the value of num_iterators.
         :rtype: Union[DatasetIterator, List[DatasetIterator]]
@@ -4602,7 +4605,7 @@ class AtriumSDK:
                                              num_windows_prefetch, "ns", label_threshold, iterator_type,
                                              window_filter_fn, shuffle, cached_windows_per_source,
                                              patient_history_fields, start_time_n, end_time_n, num_iterators=1,
-                                             cache=cache)
+                                             cache=cache, label_exact_match=label_exact_match)
                 iterators.append(iterator)
 
             return iterators
@@ -4643,13 +4646,14 @@ class AtriumSDK:
                 self, definition,
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, max_cache_duration=max_cache_duration_per_source,
-                shuffle=shuffle, patient_history_fields=patient_history_fields, cache_dir=cache)
+                shuffle=shuffle, patient_history_fields=patient_history_fields, cache_dir=cache,
+                label_exact_match=label_exact_match)
         elif iterator_type == 'lightmapped':
             iterator = LightMappedIterator(
                 self, definition,
                 window_duration, window_slide,
                 label_threshold=label_threshold, shuffle=shuffle,
-                patient_history_fields=patient_history_fields)
+                patient_history_fields=patient_history_fields, label_exact_match=label_exact_match)
         elif iterator_type == 'filtered':
             if window_filter_fn is None:
                 raise ValueError("window_filter_fn must be provided when iterator_type is 'filtered'")
@@ -4658,13 +4662,15 @@ class AtriumSDK:
                 window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                 label_threshold=label_threshold, window_filter_fn=window_filter_fn,
                 max_cache_duration=max_cache_duration_per_source, shuffle=shuffle,
-                patient_history_fields=patient_history_fields, cache_dir=cache)
+                patient_history_fields=patient_history_fields, cache_dir=cache,
+                label_exact_match=label_exact_match)
         elif iterator_type == "iterator":
             iterator = DatasetIterator(self, definition,
                                        window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
                                        label_threshold=label_threshold, shuffle=shuffle,
                                        max_cache_duration=max_cache_duration_per_source,
-                                       patient_history_fields=patient_history_fields, cache_dir=cache)
+                                       patient_history_fields=patient_history_fields, cache_dir=cache,
+                                       label_exact_match=label_exact_match)
         else:
             raise ValueError("iterator_type must be either 'mapped', 'lightmapped','filtered' or 'iterator'")
 

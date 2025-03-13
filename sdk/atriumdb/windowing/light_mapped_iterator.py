@@ -30,10 +30,11 @@ from atriumdb.windowing.windowing_functions import get_threshold_labels, find_cl
 class LightMappedIterator(DatasetIterator):
     def __init__(self, sdk, definition,
                  window_duration_ns: int, window_slide_ns: int, label_threshold=0.5,
-                 shuffle=False, patient_history_fields: list = None, allow_partial_windows = True):
+                 shuffle=False, patient_history_fields: list = None, allow_partial_windows = True, label_exact_match=False):
         if not definition.is_validated:
             definition.validate(sdk=sdk)
 
+        self.label_exact_match = label_exact_match
         # Extract validated data from the definition
         validated_data = definition.validated_data_dict
         # List of validated measures. Each item is a "measure_info" from sdk data.
@@ -220,7 +221,8 @@ class LightMappedIterator(DatasetIterator):
                     start_time=window_start_time,
                     end_time=window_start_time + self.window_duration_ns,
                     timestamp_array=label_timestamp_array,
-                    out=label_time_series[idx]
+                    out=label_time_series[idx],
+                    include_descendants=not self.label_exact_match,
                 )
             label = (np.mean(label_time_series, axis=1) > self.label_threshold).astype(np.int8)
 

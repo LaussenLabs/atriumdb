@@ -51,14 +51,17 @@ class DatasetIterator:
                                            The time range will be split accordingly. The duration must be larger than window_duration_ns.
     :param list patient_history_fields: A list of patient_history fields you would like returned in the Window object.
     :param str cache_dir: A directory, if specified, caches the results of _extract_cache_info to speed up future iterations. Setting to None will disable the cache.
+    :param bool label_exact_match: If True, labels will be matched exactly as requested, and child labels will not be returned
+        when their parent is requested. If False, child labels will be included when their parent is requested.
     """
 
     def __init__(self, sdk, definition,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None, label_threshold=0.5,
-                 shuffle=False, max_cache_duration=None, patient_history_fields: list = None, cache_dir=None):
+                 shuffle=False, max_cache_duration=None, patient_history_fields: list = None, cache_dir=None, label_exact_match=False):
         if not definition.is_validated:
             definition.validate(sdk=sdk)
 
+        self.label_exact_match = label_exact_match
         # Extract validated data from the definition
         validated_data = definition.validated_data_dict
         # List of validated measures. Each item is a "measure_info" from sdk data.
@@ -366,7 +369,8 @@ class DatasetIterator:
 
             sliced_labels, threshold_labels = get_label_dictionary(
                 self.sdk, device_id, query_patient_id, source_batch_start_time, source_batch_end_time, self.label_sets,
-                self.label_threshold, range_num_windows, self.row_period_ns, self.row_size, self.slide_size)
+                self.label_threshold, range_num_windows, self.row_period_ns, self.row_size, self.slide_size,
+                label_exact_match=self.label_exact_match)
 
             patient_history_fields = self.patient_history_fields
 

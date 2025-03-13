@@ -31,7 +31,7 @@ class MappedIterator(DatasetIterator):
     def __init__(self, sdk, definition,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
                  label_threshold=0.5, shuffle=False, max_cache_duration=None,
-                 patient_history_fields: list = None, cache_dir=None):
+                 patient_history_fields: list = None, cache_dir=None, label_exact_match=False):
         super().__init__(
             sdk=sdk,
             definition=definition,
@@ -43,6 +43,7 @@ class MappedIterator(DatasetIterator):
             max_cache_duration=max_cache_duration,
             patient_history_fields=patient_history_fields,
             cache_dir=cache_dir,
+            label_exact_match=label_exact_match,
         )
 
         pass

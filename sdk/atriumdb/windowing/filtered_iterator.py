@@ -39,7 +39,7 @@ class FilteredDatasetIterator(DatasetIterator):
     def __init__(self, sdk, definition,
                  window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
                  label_threshold=0.5, shuffle=False, max_cache_duration=None, window_filter_fn=None,
-                 patient_history_fields: list = None, cache_dir=None):
+                 patient_history_fields: list = None, cache_dir=None, label_exact_match=False):
         super().__init__(
             sdk=sdk,
             definition=definition,
@@ -51,6 +51,7 @@ class FilteredDatasetIterator(DatasetIterator):
             max_cache_duration=max_cache_duration,
             patient_history_fields=patient_history_fields,
             cache_dir=cache_dir,
+            label_exact_match=label_exact_match,
         )
         self.window_filter_fn = window_filter_fn
 
@@ -75,7 +76,7 @@ class FilteredDatasetIterator(DatasetIterator):
 
             sliced_labels, threshold_labels = get_label_dictionary(
                 self.sdk, device_id, query_patient_id, source_batch_start_time, source_batch_end_time, self.label_sets,
-                self.label_threshold, range_num_windows, self.row_period_ns, self.row_size, self.slide_size)
+                self.label_threshold, range_num_windows, self.row_period_ns, self.row_size, self.slide_size, label_exact_match=self.label_exact_match)
 
             patient_history_fields = self.patient_history_fields
 

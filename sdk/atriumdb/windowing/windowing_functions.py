@@ -98,7 +98,7 @@ def get_signal_dictionary(sdk, device_id, query_patient_id, window_duration_ns, 
 
 
 def get_label_data(device_id, query_patient_id, batch_start_time, batch_end_time, batch_time_array, sdk,
-                   row_size, slide_size, label_sets, label_threshold):
+                   row_size, slide_size, label_sets, label_threshold, label_exact_match=False):
     sliced_labels, threshold_labels = None, None
     # If labels exist, calculate them
     if len(label_sets) > 0:
@@ -114,7 +114,8 @@ def get_label_data(device_id, query_patient_id, batch_start_time, batch_end_time
                 start_time=batch_start_time,
                 end_time=batch_end_time,
                 timestamp_array=batch_time_array,
-                out=label_matrix[idx]
+                out=label_matrix[idx],
+                include_descendants=not label_exact_match,
             )
 
         # Create label windows
@@ -127,13 +128,13 @@ def get_label_data(device_id, query_patient_id, batch_start_time, batch_end_time
 
 
 def get_label_dictionary(sdk, device_id, query_patient_id, source_batch_start_time, source_batch_end_time, label_sets,
-                         label_threshold, range_num_windows, row_period_ns, row_size, slide_size):
+                         label_threshold, range_num_windows, row_period_ns, row_size, slide_size, label_exact_match=False):
     range_size = row_size + (range_num_windows - 1) * slide_size
     quantized_end_time = source_batch_start_time + (range_size * row_period_ns)
     source_time_array = np.arange(source_batch_start_time, quantized_end_time, row_period_ns)
     sliced_labels, threshold_labels = get_label_data(
         device_id, query_patient_id, source_batch_start_time, source_batch_end_time, source_time_array,
-        sdk, row_size, slide_size, label_sets, label_threshold
+        sdk, row_size, slide_size, label_sets, label_threshold, label_exact_match=label_exact_match
     )
     return sliced_labels, threshold_labels
 
