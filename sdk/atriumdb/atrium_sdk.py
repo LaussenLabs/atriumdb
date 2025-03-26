@@ -4137,9 +4137,9 @@ class AtriumSDK:
         if name:
             label_name_id = self.get_label_name_id(name)
 
-        parent_id, _ = self.sql_handler.select_label_name_parent(label_name_id)
-        if parent_id:
-            return self.get_label_name_info(parent_id)
+        result = self.sql_handler.select_label_name_parent(label_name_id)
+        if result:
+            return self.get_label_name_info(result[0])
         else:
             return None
 
