@@ -17,65 +17,62 @@
 
 import yaml
 import os
+import pickle
 import warnings
 import json
 import numpy as np
 
+from atriumdb.adb_functions import time_unit_options
 from atriumdb.windowing.definition_builder import build_source_intervals
+from atriumdb.windowing.verify_definition import verify_definition
+from atriumdb.windowing.windowing_functions import get_signal_dictionary, get_label_dictionary, get_window_list, \
+    _load_patient_cache
 
 
 class DatasetDefinition:
     """
-    Encapsulates the Dataset Definition in a YAML format.
+    Encapsulates the Dataset Definition in YAML or binary format.
 
-    The ``DefinitionYAML`` class represents the definition of dataset sources
+    The ``DatasetDefinition`` class represents the definition of dataset sources
     (devices or patients), their associated time regions, and the available signals
     over those time regions for the respective sources, along with any labels
-    associated with these sources.
+    associated with these sources. It also supports validation and filtering of the dataset
+    definition, which can then be saved in a binary format using pickle so you don't have to repeat the validation
+    and/or filtering steps for repeated runs.
 
     :ivar data_dict: A dictionary containing the structured data from the YAML file
                      or passed parameters. The keys include 'measures', 'patient_ids',
                      'mrns', 'device_ids', 'device_tags', and 'labels'.
+    :ivar validated_data_dict: A dictionary containing validated data after a successful validation process.
+                               Populated only after calling the `validate` method.
+    :ivar is_validated: A boolean flag indicating whether the dataset has been successfully validated.
 
-    :param filename: Path to the YAML file containing the dataset definition. If
-                     provided, the contents of the file will populate `data_dict`. The
-                     YAML format is described in detail at :ref:`definition_file_format`.
-    :type filename: str, optional
-
-    :param measures: List of requested measures to be considered. Measures can be:
+    :param filename: (str, optional) Path to the YAML or pickle file containing the dataset definition. If
+                     provided, the contents of the file will populate `data_dict`. If the file extension is
+                     `.pkl`, the validated dataset definition is loaded instead.
+    :param measures: (list, optional) List of requested measures to be considered. Measures can be:
                      1. Just a tag (string) representing the measure.
                      2. A dictionary specifying the measure tag, its frequency in Hertz, and its units.
                      Example: [{"tag": "ECG", "freq_hz": 300, "units": "mV"}]
-    :type measures: list, optional
-
-    :param patient_ids: Dictionary containing patient identifiers with their associated
+    :param patient_ids: (dict, optional) Dictionary containing patient identifiers with their associated
                         time specifications. The specifications can be interval-based, event-based,
                         or the keyword 'all' to indicate all available time data for the given patient.
                         Example: {1234567: "all", 7654321: [{'start': 123456000 * 10**9, 'end': 123457000 * 10**9}]}
-    :type patient_ids: dict, optional
-
-    :param mrns: Dictionary containing medical record numbers. Each MRN can have associated
+    :param mrns: (dict, optional) Dictionary containing medical record numbers. Each MRN can have associated
                  time specifications (interval-based, event-based) or 'all' indicating all available
                  time data for the given MRN.
                  Example: {1234567: "all", 7654321: [{'start': 123456000 * 10**9, 'end': 123457000 * 10**9}]}
-    :type mrns: dict, optional
-
-    :param device_ids: Dictionary containing device identifiers, each associated with its time
+    :param device_ids: (dict, optional) Dictionary containing device identifiers, each associated with its time
                        specifications. The specifications can be interval, event, or 'all' for all
                        available time data.
                        Example: {1: "all", 14: [{'time0': 123456000 * 10**9, 'pre': 1000 * 10**9, 'post': 3000 * 10**9}]}
-    :type device_ids: dict, optional
-
-    :param device_tags: Dictionary containing device tags. Each tag is mapped to its respective
+    :param device_tags: (dict, optional) Dictionary containing device tags. Each tag is mapped to its respective
                         time specifications, which can be interval-based, event-based, or simply 'all'.
                         Example: {"dev_1": "all", "dev_2b": [{'start': 123456000 * 10**9}]}
-    :type device_tags: dict, optional
-
-    :param labels: List of strings, each representing a unique label associated with the dataset elements
+    :param labels: (list, optional) List of strings, each representing a unique label associated with the dataset elements
                    (such as patient conditions or device states). These labels can be used for classification,
                    segmentation, or other forms of analysis.
                    Example: ["Sinus rhythm", "Junctional ectopic tachycardia (JET)", "arrhythmia"]
-    :type labels: list, optional
 
     .. note:: For more details on the format expectations, see :ref:`definition_file_format`.
 
@@ -84,6 +81,10 @@ class DatasetDefinition:
     **Reading from an existing YAML file**:
 
     >>> dataset_definition = DatasetDefinition(filename="/path/to/my_definition.yaml")
+
+    **Reading from an existing validated pickle file**:
+
+    >>> dataset_definition = DatasetDefinition(filename="/path/to/my_validated_definition.pkl")
 
     **Creating an empty definition**:
 
@@ -99,9 +100,30 @@ class DatasetDefinition:
 
     >>> dataset_definition.add_label("new_label")
 
+    **Validating a definition**:
+
+    >>> dataset_definition.validate(sdk=my_sdk)
+    >>> print(dataset_definition.is_validated)
+    ... True
+
     **Saving the definition to a YAML file**:
 
     >>> dataset_definition.save(filepath="path/to/saved/definition.yaml")
+
+    **Saving a validated definition to a pickle file**:
+
+    >>> dataset_definition.save(filepath="path/to/saved/definition.pkl")
+
+    **Filtering a validation definition**:
+
+    >>> def my_filter_fn(window):
+    ...     # Require more than 5 values from example_measure
+    ...     return window.signals[("example_measure", 1.0, "units")]['actual_count'] > 5
+    >>> dataset_definition.filter(sdk=my_sdk, filter_fn=my_filter_fn, window_duration=1_000_000_000, window_slide=1_000_000_000)
+
+    **Saving a filtered definition**:
+
+    >>> dataset_definition.save(filepath="path/to/saved/filtered_definition.pkl")
     """
 
     def __init__(self, filename=None, measures=None, patient_ids=None, mrns=None, device_ids=None,
@@ -114,24 +136,41 @@ class DatasetDefinition:
             'device_tags': device_tags if device_tags is not None else {},
             'labels': labels if labels is not None else [],
         }
+        # Check format and convert data as before
+        self._check_format_and_convert_data()
+
+        self.validated_data_dict = {}
+        self.is_validated = False
+        self.validated_gap_tolerance = None
+        self.filtered_window_size = None
+        self.filtered_window_slide = None
 
         if filename:
-            self.read_yaml(filename)
+            _, ext = os.path.splitext(filename)
+            if ext == '.pkl':
+                # Load from pickle
+                self._load_validated_pickle(filename)
+            elif ext in ['.yaml', '.yml']:
+                # Assume YAML
+                self.read_yaml(filename)
+                self._check_format_and_convert_data()
+            else:
+                raise ValueError("Unsupported file extension '{}', must be .pkl, .yaml or .yml".format(ext))
 
-        # Validate and convert the data
-        self._validate_and_convert_data()
+
 
     @classmethod
-    def build_from_intervals(cls, sdk, build_from_signal_type, measures=None, labels=None, patient_id_list=None,
-                             mrn_list=None, device_id_list=None, device_tag_list=None, start_time=None, end_time=None,
-                             gap_tolerance=None, merge_strategy=None):
+    def build_from_intervals(cls, sdk, build_from_signal_type, measures=None, labels=None, build_labels=None,
+                             patient_id_list=None, mrn_list=None, device_id_list=None, device_tag_list=None,
+                             start_time=None, end_time=None, gap_tolerance=None, merge_strategy=None):
         """
         Class method that builds a DatasetDefinition object using signal-based intervals.
 
         :param sdk: Data SDK used to interact with the database or data service
         :param build_from_signal_type: Signal type to build from, either "measures" or "labels"
         :param measures: List of measures to build from, if applicable
-        :param labels: List of labels to build from, if applicable
+        :param labels: List of labels for the definition (used to build by labels, if build_labels is not provided).
+        :param build_labels: Optional alternative list of labels to use for building intervals when build_from_signal_type is "labels".
         :param patient_id_list: List of patient IDs
         :param mrn_list: List of medical record numbers
         :param device_id_list: List of device IDs
@@ -150,23 +189,34 @@ class DatasetDefinition:
         if build_from_signal_type not in ["measures", "labels"]:
             raise ValueError("build_from_signal_type must be either 'measures' or 'labels'")
 
-        # Build the source intervals using the build_source_intervals function
+        # Determine which signals to build from based on build_from_signal_type
         if build_from_signal_type == "measures":
             assert measures, "If you are building on measures, you must provide measures"
             build_measures = measures
-            build_labels = None
-        else:
-            # "labels"
-            assert labels, "If you are building on labels, you must provide labels"
+            build_labels_value = None
+        else:  # "labels"
+            # Prefer build_labels if provided; otherwise, fall back to labels
+            if build_labels is not None:
+                build_labels_value = build_labels
+            else:
+                assert labels, "If you are building on labels, you must provide labels"
+                build_labels_value = labels
             build_measures = None
-            build_labels = labels
 
-        source_intervals = build_source_intervals(sdk, measures=build_measures, labels=build_labels,
-                                                  patient_id_list=patient_id_list,
-                                                  mrn_list=mrn_list, device_id_list=device_id_list,
-                                                  device_tag_list=device_tag_list, start_time=start_time,
-                                                  end_time=end_time, gap_tolerance=gap_tolerance,
-                                                  merge_strategy=merge_strategy)
+        # Build the source intervals using the build_source_intervals function
+        source_intervals = build_source_intervals(
+            sdk,
+            measures=build_measures,
+            labels=build_labels_value,
+            patient_id_list=patient_id_list,
+            mrn_list=mrn_list,
+            device_id_list=device_id_list,
+            device_tag_list=device_tag_list,
+            start_time=start_time,
+            end_time=end_time,
+            gap_tolerance=gap_tolerance,
+            merge_strategy=merge_strategy
+        )
 
         # Create a DatasetDefinition instance
         kwargs = {
@@ -180,11 +230,205 @@ class DatasetDefinition:
         dataset_def = cls(**kwargs)
         return dataset_def
 
+    def validate(self, sdk, gap_tolerance=None, measure_tag_match_rule="best", start_time=None, end_time=None,
+                 time_units: str = "ns"):
+        """
+        Verifies and validates a dataset definition against the given SDK, ensuring the data specified actually exists.
+
+        :param sdk: SDK object to validate the definition against.
+        :param gap_tolerance: (int, optional) Minimum allowed gap size in nanoseconds for continuous time ranges.
+        :param measure_tag_match_rule: (str, optional) "best" or "all" to determine matching strategy for measure tags.
+        :param start_time: (int, optional) Global start time in the specified `time_units`.
+        :param end_time: (int, optional) Global end time in the specified `time_units`.
+        :param time_units: (str, optional) Units for interpreting time parameters. Defaults to "ns".
+        :raises ValueError: If validation fails or input parameters are invalid.
+
+        **Examples**:
+
+        >>> my_sdk = AtriumSDK(dataset_location)
+        >>> dataset_definition.validate(sdk=my_sdk, gap_tolerance=100, start_time=1735845426, end_time=1737236445, time_units="s")
+        """
+        start_time_n = None if start_time is None else int(start_time * time_unit_options[time_units])
+        end_time_n = None if end_time is None else int(end_time * time_unit_options[time_units])
+        gap_tolerance_n = None if gap_tolerance is None else int(gap_tolerance * time_unit_options[time_units])
+
+        validated_measure_list, validated_label_set_list, mapped_sources = verify_definition(
+            self, sdk=sdk, gap_tolerance=gap_tolerance_n, measure_tag_match_rule=measure_tag_match_rule,
+            start_time_n=start_time_n, end_time_n=end_time_n)
+
+        self.validated_data_dict = {
+            "measures": validated_measure_list,
+            "labels": validated_label_set_list,
+            "sources": mapped_sources,
+        }
+
+        self.is_validated = True
+        self.validated_gap_tolerance = gap_tolerance_n
+
+    def filter(self, sdk, filter_fn, window_duration=None, window_slide=None, time_units='ns',
+               allow_partial_windows=True, label_threshold=0.5, patient_history_fields=None):
+        """
+        Filters the dataset definition using a custom filter function.
+
+        Your custom filter function must take a window object like those passed by AtriumSDK.get_iterator
+        It should return True to accept the Window, and False to reject the Window.
+
+        :param sdk: SDK object to retrieve and process data for filtering.
+        :param filter_fn: Callable to filter dataset windows. Should return True for accepted windows.
+        :param window_duration: (int, optional) Duration of each window in specified `time_units`.
+        :param window_slide: (int, optional) Sliding interval for the windows in specified `time_units`.
+        :param time_units: (str, optional) Units for window size and slide. One of "ns", "us", "ms", or "s".
+        :param allow_partial_windows: (bool, optional) Whether to include partially filled windows. Defaults to True.
+        :param label_threshold: (float, optional) Minimum label coverage threshold for inclusion. Defaults to 0.5.
+        :param patient_history_fields: (list, optional) Additional fields from patient history to include in the window object.
+        :raises ValueError: If the definition is not validated or parameters are invalid.
+
+        **Examples**:
+
+        >>> my_sdk = AtriumSDK(dataset_location)
+        >>> def my_filter_fn(window):
+        ...     # Require more than 5 values from example_measure
+        ...     return window.signals[("example_measure", 1.0, "units")]['actual_count'] > 5
+        >>> dataset_definition.filter(sdk=my_sdk, filter_fn=my_filter_fn, window_duration=1_000_000_000, window_slide=1_000_000_000)
+        """
+        if not self.is_validated:
+            raise ValueError("Definition must be validated before filtering, run DatasetDefinition.validate()")
+        time_units = "ns" if time_units is None else time_units
+        if time_units not in time_unit_options.keys():
+            raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
+
+        if window_duration is None or window_slide is None:
+            raise ValueError("Both window duration and window slide must be specified.")
+
+        # convert to nanoseconds
+        window_duration = int(window_duration * time_unit_options[time_units])
+        window_slide = int(window_slide * time_unit_options[time_units])
+
+        if self.filtered_window_size is not None and self.filtered_window_size != window_duration:
+            warnings.warn(f"Definition has already been filtered with different window duration "
+                          f"{self.filtered_window_size} ns. Refiltering will alter the window positions.")
+
+        # Warn if the new window slide differs from a previously set one
+        if self.filtered_window_slide is not None and self.filtered_window_slide != window_slide:
+            warnings.warn(
+                f"Definition has already been filtered with a different window slide "
+                f"({self.filtered_window_slide} ns). Refiltering will alter the window positions."
+            )
+
+        highest_freq_nhz = max([measure['freq_nhz'] for measure in self.validated_data_dict['measures']])
+        row_size = int((highest_freq_nhz * window_duration) // (10 ** 18))
+        slide_size = int((highest_freq_nhz * window_slide) // (10 ** 18))
+        row_period_ns = int((10 ** 18) // highest_freq_nhz)
+
+        filtered_sources = {}
+        patient_info_cache = {}
+        patient_history_cache = {}
+        for source_type, sources in self.validated_data_dict['sources'].items():
+            if source_type == "patient_ids":
+                # Can't filter without device information
+                filtered_sources[source_type] = sources
+                continue
+
+            filtered_sources[source_type] = {}
+            for source_id, time_ranges in sources.items():
+                if source_type == "device_ids":
+                    device_id = source_id
+                    patient_id = None
+                elif source_type == "device_patient_tuples":
+                    device_id, patient_id = source_id
+                else:
+                    raise ValueError(
+                        f"Source type must be either device_ids or device_patient_tuples, not {source_type}")
+                filtered_sources[source_type][source_id] = []
+                if patient_id is not None:
+                    _load_patient_cache(patient_id, patient_info_cache, patient_history_cache, sdk, patient_history_fields)
+
+                for start_time, end_time in time_ranges:
+                    duration = end_time - start_time
+                    if duration <= 0 or (not allow_partial_windows and duration < window_duration):
+                        continue
+
+                    # Calculate number of windows
+                    num_windows = int((duration - window_duration) // window_slide) + 1
+                    if allow_partial_windows and ((duration - window_duration) % window_slide > 0):
+                        num_windows += 1
+
+                    if num_windows <= 0:
+                        continue
+
+                    # Get data for each measure
+                    data_dictionary = get_signal_dictionary(
+                        sdk, device_id, None, window_duration, window_slide,
+                        self.validated_data_dict['measures'], start_time, end_time, num_windows, start_time, end_time)
+
+                    sliced_labels, threshold_labels = get_label_dictionary(
+                        sdk, device_id, None, start_time, end_time,
+                        self.validated_data_dict['labels'],
+                        label_threshold, num_windows, row_period_ns, row_size, slide_size)
+
+                    batch_window_list = get_window_list(device_id, patient_id, self.validated_data_dict['measures'], data_dictionary,
+                                                        start_time, num_windows, window_duration,
+                                                        threshold_labels, sliced_labels, patient_history_cache,
+                                                        patient_history_fields, patient_info_cache)
+
+                    accepted_intervals = []
+                    current_interval_start = None
+                    current_interval_end = None
+
+                    for window in batch_window_list:
+                        window_start_time = window.start_time
+                        window_end_time = window_start_time + window_duration
+                        if window_end_time > end_time:
+                            window_end_time = end_time
+
+                        if filter_fn(window):
+                            # If we have no active interval, start one
+                            if current_interval_start is None:
+                                current_interval_start = window_start_time
+                                current_interval_end = window_end_time
+                            else:
+                                # Check if contiguous or overlapping with the last accepted interval
+                                if window_start_time <= current_interval_end:
+                                    # Merge intervals if overlapping or contiguous
+                                    if window_end_time > current_interval_end:
+                                        current_interval_end = window_end_time
+                                else:
+                                    # Non-contiguous, finalize the previous interval
+                                    accepted_intervals.append([current_interval_start, current_interval_end])
+                                    # Start a new interval
+                                    current_interval_start = window_start_time
+                                    current_interval_end = window_end_time
+                        else:
+                            # Rejected window breaks any ongoing accepted interval
+                            if current_interval_start is not None:
+                                accepted_intervals.append([current_interval_start, current_interval_end])
+                                current_interval_start = None
+                                current_interval_end = None
+
+                    # If we ended with an active interval, finalize it
+                    if current_interval_start is not None:
+                        accepted_intervals.append([current_interval_start, current_interval_end])
+
+                    # accepted_intervals now holds all sub-intervals from [start_time, end_time]
+                    # that passed the filter. We add these intervals to filtered_sources.
+                    filtered_sources[source_type][source_id].extend(accepted_intervals)
+
+        # Update the filtered_window_size and filtered_window_slide
+        self.validated_data_dict['sources'] = filtered_sources
+        self.filtered_window_size = window_duration
+        self.filtered_window_slide = window_slide
+
     def read_yaml(self, filename):
         try:
             with open(filename, 'r') as file:
                 loaded_data = yaml.load(file, Loader=yaml.FullLoader)
                 for key, value in loaded_data.items():
+                    if key == "measures":
+                        # Convert measure lists to tuples
+                        value = [
+                            tuple(item) if isinstance(item, list) else item
+                            for item in value
+                        ]
                     if key in self.data_dict:
                         self.data_dict[key] = value
                     else:
@@ -194,30 +438,45 @@ class DatasetDefinition:
         except yaml.YAMLError as err:
             raise ValueError("An error occurred while reading the YAML file.") from err
 
-    def _validate_and_convert_data(self):
+    def _check_format_and_convert_data(self):
         # Convert any numpy types to native Python
         self.data_dict = convert_numpy_types(self.data_dict)
 
         # Validate measures
         seen = set()
         for measure in self.data_dict['measures']:
-            # convert dict to string to make it hashable
-            measure_str = json.dumps(measure, sort_keys=True) if isinstance(measure, dict) else measure
-            if measure_str in seen:
-                raise ValueError(f"Duplicate measure found: {measure}")
-            seen.add(measure_str)
-            if not isinstance(measure, (str, dict)):
-                raise ValueError("Measure must be a string or a dictionary")
-            if isinstance(measure, dict):
+            if isinstance(measure, tuple):
+                # Ensure tuple has the format (str, float|int, str)
+                if len(measure) != 3 or not isinstance(measure[0], str) or \
+                   not isinstance(measure[1], (float, int)) or not isinstance(measure[2], str):
+                    raise ValueError(
+                        f"Invalid measure tuple: {measure}. Must be (str, float|int, str)"
+                    )
+            elif isinstance(measure, dict):
+                # Validate measure dictionary
                 if 'tag' not in measure or ('freq_hz' not in measure and 'freq_nhz' not in measure) or 'units' not in measure:
-                    raise ValueError("Measure dictionary must contain 'tag', 'freq_hz' (or 'freq_nhz'), and 'units' keys")
+                    raise ValueError(
+                        "Measure dictionary must contain 'tag', 'freq_hz' (or 'freq_nhz'), and 'units' keys"
+                    )
+                # Convert dict to string to make it hashable
+                measure_str = json.dumps(measure, sort_keys=True)
+                if measure_str in seen:
+                    raise ValueError(f"Duplicate measure found: {measure}")
+                seen.add(measure_str)
+            elif isinstance(measure, str):
+                # Handle measure as string
+                if measure in seen:
+                    raise ValueError(f"Duplicate measure found: {measure}")
+                seen.add(measure)
+            else:
+                raise ValueError("Measure must be a string, dictionary, or tuple (str, float|int, str)")
 
         # Validate labels
         if not isinstance(self.data_dict['labels'], list):
             raise ValueError("labels must be a list or None.")
         for label_name in self.data_dict['labels']:
-            if not isinstance(self.data_dict['labels'], list):
-                raise ValueError("labels must be a list or None.")
+            if not isinstance(label_name, str):
+                raise ValueError(f"Label {label_name} must be a string")
 
         # Validate and convert patient_ids
         for patient_id, times in self.data_dict['patient_ids'].items():
@@ -305,6 +564,8 @@ class DatasetDefinition:
         else:
             self.data_dict['measures'].append(measure_tag)
 
+        return self
+
     def add_label(self, label_name):
         """
         Adds a new label to the definition.
@@ -330,6 +591,8 @@ class DatasetDefinition:
             raise ValueError(f"The label '{label_name}' is already present in the definition.")
         else:
             self.data_dict['labels'].append(label_name)
+
+        return self
 
     def add_region(self, patient_id=None, mrn=None, device_id=None, device_tag=None, start=None, end=None, time0=None,
                    pre=None, post=None):
@@ -404,9 +667,13 @@ class DatasetDefinition:
         else:
             raise ValueError("One of patient_id, mrn, device_id, device_tag must be specified.")
 
+        return self
+
     def save(self, filepath, force=False):
         """
-        Saves the definition to a YAML file.
+        Saves the definition to a file. If the extension is `.yaml` or `.yml`,
+        saves the original data_dict as YAML. If the extension is `.pkl`,
+        saves the validated dataset definition using pickle.
 
         :param filepath: Path where the YAML file should be saved.
         :type filepath: str
@@ -419,21 +686,60 @@ class DatasetDefinition:
         **Examples**:
 
         >>> dataset_definition.save(filepath="path/to/saved/definition.yaml")
+        >>> dataset_definition.validate(sdk=my_sdk)
+        >>> # Save validated binary dataset definition.
+        >>> dataset_definition.save(filepath="path/to/definition.pkl", force=True)  # force=True overwrites file.
         """
         # Check if the file already exists
         if os.path.exists(filepath) and not force:
             raise OSError("File already exists, to overwrite set force=True")
 
-        # Check file extension
         _, ext = os.path.splitext(filepath)
-        if ext not in ['.yaml', '.yml']:
-            raise ValueError("File extension must be yaml/yml.")
+        if ext in ['.yaml', '.yml']:
+            # YAML save
+            converted_data = convert_numpy_types(self.data_dict)
+            with open(filepath, 'w') as file:
+                yaml.dump(converted_data, file, sort_keys=False)
+        elif ext == '.pkl':
+            # Pickle save
+            if not self.is_validated:
+                raise ValueError("Dataset can't be saved as a validated dataset because it has not been validated "
+                                 "yet, call DatasetDefinition.validate() in order to validate it.")
 
-        # Save the dataset definition to a YAML file
-        converted_data = convert_numpy_types(self.data_dict)
-        with open(filepath, 'w') as file:
-            yaml.dump(converted_data, file, sort_keys=False)
+            data_to_save = {
+                "data_dict": self.data_dict,
+                "validated_data_dict": self.validated_data_dict,
+                "is_validated": self.is_validated,
+                "validated_gap_tolerance": self.validated_gap_tolerance,
+                "filtered_window_size": self.filtered_window_size,
+                "filtered_window_slide": self.filtered_window_slide,
+            }
+            with open(filepath, 'wb') as f:
+                pickle.dump(data_to_save, f)
+        else:
+            raise ValueError("File extension must be yaml/yml or pkl.")
 
+    def _load_validated_pickle(self, filename):
+        """
+        Internal method to load a validated dataset definition from a pickle file.
+        """
+        if not os.path.exists(filename):
+            raise FileNotFoundError("The specified file does not exist.")
+
+        with open(filename, 'rb') as f:
+            loaded_data = pickle.load(f)
+
+        required_keys = ["data_dict", "validated_data_dict", "is_validated"]
+        for key in required_keys:
+            if key not in loaded_data:
+                raise ValueError(f"Loaded pickle does not contain required key '{key}'")
+
+        self.data_dict = loaded_data["data_dict"]
+        self.validated_data_dict = loaded_data["validated_data_dict"]
+        self.is_validated = loaded_data["is_validated"]
+        self.validated_gap_tolerance = loaded_data["validated_gap_tolerance"]
+        self.filtered_window_size = loaded_data["filtered_window_size"]
+        self.filtered_window_slide = loaded_data["filtered_window_slide"]
 
 def convert_numpy_types(data):
     if isinstance(data, dict):

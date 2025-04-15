@@ -1489,15 +1489,11 @@ class AtriumSDK:
     def load_definition(self, definition, gap_tolerance=None, measure_tag_match_rule="best",
                         start_time=None, end_time=None, time_units: str = "ns", cache_dir=None):
         """
-        Load and validate a dataset definition, then initialize device and time ranges for data fetching.
+        Preloads the metadata blocks for a dataset definition, then initialize device and time ranges for data fetching.
 
-        This method validates the provided `definition` against dataset attributes to ensure accurate mapping of measures,
-        labels, and devices (or patients). Time ranges for each specified device are merged and cached to optimize
-        data retrieval, with the resulting device-time configuration used to fetch block metadata.
+        This method validates the provided DatasetDefinition object if its not already validated.
 
-        :param definition: The dataset definition specifying measures, devices (or patients), and optional time ranges to include.
-            It should be either a `DefinitionYAML` instance or a dictionary.
-        :type definition: DefinitionYAML or dict
+        :param DatasetDefinition definition: The dataset definition specifying measures, devices (or patients), and optional time ranges to include.
         :param int gap_tolerance: Tolerance for gaps between consecutive time intervals when "all" is specified in the
             definition, in the units specified by `time_units`. Defaults to 1 minute (60_000_000_000 nanoseconds).
         :param str measure_tag_match_rule: Rule for matching tags in measures; defaults to "best".
@@ -1507,11 +1503,8 @@ class AtriumSDK:
             One of ["ns", "us", "ms", "s"]. Defaults to "ns".
         :param str cache_dir: Directory to use for caching processed blocks if caching is enabled.
 
-        :raises ValueError: If the provided `time_units` is invalid.
-
         Notes:
         Supported `time_units` are nanoseconds ("ns"), microseconds ("us"), milliseconds ("ms"), and seconds ("s").
-        The `definition` parameter should specify devices or patients with associated time intervals, or the keyword "all".
 
         Example:
         sdk = AtriumSDK(dataset_location=local_dataset_location)
@@ -1537,13 +1530,14 @@ class AtriumSDK:
         start_time_n = None if start_time is None else int(start_time * time_unit_options[time_units])
         end_time_n = None if end_time is None else int(end_time * time_unit_options[time_units])
         gap_tolerance_n = None if gap_tolerance is None else int(gap_tolerance * time_unit_options[time_units])
-        # Verify the dataset definition against the AtriumSDK
-        validated_measure_list, validated_label_set_list, mapped_sources = verify_definition(
-            definition, sdk=self, gap_tolerance=gap_tolerance_n,
-            measure_tag_match_rule=measure_tag_match_rule, start_time_n=start_time_n,
-            end_time_n=end_time_n,
-            cache_dir=cache_dir,
-        )
+
+        if not definition.is_validated:
+            definition.validate(sdk=self, gap_tolerance=gap_tolerance_n,
+                                measure_tag_match_rule=measure_tag_match_rule, start_time=start_time_n,
+                                end_time=end_time_n)
+
+        validated_measure_list = definition.validated_data_dict['measures']
+        mapped_sources = definition.validated_data_dict['sources']
 
         # Extract measure_ids from the validated measures
         measure_ids = [measure['id'] for measure in validated_measure_list]
@@ -4322,7 +4316,8 @@ class AtriumSDK:
                               device_id=None, patient_id=None, start_time=None, end_time=None,
                               timestamp_array=None, sample_period=None, time_units: str = None,
                               out: np.ndarray = None, label_source_list: Optional[List[Union[str, int]]] = None,
-                              measure: Union[int, tuple[str, int | float, str]] = None):
+                              measure: Union[int, tuple[str, int | float, str]] = None,
+                              include_descendants: bool = True):
         """
         Retrieve a time series representation for labels from the database based on specified criteria.
 
@@ -4343,6 +4338,7 @@ class AtriumSDK:
             the results are written into this array in-place. It should be initialized with zeros.
             Otherwise, a new array is allocated.
         :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter by.
+        :param bool include_descendants: Whether to include descendant labels when querying the database.
 
         :return: An array representing the presence of a label for each timestamp. If a label is present at a given timestamp, the value is 1, otherwise 0.
         :rtype: np.ndarray
@@ -4415,7 +4411,8 @@ class AtriumSDK:
         labels = self.get_labels(label_name_id_list=[label_name_id] if label_name_id is not None else None,
                                  device_list=[device_id] if device_id is not None else None, start_time=start_time,
                                  end_time=end_time, patient_id_list=[patient_id] if patient_id is not None else None,
-                                 label_source_list=label_source_list, measure_list=[measure] if measure is not None else None)
+                                 label_source_list=label_source_list, measure_list=[measure] if measure is not None else None,
+                                 include_descendants=include_descendants)
 
         # Create a binary array to indicate presence of a label for each timestamp, if not provided.
         if out is not None:
@@ -4446,7 +4443,8 @@ class AtriumSDK:
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
                      time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
                      shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
-                     end_time=None, num_iterators=1, cache=None) -> Union[DatasetIterator, List[DatasetIterator]]:
+                     end_time=None, num_iterators=1, label_exact_match=False) -> Union[
+        DatasetIterator, List[DatasetIterator]]:
         """
         Constructs and returns a `DatasetIterator` object or a list of `DatasetIterator` objects that allow iteration
         over the dataset according to the specified definition.
@@ -4507,15 +4505,10 @@ class AtriumSDK:
         :param float label_threshold: The percentage of the window that must contain a label before the entire window is
             marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
         :param str iterator_type: Specify the type of iterator. If set to 'mapped', a RandomAccessDatasetIterator
-          will be returned, allowing indexed access to dataset windows. If set to 'filtered',
-          a FilteredDatasetIterator will be returned with additional filtering functionality based on
-          the `window_filter_fn`. If set to `lightmapped` a lightweight low RAM mapped iterator is returned.
+          will be returned, allowing indexed access to dataset windows. If set to `lightmapped` a lightweight low RAM mapped iterator is returned.
           'lightmapped' is most suitable when you want true random shuffles and/or you're going to be jumping around
           the indices in no particular order.
           By default or if set to None, a standard DatasetIterator is returned.
-        :param callable window_filter_fn: If provided, only windows for which this function returns True will be included in the
-             iteration. This function should accept a window as its argument. This is only applicable
-             if `iterator_type` is set to 'filtered'.
         :param bool | int shuffle: If True, the order of windows will be randomized before iteration. If set to an integer, this
             value will seed the random number generator for reproducible shuffling. If False, windows are
             returned in their original order.
@@ -4525,13 +4518,7 @@ class AtriumSDK:
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
-        :param str cache: The directory where you want to store a disk based cache to store intermediate data and
-            speed up subsequent calls with the same parameters. Verifying large definition files and index large
-            datasets takes a long time, so using a disk cache will ensure you only need to do that work once.
-            The default value (or setting cache=None) will not use the cache.
-        :param int num_iterators: Number of iterators to create by partitioning the dataset (default is 1).
-
-        :return: A single DatasetIterator object or a list of DatasetIterator objects depending on the value of num_iterators.
+of DatasetIterator objects depending on the value of num_iterators.
         :rtype: Union[DatasetIterator, List[DatasetIterator]]
 
         **Example**:
@@ -4559,7 +4546,7 @@ class AtriumSDK:
             slide_size_nano = window_size_nano = 60_000_000_000  # 1 minute nano
             iterator = sdk.get_iterator(definition, window_size_nano, slide_size_nano)
 
-            # Loop over all windows (numpy.ndarray)
+            # Loop over all windows (Window objects)
             for window in iterator:
                 print(window)
 
@@ -4610,20 +4597,28 @@ class AtriumSDK:
                                              num_windows_prefetch, "ns", label_threshold, iterator_type,
                                              window_filter_fn, shuffle, cached_windows_per_source,
                                              patient_history_fields, start_time_n, end_time_n, num_iterators=1,
-                                             cache=cache)
+                                             label_exact_match=label_exact_match)
                 iterators.append(iterator)
 
             return iterators
 
-        # Validate the definition and create the iterator for a single partition
-        validated_measure_list, validated_label_set_list, validated_sources = verify_definition(
-            definition, self, gap_tolerance=gap_tolerance, start_time_n=start_time_n, end_time_n=end_time_n,
-            cache_dir=cache)
+        if not definition.is_validated:
+            definition.validate(sdk=self, gap_tolerance=gap_tolerance, start_time=start_time_n, end_time=end_time_n)
+
+        if definition.filtered_window_size is not None and definition.filtered_window_size != window_duration:
+            warnings.warn(f"definition was filtered with window duration {definition.filtered_window_size} ns which is "
+                          f"different from your requested iterator window duration {window_duration} ns. Windows will "
+                          f"not be the same as the filter function's windows.")
+
+        if definition.filtered_window_slide is not None and definition.filtered_window_slide != window_slide:
+            warnings.warn(f"definition was filtered with window slide {definition.filtered_window_slide} ns which is "
+                          f"different from your requested iterator window slide {window_slide} ns. Windows will "
+                          f"not be the same as the filter function's windows.")
 
         if not isinstance(shuffle, bool) or shuffle:
             # Set some sensible defaults for pseudorandom yet efficient shuffle
             if cached_windows_per_source is None:
-                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in validated_measure_list)
+                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
                 number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
                 cached_windows_per_source = self.block.block_size // number_of_values_per_window_slide
             if num_windows_prefetch is None:
@@ -4631,40 +4626,40 @@ class AtriumSDK:
 
         else:
             # Not shuffling
-            cached_windows_per_source = None  # We don't want this doing anything if shuffle is False
             if num_windows_prefetch is None:
-                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in validated_measure_list)
+                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
                 number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
                 num_windows_prefetch = (10 * self.block.block_size) // number_of_values_per_window_slide
 
         # Create appropriate iterator object based on iterator_type
         if iterator_type == 'mapped':
-            iterator = MappedIterator(
-                self, validated_measure_list, validated_label_set_list, validated_sources,
-                window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
-                label_threshold=label_threshold, max_cache_duration=max_cache_duration_per_source,
-                shuffle=shuffle, patient_history_fields=patient_history_fields, cache_dir=cache)
+            iterator = MappedIterator(self, definition, window_duration, window_slide,
+                                      num_windows_prefetch=num_windows_prefetch, label_threshold=label_threshold,
+                                      shuffle=shuffle, max_cache_duration=max_cache_duration_per_source,
+                                      patient_history_fields=patient_history_fields,
+                                      label_exact_match=label_exact_match)
         elif iterator_type == 'lightmapped':
             iterator = LightMappedIterator(
-                self, validated_measure_list, validated_label_set_list, validated_sources,
+                self, definition,
                 window_duration, window_slide,
                 label_threshold=label_threshold, shuffle=shuffle,
-                patient_history_fields=patient_history_fields)
+                patient_history_fields=patient_history_fields, label_exact_match=label_exact_match)
         elif iterator_type == 'filtered':
             if window_filter_fn is None:
                 raise ValueError("window_filter_fn must be provided when iterator_type is 'filtered'")
-            iterator = FilteredDatasetIterator(
-                self, validated_measure_list, validated_label_set_list, validated_sources,
-                window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
-                label_threshold=label_threshold, window_filter_fn=window_filter_fn,
-                max_cache_duration=max_cache_duration_per_source, shuffle=shuffle,
-                patient_history_fields=patient_history_fields, cache_dir=cache)
+            iterator = FilteredDatasetIterator(self, definition, window_duration, window_slide,
+                                               num_windows_prefetch=num_windows_prefetch,
+                                               label_threshold=label_threshold, shuffle=shuffle,
+                                               max_cache_duration=max_cache_duration_per_source,
+                                               window_filter_fn=window_filter_fn,
+                                               patient_history_fields=patient_history_fields,
+                                               label_exact_match=label_exact_match)
         elif iterator_type == "iterator":
-            iterator = DatasetIterator(self, validated_measure_list, validated_label_set_list, validated_sources,
-                                       window_duration, window_slide, num_windows_prefetch=num_windows_prefetch,
-                                       label_threshold=label_threshold, shuffle=shuffle,
-                                       max_cache_duration=max_cache_duration_per_source,
-                                       patient_history_fields=patient_history_fields, cache_dir=cache)
+            iterator = DatasetIterator(self, definition, window_duration, window_slide,
+                                       num_windows_prefetch=num_windows_prefetch, label_threshold=label_threshold,
+                                       shuffle=shuffle, max_cache_duration=max_cache_duration_per_source,
+                                       patient_history_fields=patient_history_fields,
+                                       label_exact_match=label_exact_match)
         else:
             raise ValueError("iterator_type must be either 'mapped', 'lightmapped','filtered' or 'iterator'")
 

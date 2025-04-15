@@ -23,13 +23,28 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 from atriumdb.windowing.window import Window
 from atriumdb.windowing.dataset_iterator import DatasetIterator
-from atriumdb.windowing.windowing_functions import get_threshold_labels, find_closest_measurement
+from atriumdb.windowing.windowing_functions import get_threshold_labels, find_closest_measurement, \
+    _get_patient_info_from_cache, _load_patient_cache
 
 
 class LightMappedIterator(DatasetIterator):
-    def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
+    def __init__(self, sdk, definition,
                  window_duration_ns: int, window_slide_ns: int, label_threshold=0.5,
-                 shuffle=False, patient_history_fields: list = None):
+                 shuffle=False, patient_history_fields: list = None, allow_partial_windows = True, label_exact_match=False):
+        if not definition.is_validated:
+            definition.validate(sdk=sdk)
+
+        self.label_exact_match = label_exact_match
+        # Extract validated data from the definition
+        validated_data = definition.validated_data_dict
+        # List of validated measures. Each item is a "measure_info" from sdk data.
+        self.measures = validated_data['measures']
+        # List of validated label sets. Each item is a label_set id from the label_set table.
+        self.label_sets = validated_data['labels']
+        # Dictionary containing sources. Each source type contains identifiers (device_id/patient_id)
+        # and have associated time ranges.
+        self.sources = validated_data['sources']
+
         # AtriumSDK object
         self.sdk = sdk
 
@@ -37,13 +52,7 @@ class LightMappedIterator(DatasetIterator):
         self.label_threshold = label_threshold
 
         self.patient_history_fields = patient_history_fields
-
-        # List of validated measures. Each item is a "measure_info" from sdk data.
-        self.measures = validated_measure_list
-
-        # List of validated label sets. Each item is a label_set id from the label_set table.
-        self.label_sets = validated_label_set_list
-        self.sources = validated_sources
+        self.allow_partial_windows = allow_partial_windows
 
         # Duration of each window in nanoseconds. Represents the time span of each data segment.
         self.window_duration_ns = int(window_duration_ns)
@@ -112,11 +121,13 @@ class LightMappedIterator(DatasetIterator):
             for source_id, time_ranges in sources.items():
                 for start_time, end_time in time_ranges:
                     duration = end_time - start_time
-                    if duration < self.window_duration_ns:
-                        # Time range too short, skip
+                    if duration <= 0 or (not self.allow_partial_windows and duration < self.window_duration_ns):
                         continue
                     # Calculate number of windows
                     num_windows = int((duration - self.window_duration_ns) // self.window_slide_ns) + 1
+                    if self.allow_partial_windows and ((duration - self.window_duration_ns) % self.window_slide_ns > 0):
+                        num_windows += 1
+
                     if num_windows <= 0:
                         continue
                     # Append info
@@ -167,10 +178,13 @@ class LightMappedIterator(DatasetIterator):
             measure_id = measure['id']
             freq_nhz = measure['freq_nhz']
             period_ns = int((10 ** 18) // freq_nhz)
-            measure_expected_count = int(self.window_duration_ns // period_ns)
-            measure_times = np.arange(window_start_time, window_end_time, period_ns)
+            measure_expected_count = int((freq_nhz * self.window_duration_ns) // (10 ** 18))
+            measure_times = (np.arange(measure_expected_count) * period_ns) + window_start_time
             measure_values = np.full(measure_times.shape, np.nan)
             if len(measure_values) > 0:
+                if measure_expected_count != int(round((window_end_time - window_start_time) / period_ns)):
+                    window_end_time = window_start_time + int(
+                        round(measure_expected_count * (10 ** 18 / freq_nhz)))
                 self.sdk.get_data(
                     measure_id, window_start_time, window_end_time, device_id=device_id, patient_id=query_patient_id,
                     return_nan_filled=measure_values)
@@ -185,8 +199,8 @@ class LightMappedIterator(DatasetIterator):
                 'measure_id': measure_id,
             }
 
-        self._load_patient_cache(patient_id, self.patient_info_cache, self.patient_history_cache)
-        window_patient_info = self._get_patient_info_from_cache(
+        _load_patient_cache(patient_id, self.patient_info_cache, self.patient_history_cache, self.sdk, self.patient_history_fields)
+        window_patient_info = _get_patient_info_from_cache(
             patient_id, window_start_time, self.patient_info_cache, self.patient_history_cache)
 
         label, label_time_series = np.array([]), np.array([])
@@ -207,7 +221,8 @@ class LightMappedIterator(DatasetIterator):
                     start_time=window_start_time,
                     end_time=window_start_time + self.window_duration_ns,
                     timestamp_array=label_timestamp_array,
-                    out=label_time_series[idx]
+                    out=label_time_series[idx],
+                    include_descendants=not self.label_exact_match,
                 )
             label = (np.mean(label_time_series, axis=1) > self.label_threshold).astype(np.int8)
 

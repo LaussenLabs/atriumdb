@@ -27,23 +27,20 @@ import json
 
 from atriumdb.adb_functions import get_measure_id_from_generic_measure
 from atriumdb.intervals.union import intervals_union_list
-from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.windowing.map_definition_sources import map_validated_sources
 
 
 def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rule="best", start_time_n=None,
-                      end_time_n=None, cache_dir=None):
+                      end_time_n=None):
     """
     Verifies and validates a dataset definition against the given AtriumSDK, including measures, label sets, and sources.
 
-    :param Union[str, DatasetDefinition] definition: The dataset definition to be verified. This can be either a filename (str) pointing to a dataset definition file or an instance of DatasetDefinition.
+    :param DatasetDefinition definition: The dataset definition to be verified. This can be either a filename (str) pointing to a dataset definition YAML file or a DatasetDefinition object.
     :param AtriumSDK sdk: An AtriumSDK object pointing at the dataset to validate the requested definition against.
     :param Optional[int] gap_tolerance: The minimum allowed gap (in nanoseconds) in any generated time ranges (time ranges are explained below).
     :param str measure_tag_match_rule: "best" or "all" as a strategy for dealing with measure tags where there may be multiple measures with the given tag.
     :param start_time_n: Global start time in nanoseconds.
     :param end_time_n: Global end time in nanoseconds.
-    :param str cache_dir: A directory if specified will use a disk based cache to store the verified definition results.
-
     :return: A tuple containing three elements:
         1. validated_measure_list (list of dicts): A list of dictionaries, each representing a validated measure. Each dictionary includes:
            - 'id': The unique identifier of the measure.
@@ -56,42 +53,8 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
            - 'patient_ids' (optional): A dictionary present only if there are unmatched patient IDs. Each key is a patient ID, and each value is a list of time ranges where data could not be matched to devices.
            - 'device_ids' (optional): A dictionary present only if there are unmatched device IDs. Each key is a device ID, and each value is a list of time ranges where data could not be matched to patients.
 
-    :raises ValueError: If the input 'definition' is neither a filename (str) nor an instance of DatasetDefinition, or if specified measures or label sets are not found in the AtriumSDK.
     """
     gap_tolerance = 60_000_000_000 if gap_tolerance is None else gap_tolerance  # 1 minute nano default
-    # If the input is a string, it is assumed to be a filename
-    if isinstance(definition, str):
-        definition = DatasetDefinition(definition)
-    elif isinstance(definition, DatasetDefinition):
-        pass
-    else:
-        raise ValueError("Input must be either a filename or an instance of DatasetDefinition.")
-
-    # Collect parameters for cache key and info
-    hash_parameters = {
-        'gap_tolerance': gap_tolerance,
-        'measure_tag_match_rule': measure_tag_match_rule,
-        'start_time_n': start_time_n,
-        'end_time_n': end_time_n,
-    }
-
-    cache_key = compute_cache_key(
-        definition.data_dict, gap_tolerance, measure_tag_match_rule, start_time_n, end_time_n)
-
-    if cache_dir is not None:
-        # Ensure the cache directory exists
-        sdk.file_api.makedirs(cache_dir)
-        cache_filepath = sdk.file_api.get_cache_filepath(cache_key, cache_dir, cache_type='definition', extension='pkl')
-        info_filepath = sdk.file_api.get_cache_filepath(cache_key, cache_dir, 'info', extension='json')
-        # Check if the result is already cached
-        if sdk.file_api.file_exists(cache_filepath):
-            try:
-                result = sdk.file_api.pickle_load_file(cache_filepath)
-                return result
-            except (EOFError, pickle.UnpicklingError):
-                # If cache is corrupted, remove it and proceed to recompute
-                sdk.file_api.remove(cache_filepath)
-                sdk.file_api.remove(info_filepath)
 
     # Validate measures
     validated_measure_list = _validate_measures(definition, sdk, measure_tag_match_rule=measure_tag_match_rule)
@@ -107,25 +70,10 @@ def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rul
 
     result = (validated_measure_list, validated_label_set_list, mapped_sources)
 
-    if cache_dir is not None:
-        from datetime import datetime
-        date_created = datetime.now().isoformat()
-        cache_info = {
-            'cache_file_name': f"{cache_key}_definition.pkl",
-            'date_created': date_created,
-            'main_process_called': 'verify_definition',
-            'cache_type': 'definition',
-            'parameters': hash_parameters
-        }
-        cache_filepath = sdk.file_api.get_cache_filepath(cache_key, cache_dir, cache_type='definition', extension='pkl')
-        info_filepath = sdk.file_api.get_cache_filepath(cache_key, cache_dir, 'info', extension='json')
-        sdk.file_api.pickle_dump_file(cache_filepath, result)
-        sdk.file_api.json_dump_file(info_filepath, cache_info)
-
     return result
 
 
-def _validate_measures(definition: DatasetDefinition, sdk, measure_tag_match_rule="best"):
+def _validate_measures(definition, sdk, measure_tag_match_rule="best"):
     assert "measures" in definition.data_dict, "definition must have some specified measures"
 
     measures = definition.data_dict["measures"]
@@ -152,7 +100,7 @@ def _validate_measures(definition: DatasetDefinition, sdk, measure_tag_match_rul
     return validated_measure_list
 
 
-def _validate_label_sets(definition: DatasetDefinition, sdk):
+def _validate_label_sets(definition, sdk):
     # If there aren't any labels, there's nothing to do.
     if "labels" not in definition.data_dict or len(definition.data_dict['labels']) == 0:
         return []
@@ -177,7 +125,7 @@ def _validate_label_sets(definition: DatasetDefinition, sdk):
     return validated_label_set_list
 
 
-def _validate_sources(definition: DatasetDefinition, sdk, validated_measure_list, gap_tolerance=None, start_time_n=None,
+def _validate_sources(definition, sdk, validated_measure_list, gap_tolerance=None, start_time_n=None,
                       end_time_n=None):
     data_dict = definition.data_dict
 

@@ -43,19 +43,22 @@ def _test_iterator(db_type, dataset_location, connection_params):
     # create_test_definition_files(sdk)
 
     test_parameters = [
-        # definition, expected_device_id_type, expected_patient_id_type
-        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_devices.yaml"), int, int),
-        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_patients.yaml"), int, int),
-        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_mrns.yaml"), int, int),
-        (DatasetDefinition(filename="./example_data/mitbih_seed_42_all_tags.yaml"), int, int),
+        # filename, expected_device_id_type, expected_patient_id_type
+        ("./example_data/mitbih_seed_42_all_devices.yaml", int, int),
+        ("./example_data/mitbih_seed_42_all_patients.yaml", int, int),
+        ("./example_data/mitbih_seed_42_all_mrns.yaml", int, int),
+        ("./example_data/mitbih_seed_42_all_tags.yaml", int, int),
     ]
 
     window_size_nano = 1_024 * 1_000_000_000
-    for definition, expected_device_id_type, expected_patient_id_type in test_parameters:
+
+    for filename, expected_device_id_type, expected_patient_id_type in test_parameters:
+        definition = DatasetDefinition(filename=filename)
+        definition.validate(sdk)
         iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None)
 
         for window_i, window in enumerate(iterator):
-            assert isinstance(window.start_time, int)
+            assert isinstance(window.start_time, int) or isinstance(window.start_time, float)
             assert isinstance(window.device_id, expected_device_id_type)
             assert isinstance(window.patient_id, expected_patient_id_type)
 
@@ -70,7 +73,7 @@ def _test_iterator(db_type, dataset_location, connection_params):
         # Try light mapped
         iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, iterator_type="lightmapped")
         for window_i, window in enumerate(iterator):
-            assert isinstance(window.start_time, int)
+            assert isinstance(window.start_time, int) or isinstance(window.start_time, float)
             assert isinstance(window.device_id, expected_device_id_type)
             assert isinstance(window.patient_id, expected_patient_id_type)
 
@@ -83,14 +86,17 @@ def _test_iterator(db_type, dataset_location, connection_params):
             assert isinstance(window.label, np.ndarray)
 
 
-        # Try while loading the cache
-        cache_path = Path(sdk.dataset_location) / "cache"
-        shutil.rmtree(cache_path, ignore_errors=True)
-        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None,
-                                    cache=cache_path)
+        # Try with saving the validated definition
+        definition = DatasetDefinition(filename=filename)
+        definition.validate(sdk)
+        validated_filepath = Path(filename).with_suffix(".pkl")
+        definition.save(validated_filepath)
+        definition = DatasetDefinition(filename=validated_filepath)
+        validated_filepath.unlink()
+        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano)
 
         for window_i, window in enumerate(iterator):
-            assert isinstance(window.start_time, int)
+            assert isinstance(window.start_time, int) or isinstance(window.start_time, float)
             assert isinstance(window.device_id, expected_device_id_type)
             assert isinstance(window.patient_id, expected_patient_id_type)
 
@@ -102,12 +108,15 @@ def _test_iterator(db_type, dataset_location, connection_params):
             assert isinstance(window.label_time_series, np.ndarray)
             assert isinstance(window.label, np.ndarray)
 
-        # Try while reading the cache
-        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None,
-                                    cache=Path(sdk.dataset_location) / "cache")
+        # Try after filtering
+        validated_measure_list = definition.validated_data_dict['measures']
+        tag, freq_hz, units = validated_measure_list[0]['tag'], validated_measure_list[0]['freq_nhz'] / 10**9, validated_measure_list[0]['units']
+        filter_fn = lambda x: x.signals[(tag, freq_hz, units)]['actual_count'] >= 5
+        definition.filter(sdk, filter_fn, window_size_nano, window_size_nano)
+        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano)
 
         for window_i, window in enumerate(iterator):
-            assert isinstance(window.start_time, int)
+            assert isinstance(window.start_time, int) or isinstance(window.start_time, float)
             assert isinstance(window.device_id, expected_device_id_type)
             assert isinstance(window.patient_id, expected_patient_id_type)
 
@@ -192,6 +201,13 @@ def _test_iterator(db_type, dataset_location, connection_params):
         assert window.label_time_series is None
         assert window.label is None
 
+def _test_filter(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    window_size = 100
+
+    times = np.arange()
 
 def create_test_definition_files(sdk):
     measures = []

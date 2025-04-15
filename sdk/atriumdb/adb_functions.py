@@ -400,7 +400,7 @@ def get_best_measure_id(sdk, measure_tag, freq, units, freq_units):
     return new_measure_id
 
 
-def get_measure_id_from_generic_measure(sdk, measure, measure_tag_match_rule="best"):
+def get_measure_id_from_generic_measure(sdk, measure, measure_tag_match_rule="best", freq_units="Hz"):
     measure_ids = []
 
     if isinstance(measure, int):
@@ -415,11 +415,11 @@ def get_measure_id_from_generic_measure(sdk, measure, measure_tag_match_rule="be
         assert 'tag' in measure, "tag not in measure dictionary"
         freq = measure.get('freq_nhz') or measure.get('freq_hz')
         units = measure.get('units')
-        freq_units = "nHz" if 'freq_nhz' in measure else "Hz" if 'freq_hz' in measure else None
+        dict_freq_units = "nHz" if 'freq_nhz' in measure else "Hz" if 'freq_hz' in measure else None
 
         if freq and units:
             # Use sdk.get_measure_id for a unique match when both freq and units are specified
-            measure_id = sdk.get_measure_id(measure['tag'], freq=freq, units=units, freq_units=freq_units)
+            measure_id = sdk.get_measure_id(measure['tag'], freq=freq, units=units, freq_units=dict_freq_units)
             if measure_id is not None:
                 measure_ids.append(measure_id)
             else:
@@ -431,6 +431,13 @@ def get_measure_id_from_generic_measure(sdk, measure, measure_tag_match_rule="be
                 measure_ids.append(matching_ids[0])
             elif measure_tag_match_rule == "all":
                 measure_ids.extend(matching_ids)
+    elif isinstance(measure, tuple):
+        tag, freq, units = measure
+        measure_id = sdk.get_measure_id(tag, freq=freq, units=units, freq_units=freq_units)
+        if measure_id is not None:
+            measure_ids.append(measure_id)
+        else:
+            raise ValueError(f"No unique measure found for tuple: {measure} assuming freq_units = {freq_units}.")
     else:
         raise ValueError(f"measure type {type(measure)} not supported.")
 

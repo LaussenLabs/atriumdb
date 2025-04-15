@@ -8,14 +8,11 @@ class MappedIterator(DatasetIterator):
     """
     Subclass of DatasetIterator that allows random access to windowed segments of a dataset.
 
-    This class extends the capabilities of DatasetIterator by implementing __len__ and __getitem__,
-    enabling direct indexing and length querying. It's particularly useful in scenarios where random
-    access to the data is required, such as in machine learning models where shuffling or specific sampling
-    strategies are applied.
+    This class extends the capabilities of DatasetIterator by implementing __getitem__,
+    enabling direct indexing. It still uses the same sequence optimization as the default iterator
+    therefore it is best used when sequentially accessing windowed segments.
 
-    Inherits from DatasetIterator and maintains all its functionalities, including iterative access to
-    sliding windows of data from different sources. Adds the ability to access specific windows directly
-    by their index and to determine the total number of windows available in the dataset.
+    If you need random/shuffled access to windows we recommend using the `LightMappedIterator`.
 
     :param AtriumSDK sdk: SDK object to fetch data
     :param list validated_measure_list: List of validated measures with information about each measure
@@ -28,24 +25,13 @@ class MappedIterator(DatasetIterator):
     :param float label_threshold: Threshold for labeling in classification tasks.
     """
 
-    def __init__(self, sdk, validated_measure_list, validated_label_set_list, validated_sources,
-                 window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
-                 label_threshold=0.5, shuffle=False, max_cache_duration=None,
-                 patient_history_fields: list = None, cache_dir=None):
-        super().__init__(
-            sdk=sdk,
-            validated_measure_list=validated_measure_list,
-            validated_label_set_list=validated_label_set_list,
-            validated_sources=validated_sources,
-            window_duration_ns=window_duration_ns,
-            window_slide_ns=window_slide_ns,
-            num_windows_prefetch=num_windows_prefetch,
-            label_threshold=label_threshold,
-            shuffle=shuffle,
-            max_cache_duration=max_cache_duration,
-            patient_history_fields=patient_history_fields,
-            cache_dir=cache_dir,
-        )
+    def __init__(self, sdk, definition, window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
+                 label_threshold=0.5, shuffle=False, max_cache_duration=None, patient_history_fields: list = None,
+                 label_exact_match=False):
+        super().__init__(sdk=sdk, definition=definition, window_duration_ns=window_duration_ns,
+                         window_slide_ns=window_slide_ns, num_windows_prefetch=num_windows_prefetch,
+                         label_threshold=label_threshold, shuffle=shuffle, max_cache_duration=max_cache_duration,
+                         patient_history_fields=patient_history_fields, label_exact_match=label_exact_match)
 
         pass
 
