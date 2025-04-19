@@ -107,12 +107,13 @@ class SingleConnectionManager:
 
 class MariaDBHandler(SQLHandler):
     def __init__(self, host: str, user: str, password: str, database: str, port: int = None, no_pool=False,
-                 validation_interval=500):
+                 collation: str = 'utf8mb4_general_ci', validation_interval=500):
         self.host = host
         self.user = user
         self.password = password
         self.port = DEFAULT_PORT if port is None else port
         self.database = database
+        self.collation = collation
 
         self.connection_params = {
             'host': self.host,
@@ -120,6 +121,7 @@ class MariaDBHandler(SQLHandler):
             'user': self.user,
             'password': self.password,
             'database': self.database,
+            'collation': self.collation
         }
         self.no_pool = no_pool
         self.connection_manager = None if no_pool else SingleConnectionManager(
