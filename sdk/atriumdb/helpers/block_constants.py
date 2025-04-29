@@ -24,3 +24,7 @@ VALUE_TYPES = {'INT64': 1, 'DOUBLE': 2, 'DELTA_INT64': 3, 'XOR_DOUBLE': 4}
 
 TIME_TYPES_STR = {value: key for key, value in TIME_TYPES.items()}
 VALUE_TYPES_STR = {value: key for key, value in VALUE_TYPES.items()}
+
+TSC_VERSION_NUM = 2
+TSC_VERSION_EXT_FREQUENCY = 3
+TSC_VERSION_EXT_PERIOD = 4

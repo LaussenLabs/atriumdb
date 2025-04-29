@@ -48,9 +48,9 @@ class Block:
     def load_dll(self, path_to_dll, num_threads):
         self.wrapped_dll = WrappedBlockDll(os.path.abspath(path_to_dll), num_threads)
 
-    def encode_blocks(self, times, values, freq_nhz: int, start_ns: int,
-                      raw_time_type=None, raw_value_type=None, encoded_time_type=None,
-                      encoded_value_type=None, scale_m: float = None, scale_b: float = None):
+    def encode_blocks(self, times, values, start_ns: int, freq_nhz: int = None, period_ns=None, raw_time_type=None,
+                      raw_value_type=None, encoded_time_type=None, encoded_value_type=None, scale_m: float = None,
+                      scale_b: float = None):
 
         scale_m = 1.0 if scale_m is None else scale_m
         scale_b = 0.0 if scale_b is None else scale_b
@@ -77,9 +77,9 @@ class Block:
 
         # Generate metadata for the blocks
         times, headers, options, t_block_start, v_block_start = \
-            self._gen_metadata(times, values, freq_nhz, start_ns, num_blocks,
-                               raw_time_type, raw_value_type, encoded_time_type, encoded_value_type,
-                               scale_m=scale_m, scale_b=scale_b, time_data=time_info_data)
+            self._gen_metadata(times, values, start_ns, num_blocks, raw_time_type, raw_value_type, encoded_time_type,
+                               encoded_value_type, scale_m=scale_m, scale_b=scale_b, time_data=time_info_data,
+                               freq_nhz=freq_nhz)
 
         # Encode the blocks using the wrapped_dll's encode_blocks_sdk function
         encoded_bytes, byte_start_array = self.wrapped_dll.encode_blocks_sdk(
@@ -88,9 +88,8 @@ class Block:
         # Return the encoded bytes, headers, and byte start array
         return encoded_bytes, headers, byte_start_array
 
-    def prepare_encode_blocks_inputs(self, times, values, freq_nhz, start_ns,
-                                     raw_time_type, raw_value_type, encoded_time_type, encoded_value_type,
-                                     scale_m=None, scale_b=None):
+    def prepare_encode_blocks_inputs(self, times, values, start_ns, raw_time_type, raw_value_type, encoded_time_type,
+                                     encoded_value_type, scale_m=None, scale_b=None, freq_nhz=None, period_ns=None):
         scale_m = 1.0 if scale_m is None else scale_m
         scale_b = 0.0 if scale_b is None else scale_b
 
@@ -116,9 +115,9 @@ class Block:
 
         # Generate metadata for the blocks
         times, headers, options, t_block_start, v_block_start = \
-            self._gen_metadata(times, values, freq_nhz, start_ns, num_blocks,
-                               raw_time_type, raw_value_type, encoded_time_type, encoded_value_type,
-                               scale_m=scale_m, scale_b=scale_b, time_data=time_info_data)
+            self._gen_metadata(times, values, start_ns, num_blocks, raw_time_type, raw_value_type, encoded_time_type,
+                               encoded_value_type, scale_m=scale_m, scale_b=scale_b, time_data=time_info_data,
+                               freq_nhz=freq_nhz)
 
         # Return the prepared inputs
         return times, values, num_blocks, t_block_start, v_block_start, headers, options, time_info_data
@@ -155,10 +154,9 @@ class Block:
 
             # Call helper method
             times_s, values_s, num_blocks_s, t_block_start_s, v_block_start_s, headers_s, options_s, time_info_data_s = \
-                self.prepare_encode_blocks_inputs(times, values, freq_nhz, start_ns,
-                                                  raw_time_type, raw_value_type,
-                                                  encoded_time_type, encoded_value_type,
-                                                  scale_m=scale_m, scale_b=scale_b)
+                self.prepare_encode_blocks_inputs(times, values, start_ns, raw_time_type, raw_value_type,
+                                                  encoded_time_type, encoded_value_type, scale_m=scale_m,
+                                                  scale_b=scale_b, freq_nhz=freq_nhz)
 
             # Adjust t_block_start and v_block_start
             if raw_time_type == TIME_TYPES['TIME_ARRAY_INT64_NS']:
@@ -204,10 +202,7 @@ class Block:
 
         return encoded_bytes, headers_total, byte_start_array
 
-    def blockify_intervals(self, freq_nhz, num_blocks, times, value_size):
-        # Calculate the period in nanoseconds based on the input frequency
-        period_ns = freq_nhz_to_period_ns(freq_nhz)
-
+    def blockify_intervals(self, period_ns, num_blocks, times, value_size):
         # Reshape the input times array into a list of pairs (intervals)
         true_intervals = times.reshape((-1, 2)).tolist()
 
@@ -464,6 +459,7 @@ class Block:
         # Convert the decoded time and value data into the appropriate data types
         time_data = np.frombuffer(time_data, dtype=np.int64)
         period_ns = freq_nhz_to_period_ns(headers[0].freq_nhz)
+        tok = time.perf_counter_ns()
 
         if headers[0].t_raw_type == T_TYPE_START_TIME_NUM_SAMPLES:
             time_data = merge_interval_data(time_data, period_ns)
@@ -562,9 +558,11 @@ class Block:
 
         return decoded_headers, byte_start_array
 
-    def _gen_metadata(self, times, values, freq_nhz: int, start_ns: int, num_blocks: int,
-                      raw_time_type: int, raw_value_type: int, encoded_time_type: int, encoded_value_type: int,
-                      scale_m: float = None, scale_b: float = None, time_data=None):
+    def _gen_metadata(self, times, values, start_ns: int, num_blocks: int, raw_time_type: int, raw_value_type: int,
+                      encoded_time_type: int, encoded_value_type: int, scale_m: float = None, scale_b: float = None,
+                      time_data=None, freq_nhz: int = None, period_ns=None):
+        if (freq_nhz is None) == (period_ns is None):
+            raise ValueError("Frequency and period are mutually exclusive.")
 
         # Make a copy of the input times array
         times = np.copy(times)

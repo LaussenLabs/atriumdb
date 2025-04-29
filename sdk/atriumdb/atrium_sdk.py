@@ -997,14 +997,13 @@ class AtriumSDK:
                 old_block = None
 
         # Encode the block(s)
-        encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
-            time_data, value_data, freq_nhz, time_0,
-            raw_time_type=raw_time_type,
-            raw_value_type=raw_value_type,
-            encoded_time_type=encoded_time_type,
-            encoded_value_type=encoded_value_type,
-            scale_m=scale_m,
-            scale_b=scale_b)
+        encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(time_data, value_data, time_0,
+                                                                                    freq_nhz,
+                                                                                    raw_time_type=raw_time_type,
+                                                                                    raw_value_type=raw_value_type,
+                                                                                    encoded_time_type=encoded_time_type,
+                                                                                    encoded_value_type=encoded_value_type,
+                                                                                    scale_m=scale_m, scale_b=scale_b)
 
         # Write the encoded bytes to disk
         filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
@@ -1277,14 +1276,12 @@ class AtriumSDK:
         else:
             raw_v_t = V_TYPE_DOUBLE
             encoded_v_t = V_TYPE_DOUBLE
-        encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
-            gap_data, value_data, freq_nhz, time_0,
-            raw_time_type=2,
-            raw_value_type=raw_v_t,
-            encoded_time_type=2,
-            encoded_value_type=encoded_v_t,
-            scale_m=scale_m,
-            scale_b=scale_b)
+        encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(gap_data, value_data, time_0,
+                                                                                    freq_nhz, raw_time_type=2,
+                                                                                    raw_value_type=raw_v_t,
+                                                                                    encoded_time_type=2,
+                                                                                    encoded_value_type=encoded_v_t,
+                                                                                    scale_m=scale_m, scale_b=scale_b)
         # Write the encoded bytes to disk
         filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
         # Use the header data to create rows to be inserted into the block_index and interval_index SQL tables
@@ -4996,14 +4993,14 @@ of DatasetIterator objects depending on the value of num_iterators.
                 encoded_time_type = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
                 # Encode the difference data
-                encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(
-                    diff_times, diff_values, freq_nhz, diff_times[0],
-                    raw_time_type=raw_time_type,
-                    raw_value_type=raw_value_type,
-                    encoded_time_type=encoded_time_type,
-                    encoded_value_type=encoded_value_type,
-                    scale_m=scale_m,
-                    scale_b=scale_b)
+                encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(diff_times, diff_values,
+                                                                                           diff_times[0], freq_nhz,
+                                                                                           raw_time_type=raw_time_type,
+                                                                                           raw_value_type=raw_value_type,
+                                                                                           encoded_time_type=encoded_time_type,
+                                                                                           encoded_value_type=encoded_value_type,
+                                                                                           scale_m=scale_m,
+                                                                                           scale_b=scale_b)
 
                 # Write the encoded difference data to a new file
                 diff_filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
@@ -5166,14 +5163,13 @@ of DatasetIterator objects depending on the value of num_iterators.
             raise NotImplementedError("API mode is not supported for writing data.")
 
         # Block Encode
-        encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(
-            time_data, value_data, freq_nhz, time_0,
-            raw_time_type=raw_time_type,
-            raw_value_type=raw_value_type,
-            encoded_time_type=encoded_time_type,
-            encoded_value_type=encoded_value_type,
-            scale_m=scale_m,
-            scale_b=scale_b)
+        encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(time_data, value_data, time_0,
+                                                                                   freq_nhz,
+                                                                                   raw_time_type=raw_time_type,
+                                                                                   raw_value_type=raw_value_type,
+                                                                                   encoded_time_type=encoded_time_type,
+                                                                                   encoded_value_type=encoded_value_type,
+                                                                                   scale_m=scale_m, scale_b=scale_b)
 
         # Write to Disk
         filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)

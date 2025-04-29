@@ -365,14 +365,13 @@ def old_write_data(sdk, measure_id: int, device_id: int, time_data: np.ndarray, 
     # if all blocks are perfectly sized or there is less than one optimal block worth of data
     else:
         # Encode the block(s)
-        encoded_bytes, encoded_headers, byte_start_array = sdk.block.encode_blocks(
-            time_data, value_data, freq_nhz, time_0,
-            raw_time_type=raw_time_type,
-            raw_value_type=raw_value_type,
-            encoded_time_type=encoded_time_type,
-            encoded_value_type=encoded_value_type,
-            scale_m=scale_m,
-            scale_b=scale_b)
+        encoded_bytes, encoded_headers, byte_start_array = sdk.block.encode_blocks(time_data, value_data, time_0,
+                                                                                   freq_nhz,
+                                                                                   raw_time_type=raw_time_type,
+                                                                                   raw_value_type=raw_value_type,
+                                                                                   encoded_time_type=encoded_time_type,
+                                                                                   encoded_value_type=encoded_value_type,
+                                                                                   scale_m=scale_m, scale_b=scale_b)
 
     # Write the encoded bytes to disk
     filename = sdk.file_api.write_bytes(measure_id, device_id, encoded_bytes)
