@@ -19,6 +19,7 @@ import math
 from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple, Optional
 
+from atriumdb.sql_handler.maria.maria_functions import maria_insert_file_index_query, maria_insert_block_query
 from atriumdb.sql_handler.sql_helper import join_sql_and_bools
 
 
@@ -102,6 +103,29 @@ class SQLHandler(ABC):
         # Insert block_index rows with foreign key file_id.
         # Insert interval_index rows.
         pass
+
+    def insert_tsc_file_blocks(self, file_path: str, block_data: List[Dict]):
+        with self.connection(begin=True) as (conn, cursor):
+            # insert file_path into file_index and get id
+            cursor.execute("INSERT INTO file_index (path) VALUES (?);", (file_path,))
+            file_id = cursor.lastrowid
+
+            # insert into block_index
+            block_tuples = [(block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
+                             block["start_time_n"], block["end_time_n"], block["num_values"])
+                            for block in block_data]
+
+            block_query = """INSERT INTO block_index 
+                (measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
+            cursor.executemany(block_query, block_tuples)
+
+    def insert_intervals(self, interval_data):
+        with self.connection(begin=True) as (conn, cursor):
+            interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                                interval["end_time_n"]) for interval in interval_data]
+            interval_index_query = "INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n) VALUES (?, ?, ?, ?);"
+            cursor.executemany(interval_index_query, interval_tuples)
 
     def insert_and_delete_tsc_file_data(self, file_path: str, block_data: List[Dict], block_ids_to_delete: List[int]):
         with self.connection(begin=True) as (conn, cursor):

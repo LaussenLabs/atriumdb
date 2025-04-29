@@ -18,7 +18,7 @@ import pytest
 import numpy as np
 
 from atriumdb.adb_functions import group_sorted_block_list, get_interval_list_from_ordered_timestamps, \
-    group_headers_by_scale_factor
+    group_headers_by_scale_factor_freq_time_type, truncate_messages
 
 
 def test_group_sorted_block_list():
@@ -112,38 +112,50 @@ def test_get_time_regions():
     assert np.array_equal(get_interval_list_from_ordered_timestamps(timestamps, period_ns), expected)
 
 
-# Mock header class
 class MockHeader:
-    def __init__(self, scale_m, scale_b, num_vals):
+    def __init__(self, scale_m, scale_b, num_vals, num_gaps, t_raw_type, freq_nhz, t_encoded_type):
         self.scale_m = scale_m
         self.scale_b = scale_b
         self.num_vals = num_vals
+        self.num_gaps = num_gaps
+        self.t_raw_type = t_raw_type
+        self.freq_nhz = freq_nhz
+        self.t_encoded_type = t_encoded_type
 
-def test_group_headers_by_scale_factor():
-    # Test case 1: Consecutive headers with the same scale factors
+def test_group_headers_by_scale_factor_time_type():
+    # Test case 1: Consecutive headers with the same scale factors and time types
     headers1 = [
-        MockHeader(1.0, 2.0, 3),
-        MockHeader(1.0, 2.0, 2),
-        MockHeader(1.0, 2.0, 4),
+        MockHeader(1.0, 2.0, 3, 1, 2, 50, 0),  # 1 gap
+        MockHeader(1.0, 2.0, 2, 0, 2, 50, 0),  # 0 gaps
+        MockHeader(1.0, 2.0, 4, 2, 2, 50, 0),  # 2 gaps
     ]
-    times_array1 = list(range(9))  # times from 0 to 8
-    values_array1 = list(range(100, 109))  # values from 100 to 108
+    # Adjusted times_array with relative indices for each header block
+    times_array1 = [
+        0, 1,  # Gap for first header
+        # No gaps for second header
+        0, 2, 3, 3  # Gaps for third header
+    ]
+    values_array1 = list(range(9))  # values from 0 to 8
     expected_groups1 = [
         (headers1, times_array1, values_array1)
     ]
 
     # Test case 2: Headers with different scale factors
     headers2 = [
-        MockHeader(1.0, 2.0, 3),
-        MockHeader(1.1, 2.0, 2),
-        MockHeader(1.0, 2.0, 4),
+        MockHeader(1.0, 2.0, 3, 1, 2, 50, 0),
+        MockHeader(1.1, 2.0, 2, 0, 2, 50, 0),
+        MockHeader(1.0, 2.0, 4, 2, 2, 50, 0),
     ]
-    times_array2 = list(range(9))
-    values_array2 = list(range(200, 209))
+    times_array2 = [
+        0, 1,  # Gap for first header
+        # No gaps for second header
+        0, 2, 3, 3  # Gaps for third header
+    ]
+    values_array2 = list(range(9))
     expected_groups2 = [
-        ([headers2[0]], times_array2[0:3], values_array2[0:3]),
-        ([headers2[1]], times_array2[3:5], values_array2[3:5]),
-        ([headers2[2]], times_array2[5:9], values_array2[5:9]),
+        ([headers2[0]], times_array2[0:2], values_array2[0:3]),
+        ([headers2[1]], [], values_array2[3:5]),
+        ([headers2[2]], times_array2[2:], values_array2[5:9]),
     ]
 
     # Test case 3: Empty headers list
@@ -152,47 +164,58 @@ def test_group_headers_by_scale_factor():
     values_array3 = []
     expected_groups3 = []
 
-    # Test case 4: Non-consecutive headers with same scale factors
+    # Test case 4: Non-consecutive headers with same scale factors but different time types
     headers4 = [
-        MockHeader(1.0, 2.0, 3),
-        MockHeader(1.1, 2.0, 2),
-        MockHeader(1.0, 2.0, 4),
-        MockHeader(1.0, 2.0, 1),
+        MockHeader(1.0, 2.0, 3, 1, 2, 50, 0),
+        MockHeader(1.1, 2.0, 2, 1, 2, 50, 0),
+        MockHeader(1.0, 2.0, 4, 1, 2, 50, 0),
+        MockHeader(1.0, 2.0, 1, 0, 2, 50, 0),
     ]
-    times_array4 = list(range(10))
-    values_array4 = list(range(300, 310))
+    times_array4 = [
+        0, 1,  # Gap for first header
+        0, 2,  # Gap for second header
+        0, 1   # Gap for third header
+        # No gaps for fourth header
+    ]
+    values_array4 = list(range(10))
     expected_groups4 = [
-        ([headers4[0]], times_array4[0:3], values_array4[0:3]),
-        ([headers4[1]], times_array4[3:5], values_array4[3:5]),
-        ([headers4[2], headers4[3]], times_array4[5:10], values_array4[5:10]),
+        ([headers4[0]], times_array4[0:2], values_array4[0:3]),
+        ([headers4[1]], times_array4[2:4], values_array4[3:5]),
+        ([headers4[2], headers4[3]], times_array4[4:6], values_array4[5:10]),
     ]
 
-    # Test case 5: All headers have different scale factors
+    # Test case 5: All headers have different scale factors and time types
     headers5 = [
-        MockHeader(1.0, 2.0, 1),
-        MockHeader(1.1, 2.1, 2),
-        MockHeader(1.2, 2.2, 3),
+        MockHeader(1.0, 2.0, 1, 0, 2, 50, 0),
+        MockHeader(1.1, 2.1, 2, 1, 1, 60, 0),
+        MockHeader(1.2, 2.2, 3, 0, 2, 70, 0),
     ]
-    times_array5 = list(range(6))
-    values_array5 = list(range(400, 406))
+    times_array5 = [
+        # No gaps for first header
+        0, 2  # Gap for second header
+        # No gaps for third header
+    ]
+    values_array5 = list(range(6))
     expected_groups5 = [
-        ([headers5[0]], times_array5[0:1], values_array5[0:1]),
-        ([headers5[1]], times_array5[1:3], values_array5[1:3]),
-        ([headers5[2]], times_array5[3:6], values_array5[3:6]),
+        ([headers5[0]], [], values_array5[0:1]),
+        ([headers5[1]], times_array5[0:2], values_array5[1:3]),
+        ([headers5[2]], [], values_array5[3:6]),
     ]
 
     # Test case 6: Only one header
-    headers6 = [MockHeader(1.0, 2.0, 3)]
-    times_array6 = list(range(3))
-    values_array6 = list(range(500, 503))
+    headers6 = [MockHeader(1.0, 2.0, 3, 1, 2, 50, 0)]
+    times_array6 = [
+        0, 2  # Gap for the header
+    ]
+    values_array6 = list(range(3))
     expected_groups6 = [
         (headers6, times_array6, values_array6)
     ]
 
     # Test case 7: Headers with zero num_vals
     headers7 = [
-        MockHeader(1.0, 2.0, 0),
-        MockHeader(1.0, 2.0, 0),
+        MockHeader(1.0, 2.0, 0, 0, 2, 50, 0),
+        MockHeader(1.0, 2.0, 0, 0, 2, 50, 0),
     ]
     times_array7 = []
     values_array7 = []
@@ -213,7 +236,7 @@ def test_group_headers_by_scale_factor():
 
     # Run tests
     for idx, (headers, times_array, values_array, expected_groups) in enumerate(test_cases, 1):
-        result = list(group_headers_by_scale_factor(headers, times_array, values_array))
+        result = list(group_headers_by_scale_factor_freq_time_type(headers, times_array, values_array))
         assert len(result) == len(expected_groups), f"Test case {idx}: Number of groups does not match expected."
 
         for i, (group, times_slice, values_slice) in enumerate(result):
@@ -222,3 +245,29 @@ def test_group_headers_by_scale_factor():
             assert times_slice == expected_times, f"Test case {idx}, group {i+1}: Times slice does not match expected."
             assert values_slice == expected_values, f"Test case {idx}, group {i+1}: Values slice does not match expected."
 
+
+def test_truncate_messages():
+    # Sample data
+    value_data = np.arange(40)
+    message_starts = np.array([10_000_000_000, 50_000_000_000])
+    message_sizes = np.array([20, 20])
+    freq_nhz = 10 ** 9 # (1 Hz)
+    trunc_start_nano = 20_000_000_000
+    trunc_end_nano = 60_000_000_000
+
+    expected_truncated_value_data = value_data[10:30]
+    expected_truncated_message_starts = np.array([20_000_000_000, 50_000_000_000])
+    expected_truncated_message_sizes = np.array([10, 10])
+
+    # Run the function with the sample data
+    truncated_value_data, truncated_message_starts, truncated_message_sizes = truncate_messages(
+        value_data, message_starts, message_sizes, freq_nhz, trunc_start_nano, trunc_end_nano
+    )
+
+    # Verify if the actual outputs match the expected outputs
+    assert np.array_equal(truncated_value_data,
+                          expected_truncated_value_data), "Value data does not match expected output."
+    assert np.array_equal(truncated_message_starts,
+                          expected_truncated_message_starts), "Message starts do not match expected output."
+    assert np.array_equal(truncated_message_sizes,
+                          expected_truncated_message_sizes), "Message sizes do not match expected output."

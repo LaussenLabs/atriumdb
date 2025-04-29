@@ -17,12 +17,15 @@
 
 import random
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import List
 
 import numpy as np
 from tqdm import tqdm
 
+from atriumdb.block_wrapper import BlockMetadata
+from atriumdb.intervals.union import intervals_union_list
 from atriumdb.transfer.adb.csv import _write_csv
 from atriumdb.transfer.adb.datestring_conversion import nanoseconds_to_date_string_with_tz
 from atriumdb.transfer.adb.definition import create_dataset_definition_from_verified_data
@@ -34,7 +37,9 @@ from atriumdb.transfer.adb.tsc import _ingest_data_tsc
 from atriumdb.transfer.adb.wfdb import _ingest_data_wfdb
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.atrium_sdk import AtriumSDK
-from atriumdb.adb_functions import convert_value_to_nanoseconds, condense_byte_read_list, get_block_and_interval_data
+from atriumdb.adb_functions import convert_value_to_nanoseconds, condense_byte_read_list, get_block_and_interval_data, \
+    group_sorted_block_list, reconstruct_messages_multi, sort_message_time_values, truncate_messages, \
+    create_gap_arr_from_variable_messages
 from atriumdb.transfer.adb.devices import transfer_devices
 from atriumdb.transfer.adb.measures import transfer_measures
 from atriumdb.windowing.verify_definition import verify_definition
@@ -112,14 +117,16 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,deidentify=True,deidentification_functions=my_deid_funcs,time_shift=time_shift,time_units='s')
 
     """
-    if not reencode_waveforms and time_shift is not None:
-        raise ValueError("Cannot apply a time shift without re-encoding waveforms. You must set reencode_waveforms=True")
 
+    # Set defaults for time units and export format
     time_units = "ns" if time_units is None else time_units
     export_time_format = "ns" if export_time_format is None else export_time_format
+
+    # Determine if analog values and duplicates are allowed based on export format
     analog_values = export_format != 'tsc'
     allow_duplicates = export_format == 'tsc'
 
+    # Validate provided time units
     if time_units not in time_unit_options.keys():
         raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
 
@@ -142,11 +149,13 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     gap_tolerance = DEFAULT_GAP_TOLERANCE if gap_tolerance is None else gap_tolerance
     measure_tag_match_rule = "all" if measure_tag_match_rule is None else measure_tag_match_rule
 
+    # Validate the dataset definition if not already done
     if not definition.is_validated:
         definition.validate(sdk=src_sdk, gap_tolerance=gap_tolerance,
                             measure_tag_match_rule=measure_tag_match_rule, start_time=start_time_n,
                             end_time=end_time_n)
 
+    # Extract validated info
     validated_measure_list = definition.validated_data_dict['measures']
     validated_label_set_list = definition.validated_data_dict['labels']
     validated_sources = definition.validated_data_dict['sources']
@@ -154,6 +163,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     src_measure_id_list = [measure_info["id"] for measure_info in validated_measure_list]
     src_device_id_list, src_patient_id_list = extract_src_device_and_patient_id_list(validated_sources)
 
+    # Transfer measure, devices, patients between SDKs
     measure_id_map = transfer_measures(src_sdk, dest_sdk, measure_id_list=src_measure_id_list,
                                        measure_tag_match_rule=measure_tag_match_rule)
     device_id_map = transfer_devices(src_sdk, dest_sdk, device_id_list=src_device_id_list)
@@ -167,16 +177,289 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     else:
         label_set_id_map = {}
 
-    # Keep track of all files created
     file_path_dicts = {}
-    # Transfer Waveforms and Labels
+
     for source_type, sources in validated_sources.items():
-        # For each source identifier of that type
         for source_id, time_ranges in tqdm(list(sources.items())):
             dest_device_id, src_device_id = extract_device_ids(source_id, source_type, device_id_map)
 
             if src_device_id is None:
                 continue
+
+            if export_format == "tsc":
+                for src_measure_id, dest_measure_id in measure_id_map.items():
+                    seen_block_ids = set()
+                    blocks_to_transfer = []
+                    time_range_index_to_transfer = []
+                    re_encode_block_bool_list = []
+                    measure_device_intervals = []
+
+                    for time_range_i, (start_time_nano, end_time_nano) in enumerate(time_ranges):
+                        # Finding all blocks that match the given time ranges
+                        if src_sdk.mode == "api":
+                            params = {
+                                "start_time": int(start_time_nano),
+                                "end_time": int(end_time_nano),
+                                "measure_id": int(src_measure_id),
+                                "device_id": int(src_device_id),
+                            }
+                            block_list = src_sdk._request("GET", "sdk/blocks", params=params)
+                            block_list.sort(key=lambda b: b["start_time_n"])
+                        else:
+                            block_list = src_sdk.sql_handler.select_blocks(
+                                int(src_measure_id), int(start_time_nano), int(end_time_nano), int(src_device_id), None)
+                            block_list.sort(key=lambda x: x[6])
+
+                        # Filter out duplicates
+                        filtered_blocks = []
+                        for block in block_list:
+                            block_id = block["id"] if src_sdk.mode == "api" else block[0]
+                            if block_id not in seen_block_ids:
+                                seen_block_ids.add(block_id)
+                                filtered_blocks.append(block)
+
+                        # Extend the main list with unique blocks
+                        blocks_to_transfer.extend(filtered_blocks)
+
+                        # Decide which blocks need to be reencoded.
+                        if not reencode_waveforms:
+                            for block in block_list:
+                                block_s = block["start_time_n"] if src_sdk.mode == "api" else block[6]
+                                block_e = block["end_time_n"] if src_sdk.mode == "api" else block[7]
+                                if start_time_nano <= block_s and block_e <= end_time_nano:
+                                    time_range_index_to_transfer.append(-1)
+                                    re_encode_block_bool_list.append(False)
+                                else:
+                                    re_encode_block_bool_list.append(True)
+                        else:
+                            re_encode_block_bool_list.extend([True] * len(block_list))
+
+                        time_range_index_to_transfer.extend([time_range_i] * len(block_list))
+
+                        # Grab the interval data for transferring into the new sdk.
+                        write_intervals = src_sdk.get_interval_array(
+                            measure_id=src_measure_id, device_id=src_device_id,
+                            start=int(start_time_nano), end=int(end_time_nano))
+
+                        measure_device_intervals.append(write_intervals)
+
+                    if not blocks_to_transfer:
+                        continue
+
+                    block_start_index = 0
+                    # Break up  the list of total blocks to transfer into manageable block groups.
+                    for block_group in group_sorted_block_list(
+                            blocks_to_transfer, num_values_per_group=dest_sdk.block.block_size * 2048,
+                            src_sdk_mode=src_sdk.mode):
+
+                        group_re_encode_flags = re_encode_block_bool_list[block_start_index:block_start_index + len(block_group)]
+                        block_time_range_indices = time_range_index_to_transfer[
+                            block_start_index:block_start_index + len(block_group)]
+                        block_start_index += len(block_group)
+                        if len(block_group) == 0:
+                            continue
+
+                        # Read the bytes for the block group.
+                        if src_sdk.mode == "api":
+                            encoded_bytes = src_sdk._block_websocket_request(block_group)
+                        else:
+                            file_id_list = list({row[3] for row in block_group})
+                            filename_dict = src_sdk.get_filename_dict(file_id_list)
+                            read_list = condense_byte_read_list(block_group)
+                            encoded_bytes = src_sdk.file_api.read_file_list(read_list, filename_dict)
+
+                        groups_to_reencode = {}
+                        blocks_to_hold = []
+
+                        start_byte = 0
+                        # Read the block headers and organize block information.
+                        for block_i, (time_range_i, block, re_encode_flag) in enumerate(zip(block_time_range_indices, block_group, group_re_encode_flags)):
+                            block_num_bytes = block["num_bytes"] if src_sdk.mode == "api" else block[5]
+                            block_bytes = encoded_bytes[start_byte:start_byte + block_num_bytes]
+                            header = BlockMetadata.from_buffer(block_bytes, 0)
+
+                            scale_m = header.scale_m
+                            scale_b = header.scale_b
+                            freq_nhz = int(header.freq_nhz)
+                            t_encoded_type = int(header.t_encoded_type)
+
+                            key = (time_range_i, scale_m, scale_b, freq_nhz, t_encoded_type)
+
+                            if not re_encode_flag and time_shift is not None and t_encoded_type == 1:
+                                re_encode_flag = True
+
+                            if not re_encode_flag:
+                                # Pass encoded blocks directly to be written.
+                                if time_shift is not None:
+                                    header.start_n = header.start_n + time_shift
+                                    header.end_n = header.end_n + time_shift
+                                blocks_to_hold.append({'block_bytes': block_bytes, 'header': header})
+                            else:
+                                # Pass encoded blocks to be re-encoded before written.
+                                if key not in groups_to_reencode:
+                                    groups_to_reencode[key] = {
+                                        'block_bytes_list': [], 'block_num_bytes_list': [],
+                                        'blocks': [], 'headers': []}
+                                groups_to_reencode[key]['block_bytes_list'].append(block_bytes)
+                                groups_to_reencode[key]['block_num_bytes_list'].append(block_num_bytes)
+                                groups_to_reencode[key]['blocks'].append(block)
+                                groups_to_reencode[key]['headers'].append(header)
+
+                            start_byte += block_num_bytes
+
+                        # Process each group for reencoding
+                        segments = []
+                        for key, group_data in groups_to_reencode.items():
+                            time_range_i, scale_m, scale_b, freq_nhz, t_encoded_type = key
+                            encode_group_lower_bound, encode_group_upper_bound = time_ranges[time_range_i]
+
+                            block_bytes_list = group_data['block_bytes_list']
+                            block_num_bytes_list = group_data['block_num_bytes_list']
+                            group_headers = group_data['headers']
+
+                            # Concatenate all block bytes into one array
+                            encode_group_bytes = np.concatenate(block_bytes_list)
+
+                            # Decode the blocks to get times and values
+                            encode_group_times, encode_group_values, _ = src_sdk.block.decode_blocks(
+                                encode_group_bytes, block_num_bytes_list, analog=False, time_type='encoded')
+
+                            if np.issubdtype(encode_group_values.dtype, np.integer):
+                                raw_value_type = 1
+                                encoded_value_type = 3
+                            else:
+                                raw_value_type = 2
+                                encoded_value_type = 2
+
+                            group_time_type = t_encoded_type
+                            if group_time_type == 1:
+                                # Time type is 1
+                                period_ns = (10 ** 18) // freq_nhz
+                                encode_group_times, sorted_time_indices = np.unique(encode_group_times,
+                                                                                    return_index=True)
+                                encode_group_values = encode_group_values[sorted_time_indices]
+
+                                # Truncate data
+                                left = np.searchsorted(encode_group_times, encode_group_lower_bound, side='left')
+                                right = np.searchsorted(encode_group_times, encode_group_upper_bound, side='left')
+                                encode_group_times = encode_group_times[left:right]
+                                encode_group_values = encode_group_values[left:right]
+                                if encode_group_times.size == 0:
+                                    continue
+
+                                if time_shift is not None:
+                                    encode_group_times += time_shift
+
+                                encode_group_start_time = int(encode_group_times[0])
+                            elif group_time_type == 2:
+                                # Time type is 2
+                                message_starts, message_sizes = reconstruct_messages_multi(
+                                    group_headers, encode_group_times, freq_nhz)
+                                sort_message_time_values(message_starts, message_sizes, encode_group_values)
+
+                                # Truncate the message data
+                                encode_group_values, message_starts, message_sizes = truncate_messages(
+                                    encode_group_values, message_starts, message_sizes, freq_nhz,
+                                    encode_group_lower_bound, encode_group_upper_bound)
+
+                                if len(message_starts) == 0:
+                                    continue
+
+                                # Revert back to gap array
+                                gap_data = create_gap_arr_from_variable_messages(
+                                    message_starts, message_sizes, freq_nhz)
+                                encode_group_times = gap_data
+
+                                encode_group_start_time = int(message_starts[0])
+
+                                if time_shift is not None:
+                                    encode_group_start_time += time_shift
+                            else:
+                                raise ValueError("time_type must be 1 or 2")
+
+                            segment = {
+                                'times': encode_group_times,
+                                'values': encode_group_values,
+                                'freq_nhz': freq_nhz,
+                                'start_ns': encode_group_start_time,
+                                'raw_time_type': t_encoded_type,
+                                'encoded_time_type': t_encoded_type,
+                                'raw_value_type': raw_value_type,
+                                'encoded_value_type': encoded_value_type,
+                                'scale_m': scale_m,
+                                'scale_b': scale_b
+                            }
+                            segments.append(segment)
+
+                        # Combine reencoded blocks and held blocks
+                        all_blocks_bytes = []
+                        all_blocks_headers = []
+
+                        if segments:
+                            # Re-encode the blocks that needed re-encoding.
+                            reencoded_bytes, reencoded_headers, reencoded_byte_start_array = dest_sdk.block.encode_blocks_from_multiple_segments(segments)
+
+                            # Add re-encoded blocks to total blocks to be written.
+                            for i in range(len(reencoded_headers)):
+                                header = reencoded_headers[i]
+                                start_byte = reencoded_byte_start_array[i]
+                                end_byte = reencoded_byte_start_array[i + 1] if i < len(reencoded_headers) - 1 else len(reencoded_bytes)
+
+                                block_bytes = reencoded_bytes[start_byte:end_byte]
+
+                                all_blocks_bytes.append(block_bytes)
+                                all_blocks_headers.append(header)
+
+                        # Add blocks that didn't need re-encoding.
+                        for block_info in blocks_to_hold:
+                            block_bytes = block_info['block_bytes']
+                            header = block_info['header']
+                            all_blocks_bytes.append(block_bytes)
+                            all_blocks_headers.append(header)
+
+                        if not all_blocks_bytes:
+                            continue
+
+                        paired = sorted(zip(all_blocks_headers, all_blocks_bytes), key=lambda hb: hb[0].start_n)
+                        total_recombined_headers, sorted_block_bytes = zip(*paired)
+                        total_recombined_bytes = np.concatenate(sorted_block_bytes, dtype=np.uint8)
+
+                        filename = dest_sdk.file_api.write_bytes(dest_measure_id, dest_device_id, total_recombined_bytes)
+
+                        sql_total_block_data = []
+                        start_byte = 0
+                        for header in total_recombined_headers:
+                            sql_total_block_data.append({
+                                "measure_id": dest_measure_id,
+                                "device_id": dest_device_id,
+                                "start_byte": start_byte,
+                                "num_bytes": int(header.meta_num_bytes + header.t_num_bytes + header.v_num_bytes),
+                                "start_time_n": header.start_n,
+                                "end_time_n": header.end_n,
+                                "num_values": header.num_vals,
+                            })
+                            start_byte += int(header.meta_num_bytes + header.t_num_bytes + header.v_num_bytes)
+
+                        # Insert block + file data into sql table.
+                        dest_sdk.sql_handler.insert_tsc_file_blocks(filename, sql_total_block_data)
+
+                    # Recombine data intervals
+                    total_recombined_data_intervals = intervals_union_list(measure_device_intervals, gap_tolerance_nano=0)
+
+                    if time_shift is not None:
+                        total_recombined_data_intervals += time_shift
+
+                    # Get interval sql data
+                    sql_total_interval_data = []
+                    for interval in total_recombined_data_intervals:
+                        sql_total_interval_data.append({
+                            "measure_id": dest_measure_id,
+                            "device_id": dest_device_id,
+                            "start_time_n": int(interval[0]),
+                            "end_time_n": int(interval[1]),
+                        })
+                    # Insert Interval data into sql table
+                    dest_sdk.sql_handler.insert_intervals(sql_total_interval_data)
 
             # Simple for now. Optimized by a large gap_tolerance.
             # Might want to aggregate reads and writes in the future.
@@ -184,82 +467,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                 file_path_dicts[(source_type, source_id, start_time_nano, end_time_nano)] = {}
                 for src_measure_id, dest_measure_id in measure_id_map.items():
                     # Insert Waveforms
-                    if not reencode_waveforms and export_format == "tsc":
-                        freq_nhz = src_sdk.get_measure_info(src_measure_id)['freq_nhz']
-                        # If we aren't re-encoding, just read the encoded blocks and insert them.
-                        block_list = src_sdk.sql_handler.select_blocks(
-                            int(src_measure_id), int(start_time_nano), int(end_time_nano), src_device_id, None)
-
-                        within_time_blocks = []
-                        remaining_blocks = []
-
-                        # Iterate through the block_list and split into the new lists
-                        write_intervals = src_sdk.get_interval_array(
-                            measure_id=src_measure_id, device_id=src_device_id,
-                            start=int(start_time_nano), end=int(end_time_nano)).tolist()
-
-                        for block in block_list:
-                            block_s = block[6]
-                            block_e = block[7]
-                            if start_time_nano <= block_s and block_e <= end_time_nano:
-                                within_time_blocks.append(block)
-                            else:
-                                remaining_blocks.append(block)
-
-                        # if no matching block ids
-                        if len(within_time_blocks) + len(remaining_blocks) == 0:
-                            continue
-
-                        if within_time_blocks:
-                            # Concatenate continuous byte intervals to cut down on total number of reads.
-                            read_list = condense_byte_read_list(within_time_blocks)
-
-                            # Map file_ids to filenames and return a dictionary.
-                            file_id_list = [row[2] for row in read_list]
-                            filename_dict = src_sdk.get_filename_dict(file_id_list)
-
-                            # Read the data from the files using the read list
-                            encoded_bytes = src_sdk.file_api.read_file_list(read_list, filename_dict)
-
-                            num_bytes_list = [row[5] for row in within_time_blocks]
-                            byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
-                            byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]],
-                                                              axis=None)
-                            encoded_headers = src_sdk.block.decode_headers(encoded_bytes, byte_start_array)
-                            filename = dest_sdk.file_api.write_bytes(dest_measure_id, dest_device_id, encoded_bytes)
-
-                            block_data, interval_data = get_block_and_interval_data(
-                                dest_measure_id, dest_device_id, encoded_headers, byte_start_array, write_intervals,
-                                interval_gap_tolerance=gap_tolerance)
-
-                            dest_sdk.sql_handler.insert_tsc_file_data(
-                                filename, block_data, interval_data, "fast")
-
-                        if remaining_blocks:
-                            # If there were partial blocks, we need to re-encode them.
-                            # Concatenate continuous byte intervals to cut down on total number of reads.
-                            read_list = condense_byte_read_list(remaining_blocks)
-
-                            # if no matching block ids
-                            if len(read_list) == 0:
-                                continue
-
-                            # Map file_ids to filenames and return a dictionary.
-                            file_id_list = [row[2] for row in read_list]
-                            filename_dict = src_sdk.get_filename_dict(file_id_list)
-                            headers, times, values = src_sdk.get_data_from_blocks(
-                                remaining_blocks, filename_dict, int(start_time_nano), int(end_time_nano),
-                                analog_values, time_type=1, sort=True, allow_duplicates=allow_duplicates)
-
-                            for h_i in range(len(headers)):
-                                headers[h_i].t_raw_type = 1
-
-                            if values.size == 0:
-                                continue
-
-                            file_path = ingest_data(dest_sdk, dest_measure_id, dest_device_id, headers, times, values,
-                                                    export_format=export_format, export_time_format=export_time_format,
-                                                    parquet_engine=parquet_engine, **kwargs)
+                    if export_format == "tsc":
+                        break
                     else:
                         headers, times, values = src_sdk.get_data(
                             src_measure_id, start_time_nano, end_time_nano, device_id=src_device_id, time_type=1,
@@ -300,7 +509,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                         label_dict['start_time_n'] += time_shift
                         label_dict['end_time_n'] += time_shift
 
-                # make the list of label tuples to insert to the other dataset
+                # Make the list of label tuples to insert to the other dataset
                 dest_labels = [(label['label_name'], device_id_map[label['device_id']],
                                 measure_id_map[label['measure_id']], label['start_time_n'], label['end_time_n'],
                                 label['label_source_id']) for label in labels]
@@ -315,6 +524,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     definition_path = Path(dest_sdk.dataset_location) / "meta" / "definition.yaml"
     definition_path.parent.mkdir(parents=True, exist_ok=True)
     export_definition.save(definition_path, force=True)
+
 
 
 def extract_device_ids(source_id, source_type, device_id_map):

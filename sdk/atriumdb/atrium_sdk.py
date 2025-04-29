@@ -431,17 +431,20 @@ class AtriumSDK:
         :param int end_time_n: The end epoch in nanoseconds. The end time is not inclusive.
         :param int device_id: The device identifier. If None, device_tag must be provided.
         :param int patient_id: The patient identifier. If None, mrn must be provided.
-        :param int time_type: The type of time returned. Time_type=1 for timestamps.
+        :param time_type: The type of time returned. Options are:
+            - 1: Timestamps (default).
+            - 2: Gap array (advanced users only).
+            - 'raw': Return as was originally stored.
+            - 'encoded': Return in the format currently encoded (usually 2 for periodic signals).
         :param bool analog: Convert value return type to analog signal.
         :param block_info: Custom block_info list to skip metadata table check.
         :param str time_units: Unit for the time array returned. Options: ["s", "ms", "us", "ns"].
-        :param bool sort: Whether to sort the returned data by time.
+        :param bool sort: Whether to sort the returned data by time. Sorting is only applied when time_type is 1.
         :param bool allow_duplicates: Allow duplicate times in returned data. Affects performance if false.
         :param str measure_tag: A short string identifying the signal. Required if measure_id is None.
         :param freq: The sample frequency of the signal. Helpful with measure_tag.
         :param str units: The units of the signal. Helpful with measure_tag.
-        :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz",
-            "Hz", "kHz", "MHz"] default "nHz".
+        :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz", "Hz", "kHz", "MHz"] default "nHz".
         :param str device_tag: A string identifying the device. Exclusive with device_id.
         :param int mrn: Medical record number for the patient. Exclusive with patient_id.
         :param bool | ndarray return_nan_filled: Whether or not to fill missing values from start to end with np.nan.
@@ -564,18 +567,20 @@ class AtriumSDK:
         :param int start_time_n: Start time of the data to read.
         :param int end_time_n: End time of the data to read.
         :param bool analog: Whether the data is analog or not, defaults to True.
-        :param int time_type: The time type returned to you. Time_type=1 is time stamps, which is what most people will
-         want. Time_type=2 is gap array and should only be used by advanced users. Note that sorting will not work for
-        time type 2 and you may receive more values than you asked for because of this.
-        :param bool sort: Whether to sort the returned data by time.
+        :param time_type: The type of time returned. Options are:
+            - 1: Timestamps (default).
+            - 2: Gap array (advanced users only).
+            - 'raw': Return as was originally stored.
+            - 'encoded': Return in the format currently encoded (usually 2 for periodic signals).
+        :param bool sort: Whether to sort the returned data by time. Sorting is only applied when time_type is 1.
         :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
-        nothing if sort is false.
+            nothing if sort is false.
         :param bool | ndarray return_nan_gap: Whether or not to return values as a list of nans from start to end.
         :return: Tuple containing headers, times, and values.
         :rtype: tuple
         """
         if self.metadata_connection_type == "api":
-            raise NotImplementedError("API mode is not yet supported for this function.")
+            raise ValueError("This function is only meant to work in local mode.")
 
         # Condense the block list for optimized reading
         read_list = condense_byte_read_list(block_list)
@@ -631,6 +636,8 @@ class AtriumSDK:
         return headers, r_times, r_values
 
     def _block_websocket_request(self, block_info_list):
+        if len(block_info_list) == 0:
+            return np.array([], dtype=np.uint8)
 
         # check if the api token will expire within 30 seconds and if so refresh it
         if self.validate_token and time.time() >= self.token_expiry - 30:
@@ -3118,8 +3125,8 @@ class AtriumSDK:
                     query_start_time = query_start_time if start_time_ns is None else max(query_start_time, start_time_ns)
 
                     # Convert times to desired units
-                    query_start_time_converted = query_start_time / time_unit_options[time_units]
-                    query_end_time_converted = query_end_time / time_unit_options[time_units]
+                    query_start_time_converted = query_start_time / time_unit_options[time_units] if time_units != "ns" else query_start_time
+                    query_end_time_converted = query_end_time / time_unit_options[time_units] if time_units != "ns" else query_end_time
 
                     # Filter based on device_id_list if it's provided
                     if device_id_list is None or query_device_id in device_id_list:
@@ -4911,7 +4918,7 @@ of DatasetIterator objects depending on the value of num_iterators.
 
     def get_filename_dict(self, file_id_list):
         if self.metadata_connection_type == "api":
-            raise NotImplementedError("API mode is not yet supported for this function.")
+            raise ValueError("This function is only meant to work in local mode.")
 
         result_dict = {}
 
@@ -4946,7 +4953,7 @@ of DatasetIterator objects depending on the value of num_iterators.
 
         # Initialize dictionary to store overwritten files
         overwrite_file_dict = {}
-        # Initialize list to store all old file blocks (The blocks before this latest write_data command)
+        # Initialize list to store all old file blocks (The blocks before this lates command)
         all_old_file_blocks = []
 
         # Get the list of old blocks

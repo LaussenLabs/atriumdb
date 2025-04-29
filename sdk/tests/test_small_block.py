@@ -36,7 +36,7 @@ global_d_record, annotation = next(get_records(dataset_name='mitdb', physical=Fa
 
 
 def test_small_block():
-    global global_gap_index
+    _test_for_both(DB_NAME, _test_big_gap_array)
     _test_for_both(DB_NAME, _test_small_block)
 
 
@@ -91,6 +91,55 @@ def _test_small_block_experiment(db_type, dataset_location, connection_params):
 
     if not np.array_equal(expected_times, times):
         print(f"Didn't work for {global_gap_index}")
+
+
+def _test_big_gap_array(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params, no_pool=True)
+
+    one_d_record = global_d_record
+
+    device_id = sdk.insert_device(device_tag=one_d_record.record_name)
+    measure_tag = one_d_record.sig_name[0]
+    units = one_d_record.units[0]
+    freq_nano = 500 * (10 ** 9)
+    period_ns = (10 ** 18) // freq_nano
+    measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq_nano,
+                                    units=units)
+
+    value_data = one_d_record.d_signal.T[0].astype(np.int64)[:1000]
+    scale_m = (1 / one_d_record.adc_gain[0])
+    scale_b = (-one_d_record.adc_zero[0] / one_d_record.adc_gain[0])
+
+    start_time = 0
+
+    # Time type 2
+    raw_t_t = 2
+    encoded_t_t = 2
+
+    gap_data = [[i, 4_000_000] for i in range(value_data.size)]
+    gap_data = np.array(gap_data, dtype=np.int64).flatten()
+    expected_times = np.arange(start_time, start_time + (period_ns * value_data.size), period_ns, dtype=np.int64)
+
+    for gap_i, gap_dur in gap_data.reshape(-1, 2):
+        expected_times[gap_i:] += gap_dur
+
+    if np.issubdtype(value_data.dtype, np.integer):
+        raw_v_t = V_TYPE_INT64
+        encoded_v_t = V_TYPE_DELTA_INT64
+    else:
+        raw_v_t = V_TYPE_DOUBLE
+        encoded_v_t = V_TYPE_DOUBLE
+
+    sdk.block.block_size = 4
+    # Call the write_data method with the determined parameters
+    sdk.write_data(measure_id, device_id, gap_data, value_data, freq_nano, start_time, raw_time_type=raw_t_t,
+                   raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
+                   scale_m=scale_m, scale_b=scale_b)
+
+    _, times, values = sdk.get_data(measure_id, start_time, start_time + (10 ** 17), device_id=device_id, analog=False)
+
+    assert np.array_equal(expected_times, times)
 
 
 def _test_small_block(db_type, dataset_location, connection_params):

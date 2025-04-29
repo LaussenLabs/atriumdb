@@ -414,11 +414,11 @@ class MariaDBHandler(SQLHandler):
         return row
 
     def select_files(self, file_id_list: List[int]):
+        if not file_id_list:
+            return []
         placeholders = ', '.join(['?'] * len(file_id_list))
         maria_select_files_by_id_list = f"SELECT id, path FROM file_index WHERE id IN ({placeholders})"
         with self.maria_db_connection() as (conn, cursor):
-            _LOGGER.debug(f"maria_select_files_by_id_list {maria_select_files_by_id_list}")
-            _LOGGER.debug(f"file_id_list {file_id_list}")
             cursor.execute(maria_select_files_by_id_list, file_id_list)
             rows = cursor.fetchall()
 

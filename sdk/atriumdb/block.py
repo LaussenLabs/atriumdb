@@ -161,7 +161,7 @@ class Block:
                                                   scale_m=scale_m, scale_b=scale_b)
 
             # Adjust t_block_start and v_block_start
-            if raw_time_type == TIME_TYPES['TIME_ARRAY_INT64_NS']:
+            if raw_time_type in [TIME_TYPES['TIME_ARRAY_INT64_NS'], TIME_TYPES['GAP_ARRAY_INT64_INDEX_DURATION_NS']]:
                 t_block_start_s += cumulative_time_length * times_s.itemsize
             elif raw_time_type == TIME_TYPES['START_TIME_NUM_SAMPLES']:
                 # Adjust interval_block_start_s
@@ -406,26 +406,41 @@ class Block:
 
     def decode_blocks(self, encoded_bytes, num_bytes_list, analog=True, time_type=1, return_nan_gap=False,
                       start_time_n=None, end_time_n=None):
+        if time_type not in [1, 2, 'encoded', 'raw']:
+            raise ValueError("Time type must be one of [1, 2, 'encoded', 'raw']")
+
         # Calculate the starting byte positions of each block in the encoded bytes array
         byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
         byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]], axis=None)
 
         min_block_start, max_block_end = None, None
-        # trick C dll into decoding the data directly into the time type you want by editing the t_raw_type field in
-        # each of the block headers in the encoded_bytes_stream so the python sdk doesn't have to do it
+        # Adjust the t_raw_type field in each of the block headers based on the requested time_type
         for start_byte in byte_start_array:
-            # using from_buffer() on the header will allow us to directly modify the encoded_bytes variable through
-            # the headers ctypes fields. This is because both the header struct and encoded_bytes variable point at
+            # Using from_buffer() on the header will allow us to directly modify the encoded_bytes variable through
+            # the header's ctypes fields. This is because both the header struct and encoded_bytes variable point at
             # the same bytes in memory so modifying one will modify the other
             header = BlockMetadata.from_buffer(encoded_bytes, start_byte)
-            if time_type == 1 and header.t_raw_type != 1:
-                header.t_raw_type = time_type
+            if time_type == 'raw':
+                # Do nothing, keep header.t_raw_type as is
+                pass
+            elif time_type == 'encoded':
+                # Set t_raw_type to t_encoded_type
+                header.t_raw_type = header.t_encoded_type
+                if header.t_encoded_type == 1:
+                    header.t_raw_size = 8 * header.num_vals
+                elif header.t_encoded_type == 2:
+                    header.t_raw_size = 16 * header.num_gaps
+                else:
+                    raise ValueError(f"Requested header.t_raw_type is {header.t_raw_type} but must be 1 or 2")
+            elif time_type == 1:
+                header.t_raw_type = 1
                 header.t_raw_size = 8 * header.num_vals
-            elif time_type == 2 and header.t_raw_type != 2:
-                header.t_raw_type = time_type
+            elif time_type == 2:
+                header.t_raw_type = 2
                 header.t_raw_size = 16 * header.num_gaps
-            elif time_type not in [1, 2]:
-                raise ValueError("Time type must be in [1, 2]")
+
+            if header.t_raw_type not in [1, 2]:
+                raise ValueError(f"Requested header.t_raw_type is {header.t_raw_type} but must be 1 or 2")
 
             min_block_start = header.start_n if min_block_start is None else min(min_block_start, header.start_n)
             max_block_end = header.end_n if max_block_end is None else max(max_block_end, header.end_n)
