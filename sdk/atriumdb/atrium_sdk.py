@@ -3346,24 +3346,27 @@ class AtriumSDK:
 
         self.sql_handler.insert_device_patients(converted_device_patient_data)
 
-    def convert_patient_to_device_id(self, start_time: int, end_time: int, patient_id: int = None, mrn: int = None):
+    def convert_patient_to_device_id(self, start_time: int, end_time: int = None, patient_id: int = None,
+                                     mrn: int = None):
         """
         Converts a patient ID or MRN to a device ID based on the specified time range.
 
-        :param int start_time: Start time for the association.
-        :param int end_time: End time for the association.
+        :param int start_time: Start time or only time for the association.
+        :param int end_time: End time for the association. If None, then start_time is taken as a single point in time.
         :param int patient_id: Patient ID to be converted.
         :param int mrn: MRN to be converted.
         :return: Device ID if a single device fully encapsulates the time range, otherwise None.
         :rtype: int or None
         """
 
+        end_time = start_time if end_time is None else end_time
         # Retrieve device-patient mapping data
         if patient_id is not None:
-            device_patient_data = self.get_device_patient_data(patient_id_list=[patient_id], start_time=start_time,
-                                                               end_time=end_time)
+            device_patient_data = self.get_device_patient_mapping(patient_id_list=[patient_id], start_time=start_time,
+                                                                  end_time=end_time, truncate=False)
         elif mrn is not None:
-            device_patient_data = self.get_device_patient_data(mrn_list=[mrn], start_time=start_time, end_time=end_time)
+            device_patient_data = self.get_device_patient_mapping(mrn_list=[mrn], start_time=start_time,
+                                                                  end_time=end_time, truncate=False)
         else:
             raise ValueError("You must specify either patient_id or mrn.")
 
@@ -3401,12 +3404,13 @@ class AtriumSDK:
 
         return matching_devices[0] if matching_devices else None
 
-    def convert_device_to_patient_id(self, start_time: int, end_time: int, device, conflict_resolution='error'):
+    def convert_device_to_patient_id(self, start_time: int, end_time: int = None, device=None,
+                                     conflict_resolution='error'):
         """
         Converts a device ID or tag to a patient ID based on the specified time range.
 
-        :param int start_time: Start time for the association.
-        :param int end_time: End time for the association.
+        :param int start_time: Start time or only time for the association.
+        :param int end_time: End time for the association. If None, then start_time is taken as a single point in time.
         :param device: Device ID (int) or tag (str) to be converted.
         :param str conflict_resolution: How to handle multiple matching patients. Options are 'error', '90_percent_overlap', 'always_none'.
         :return: Patient ID if a single patient's interval encapsulates the time range, otherwise None.
@@ -3421,9 +3425,11 @@ class AtriumSDK:
         else:
             raise ValueError(f"device must be either int or str (id or tag), not type{type(device)}")
 
+        end_time = start_time if end_time is None else end_time
+
         # Retrieve device-patient mapping data
-        device_patient_data = self.get_device_patient_data(device_id_list=[device_id], start_time=start_time,
-                                                           end_time=end_time)
+        device_patient_data = self.get_device_patient_mapping(device_id_list=[device_id], start_time=start_time,
+                                                              end_time=end_time, truncate=False)
 
         # Group data by patient_id
         patient_intervals = {}
