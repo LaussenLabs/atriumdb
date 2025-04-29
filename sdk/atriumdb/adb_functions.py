@@ -407,6 +407,8 @@ def get_measure_id_from_generic_measure(sdk, measure, measure_tag_match_rule="be
         measure_ids.append(measure)
     elif isinstance(measure, str):
         matching_ids = sdk.get_measure_id_list_from_tag(measure, approx=True)
+        if len(matching_ids) == 0:
+            raise ValueError(f"No matching measures found for: {measure}")
         if measure_tag_match_rule == "best":
             measure_ids.append(matching_ids[0])
         elif measure_tag_match_rule == "all":
@@ -427,6 +429,8 @@ def get_measure_id_from_generic_measure(sdk, measure, measure_tag_match_rule="be
         else:
             # Use get_measure_id_list_from_tag when either freq or units is not specified
             matching_ids = sdk.get_measure_id_list_from_tag(measure['tag'], approx=True)
+            if len(matching_ids) == 0:
+                raise ValueError(f"No matching measures found for: {measure['tag']}")
             if measure_tag_match_rule == "best":
                 measure_ids.append(matching_ids[0])
             elif measure_tag_match_rule == "all":
