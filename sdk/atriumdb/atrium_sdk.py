@@ -4628,6 +4628,17 @@ of DatasetIterator objects depending on the value of num_iterators.
                           f"different from your requested iterator window slide {window_slide} ns. Windows will "
                           f"not be the same as the filter function's windows.")
 
+        min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
+        number_of_values_per_window_duration = (int(window_duration) * int(min_freq_nhz)) // (10 ** 18)
+        if number_of_values_per_window_duration == 0:
+            raise ValueError(f"Window Slide {window_duration} with units {time_units} is less than a single value. "
+                             f"Please increase it to at least one sample period.")
+
+        number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
+        if number_of_values_per_window_slide == 0:
+            raise ValueError(f"Window Slide {window_slide} with units {time_units} is less than a single value. "
+                             f"Please increase it to at least one sample period.")
+
         if not isinstance(shuffle, bool) or shuffle:
             # Set some sensible defaults for pseudorandom yet efficient shuffle
             if cached_windows_per_source is None:
