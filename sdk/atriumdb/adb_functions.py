@@ -80,8 +80,10 @@ def condense_byte_read_list(block_list):
     return result
 
 
-def find_intervals(freq_nhz, raw_time_type, time_data, data_start_time, num_values):
-    period_ns = int((10 ** 18) / freq_nhz)
+def find_intervals(raw_time_type, time_data, data_start_time, num_values, freq_nhz=None, period_ns=None):
+    if (period_ns is None) == (freq_nhz is None):
+        raise ValueError("period_ns and freq_nhz are mutually exclusive")
+    period_ns = int((10 ** 18) / freq_nhz) if period_ns is None else period_ns
     if raw_time_type == TIME_TYPES['TIME_ARRAY_INT64_NS']:
         intervals = [[time_data[0], 0]]
         time_deltas = time_data[1:] - time_data[:-1]
@@ -105,14 +107,24 @@ def find_intervals(freq_nhz, raw_time_type, time_data, data_start_time, num_valu
                 intervals.append([start_time, end_time])
 
     elif raw_time_type == TIME_TYPES['GAP_ARRAY_INT64_INDEX_DURATION_NS']:
-        intervals = [[data_start_time, data_start_time + calc_time_by_freq(freq_nhz, num_values)]]
-        last_id = 0
+        if freq_nhz is not None:
+            intervals = [[data_start_time, data_start_time + calc_time_by_freq(freq_nhz, num_values)]]
+            last_id = 0
 
-        for sample_id, duration in time_data.reshape((-1, 2)):
-            intervals[-1][-1] = intervals[-1][0] + calc_time_by_freq(freq_nhz, sample_id - last_id)
-            last_id = sample_id
-            intervals.append([intervals[-1][-1] + duration,
-                              intervals[-1][-1] + duration + calc_time_by_freq(freq_nhz, num_values - last_id)])
+            for sample_id, duration in time_data.reshape((-1, 2)):
+                intervals[-1][-1] = intervals[-1][0] + calc_time_by_freq(freq_nhz, sample_id - last_id)
+                last_id = sample_id
+                intervals.append([intervals[-1][-1] + duration,
+                                  intervals[-1][-1] + duration + calc_time_by_freq(freq_nhz, num_values - last_id)])
+        else:
+            intervals = [[data_start_time, data_start_time + (num_values * period_ns)]]
+            last_id = 0
+
+            for sample_id, duration in time_data.reshape((-1, 2)):
+                intervals[-1][-1] = intervals[-1][0] + ((num_values - last_id) * period_ns)
+                last_id = sample_id
+                intervals.append([intervals[-1][-1] + duration,
+                                  intervals[-1][-1] + duration + ((num_values - last_id) * period_ns)])
 
     else:
         raise ValueError("raw_time_type not one of {}.".format(
@@ -476,22 +488,27 @@ def collect_all_descendant_ids(label_set_ids, sql_handler):
     return all_descendants, closest_ancestor_dict
 
 
-def merge_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, start_time_2, freq_nhz):
+def merge_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, start_time_2, freq_nhz=None,
+                   period_ns=None):
+    if (period_ns is None) == (freq_nhz is None):
+        raise ValueError("period_ns and freq_nhz are mutually exclusive")
+
     if not all(isinstance(arr, np.ndarray) for arr in [values_1, gap_array_1, values_2, gap_array_2]):
         raise ValueError(f"All input value and gap arrays must be numpy arrays.")
 
     if not values_1.dtype == values_2.dtype:
         raise ValueError(f"Values 1 and 2 have different dtypes {values_1.dtype}, {values_2.dtype}. Cannot merge.")
 
-    end_time_1 = _calc_end_time_from_gap_data(values_1.size, gap_array_1, start_time_1, freq_nhz)
-    end_time_2 = _calc_end_time_from_gap_data(values_2.size, gap_array_2, start_time_2, freq_nhz)
+    end_time_1 = _calc_end_time_from_gap_data(values_1.size, gap_array_1, start_time_1, freq_nhz, period_ns)
+    end_time_2 = _calc_end_time_from_gap_data(values_2.size, gap_array_2, start_time_2, freq_nhz, period_ns)
 
     overlap = (start_time_1 < end_time_2) and (end_time_1 > start_time_2)
 
     # If there's no overlap, you can simply concatenate the data.
-    if is_gap_data_sorted(gap_array_1, freq_nhz) and is_gap_data_sorted(gap_array_2, freq_nhz) and not overlap:
-        return _concatenate_gap_data(
-            values_1, gap_array_1, start_time_1, values_2, gap_array_2, start_time_2, freq_nhz)
+    sorted_period_ns = freq_nhz_to_period_ns(freq_nhz) if period_ns is None else period_ns
+
+    if is_gap_data_sorted(gap_array_1, sorted_period_ns) and is_gap_data_sorted(gap_array_2, sorted_period_ns) and not overlap:
+        return _concatenate_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, start_time_2, freq_nhz, period_ns)
 
     # if starts, values and gaps are equal, then just return the 1's
     if np.array_equal(values_1, values_2) and \
@@ -500,11 +517,9 @@ def merge_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, s
         return values_1, gap_array_1, start_time_1
 
     # Convert both gap_data into messages
-    message_starts_1, message_sizes_1 = reconstruct_messages(
-        start_time_1, gap_array_1, freq_nhz, int(values_1.size))
+    message_starts_1, message_sizes_1 = reconstruct_messages(start_time_1, gap_array_1, int(values_1.size), freq_nhz, period_ns)
 
-    message_starts_2, message_sizes_2 = reconstruct_messages(
-        start_time_2, gap_array_2, freq_nhz, int(values_2.size))
+    message_starts_2, message_sizes_2 = reconstruct_messages(start_time_2, gap_array_2, int(values_2.size), freq_nhz, period_ns)
 
     # Sort both message lists + values, and copy values to not mess with the originals
     values_1, values_2 = values_1.copy(), values_2.copy()
@@ -512,17 +527,20 @@ def merge_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, s
     sort_message_time_values(message_starts_2, message_sizes_2, values_2)
 
     # Merge lists and Overwrite 2 over 1 if overlapping
-    merged_starts, merged_sizes, merged_values = merge_sorted_messages(
-        message_starts_1, message_sizes_1, values_1,
-        message_starts_2, message_sizes_2, values_2, freq_nhz)
+    merged_starts, merged_sizes, merged_values = merge_sorted_messages(message_starts_1, message_sizes_1, values_1,
+                                                                       message_starts_2, message_sizes_2, values_2,
+                                                                       freq_nhz, period_ns)
 
     # Convert back into gap data
-    merged_gap_data = create_gap_arr_from_variable_messages(merged_starts, merged_sizes, freq_nhz)
+    merged_gap_data = create_gap_arr_from_variable_messages(merged_starts, merged_sizes, freq_nhz, period_ns)
 
     return merged_values, merged_gap_data, int(merged_starts[0])
 
 
-def _concatenate_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, start_time_2, freq_nhz):
+def _concatenate_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, start_time_2, freq_nhz=None,
+                          period_ns=None):
+    if (period_ns is None) == (freq_nhz is None):
+        raise ValueError("period_ns and freq_nhz are mutually exclusive")
     # if start_time_2 < start_time_1, swap 1's with 2's so that 1 is always temporally first.
     if start_time_2 < start_time_1:
         values_1, values_2 = values_2, values_1
@@ -530,7 +548,7 @@ def _concatenate_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_arr
         start_time_1, start_time_2 = start_time_2, start_time_1
 
     # Calculate the gap between blocks
-    end_time_1 = _calc_end_time_from_gap_data(values_1.size, gap_array_1, start_time_1, freq_nhz)
+    end_time_1 = _calc_end_time_from_gap_data(values_1.size, gap_array_1, start_time_1, freq_nhz, period_ns)
     new_gap_index, new_gap_duration = int(values_1.size), start_time_2 - end_time_1
 
     # Calculate positions depending on if we need to add a new gap between blocks.
@@ -558,20 +576,29 @@ def _concatenate_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_arr
     return merged_values, merged_gap_array, start_time_1
 
 
-def _calc_end_time_from_gap_data(values_size, gap_array, start_time, freq_nhz):
-    if (int(values_size) * (10 ** 18)) % freq_nhz != 0:
-        warnings.warn(f"Blocking starting on epoch {start_time} doesn't end on an integer number of nanoseconds, "
-                      f"merge will be approximate.")
-    sample_duration = (int(values_size) * (10 ** 18)) // freq_nhz
+def _calc_end_time_from_gap_data(values_size, gap_array, start_time, freq_nhz=None, period_ns=None):
+    if (period_ns is None) == (freq_nhz is None):
+        raise ValueError("period_ns and freq_nhz are mutually exclusive")
+    if freq_nhz is not None:
+        if (int(values_size) * (10 ** 18)) % freq_nhz != 0:
+            warnings.warn(f"Blocking starting on epoch {start_time} doesn't end on an integer number of nanoseconds, "
+                          f"merge will be approximate.")
+        sample_duration = (int(values_size) * (10 ** 18)) // freq_nhz
+    else:
+        sample_duration = int(values_size) * period_ns
     gap_total = int(np.sum(gap_array[1::2]))
     return start_time + sample_duration + gap_total
 
 
-def create_timestamps_from_gap_data(values_size, gap_array, start_time, freq_nhz):
-    if (10 ** 18) % freq_nhz != 0:
-        raise ValueError(f"Cannot create perfect timestamps from frequency_nhz = {freq_nhz}")
+def create_timestamps_from_gap_data(values_size, gap_array, start_time, freq_nhz=None, period_ns=None):
+    if (period_ns is None) == (freq_nhz is None):
+        raise ValueError("period_ns and freq_nhz are mutually exclusive")
 
-    period_ns = freq_nhz_to_period_ns(freq_nhz)
+    if freq_nhz is not None:
+        if (10 ** 18) % freq_nhz != 0:
+            raise ValueError(f"Cannot create perfect timestamps from frequency_nhz = {freq_nhz}")
+        period_ns = freq_nhz_to_period_ns(freq_nhz)
+
     timestamps = np.arange(values_size, dtype=np.int64)
     timestamps *= period_ns
     timestamps += start_time
@@ -582,14 +609,17 @@ def create_timestamps_from_gap_data(values_size, gap_array, start_time, freq_nhz
     return timestamps
 
 
-def is_gap_data_sorted(gap_data, freq_nhz):
-    period_ns = freq_nhz_to_period_ns(freq_nhz)
+def is_gap_data_sorted(gap_data, period_ns):
     gap_durations = gap_data[1::2]
     return np.all(gap_durations >= -period_ns)
 
 
-def create_gap_arr_from_variable_messages(message_start_epoch_array, message_size_array, sample_freq):
-    sample_freq = int(sample_freq)
+def create_gap_arr_from_variable_messages(message_start_epoch_array, message_size_array, sample_freq=None,
+                                          sample_period=None):
+    if (sample_freq is None) == (sample_period is None):
+        raise ValueError("sample_freq and sample_period are mutually exclusive")
+    sample_freq = int(sample_freq) if sample_freq is not None else None
+    sample_period = int(sample_period) if sample_period is not None else None
     result_list = []
     current_sample = 0
 
@@ -599,7 +629,10 @@ def create_gap_arr_from_variable_messages(message_start_epoch_array, message_siz
 
         # Calculate the message period for the current message based on its size
         current_message_size = int(message_size_array[i - 1])
-        current_message_period_ns = ((10 ** 18) * current_message_size) // sample_freq
+        if sample_freq is not None:
+            current_message_period_ns = ((10 ** 18) * current_message_size) // sample_freq
+        else:
+            current_message_period_ns = current_message_size * sample_period
 
         # Check if the time difference doesn't match the expected message period
         if delta_t != current_message_period_ns:
@@ -617,7 +650,9 @@ def create_gap_arr_from_variable_messages(message_start_epoch_array, message_siz
     return np.array(result_list, dtype=np.int64)
 
 
-def reconstruct_messages(start_time_nano_epoch, gap_data_array, sample_freq, num_values):
+def reconstruct_messages(start_time_nano_epoch, gap_data_array, num_values, sample_freq=None, sample_period=None):
+    if (sample_period is None) == (sample_freq is None):
+        raise ValueError("sample_period and sample_freq are mutually exclusive")
     message_sizes = np.empty((gap_data_array.size // 2) + 2, dtype=np.int64)
     message_sizes[0] = 0
     message_sizes[-1] = num_values
@@ -628,9 +663,12 @@ def reconstruct_messages(start_time_nano_epoch, gap_data_array, sample_freq, num
 
     message_starts[0] = start_time_nano_epoch
 
-    if any(((10 ** 18) * int(m_size)) % sample_freq != 0 for m_size in message_sizes[:-1]):
-        warnings.warn("Not all messages durations can be expressed as a perfect nanosecond integer, some rounding has occured")
-    message_starts[1:] = [_message_size_to_duration_ns(int(m_size), sample_freq) for m_size in message_sizes[:-1]]
+    if sample_freq is not None:
+        if any(((10 ** 18) * int(m_size)) % sample_freq != 0 for m_size in message_sizes[:-1]):
+            warnings.warn("Not all messages durations can be expressed as a perfect nanosecond integer, some rounding has occurred")
+        message_starts[1:] = [_message_size_to_duration_ns(int(m_size), sample_freq) for m_size in message_sizes[:-1]]
+    else:
+        message_starts[1:] = [int(m_size) * sample_period for m_size in message_sizes[:-1]]
     message_starts[1:] += gap_data_array[1::2]
     message_starts = np.cumsum(message_starts)
 
@@ -666,8 +704,11 @@ def _get_message_indices(message_sizes):
     return message_end_indices, message_start_indices
 
 
-def merge_sorted_messages(message_starts_1, message_sizes_1, values_1,
-                          message_starts_2, message_sizes_2, values_2, freq_nhz):
+def merge_sorted_messages(message_starts_1, message_sizes_1, values_1, message_starts_2, message_sizes_2, values_2,
+                          freq_nhz=None, period_ns=None):
+    if (period_ns is None) == (freq_nhz is None):
+        raise ValueError("period_ns and freq_nhz are mutually exclusive")
+
     # Find the smallest start time from both inputs
     min_start = min(np.min(message_starts_1), np.min(message_starts_2))
 
@@ -676,7 +717,8 @@ def merge_sorted_messages(message_starts_1, message_sizes_1, values_1,
     rel_starts_2 = message_starts_2 - min_start
 
     # Calculate period in nanoseconds for one sample
-    period_ns = float((10 ** 18) / int(freq_nhz))
+    if period_ns is None:
+        period_ns = float((10 ** 18) / int(freq_nhz))
 
     timestamps_1 = []
     timestamps_2 = []

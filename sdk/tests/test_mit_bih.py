@@ -68,6 +68,7 @@ def _test_mit_bih(db_type, dataset_location, connection_params):
     write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
     assert_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
 
+
     # Test using caching
     sdk_cached = AtriumSDK(
         dataset_location=dataset_location, metadata_connection_type=db_type, connection_params=connection_params)
@@ -76,15 +77,27 @@ def _test_mit_bih(db_type, dataset_location, connection_params):
         sdk_cached.load_device(device_id)
     assert_mit_bih_to_dataset(sdk_cached, max_records=MAX_RECORDS, seed=SEED)
 
+    # Test using period
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
     write_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_numpy=True)
     assert_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_numpy=True)
 
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
+
+    write_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_period=True)
+    assert_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED)
+
     # Test using message inserts
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
     write_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_messages=True)
+    assert_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED)
+
+    # Test using message + period inserts
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
+
+    write_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_messages=True, use_period=True)
     assert_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED)
 
 
@@ -184,7 +197,7 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
 
 
 def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=None, use_numpy=False,
-                             use_messages=False):
+                             use_messages=False, use_period=False):
     seed = SEED if seed is None else seed
     if seed is not None:
         np.random.seed(seed)
@@ -257,20 +270,24 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
                 write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, record, d_record, i,
-                             message_starts, message_num_values, use_messages=use_messages)
+                             message_starts, message_num_values, use_messages=use_messages, use_period=use_period)
         else:
             write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, record, d_record, None,
-                         message_starts, message_num_values, use_messages=use_messages)
+                         message_starts, message_num_values, use_messages=use_messages, use_period=use_period)
 
     return device_patient_dict
 
 
 def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p_record, d_record, signal_i,
-                 message_starts, message_num_values, use_messages=False):
+                 message_starts, message_num_values, use_messages=False, use_period=False):
     measure_tag, scale_b, scale_m, units, value_data = get_record_data_for_ingest(d_record, p_record, signal_i)
 
     measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq_nano,
                                     units=units)
+    period_ns = None
+    if use_period:
+        period_ns = 10**18 // freq_nano
+        freq_nano = None
 
     # Create random block_size
     sdk.block.block_size = random.choice([2 ** exp for exp in range(11, 21)])
@@ -303,12 +320,12 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
 
         if use_messages:
             sdk.write_time_value_pairs(measure_id, device_id, time_arr, value_data, freq=freq_nano, time_units="ns",
-                                       freq_units="nHz", scale_m=scale_m, scale_b=scale_b)
+                                       freq_units="nHz", scale_m=scale_m, scale_b=scale_b, period=period_ns)
             return
         # Call the write_data method with the determined parameters
-        sdk.write_data(measure_id, device_id, time_arr, value_data, freq_nano, start_time,
-                       raw_time_type=raw_t_t, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t,
-                       encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b, gap_tolerance=gap_tolerance)
+        sdk.write_data(measure_id, device_id, time_arr, value_data, freq_nano, start_time, raw_time_type=raw_t_t,
+                       raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
+                       scale_m=scale_m, scale_b=scale_b, gap_tolerance=gap_tolerance, sample_period_ns=period_ns)
 
         sdk.block.t_compression = 1
         sdk.block.t_compression_level = 0
@@ -322,7 +339,7 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
                 message_start_index += num_values
 
             sdk.write_segments(measure_id, device_id, messages, message_starts, freq=freq_nano,
-                               freq_units='nHz', time_units='ns', scale_m=scale_m, scale_b=scale_b)
+                               freq_units='nHz', time_units='ns', scale_m=scale_m, scale_b=scale_b, period=period_ns)
             return
 
         raw_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
@@ -331,7 +348,8 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
         # Call the write_data method with the determined parameters
         sdk.write_data(measure_id, device_id, gap_data_2d.flatten(), value_data, freq_nano, start_time,
                        raw_time_type=raw_t_t, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t,
-                       encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b, gap_tolerance=gap_tolerance)
+                       encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b, gap_tolerance=gap_tolerance,
+                       sample_period_ns=period_ns)
 
 
 def get_record_data_for_ingest(d_record, p_record, signal_i):

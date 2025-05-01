@@ -173,8 +173,8 @@ def _test_iterator(db_type, dataset_location, connection_params):
     scale_m = 1 / 1000
     scale_b = 0
 
-    sdk.write_data_easy(
-        partial_measure_id, partial_device_id, times, values, partial_freq_nano, scale_m=scale_m, scale_b=scale_b)
+    sdk.write_data_easy(partial_measure_id, partial_device_id, times, values, partial_freq_nano, scale_m=scale_m,
+                        scale_b=scale_b)
 
     # Add a patient
     patient_id = sdk.insert_patient()

@@ -228,7 +228,7 @@ def old_write_data(sdk, measure_id: int, device_id: int, time_data: np.ndarray, 
     time_0 = int(time_0)
 
     # Calculate new intervals
-    write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
+    write_intervals = find_intervals(raw_time_type, time_data, time_0, int(value_data.size), freq_nhz)
 
     # check overwrite setting
     if OVERWRITE_SETTING_NAME not in sdk.settings_dict:
@@ -254,8 +254,11 @@ def old_write_data(sdk, measure_id: int, device_id: int, time_data: np.ndarray, 
 
             # Handle overwriting based on the overwrite_setting
             if overwrite_setting == 'overwrite':
-                overwrite_file_dict, old_block_ids, old_file_list = sdk._overwrite_delete_data(
-                    measure_id, device_id, time_data, time_0, raw_time_type, value_data.size, freq_nhz)
+                overwrite_file_dict, old_block_ids, old_file_list = sdk._overwrite_delete_data(measure_id, device_id,
+                                                                                               time_data, time_0,
+                                                                                               raw_time_type,
+                                                                                               value_data.size,
+                                                                                               freq_nhz)
             elif overwrite_setting == 'error':
                 raise ValueError("Data to be written overlaps already ingested data.")
             else:
@@ -270,8 +273,8 @@ def old_write_data(sdk, measure_id: int, device_id: int, time_data: np.ndarray, 
         # if the times are a gap array find the end time of the array so we can find the closest block
         if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
             # need to subtract one period since the function gives end_time+1 period
-            end_time = _calc_end_time_from_gap_data(values_size=value_data.size, gap_array=time_data,
-                                                    start_time=time_0, freq_nhz=freq_nhz) - freq_nhz_to_period_ns(
+            end_time = _calc_end_time_from_gap_data(values_size=value_data.size, gap_array=time_data, start_time=time_0,
+                                                    freq_nhz=freq_nhz) - freq_nhz_to_period_ns(
                 freq_nhz)
         elif raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
             end_time = time_data[-1]
@@ -318,8 +321,8 @@ def old_write_data(sdk, measure_id: int, device_id: int, time_data: np.ndarray, 
                     if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
                         try:
                             time_data = create_timestamps_from_gap_data(values_size=value_data.size,
-                                                                        gap_array=time_data,
-                                                                        start_time=time_0, freq_nhz=freq_nhz)
+                                                                        gap_array=time_data, start_time=time_0,
+                                                                        freq_nhz=freq_nhz)
                             raw_time_type = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
                         except ValueError:
                             raise ValueError(f"You are trying to merge a gap array into a block that has the data "

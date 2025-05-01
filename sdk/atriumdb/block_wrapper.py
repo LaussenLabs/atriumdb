@@ -26,6 +26,7 @@ from typing import Tuple
 # Current Block Data
 TSC_VERSION_NUM = 2
 TSC_VERSION_EXT = 3
+TSC_VERSION_EXT_PERIOD = 4
 TSC_NUM_CHANNELS = 1
 
 # Time Types

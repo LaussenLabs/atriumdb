@@ -51,6 +51,8 @@ class Block:
     def encode_blocks(self, times, values, start_ns: int, freq_nhz: int = None, period_ns=None, raw_time_type=None,
                       raw_value_type=None, encoded_time_type=None, encoded_value_type=None, scale_m: float = None,
                       scale_b: float = None):
+        if (period_ns is None) == (freq_nhz is None):
+            raise ValueError("period_ns and freq_nhz are mutually exclusive")
 
         scale_m = 1.0 if scale_m is None else scale_m
         scale_b = 0.0 if scale_b is None else scale_b
@@ -73,13 +75,14 @@ class Block:
         time_info_data = None
         # Check if raw time type is START_TIME_NUM_SAMPLES and process accordingly
         if raw_time_type == TIME_TYPES['START_TIME_NUM_SAMPLES']:
-            times, time_info_data = self.blockify_intervals(freq_nhz, num_blocks, times, values.size)
+            blockify_period_ns = freq_nhz_to_period_ns(freq_nhz) if period_ns is None else period_ns
+            times, time_info_data = self.blockify_intervals(blockify_period_ns, num_blocks, times, values.size)
 
         # Generate metadata for the blocks
         times, headers, options, t_block_start, v_block_start = \
             self._gen_metadata(times, values, start_ns, num_blocks, raw_time_type, raw_value_type, encoded_time_type,
                                encoded_value_type, scale_m=scale_m, scale_b=scale_b, time_data=time_info_data,
-                               freq_nhz=freq_nhz)
+                               freq_nhz=freq_nhz, period_ns=period_ns)
 
         # Encode the blocks using the wrapped_dll's encode_blocks_sdk function
         encoded_bytes, byte_start_array = self.wrapped_dll.encode_blocks_sdk(
@@ -564,6 +567,8 @@ class Block:
         if (freq_nhz is None) == (period_ns is None):
             raise ValueError("Frequency and period are mutually exclusive.")
 
+        converted_period = int(freq_nhz_to_period_ns(freq_nhz)) if period_ns is None else period_ns
+
         # Make a copy of the input times array
         times = np.copy(times)
 
@@ -601,8 +606,14 @@ class Block:
             headers[i].t_compression_level = self.t_compression_level
             headers[i].v_compression_level = self.v_compression_level
 
-            # Set the frequency for the current block
-            headers[i].freq_nhz = freq_nhz
+            # Set header values for the current block
+            headers[i].tsc_version_num = TSC_VERSION_NUM
+            if freq_nhz is not None:
+                headers[i].freq_nhz = freq_nhz
+                headers[i].tsc_version_ext = TSC_VERSION_EXT
+            else:
+                headers[i].freq_nhz = period_ns
+                headers[i].tsc_version_ext = TSC_VERSION_EXT_PERIOD
 
             # Determine the number of values in the current block
             if i < num_blocks - 1:
@@ -633,7 +644,7 @@ class Block:
                 elapsed_time = elapsed_block_time[i]
                 t_block_start[i] = interval_block_start[i]
                 cur_time += elapsed_time
-                headers[i].end_n = int(cur_time) - int(freq_nhz_to_period_ns(freq_nhz))
+                headers[i].end_n = int(cur_time) - converted_period
 
             else:
                 headers[i].start_n, t_block_start[i] = int(cur_time), cur_gap * 16
@@ -645,12 +656,12 @@ class Block:
                 else:
                     raise ValueError("time type {} not supported.".format(raw_time_type))
 
-                headers[i].num_gaps, elapsed_time, period_ns = \
-                    calc_gap_block_start(times, headers[i].num_vals, freq_nhz, val_offset, cur_gap, mode)
+                headers[i].num_gaps, elapsed_time, _ = \
+                    calc_gap_block_start(times, headers[i].num_vals, val_offset, cur_gap, mode, freq_nhz, period_ns)
 
                 cur_time += elapsed_time
                 cur_gap += headers[i].num_gaps
-                headers[i].end_n = int(cur_time) - period_ns
+                headers[i].end_n = int(cur_time) - converted_period
 
             # Set the starting position of the value data for the current block
             v_block_start[i] = val_offset * 8
@@ -683,11 +694,16 @@ def concat_encoded_arrays(encoded_bytes, encoded_headers, encoded_bytes_1, encod
     return encoded_bytes, encoded_headers, byte_start_array
 
 
-def create_gap_arr(message_time_arr, samples_per_message, freq_nhz):
+def create_gap_arr(message_time_arr, samples_per_message, freq_nhz=None, period_ns=None):
+    if (period_ns is None) == (freq_nhz is None):
+        raise ValueError("period_ns and freq_nhz are mutually exclusive")
     # Check if the product of samples_per_message and 10^18 is divisible by freq_nhz
-    assert ((10 ** 18) * samples_per_message) % freq_nhz == 0
-    # Calculate the message period in nanoseconds
-    message_period_ns = ((10 ** 18) * samples_per_message) // freq_nhz
+    if freq_nhz is not None:
+        assert ((10 ** 18) * samples_per_message) % freq_nhz == 0
+        # Calculate the message period in nanoseconds
+        message_period_ns = ((10 ** 18) * samples_per_message) // freq_nhz
+    else:
+        message_period_ns = samples_per_message * period_ns
 
     # Calculate the time gaps between consecutive message times and subtract the message period
     time_gaps = np.diff(message_time_arr) - message_period_ns

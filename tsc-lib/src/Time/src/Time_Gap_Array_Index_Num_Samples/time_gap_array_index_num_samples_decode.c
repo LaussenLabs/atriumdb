@@ -28,10 +28,19 @@
 size_t time_gap_d64_num_samples_decode(int64_t * time_data, const void * time_bytes,
                                        block_metadata_t * block_metadata)
 {
+    /* pick either raw nhz or converted ns‐period, once */
+    int64_t period_arg = block_metadata->freq_nhz;
+    if (block_metadata->tsc_version_ext == TSC_VERSION_EXT) {
+        period_arg = (int64_t)uint64_nhz_freq_to_uint64_ns_period(block_metadata->freq_nhz);
+    } else if (block_metadata->tsc_version_ext != TSC_VERSION_EXT_PERIOD) {
+        printf("tsc_version_ext %u not supported. On line %d in file %s\n",
+               block_metadata->tsc_version_ext, __LINE__, __FILE__);
+        exit(1);
+    }
     switch (block_metadata->t_raw_type) {
         case T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
             gap_int64_samples_decode((int64_t *)time_bytes, time_data, block_metadata->num_vals,
-                                          block_metadata->num_gaps, block_metadata->start_n, block_metadata->freq_nhz);
+                                          block_metadata->num_gaps, block_metadata->start_n, period_arg);
 
             // Return size of timestamp array.
             return block_metadata->num_vals * sizeof(int64_t);

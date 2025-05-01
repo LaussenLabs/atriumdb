@@ -663,8 +663,9 @@ class AtriumSDK:
 
         return encoded_bytes
 
-    def write_data_easy(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq: int,
-                        scale_m: float = None, scale_b: float = None, time_units: str = None, freq_units: str = None):
+    def write_data_easy(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray,
+                        freq: int = None, sample_period=None, scale_m: float = None, scale_b: float = None,
+                        time_units: str = None, freq_units: str = None):
         """
         .. _write_data_easy_label:
 
@@ -693,8 +694,11 @@ class AtriumSDK:
             relational database.
         :param np.ndarray time_data: A 1D numpy array representing the time information of the data to be written.
         :param np.ndarray value_data: A 1D numpy array representing the value information of the data to be written.
-        :param int freq: The sample frequency of the data to be written. If you want to use units
+        :param float | int freq: The sample frequency of the data to be written. If you want to use units
             other than the default (nanohertz), specify the desired unit using the "freq_units" parameter.
+        :param float | int sample_period: The sample period of the data to be written. If you want to use units
+            other than the default (nanoseconds), specify the desired unit using the "time_units" parameter.
+            Mutually exclusive with freq
         :param float scale_m: A constant factor to scale digital data to transform it to analog (None if raw data
             is already analog). The slope (m) in y = mx + b
         :param float scale_b: A constant factor to offset digital data to transform it to analog (None if raw data
@@ -717,6 +721,7 @@ class AtriumSDK:
         # Convert time_data to nanoseconds if a different time unit is used
         if time_units != "ns":
             time_data = convert_to_nanoseconds(time_data, time_units)
+            sample_period = int(sample_period * time_unit_options[time_units]) if sample_period is not None else sample_period
 
         # Convert frequency to nanohertz if a different frequency unit is used
         if freq_units != "nHz":
@@ -742,12 +747,13 @@ class AtriumSDK:
         # Call the write_data method with the determined parameters
         self.write_data(measure_id, device_id, time_data, value_data, freq, int(time_data[0]), raw_time_type=raw_t_t,
                         raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
-                        scale_m=scale_m, scale_b=scale_b)
+                        scale_m=scale_m, scale_b=scale_b, sample_period_ns=sample_period)
 
-    def write_data(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq_nhz: int,
-                   time_0: int, raw_time_type: int = None, raw_value_type: int = None, encoded_time_type: int = None,
-                   encoded_value_type: int = None, scale_m: float = None, scale_b: float = None,
-                   interval_index_mode: str = None, gap_tolerance: int = 0, merge_blocks: bool = True):
+    def write_data(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray,
+                   freq_nhz: int = None, time_0: int = None, raw_time_type: int = None, raw_value_type: int = None,
+                   encoded_time_type: int = None, encoded_value_type: int = None, scale_m: float = None,
+                   scale_b: float = None, interval_index_mode: str = None, gap_tolerance: int = 0,
+                   merge_blocks: bool = True, sample_period_ns=None):
         """
         .. _write_data_label:
 
@@ -761,6 +767,7 @@ class AtriumSDK:
         :param numpy.ndarray value_data: 1D numpy array representing the value information of the data to be written.
         :param int freq_nhz: Sample frequency, in nanohertz, of the data to be written.
         :param int time_0: Start time of the data to be written.
+        :param int sample_period_ns: The sample period in nanoseconds of the data to be written. Mutually exclusive with freq_nhz.
         :param int raw_time_type: Identifier representing the time format being written, corresponding to the options
             written in the block header.
         :param int raw_value_type: Identifier representing the value format being written, corresponding to the
@@ -805,12 +812,7 @@ class AtriumSDK:
             >>> time_zero_nano = 1234567890_000_000_000
             >>> gap_arr = np.array([42, 1_000_000_000, 99, 2_000_000_000])
             >>> value_data = np.sin(np.linspace(0, 4, num=200))
-            >>> sdk.write_data(
-            >>>     measure_id, device_id, gap_arr, value_data, freq_nhz, time_zero_nano,
-            >>>     raw_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
-            >>>     raw_value_type=V_TYPE_INT64,
-            >>>     encoded_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
-            >>>     encoded_value_type=V_TYPE_DELTA_INT64)
+            >>> sdk.write_data(measure_id,device_id,gap_arr,value_data,freq_nhz,time_zero_nano,raw_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,raw_value_type=V_TYPE_INT64,encoded_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,encoded_value_type=V_TYPE_DELTA_INT64)
         """
 
         if self.metadata_connection_type == "api":
@@ -835,12 +837,19 @@ class AtriumSDK:
         assert interval_index_mode in allowed_interval_index_modes, \
             f"interval_index must be one of {allowed_interval_index_modes}"
 
+        if (freq_nhz is None) == (sample_period_ns is None):
+            raise ValueError(f"freq_nhz and sample_period_ns are mutually exclusive")
+
         # Force Python Integers
-        freq_nhz = int(freq_nhz)
+        if freq_nhz is not None:
+            freq_nhz = int(freq_nhz)
+        else:
+            sample_period_ns = int(sample_period_ns)
+
         time_0 = int(time_0)
         measure_id = int(measure_id)
         device_id = int(device_id)
-        period_ns = (10 ** 18) // freq_nhz
+        converted_period_ns = (10 ** 18) // freq_nhz if freq_nhz is not None else sample_period_ns
 
         # Presort the time data
         if raw_time_type == 1:
@@ -853,10 +862,10 @@ class AtriumSDK:
                 value_data = value_data[sorted_indices]
 
         elif raw_time_type == 2:
-            if not np.all(time_data[1::2] >= -period_ns):
+            if not np.all(time_data[1::2] >= -converted_period_ns):
                 # Convert gap_data into messages
-                message_starts_1, message_sizes_1 = reconstruct_messages(
-                    time_0, time_data, freq_nhz, int(value_data.size))
+                message_starts_1, message_sizes_1 = reconstruct_messages(time_0, time_data, int(value_data.size),
+                                                                         freq_nhz, sample_period_ns)
 
                 # Sort both message lists + values, and copy values to not mess with the originals
                 value_data = value_data.copy()
@@ -864,12 +873,12 @@ class AtriumSDK:
                 time_0 = message_starts_1[0]
 
                 # Convert back into gap data
-                time_data = create_gap_arr_from_variable_messages(message_starts_1, message_sizes_1, freq_nhz)
+                time_data = create_gap_arr_from_variable_messages(message_starts_1, message_sizes_1, freq_nhz, sample_period_ns)
         else:
             raise ValueError("raw_time_type must be either 1 or 2")
 
         # Calculate new intervals
-        write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
+        write_intervals = find_intervals(raw_time_type, time_data, time_0, int(value_data.size), freq_nhz, sample_period_ns)
 
         # check overwrite setting
         if OVERWRITE_SETTING_NAME not in self.settings_dict:
@@ -899,8 +908,13 @@ class AtriumSDK:
                 if overwrite_setting == 'overwrite':
                     _LOGGER.debug(
                         f"({measure_id}, {device_id}): value_data: {value_data} \n time_data: {time_data} \n write_intervals: {write_intervals} \n current_intervals: {current_intervals}")
-                    overwrite_file_dict, old_block_ids, old_file_list = self._overwrite_delete_data(
-                        measure_id, device_id, time_data, time_0, raw_time_type, value_data.size, freq_nhz)
+                    overwrite_file_dict, old_block_ids, old_file_list = self._overwrite_delete_data(measure_id,
+                                                                                                    device_id,
+                                                                                                    time_data, time_0,
+                                                                                                    raw_time_type,
+                                                                                                    value_data.size,
+                                                                                                    freq_nhz,
+                                                                                                    sample_period_ns)
                 elif overwrite_setting == 'error':
                     raise ValueError("Data to be written overlaps already ingested data.")
                 else:
@@ -916,7 +930,7 @@ class AtriumSDK:
             if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
                 # need to subtract one period since the function gives end_time+1 period
                 end_time = _calc_end_time_from_gap_data(values_size=value_data.size, gap_array=time_data,
-                                                        start_time=time_0, freq_nhz=freq_nhz) - freq_nhz_to_period_ns(freq_nhz)
+                                                        start_time=time_0, freq_nhz=freq_nhz, period_ns=sample_period_ns) - converted_period_ns
             elif raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
                 end_time = time_data[-1]
             else:
@@ -961,8 +975,9 @@ class AtriumSDK:
                         # if the new time data is a gap array make it into a timestamp array to match the old times
                         if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
                             try:
-                                time_data = create_timestamps_from_gap_data(values_size=value_data.size, gap_array=time_data,
-                                                                            start_time=time_0, freq_nhz=freq_nhz)
+                                time_data = create_timestamps_from_gap_data(values_size=value_data.size,
+                                                                            gap_array=time_data, start_time=time_0,
+                                                                            freq_nhz=freq_nhz, period_ns=sample_period_ns)
                                 raw_time_type = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
                             except ValueError:
                                 raise ValueError(f"You are trying to merge a gap array into a block that has the data "
@@ -971,7 +986,7 @@ class AtriumSDK:
                                                  f"merge_blocks to false or pass in the times as a timestamp array.")
                         # if the new time data is a gap array convert it to a time array to match the old times
                         elif raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
-                            time_data = create_gap_arr(time_data, 1, freq_nhz)
+                            time_data = create_gap_arr(time_data, 1, freq_nhz, sample_period_ns)
                             raw_time_type = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
                     # Decode the data and get the values and the times we are going to merge this data with
@@ -988,7 +1003,7 @@ class AtriumSDK:
                         time_0 = time_data[0]
                     else:
                         value_data, time_data, time_0 = merge_gap_data(r_value, r_time, header[0].start_n, value_data,
-                                                                       time_data, time_0, freq_nhz)
+                                                                       time_data, time_0, freq_nhz, sample_period_ns)
                 else:
                     # if the scale factors are not the same don't merge and set old block to none, so we don't delete it
                     old_block = None
@@ -998,7 +1013,8 @@ class AtriumSDK:
 
         # Encode the block(s)
         encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(time_data, value_data, time_0,
-                                                                                    freq_nhz,
+                                                                                    freq_nhz=freq_nhz,
+                                                                                    period_ns=sample_period_ns,
                                                                                     raw_time_type=raw_time_type,
                                                                                     raw_value_type=raw_value_type,
                                                                                     encoded_time_type=encoded_time_type,
@@ -1180,6 +1196,9 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for writing data.")
 
+        if (period is None) == (freq is None):
+            raise ValueError("period and freq are mutually exclusive")
+
         # Set default time and frequency units if not provided
         time_units = "s" if time_units is None else time_units
         freq_units = "Hz" if freq_units is None else freq_units
@@ -1200,14 +1219,11 @@ class AtriumSDK:
                              f"Add it with AtriumSDK.insert_device(tag)")
 
         # Figure out the frequency
+        freq_nano = period_ns = None
         if freq is not None:
             freq_nano = convert_to_nanohz(freq, freq_units)
         elif period is not None:
             period_ns = int(period * time_unit_options[time_units])
-            freq_nano = 10**18 // period_ns
-            if 10**18 % period_ns != 0:
-                warnings.warn(f"Given period doesn't divide perfectly into a frequency. "
-                              f"Estimating to be {freq_nano / 10**9} Hz")
         else:
             freq_nano = measure_info["freq_nhz"]
 
@@ -1229,8 +1245,11 @@ class AtriumSDK:
                 'values': values,
                 'scale_m': m,
                 'scale_b': b,
-                'freq_nhz': freq_nano,
             }
+            if freq_nano is not None:
+                message_dict['freq_nhz'] = freq_nano
+            else:
+                message_dict['period_ns'] = period_ns
             write_segments.append(message_dict)
 
 
@@ -1247,7 +1266,8 @@ class AtriumSDK:
         sorted_segments = sorted(write_segments, key=lambda x: x['start_time_nano'])
         message_start_epoch_array = []
         message_size_array = []
-        freq_nhz = sorted_segments[0]['freq_nhz']
+        freq_nhz = sorted_segments[0].get('freq_nhz')
+        period_ns = sorted_segments[0].get('period_ns')
         scale_m = sorted_segments[0]['scale_m']
         scale_b = sorted_segments[0]['scale_b']
         message_dtype = sorted_segments[0]['values'].dtype
@@ -1255,20 +1275,23 @@ class AtriumSDK:
             message_start_epoch_array.append(message['start_time_nano'])
             message_size_array.append(message['values'].size)
 
-            if message['freq_nhz'] != freq_nhz:
+            if message.get('freq_nhz') != freq_nhz:
                 raise ValueError("Segments inserted do not all have the same frequency. "
                                  "If you want to ingest segments for the same signal with different frequencies, "
+                                 "you must insert them separately.")
+            if message.get('period_ns') != period_ns:
+                raise ValueError("Segments inserted do not all have the same period. "
+                                 "If you want to ingest segments for the same signal with different periods, "
                                  "you must insert them separately.")
             if message['scale_m'] != scale_m or message['scale_b'] != scale_b:
                 raise ValueError("Segments inserted do not all have the same scale factors.")
             if message['values'].dtype != message_dtype:
                 raise ValueError("Segments inserted do not all have the same dtype.")
         # Convert segments to gap_data
-        gap_data = create_gap_arr_from_variable_messages(
-            message_start_epoch_array, message_size_array, freq_nhz)
+        gap_data = create_gap_arr_from_variable_messages(message_start_epoch_array, message_size_array, freq_nhz, period_ns)
         value_data = np.concatenate([message['values'] for message in sorted_segments])
         time_0 = int(sorted_segments[0]['start_time_nano'])
-        write_intervals = find_intervals(freq_nhz, 2, gap_data, time_0, int(value_data.size))
+        write_intervals = find_intervals(2, gap_data, time_0, int(value_data.size), freq_nhz, period_ns)
         # Encode the block(s)
         if np.issubdtype(value_data.dtype, np.integer):
             raw_v_t = V_TYPE_INT64
@@ -1277,7 +1300,8 @@ class AtriumSDK:
             raw_v_t = V_TYPE_DOUBLE
             encoded_v_t = V_TYPE_DOUBLE
         encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(gap_data, value_data, time_0,
-                                                                                    freq_nhz, raw_time_type=2,
+                                                                                    freq_nhz, period_ns=period_ns,
+                                                                                    raw_time_type=2,
                                                                                     raw_value_type=raw_v_t,
                                                                                     encoded_time_type=2,
                                                                                     encoded_value_type=encoded_v_t,
@@ -1361,14 +1385,11 @@ class AtriumSDK:
             times = convert_to_nanoseconds(times, time_units)
 
         # Figure out the frequency
+        freq_nano = period_ns = None
         if freq is not None:
             freq_nano = convert_to_nanohz(freq, freq_units)
         elif period is not None:
             period_ns = int(period * time_unit_options[time_units])
-            freq_nano = 10 ** 18 // period_ns
-            if 10 ** 18 % period_ns != 0:
-                warnings.warn(f"Given period doesn't divide perfectly into a frequency. "
-                              f"Estimating to be {freq_nano / 10 ** 9} Hz")
         else:
             freq_nano = measure_info["freq_nhz"]
 
@@ -1378,8 +1399,12 @@ class AtriumSDK:
             'values': values,
             'scale_m': scale_m,
             'scale_b': scale_b,
-            'freq_nhz': freq_nano
         }
+
+        if freq_nano is not None:
+            data_dict['freq_nhz'] = freq_nano
+        else:
+            data_dict['period_ns'] = period_ns
 
         if self._active_buffer is None:
             # Ingest Immediately
@@ -1391,13 +1416,16 @@ class AtriumSDK:
 
     def _write_time_value_pairs_to_dataset(self, measure_id, device_id, data_dicts, interval_gap_tolerance_nano=0):
         # Ensure consistency across data_dicts
-        freq_nhz = data_dicts[0]['freq_nhz']
+        freq_nhz = data_dicts[0].get('freq_nhz')
+        period_ns = data_dicts[0].get('period_ns')
         scale_m = data_dicts[0]['scale_m']
         scale_b = data_dicts[0]['scale_b']
         data_dtype = data_dicts[0]['values'].dtype
         for data in data_dicts:
-            if data['freq_nhz'] != freq_nhz:
+            if data.get('freq_nhz') != freq_nhz:
                 raise ValueError("Data dictionaries have inconsistent frequencies.")
+            if data.get('period_ns') != period_ns:
+                raise ValueError("Data dictionaries have inconsistent periods.")
             if data['scale_m'] != scale_m or data['scale_b'] != scale_b:
                 raise ValueError("Data dictionaries have inconsistent scale factors.")
             if data['values'].dtype != data_dtype:
@@ -1421,11 +1449,10 @@ class AtriumSDK:
             raw_v_t = V_TYPE_DOUBLE
             encoded_v_t = V_TYPE_DOUBLE
 
-        self.write_data(measure_id, device_id, times, values, freq_nhz, time_0,
-                        raw_time_type=1,
-                        raw_value_type=raw_v_t, encoded_time_type=2, encoded_value_type=encoded_v_t,
-                        scale_m=scale_m, scale_b=scale_b, interval_index_mode="fast",
-                        gap_tolerance=interval_gap_tolerance_nano, merge_blocks=False)
+        self.write_data(measure_id, device_id, times, values, freq_nhz, time_0, raw_time_type=1, raw_value_type=raw_v_t,
+                        encoded_time_type=2, encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b,
+                        interval_index_mode="fast", gap_tolerance=interval_gap_tolerance_nano, merge_blocks=False,
+                        sample_period_ns=period_ns)
 
     def load_device(self, device_id: int, measure_id: int|List[int] = None):
         """
@@ -4918,12 +4945,14 @@ of DatasetIterator objects depending on the value of num_iterators.
         return {setting[0]: setting[1] for setting in settings}
 
     def _overwrite_delete_data(self, measure_id, device_id, new_time_data, time_0, raw_time_type, values_size,
-                               freq_nhz):
+                               freq_nhz=None, period_ns=None):
+        if (period_ns is None) == (freq_nhz is None):
+            raise ValueError("period_ns and freq_nhz are mutually exclusive")
         # Make assumption for analog
         analog = False
 
         # Calculate the period in nanoseconds
-        period_ns = int((10 ** 18) // freq_nhz)
+        period_ns = int((10 ** 18) // freq_nhz) if period_ns is None else period_ns
 
         # Check if the input data is already a timestamp array
         if raw_time_type == 1:
@@ -5175,7 +5204,7 @@ of DatasetIterator objects depending on the value of num_iterators.
         filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
 
         # Calculate Intervals
-        intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
+        intervals = find_intervals(raw_time_type, time_data, time_0, int(value_data.size), freq_nhz)
 
         encode_headers = [BlockMetadataWrapper(head) for head in encode_headers]
 

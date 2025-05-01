@@ -18,11 +18,12 @@
 gap_modes = ["samples", "duration"]
 
 
-def calc_gap_block_start(gap_data, num_vals, freq_nhz, val_offset, cur_gap, mode):
+def calc_gap_block_start(gap_data, num_vals, val_offset, cur_gap, mode, freq_nhz=None, period_ns=None):
     """
     One concern that needs to be checked is if the blocks are divided over a gap. The way I think it should work
     is that the start_time (last blocks cur_time/start_n) should be without the gap size and then a gap and index 0
     will be saved, not ideal, but easier than designing around this edge case.
+    :param period_ns:
     :param gap_data: A list/array of ints, the even indexed ints represent the index of the end of the gap and the odd
     indexed ints represent the duration of the gap either in nanosecond or number of samples (see mode)
     :param num_vals:
@@ -32,13 +33,19 @@ def calc_gap_block_start(gap_data, num_vals, freq_nhz, val_offset, cur_gap, mode
     :param mode: The method of gap duration representation.
     :return num_gaps, elapsed_time, period_ns:
     """
+    if (period_ns is None) == (freq_nhz is None):
+        raise ValueError("period_ns and freq_nhz are mutually exclusive")
+
     num_gaps, elapsed_time = 0, 0
-    period_ns = freq_nhz_to_period_ns(freq_nhz)
+    converted_period_ns = freq_nhz_to_period_ns(freq_nhz) if period_ns is None else period_ns
 
     while 2 * cur_gap < gap_data.size and gap_data[2 * cur_gap] < val_offset + num_vals:
         if mode == "samples":
-            elapsed_time += gap_data[(2 * cur_gap) + 1] * period_ns
-            elapsed_time += calc_time_by_freq(freq_nhz, gap_data[(2 * cur_gap) + 1])
+            elapsed_time += gap_data[(2 * cur_gap) + 1] * converted_period_ns
+            if freq_nhz is not None:
+                elapsed_time += calc_time_by_freq(freq_nhz, gap_data[(2 * cur_gap) + 1])
+            else:
+                elapsed_time += gap_data[(2 * cur_gap) + 1] * period_ns
         elif mode == "duration":
             elapsed_time += gap_data[(2 * cur_gap) + 1]
         else:
@@ -51,9 +58,12 @@ def calc_gap_block_start(gap_data, num_vals, freq_nhz, val_offset, cur_gap, mode
         cur_gap += 1
 
     # elapsed_time += period_ns * num_vals
-    elapsed_time += calc_time_by_freq(freq_nhz, num_vals)
+    if freq_nhz is not None:
+        elapsed_time += calc_time_by_freq(freq_nhz, num_vals)
+    else:
+        elapsed_time += num_vals * period_ns
 
-    return num_gaps, elapsed_time, period_ns
+    return num_gaps, elapsed_time, converted_period_ns
 
 
 def freq_nhz_to_period_ns(freq_nhz):

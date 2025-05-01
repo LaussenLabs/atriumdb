@@ -51,8 +51,7 @@ def _test_transfer_start_end(db_type, dataset_location, connection_params):
     scale_m = 1 / 1000
     scale_b = 0
 
-    sdk_1.write_data_easy(
-        measure_id, device_id, times, values, freq_nano, scale_m=scale_m, scale_b=scale_b)
+    sdk_1.write_data_easy(measure_id, device_id, times, values, freq_nano, scale_m=scale_m, scale_b=scale_b)
 
     third_time = int(times[num_values // 3])
     second_third_time = int(times[(2 * num_values) // 3])

@@ -26,7 +26,7 @@
 #include <inttypes.h>
 
 uint64_t gap_int64_samples_encode(const int64_t * time_data, int64_t * gap_array, uint64_t num_values,
-                                  uint64_t freq_nhz)
+                                  uint64_t period_ns)
 {
     // This function isn't going to work correctly if the period corresponding to the frequency isn't
     // an integer number of nanoseconds.
@@ -37,9 +37,6 @@ uint64_t gap_int64_samples_encode(const int64_t * time_data, int64_t * gap_array
                num_values, INT64_MAX, __LINE__, __FILE__);
         exit(1);
     }
-
-    // Calculate the period of what would be continuous data.
-    int64_t period_ns = (int64_t)uint64_nhz_freq_to_uint64_ns_period(freq_nhz);
 
     // Count how many gaps are in the data, and record them in the gap array.
     uint64_t num_gaps = 0;

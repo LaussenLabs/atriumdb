@@ -32,10 +32,9 @@ def _ingest_data_tsc(to_sdk, measure_id, device_id, headers, times, values):
                 try:
                     to_sdk.write_data(measure_id, device_id, times, values, h.freq_nhz, int(times[0]),
                                       raw_time_type=h.t_raw_type, raw_value_type=h.v_raw_type,
-                                      encoded_time_type=h.t_encoded_type,
-                                      encoded_value_type=h.v_encoded_type,
-                                      scale_m=h.scale_m, scale_b=h.scale_b,
-                                      interval_index_mode="fast", merge_blocks=False)
+                                      encoded_time_type=h.t_encoded_type, encoded_value_type=h.v_encoded_type,
+                                      scale_m=h.scale_m, scale_b=h.scale_b, interval_index_mode="fast",
+                                      merge_blocks=False)
                 except IndexError:
                     continue
                 val_index += h.num_vals

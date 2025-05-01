@@ -73,8 +73,8 @@ def _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_d
     start_1, start_2 = start_time, int(time_arr[split_index])
     gap_array_1 = create_gap_arr(times_1, 1, freq_nano)
     gap_array_2 = create_gap_arr(times_2, 1, freq_nano)
-    merged_values, merged_gap_array, merged_start_time = merge_gap_data(
-        values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
+    merged_values, merged_gap_array, merged_start_time = merge_gap_data(values_1, gap_array_1, start_1, values_2,
+                                                                        gap_array_2, start_2, freq_nano)
 
     assert np.array_equal(value_data, merged_values)
     assert np.array_equal(gap_data_2d.flatten(), merged_gap_array)
@@ -86,8 +86,8 @@ def _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_d
     start_1, start_2 = start_time, int(time_arr[split_index])
     gap_array_1 = create_gap_arr(times_1, 1, freq_nano)
     gap_array_2 = create_gap_arr(times_2, 1, freq_nano)
-    merged_values, merged_gap_array, merged_start_time = merge_gap_data(
-        values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
+    merged_values, merged_gap_array, merged_start_time = merge_gap_data(values_1, gap_array_1, start_1, values_2,
+                                                                        gap_array_2, start_2, freq_nano)
 
     assert np.array_equal(value_data, merged_values)
     assert np.array_equal(gap_data_2d.flatten(), merged_gap_array)
@@ -102,8 +102,8 @@ def _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_d
     start_1, start_2 = start_time, int(time_arr[split_index])
     gap_array_1 = create_gap_arr(times_1, 1, freq_nano)
     gap_array_2 = create_gap_arr(times_2, 1, freq_nano)
-    merged_values, merged_gap_array, merged_start_time = merge_gap_data(
-        values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
+    merged_values, merged_gap_array, merged_start_time = merge_gap_data(values_1, gap_array_1, start_1, values_2,
+                                                                        gap_array_2, start_2, freq_nano)
 
     assert np.array_equal(value_data, merged_values)
     assert np.array_equal(gap_data_2d.flatten(), merged_gap_array)
@@ -118,8 +118,8 @@ def _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_d
     start_1, start_2 = int(times_1[0]), int(times_2[0])
     gap_array_1 = create_gap_arr(times_1, 1, freq_nano)
     gap_array_2 = create_gap_arr(times_2, 1, freq_nano)
-    merged_values, merged_gap_array, merged_start_time = merge_gap_data(
-        values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
+    merged_values, merged_gap_array, merged_start_time = merge_gap_data(values_1, gap_array_1, start_1, values_2,
+                                                                        gap_array_2, start_2, freq_nano)
     merged_timestamps = create_timestamps_from_gap_data(merged_values.size, merged_gap_array, start_time, freq_nano)
     sorted_indices = np.argsort(merged_timestamps)
     merged_timestamps = merged_timestamps[sorted_indices]
@@ -135,8 +135,8 @@ def _test_gap_data_merging(freq_nano, gap_data_2d, start_time, time_arr, value_d
         start_1, start_2 = int(times_1[0]), int(times_2[0])
         gap_array_1 = create_gap_arr(times_1, 1, freq_nano)
         gap_array_2 = create_gap_arr(times_2, 1, freq_nano)
-        merged_values, merged_gap_array, merged_start_time = merge_gap_data(
-            values_1, gap_array_1, start_1, values_2, gap_array_2, start_2, freq_nano)
+        merged_values, merged_gap_array, merged_start_time = merge_gap_data(values_1, gap_array_1, start_1, values_2,
+                                                                            gap_array_2, start_2, freq_nano)
         merged_timestamps = create_timestamps_from_gap_data(merged_values.size, merged_gap_array, start_time, freq_nano)
         sorted_indices = np.argsort(merged_timestamps)
         merged_timestamps = merged_timestamps[sorted_indices]

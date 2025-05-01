@@ -111,8 +111,10 @@ def _test_get_interval_arr(db_type, dataset_location, connection_params):
     times_2 = np.arange(start_2, end_2, period_s, dtype=np.int64)
     values_2 = np.sin(times_2)
 
-    sdk.write_data_easy(measure_id=measure_id, device_id=device_id, time_data=times_1, value_data=values_1, freq=freq_hz, time_units="s", freq_units="Hz")
-    sdk.write_data_easy(measure_id=measure_id, device_id=device_id, time_data=times_2, value_data=values_2, freq=freq_hz, time_units="s", freq_units="Hz")
+    sdk.write_data_easy(measure_id=measure_id, device_id=device_id, time_data=times_1, value_data=values_1,
+                        freq=freq_hz, time_units="s", freq_units="Hz")
+    sdk.write_data_easy(measure_id=measure_id, device_id=device_id, time_data=times_2, value_data=values_2,
+                        freq=freq_hz, time_units="s", freq_units="Hz")
 
     start_time_nano = start_1 * 10**9
     end_time_nano = end_1 * 10**9

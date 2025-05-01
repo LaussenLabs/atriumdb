@@ -74,8 +74,8 @@ for wfdb_data_dir in ["challenge_2017_data/training/", "challenge_2017_data/vali
             scale_b = -baseline / gain
 
             # Insert Wave Data
-            sdk.write_data_easy(measure_id, device_id, time_data_s, digital_signal, freq_hz,
-                                scale_m=scale_m, scale_b=scale_b, time_units="s", freq_units="Hz")
+            sdk.write_data_easy(measure_id, device_id, time_data_s, digital_signal, freq_hz, scale_m=scale_m,
+                                scale_b=scale_b, time_units="s", freq_units="Hz")
 
             # Insert label
             sdk.insert_label(label_name, start_time_s, end_time_s, device=device_id, time_units="s")

@@ -77,10 +77,22 @@ def test_end_to_end_merging(times_1, values_1, times_2, values_2, expected_merge
     times_2, values_2 = (np.array(times_2, dtype=np.float64) * nanoseconds_in_a_second).astype(np.int64), np.array(values_2, dtype=np.float64)
     gap_array_2 = create_gap_arr(times_2, 1, freq_nhz)
 
+    # Call merge_gap_data with freq_nhz
     merged_values, merged_gap_array, merged_start_time = merge_gap_data(
         values_1, gap_array_1, int(times_1[0]), values_2, gap_array_2, int(times_2[0]), freq_nhz)
 
     assert np.allclose(merged_values, np.array(expected_merged_values, dtype=np.float64))
+
+    # Also test merge_gap_data with period_ns instead of freq_nhz
+    period_ns = 10**18 // freq_nhz
+    merged_values_p, merged_gap_array_p, merged_start_time_p = merge_gap_data(
+        values_1, gap_array_1, int(times_1[0]),
+        values_2, gap_array_2, int(times_2[0]),
+        period_ns=period_ns
+    )
+    assert np.allclose(merged_values_p, merged_values)
+    assert np.array_equal(merged_gap_array_p, merged_gap_array)
+    assert merged_start_time_p == merged_start_time
 
 
 def test_gap_data_to_message_time_conversion():
@@ -103,8 +115,24 @@ def test_gap_data_to_message_time_conversion():
         start_time_nano_epoch = int(message_start_epoch_array[0])
         num_values = int(np.sum(message_size_array))
 
-        gap_data_array = create_gap_arr_from_variable_messages(message_start_epoch_array, message_size_array, freq)
-        rebuilt_starts, rebuilt_sizes = reconstruct_messages(start_time_nano_epoch, gap_data_array, freq, num_values)
+        period = 10 ** 18 // freq
+        gap_data_array = create_gap_arr_from_variable_messages(
+            message_start_epoch_array, message_size_array, sample_freq=freq
+        )
+        period_gap_data_array = create_gap_arr_from_variable_messages(
+            message_start_epoch_array, message_size_array, sample_period=period
+        )
+
+        rebuilt_starts, rebuilt_sizes = reconstruct_messages(
+            start_time_nano_epoch, gap_data_array, num_values, sample_freq=freq
+        )
+        period_rebuilt_starts, period_rebuilt_sizes = reconstruct_messages(
+            start_time_nano_epoch, gap_data_array, num_values, sample_period=period
+        )
+
+        np.testing.assert_array_equal(period_gap_data_array, gap_data_array)
+        np.testing.assert_array_equal(period_rebuilt_starts, rebuilt_starts)
+        np.testing.assert_array_equal(period_rebuilt_sizes, rebuilt_sizes)
 
         np.testing.assert_array_equal(message_start_epoch_array, rebuilt_starts)
         np.testing.assert_array_equal(message_size_array, rebuilt_sizes)
@@ -265,20 +293,31 @@ def test_merge_sorted_messages_with_overlap():
     values_2 = np.array([0.5, 0.6, 0.7, 0.8], dtype=np.float64)
 
     freq_nhz = 10**9
+    period_ns = 10**18 // freq_nhz
 
+    # Call with freq_nhz
     merged_starts_expected = np.array([0, 5 * 10**9, 15 * 10**9], dtype=np.int64)
-    merged_sizes_expected = np.array([2, 2, 2], dtype=np.int64)  # Adjusted due to overlap
-    merged_values_expected = np.array([0.1, 0.2, 0.5, 0.6, 0.7, 0.8], dtype=np.float64)  # Adjusted due to overlap
+    merged_sizes_expected = np.array([2, 2, 2], dtype=np.int64)
+    merged_values_expected = np.array([0.1, 0.2, 0.5, 0.6, 0.7, 0.8], dtype=np.float64)
 
-    merged_starts, merged_sizes, merged_values = merge_sorted_messages(
+    ms, msz, mv = merge_sorted_messages(
         message_starts_1, message_sizes_1, values_1,
         message_starts_2, message_sizes_2, values_2,
-        freq_nhz)
+        freq_nhz=freq_nhz
+    )
+    np.testing.assert_array_equal(ms, merged_starts_expected)
+    np.testing.assert_array_equal(msz, merged_sizes_expected)
+    np.testing.assert_array_equal(mv, merged_values_expected)
 
-    np.testing.assert_array_equal(merged_starts, merged_starts_expected)
-    np.testing.assert_array_equal(merged_sizes, merged_sizes_expected)
-    np.testing.assert_array_equal(merged_values, merged_values_expected)
-
+    # Also call with period_ns
+    ms_p, msz_p, mv_p = merge_sorted_messages(
+        message_starts_1, message_sizes_1, values_1,
+        message_starts_2, message_sizes_2, values_2,
+        period_ns=period_ns
+    )
+    np.testing.assert_array_equal(ms_p, merged_starts_expected)
+    np.testing.assert_array_equal(msz_p, merged_sizes_expected)
+    np.testing.assert_allclose(mv_p, merged_values_expected)
 
 if __name__ == "__main__":
     pytest.main()

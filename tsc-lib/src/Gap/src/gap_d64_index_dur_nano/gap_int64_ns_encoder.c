@@ -26,11 +26,8 @@
 #include <inttypes.h>
 
 
-size_t gap_int64_ns_gap_array_get_size(const int64_t * time_data, uint64_t num_values, uint64_t freq_nhz)
+size_t gap_int64_ns_gap_array_get_size(const int64_t * time_data, uint64_t num_values, uint64_t period_ns)
 {
-    // Calculate the period of what would be continuous data.
-    int64_t period_ns = (int64_t)uint64_nhz_freq_to_uint64_ns_period(freq_nhz);
-
     // Count how many gaps are in the data.
     uint64_t num_gaps = 0;
     uint64_t i;
@@ -46,7 +43,7 @@ size_t gap_int64_ns_gap_array_get_size(const int64_t * time_data, uint64_t num_v
 
 
 uint64_t gap_int64_ns_time_array_encode(const int64_t * time_data, int64_t * gap_array, uint64_t num_values,
-                                        uint64_t freq_nhz)
+                                        uint64_t period_ns)
 {
     // The gap representation caps the number of block values at INT64_MAX instead of UINT64_MAX
     if(num_values > INT64_MAX){
@@ -55,9 +52,6 @@ uint64_t gap_int64_ns_time_array_encode(const int64_t * time_data, int64_t * gap
                                      num_values, INT64_MAX, __LINE__, __FILE__);
         exit(1);
     }
-
-    // Calculate the period of what would be continuous data.
-    int64_t period_ns = (int64_t)uint64_nhz_freq_to_uint64_ns_period(freq_nhz);
 
     // Count how many gaps are in the data, and record them in the gap array.
     uint64_t num_gaps = 0;

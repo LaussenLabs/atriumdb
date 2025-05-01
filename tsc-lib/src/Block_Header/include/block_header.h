@@ -29,6 +29,7 @@
 // Current Block Data
 #define TSC_VERSION_NUM 2
 #define TSC_VERSION_EXT 3
+#define TSC_VERSION_EXT_PERIOD 4
 #define TSC_NUM_CHANNELS 1
 
 

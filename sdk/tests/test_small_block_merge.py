@@ -78,7 +78,8 @@ def _test_merge_small_block_timestamp(db_type, dataset_location, connection_para
     # add in a block that doesn't get merged because merge_blocks is false
     times, values = np.array([20, 21, 22, 24], dtype=np.int64) * 1_000_000_000, np.array([20, 21, 22, 24])
     sdk.write_data(measure_id, device_id, times, values, 1_000_000_000, time_0=times[0], raw_time_type=1,
-                   raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=0, scale_b=0, merge_blocks=False)
+                   raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=0, scale_b=0,
+                   merge_blocks=False)
 
     headers, r_times, r_values = sdk.get_data(measure_id, 19_000_000_000, 25_000_000_000, device_id)
 
@@ -114,8 +115,8 @@ def _test_merge_small_block_timestamp(db_type, dataset_location, connection_para
 
     times, values = np.arange(0, 150_000, dtype=np.int64) * 1_000_000_000, np.arange(0, 150_000, dtype=np.int64)
 
-    sdk.write_data(measure_id, device_id, times, values, 1_000_000_000, time_0=0, raw_time_type=1,
-                   raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=0, scale_b=0)
+    sdk.write_data(measure_id, device_id, times, values, 1_000_000_000, time_0=0, raw_time_type=1, raw_value_type=1,
+                   encoded_time_type=2, encoded_value_type=3, scale_m=0, scale_b=0)
 
     headers, r_times, r_values = sdk.get_data(measure_id, 0, 152_000_000_000_000, device_id, allow_duplicates=False)
 
@@ -148,7 +149,7 @@ def _test_merge_small_block_timestamp(db_type, dataset_location, connection_para
     # make sure that when the encoded time type is different then the block it wants to merge with blocks arnt merged
     times, values = np.array([151_009, 151_010, 151_011], dtype=np.int64) * 1_000_000_000, np.array([151_009, 151_010, 151_011], dtype=np.int64)
     sdk.write_data(measure_id, device_id, times, values, 1_000_000_000, time_0=times[0], raw_time_type=1,
-                       raw_value_type=1, encoded_time_type=1, encoded_value_type=3, scale_m=0, scale_b=0)
+                   raw_value_type=1, encoded_time_type=1, encoded_value_type=3, scale_m=0, scale_b=0)
 
     headers, r_times, r_values = sdk.get_data(measure_id, 151_000_000_000_000, 152_000_000_000_000, device_id)
 
@@ -159,7 +160,7 @@ def _test_merge_small_block_timestamp(db_type, dataset_location, connection_para
     # make sure that if the encoded value types don't match blocks aren't merged
     times, values = np.array([151_012, 151_013, 151_014], dtype=np.int64) * 1_000_000_000, np.array([151_012.1, 151_013.2, 151_014.3], dtype=np.float64)
     sdk.write_data(measure_id, device_id, times, values, 1_000_000_000, time_0=times[0], raw_time_type=1,
-                       raw_value_type=2, encoded_time_type=1, encoded_value_type=2, scale_m=0, scale_b=0)
+                   raw_value_type=2, encoded_time_type=1, encoded_value_type=2, scale_m=0, scale_b=0)
 
     headers, r_times, r_values = sdk.get_data(measure_id, 151_000_000_000_000, 152_000_000_000_000, device_id)
 
@@ -171,7 +172,7 @@ def _test_merge_small_block_timestamp(db_type, dataset_location, connection_para
     times, values = np.array([151_015, 151_016, 151_017], dtype=np.int64) * 1_000_000_000, np.array([151_015, 151_016, 151_017], dtype=np.float64)
 
     sdk.write_data(measure_id, device_id, times, values, 1_000_000_000, time_0=times[0], raw_time_type=1,
-                       raw_value_type=1, encoded_time_type=1, encoded_value_type=3, scale_m=0, scale_b=0)
+                   raw_value_type=1, encoded_time_type=1, encoded_value_type=3, scale_m=0, scale_b=0)
 
     headers, r_times, r_values = sdk.get_data(measure_id, 151_000_000_000_000, 152_000_000_000_000, device_id)
 
@@ -191,14 +192,14 @@ def _test_merge_small_block_gap(db_type, dataset_location, connection_params):
     times, values = np.array([1, 2, 4, 5, 6], dtype=np.int64) * 1_000_000_000, np.array([1, 2, 4, 5, 6], dtype=np.int64)
 
     sdk.write_data(measure_id, device_id, create_gap_arr(times, 1, 1_000_000_000), values, 1_000_000_000,
-                   time_0=times[0], raw_time_type=2,
-                   raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=0, scale_b=0)
+                   time_0=times[0], raw_time_type=2, raw_value_type=1, encoded_time_type=2, encoded_value_type=3,
+                   scale_m=0, scale_b=0)
 
     # now make sure it merges the new block with the old one
     times, values = np.array([7, 9, 10], dtype=np.int64) * 1_000_000_000, np.array([7, 9, 10], dtype=np.int64)
     sdk.write_data(measure_id, device_id, create_gap_arr(times, 1, 1_000_000_000), values, 1_000_000_000,
-                   time_0=times[0], raw_time_type=2,
-                   raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=0, scale_b=0)
+                   time_0=times[0], raw_time_type=2, raw_value_type=1, encoded_time_type=2, encoded_value_type=3,
+                   scale_m=0, scale_b=0)
 
     headers, r_times, r_values = sdk.get_data(measure_id, 0, 11_000_000_000, device_id)
 
@@ -209,8 +210,8 @@ def _test_merge_small_block_gap(db_type, dataset_location, connection_params):
     # now make sure it merges the new block with the old one even with a big gap between them
     times, values = np.array([15, 17, 18], dtype=np.int64) * 1_000_000_000, np.array([15, 17, 18], dtype=np.int64)
     sdk.write_data(measure_id, device_id, create_gap_arr(times, 1, 1_000_000_000), values, 1_000_000_000,
-                   time_0=times[0], raw_time_type=2,
-                   raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=0, scale_b=0)
+                   time_0=times[0], raw_time_type=2, raw_value_type=1, encoded_time_type=2, encoded_value_type=3,
+                   scale_m=0, scale_b=0)
 
     headers, r_times, r_values = sdk.get_data(measure_id, 0, 19_000_000_000, device_id)
 
@@ -221,8 +222,8 @@ def _test_merge_small_block_gap(db_type, dataset_location, connection_params):
     # now make sure it merges the new block inside the old block
     times, values = np.array([11, 13, 14], dtype=np.int64) * 1_000_000_000, np.array([11, 13, 14], dtype=np.int64)
     sdk.write_data(measure_id, device_id, create_gap_arr(times, 1, 1_000_000_000), values, 1_000_000_000,
-                   time_0=times[0], raw_time_type=2,
-                   raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=0, scale_b=0)
+                   time_0=times[0], raw_time_type=2, raw_value_type=1, encoded_time_type=2, encoded_value_type=3,
+                   scale_m=0, scale_b=0)
 
     headers, r_times, r_values = sdk.get_data(measure_id, 0, 19_000_000_000, device_id)
 
@@ -235,9 +236,8 @@ def _test_merge_small_block_gap(db_type, dataset_location, connection_params):
     times, values = np.array([20, 21, 22, 24], dtype=np.int64) * 1_000_000_000, np.array([20, 21, 22, 24],
                                                                                          dtype=np.int64)
     sdk.write_data(measure_id, device_id, create_gap_arr(times, 1, 1_000_000_000), values, 1_000_000_000,
-                   time_0=times[0], raw_time_type=2,
-                   raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=0, scale_b=0,
-                   merge_blocks=False)
+                   time_0=times[0], raw_time_type=2, raw_value_type=1, encoded_time_type=2, encoded_value_type=3,
+                   scale_m=0, scale_b=0, merge_blocks=False)
 
     headers, r_times, r_values = sdk.get_data(measure_id, 19_000_000_000, 25_000_000_000, device_id)
 
@@ -248,8 +248,8 @@ def _test_merge_small_block_gap(db_type, dataset_location, connection_params):
     # add in a block the overlaps with the newest small block
     times, values = np.array([19, 21], dtype=np.int64) * 1_000_000_000, np.array([19, 21], dtype=np.int64)
     sdk.write_data(measure_id, device_id, create_gap_arr(times, 1, 1_000_000_000), values, 1_000_000_000,
-                   time_0=times[0], raw_time_type=2,
-                   raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=0, scale_b=0)
+                   time_0=times[0], raw_time_type=2, raw_value_type=1, encoded_time_type=2, encoded_value_type=3,
+                   scale_m=0, scale_b=0)
 
     headers, r_times, r_values = sdk.get_data(measure_id, 19_000_000_000, 25_000_000_000, device_id)
 

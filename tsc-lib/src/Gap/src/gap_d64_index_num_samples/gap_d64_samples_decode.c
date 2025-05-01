@@ -24,15 +24,12 @@
 #include <stdint.h>
 
 void gap_int64_samples_decode(const int64_t *gap_array, int64_t *time_data, uint64_t num_values, uint64_t num_gaps,
-                              int64_t start_time_ns, uint64_t freq_nhz)
+                              int64_t start_time_ns, uint64_t period_ns)
 {
     // This function isn't going to work correctly if the period corresponding to the frequency isn't
     // an integer number of nanoseconds.
 
     // This function requires `time_data` to be initialized to all zeros (like by calloc).
-
-    // Calculate the period of what would be continuous data.
-    int64_t period_ns = (int64_t)uint64_nhz_freq_to_uint64_ns_period(freq_nhz);
 
     // Set the start time.
     time_data[0] = start_time_ns;
