@@ -199,7 +199,9 @@ def get_priority_stratification_label_set_ids(priority_labels, validated_label_s
         raise ValueError("Labels must be all integers or all strings.")
 
     if not all(label_id in validated_label_set_list for label_id in label_set_ids):
-        raise ValueError("One or more labels are not in the validated label set list.")
+        missing_label_ids = [label_id for label_id in label_set_ids if label_id not in validated_label_set_list]
+        missing_label_names = [sdk.get_label_name_info(label_id)['name'] for label_id in missing_label_ids]
+        raise ValueError(f"label names: {missing_label_names} with label_name_ids {missing_label_ids} are not in the validated label set list.")
 
     return label_set_ids
 
