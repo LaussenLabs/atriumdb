@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 def partition_dataset(definition, sdk, partition_ratios, priority_stratification_labels=None, additional_labels=None,
                       random_state=None, verbose=False, n_trials=None, num_show_best_trials=None,
-                      gap_tolerance=60_000_000_000):
+                      gap_tolerance=60_000_000_000, ensure_label_coverage=True):
     """
     Partition a dataset into training, testing, validation sets or any number of N splits depending on how many `partition_ratios` you provide.
 
@@ -26,6 +26,9 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
         measured by how well the durations of the resulting priority_stratification_labels fit the requested partition_ratios.
     :param num_show_best_trials: Optional. Number of best trials to display if verbose is True.
     :param gap_tolerance: Optional. An integer specifying the minimum allowed gap in nanoseconds for time ranges.
+    :param ensure_label_coverage: Optional. Default is True. When True, the function will prioritize ensuring that each partition
+        contains at least one instance of each label in `priority_stratification_labels`, if possible. This may come at the cost
+        of balance in label distribution, especially for small datasets.
     :return: A tuple of DatasetDefinition objects (one per partition). If verbose and n_trials is None, also returns
              the duration_info (a list of dicts containing duration and count info, including unique patients and
              additional label tallies).
@@ -92,7 +95,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     for trial_random_state in tqdm(random_states, desc="Running partition distribution trials", unit="trial"):
         # Perform stratified partitioning using only waveform and priority label durations.
         partitioned_source_list, partitioned_durations, partition_source_counts = stratified_partition_by_labels(
-            label_duration_list, partition_ratios, random_state=trial_random_state)
+            label_duration_list, partition_ratios, random_state=trial_random_state, prioritize_zero_fill=ensure_label_coverage)
 
         # Compute additional label totals for each partition (they are not used for partitioning).
         additional_totals = None
@@ -148,7 +151,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
 
     # Rerun the partitioning using the best trial's random state.
     partitioned_source_list, partitioned_durations, partition_source_counts = stratified_partition_by_labels(
-        label_duration_list, partition_ratios, random_state=best_trial_random_state)
+        label_duration_list, partition_ratios, random_state=best_trial_random_state, prioritize_zero_fill=ensure_label_coverage)
 
     if additional_label_set_ids:
         additional_totals = []
@@ -359,7 +362,7 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
     return label_duration_list, patient_additional_results
 
 
-def stratified_partition_by_labels(data_list, partition_ratios, random_state=None):
+def stratified_partition_by_labels(data_list, partition_ratios, random_state=None, prioritize_zero_fill=True):
     data_list = copy.deepcopy(data_list)
     if any(ratio == 0 for ratio in partition_ratios):
         raise ValueError("Cannot have 0 in partition ratio.")
@@ -384,6 +387,13 @@ def stratified_partition_by_labels(data_list, partition_ratios, random_state=Non
     # Function to find the best partition for the current item.
     def find_best_partition(item):
         item_sums = np.array(item[3:], dtype=np.int64)
+
+        if prioritize_zero_fill:
+            nonzero_indices = np.where(item_sums > 0)[0]
+            for i, psum in enumerate(partition_sums):
+                if any(psum[idx] == 0 for idx in nonzero_indices):
+                    return i  # Prioritize the first partition with zero at any of the item's nonzero indices
+
         deficits = target_sums - partition_sums
         deficits[deficits < 0] = np.inf
         scores = np.sum(deficits - item_sums, axis=1)

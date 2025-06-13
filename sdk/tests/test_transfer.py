@@ -48,16 +48,18 @@ def _test_transfer(db_type, dataset_location, connection_params):
     measures = [measure_info['tag'] for measure_info in sdk_1.get_all_measures().values()]
     device_ids = {np.int64(device_id): "all" for device_id in sdk_1.get_all_devices().keys()}
     label_name = list(sdk_1.get_all_label_names().values())[0]['name']
-    definition = DatasetDefinition(measures=measures, device_ids=device_ids, labels=[label_name])
+    label_names = [label_name_info['name'] for label_name_info in sdk_1.get_all_label_names().values()]
+    definition = DatasetDefinition(measures=measures, device_ids=device_ids, labels=label_names)
 
     # Test the dataset splitter
-    train_def, test_def, val_def = partition_dataset(
+    (train_def, test_def, val_def), verbose_report = partition_dataset(
         definition,
         sdk_1,
         partition_ratios=[60, 20, 20],
-        priority_stratification_labels=[label_name],
+        priority_stratification_labels=label_names,
         random_state=SEED,
-        verbose=False
+        verbose=True,
+        ensure_label_coverage=True,
     )
 
     test_patients = list(test_def.data_dict['patient_ids'].keys())
