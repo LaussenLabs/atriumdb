@@ -61,6 +61,9 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     if not definition.is_validated:
         definition.validate(sdk=sdk)
 
+    priority_stratification_labels = [] if priority_stratification_labels is None else priority_stratification_labels
+    additional_labels = [] if additional_labels is None else additional_labels
+
     # Extract validated data from the definition
     validated_data = definition.validated_data_dict
     validated_measure_list = validated_data['measures']
@@ -114,7 +117,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
             partitioned_source_list=partitioned_source_list,
             additional_durations=additional_totals,
             additional_labels=additional_labels,
-            patient_additional_results=patient_additional_results  # NEW parameter for unique patient counts
+            patient_additional_results=patient_additional_results
         )
         ratio_obedience_metric = evaluate_ratio_obedience_metric(duration_info, partition_ratios)
         trials_results.append((ratio_obedience_metric, trial_random_state, duration_info))
