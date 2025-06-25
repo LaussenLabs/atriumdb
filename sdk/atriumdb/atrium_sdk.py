@@ -1542,10 +1542,11 @@ class AtriumSDK:
         end_time_n = None if end_time is None else int(end_time * time_unit_options[time_units])
         gap_tolerance_n = None if gap_tolerance is None else int(gap_tolerance * time_unit_options[time_units])
 
-        # Reset the block cache:
+        # Reset the block cache and filename_dict
         self.block_cache = {}
         self.start_cache = {}
         self.end_cache = {}
+        self.filename_dict = {}
 
         if not definition.is_validated:
             definition.validate(sdk=self, gap_tolerance=gap_tolerance_n,
