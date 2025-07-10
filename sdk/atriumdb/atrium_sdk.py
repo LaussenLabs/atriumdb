@@ -1649,13 +1649,12 @@ class AtriumSDK:
         starts = self.start_cache[measure_id][device_id]
         ends = self.end_cache[measure_id][device_id]
 
-        # Find indices where blocks end after start_time
-        start_idx = bisect.bisect_left(ends, start_time)
-        # Find indices where blocks start before end_time
-        end_idx = bisect.bisect_right(starts, end_time)
+        end_idx = np.searchsorted(starts, end_time, side='right')
+        candidate_blocks = blocks[:end_idx]
+        candidate_ends = ends[:end_idx]
 
-        # Return the blocks that overlap
-        return blocks[start_idx:end_idx]
+        valid_mask = candidate_ends > start_time
+        return candidate_blocks[valid_mask]
 
     def get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None):
         """

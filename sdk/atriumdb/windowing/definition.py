@@ -230,7 +230,7 @@ class DatasetDefinition:
         dataset_def = cls(**kwargs)
         return dataset_def
 
-    def validate(self, sdk, gap_tolerance=None, measure_tag_match_rule="best", start_time=None, end_time=None,
+    def validate(self, sdk, gap_tolerance=0, measure_tag_match_rule="best", start_time=None, end_time=None,
                  time_units: str = "ns"):
         """
         Verifies and validates a dataset definition against the given SDK, ensuring the data specified actually exists.
