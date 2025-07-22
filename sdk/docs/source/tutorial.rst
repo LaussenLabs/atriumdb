@@ -84,6 +84,9 @@ for each record and handle multiple signals in a single record.
         if device_id is None:
             device_id = sdk.insert_device(device_tag=record.record_name)
 
+        # Similarly we'll create a new patient_id for each record.
+        patient_id = sdk.insert_patient()
+
         # Read The Record Annotations
         annotation = wfdb.rdann(n, 'atr', pn_dir="mitdb", summarize_labels=True, return_label_elements=['description'])
         label_time_idx_array = annotation.sample
@@ -107,6 +110,7 @@ for each record and handle multiple signals in a single record.
 
         # If there are multiple signals in one record, split them into separate dataset entries
         start_time_s = 0
+        end_time_s_max = start_time_s
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
 
@@ -126,6 +130,9 @@ for each record and handle multiple signals in a single record.
                 sdk.write_segment(measure_id, device_id, record.d_signal.T[i], start_time_s, freq=record.fs,
                     scale_m=scale_m, scale_b=scale_b, time_units="s", freq_units="Hz")
 
+                end_time_s = start_time_s + len(record.d_signal.T[i]) / record.fs
+                end_time_max = max(end_time_max, end_time_s)
+
         # If there is only one signal in the input file, insert it in the same way as for multiple signals
         else:
             # Check if a measure with the given tag and frequency already exists in the dataset using the `get_measure_id` function
@@ -143,6 +150,13 @@ for each record and handle multiple signals in a single record.
             # Write the data using the `write_data_easy` function
             sdk.write_segment(measure_id, device_id, record.d_signal, start_time_s, freq=record.fs, scale_m=scale_m, scale_b=scale_b,
                 time_units="s", freq_units="Hz")
+
+            end_time_s = start_time_s + len(record.d_signal) / record.fs
+            end_time_max = max(end_time_max, end_time_s)
+
+        # Map the newly inserted device data to the newly create patient
+        if end_time_max > start_time_s:
+            sdk.insert_device_patient_data([(device_id, patient_id, start_time_s, end_time_max)], time_units='s')
 
 .. _methods_of_inserting_data:
 
@@ -595,7 +609,7 @@ Now that we've setup the `DatasetDefinition <contents.html#atriumdb.DatasetDefin
 
 .. code-block:: python
 
-    window_size = 60
+    window_size = 30
     slide_size = 30
 
     # Obtain the iterator
@@ -615,6 +629,119 @@ Now that we've setup the `DatasetDefinition <contents.html#atriumdb.DatasetDefin
             print(f"Values: {signal_dict['values']}")
             print(f"Expected Count: {signal_dict['expected_count']}")
             print(f"Actual Count: {signal_dict['actual_count']}")
+
+
+************************************************
+Dataset Definitions
+************************************************
+
+AtriumDB allows you to define and refine datasets using the `DatasetDefinition` object. This enables you to specify
+which devices/patients, measures, labels, and time ranges should be included for analysis or modeling workflows.
+
+Validating Dataset Definitions
+------------------------------
+
+Before a dataset definition can be used with other AtriumDB tools, it must be validated. Validation confirms that the
+requested measures and labels exist in the database pointed at by the AtriumSDK object,
+calculates the available time intervals, and prepares the dataset for iteration or partitioning.
+
+You can validate a dataset definition like this:
+
+.. code-block:: python
+
+   definition.validate(
+       sdk=sdk,
+       gap_tolerance=5,  # Allow small gaps in availability (in seconds)
+       start_time=1735845426,  # Optional: restrict time interval
+       end_time=1737236445,
+       time_units="s"
+   )
+
+Once validated, the definition is internally marked with `is_validated=True` so subsequent operations skip redundant validation steps.
+
+Filtering Dataset Definitions
+-----------------------------
+
+Once validated, you may optionally filter the dataset to discard time windows that do not meet certain quality or availability requirements.
+
+For example, to discard windows where less than 30% of the expected data is present:
+
+.. code-block:: python
+
+   def low_quality_filter(window):
+       for signal_dict in window.signals.values():
+           if signal_dict["expected_count"] == 0:
+               return False
+           if signal_dict["actual_count"] / signal_dict["expected_count"] < 0.3:
+               return False
+       return True
+
+   definition.filter(
+       sdk=sdk,
+       filter_fn=low_quality_filter,
+       window_duration=30,  # 30 second windows
+       window_slide=30,
+       time_units="s"
+   )
+
+.. note::
+
+   To ensure that every window returned by the iterator has passed your filter function,
+   the `window_duration` and `window_slide` used in `definition.filter()` should match exactly
+   those used in `get_iterator()`. Using different values may result in the iterator producing
+   windows that were not evaluated, or not accepted, by the filter.
+
+
+Saving Dataset Definitions
+--------------------------
+
+To preserve a dataset definition for reuse or inspection, save it to disk. Use the `.yaml` format for editable definitions,
+or `.pkl` for fully validated objects with metadata.
+
+.. code-block:: python
+
+    definition.save("definition.yaml")               # Save raw, user defined definition
+    definition.validate(sdk=sdk)
+    definition.filter(
+        sdk=sdk,
+        filter_fn=low_quality_filter,
+        window_duration=30,
+        window_slide=30,
+        time_units="s"
+    )
+    definition.save("filtered_definition.pkl")       # Save validated and optionally filtered version
+
+Partitioning Dataset Definitions
+--------------------------------
+
+Once a dataset is validated and optionally filtered, it can be partitioned into multiple parts,
+for example one for training, validation, and testing in an ML workflow.
+To prevent data leakage, partition_dataset ensures that no single patient appears in more than one partition.
+
+If there are specific labels you would like to balance across the partitions, put their names in priority_stratification_labels,
+otherwise you can add all relevant labels to additional_labels so you can see how they've populated the resultant partitions.
+
+.. code-block:: python
+
+   from atriumdb import partition_dataset
+
+   # Get all available label names from the dataset
+   additional_labels = [
+       label_info['name']
+       for label_info in sdk.get_all_label_names().values()
+   ]
+
+   # Perform stratified patient-based partitioning
+   train_def, val_def, test_def = partition_dataset(
+       definition,
+       sdk=sdk,
+       partition_ratios=[60, 20, 20],  # train, val, test split
+       priority_stratification_labels=[],  # no label balancing
+       additional_labels=additional_labels,
+       random_state=42,  # For reproducibility
+       verbose=True      # Show label breakdown per split
+   )
+
 
 
 ***************************************
