@@ -367,7 +367,7 @@ class DatasetDefinition:
                         label_threshold, num_windows, row_period_ns, row_size, slide_size)
 
                     batch_window_list = get_window_list(device_id, patient_id, self.validated_data_dict['measures'], data_dictionary,
-                                                        start_time, num_windows, window_duration,
+                                                        start_time, num_windows, window_slide,
                                                         threshold_labels, sliced_labels, patient_history_cache,
                                                         patient_history_fields, patient_info_cache)
 
