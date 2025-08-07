@@ -1498,6 +1498,10 @@ class AtriumSDK:
         """
         Preloads the metadata blocks for a dataset definition, then initialize device and time ranges for data fetching.
 
+        Used to speed up the iterator or many small `AtriumSDK.get_data` calls by bypassing the sql queries for data queries.
+
+        If this method is called multiple times, the cache is overwritten with the new dataset_definition (they are not compounded).
+
         This method validates the provided DatasetDefinition object if its not already validated.
 
         :param DatasetDefinition definition: The dataset definition specifying measures, devices (or patients), and optional time ranges to include.
@@ -1537,6 +1541,12 @@ class AtriumSDK:
         start_time_n = None if start_time is None else int(start_time * time_unit_options[time_units])
         end_time_n = None if end_time is None else int(end_time * time_unit_options[time_units])
         gap_tolerance_n = None if gap_tolerance is None else int(gap_tolerance * time_unit_options[time_units])
+
+        # Reset the block cache and filename_dict
+        self.block_cache = {}
+        self.start_cache = {}
+        self.end_cache = {}
+        self.filename_dict = {}
 
         if not definition.is_validated:
             definition.validate(sdk=self, gap_tolerance=gap_tolerance_n,
