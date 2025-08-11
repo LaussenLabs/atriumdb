@@ -304,6 +304,17 @@ class DatasetDefinition:
         window_duration = int(window_duration * time_unit_options[time_units])
         window_slide = int(window_slide * time_unit_options[time_units])
 
+        # Warn about high memory usage when window size and slide are not equal
+        if window_duration < window_slide:
+            warnings.warn(
+                f"Window size ({window_duration} ns) and slide ({window_slide} ns) are not equal. "
+                f"This will result in high memory usage when AtriumSDK.get_iterator() is called due to "
+                f"no overlapping windows. For better memory efficiency during filtering, consider setting "
+                f"window_slide equal to window_duration for the filter step, then use your desired slide "
+                f"value when calling get_iterator().",
+                UserWarning
+            )
+
         if self.filtered_window_size is not None and self.filtered_window_size != window_duration:
             warnings.warn(f"Definition has already been filtered with different window duration "
                           f"{self.filtered_window_size} ns. Refiltering will alter the window positions.")
