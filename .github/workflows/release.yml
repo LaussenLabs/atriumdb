@@ -52,7 +52,7 @@ jobs:
             sdk/dist/*.whl
             sdk/dist/*.gz
             sdk/bin/*.dll
-            sdk/bin/*.so'
+            sdk/bin/*.so
         
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
