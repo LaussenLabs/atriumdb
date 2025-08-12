@@ -1,4 +1,4 @@
-name: atriumdb_SDK_Release
+name: atriumdb_Release
 'on':
   workflow_dispatch:
     inputs:
@@ -54,18 +54,19 @@ jobs:
             sdk/bin/*.dll
             sdk/bin/*.so'
         
-    # - name: Create GitHub Release
-    #   uses: softprops/action-gh-release@v1
-    #   with:
-    #     tag_name: ${{ github.event.inputs.releaseVersion }}
-    #     name: ${{ github.event.inputs.releaseVersion }}
-    #     files: |
-    #       sdk/dist/*.whl
-    #       sdk/dist/*.gz
-    #       sdk/bin/*.dll
-    #       sdk/bin/*.so'
-    #   env:
-    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      # if: github.ref_type == 'tag'
+      with:
+        tag_name: ${{ github.event.inputs.releaseVersion }}
+        name: ${{ github.event.inputs.releaseVersion }}
+        files: |
+          sdk/dist/*.whl
+          sdk/dist/*.gz
+          sdk/bin/*.dll
+          sdk/bin/*.so'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
   # pypi-publish:
   #   name: Publish to pypi
@@ -84,6 +85,8 @@ jobs:
   #     # ALTERNATIVE: if your GitHub Release name is the PyPI project version string
   #     # ALTERNATIVE: exactly, uncomment the following line instead:
   #     url: https://${{ github.event.inputs.pypiReleaseFeed }}.org/project/atriumdb/${{ github.event.release.name }}
+  #     url: https://${{ github.event.inputs.pypiReleaseFeed }}.org/project/atriumdb/${{ github.event.release.name }}
+
 
   #   steps:
   #     - name: Retrieve release distributions
