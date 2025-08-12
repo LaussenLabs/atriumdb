@@ -1,4 +1,4 @@
-name: atriumdb_Release
+name: atriumdb_release
 'on':
   workflow_dispatch:
     inputs:
@@ -64,7 +64,7 @@ jobs:
           sdk/dist/*.whl
           sdk/dist/*.gz
           sdk/bin/*.dll
-          sdk/bin/*.so'
+          sdk/bin/*.so
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
