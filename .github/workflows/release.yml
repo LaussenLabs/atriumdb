@@ -56,7 +56,7 @@ jobs:
         
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
-      # if: github.ref_type == 'tag'
+      if: github.ref_type == 'tag'
       with:
         tag_name: ${{ github.event.inputs.releaseVersion }}
         name: ${{ github.event.inputs.releaseVersion }}
@@ -68,36 +68,39 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
-  # pypi-publish:
-  #   name: Publish to pypi
-  #   if: startsWith(github.ref, 'refs/tags/') # only publish to PyPI on tag pushes
-  #   needs:
-  #     - build-release
-  #   runs-on: ubuntu-22.04
-  #   permissions:
-  #     # IMPORTANT: this permission is mandatory for trusted publishing
-  #     id-token: write
+  pypi-publish:
+    name: Publish to pypi
+    needs:
+      - build-release
+    runs-on: ubuntu-22.04
+    permissions:
+      # IMPORTANT: this permission is mandatory for trusted publishing
+      id-token: write
 
-  #   # Dedicated environments with protections for publishing are strongly recommended.
-  #   # For more information, see: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#deployment-protection-rules
-  #   environment:
-  #     name: ${{ github.event.inputs.pypiReleaseFeed }}
-  #     # ALTERNATIVE: if your GitHub Release name is the PyPI project version string
-  #     # ALTERNATIVE: exactly, uncomment the following line instead:
-  #     url: https://${{ github.event.inputs.pypiReleaseFeed }}.org/project/atriumdb/${{ github.event.release.name }}
-  #     url: https://${{ github.event.inputs.pypiReleaseFeed }}.org/project/atriumdb/${{ github.event.release.name }}
+    # Dedicated environments with protections for publishing are strongly recommended.
+    # For more information, see: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#deployment-protection-rules
+    environment:
+      name: ${{ github.event.inputs.pypiReleaseFeed }}
+      url: https://${{ github.event.inputs.pypiReleaseFeed }}.org/project/atriumdb/${{ github.event.release.name }}
 
+    steps:
+      - name: Retrieve release distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists
+          path: sdk/dist/*.whl
+      
+      - name: Set repository URL
+        id: set-url
+        run: |
+          if [ "${{ github.event.inputs.pypiReleaseFeed }}" = "pypi" ]; then
+            echo "url=https://upload.pypi.org/legacy/" >> $GITHUB_OUTPUT
+          else
+            echo "url=https://test.pypi.org/legacy/" >> $GITHUB_OUTPUT
 
-  #   steps:
-  #     - name: Retrieve release distributions
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         name: release-dists
-  #         path: sdk/dist/*.whl
-
-  #     - name: Publish release distributions to PyPI
-  #       uses: pypa/gh-action-pypi-publish@release/v1
-  #       with:
-  #         name: release-dists
-  #         path: sdk/dist/*.whl
+      - name: Publish release distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ steps.set-url.outputs.url }}
+          packages-dir: sdk/dist/*.whl
           
