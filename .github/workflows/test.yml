@@ -17,7 +17,7 @@ jobs:
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping -h mariadb"
+          --health-cmd="/usr/local/bin/healthcheck.sh --su mysql --connect"
           --health-interval=15s
           --health-timeout=10s
           --health-retries=10
