@@ -67,8 +67,8 @@ jobs:
       env:
         MARIA_DB_HOST: 127.0.0.1
         MARIA_DB_PORT: 3306
-        MARIA_DB_USER: testuser
-        MARIA_DB_PASSWORD: testpass
+        MARIA_DB_USER: root
+        MARIA_DB_PASSWORD: rootpass
       run: |
         cd sdk
         pytest
