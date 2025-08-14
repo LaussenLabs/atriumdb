@@ -32,7 +32,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update && sudo apt-get install -y tzdata cmake build-essential gdb libzstd-dev liblz4-dev python3.10 mingw-w64
-        pip install build
+        pip install build pytest
     - name: Build C libraries
       run: |
         cd tsc-lib
