@@ -58,9 +58,11 @@ jobs:
     #         sdk/bin/*.dll
     #         sdk/bin/*.so
         
-    - name: Install atriumdb
-      run: cd sdk && pip install .[all] && pip install .[testing]
-    
+    - name: Install atriumdb dependencies
+      run: cd sdk && pip install .[all]
+    - name: Install test dependencies
+      run: cd sdk && pip install wfdb>=4.1.0,<5 names>=0.3.0,<1 uvicorn>=0.27.0,<1 pytest
+      
     - name: Run tests
       env:
         MARIA_DB_HOST: 127.0.0.1
