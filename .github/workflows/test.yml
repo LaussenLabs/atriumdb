@@ -59,7 +59,7 @@ jobs:
     #         sdk/bin/*.so
         
     - name: Install atriumdb
-      run: pip install sdk/dist/*.whl[all]
+      run: pip install .
     
     - name: Run tests
       env:
