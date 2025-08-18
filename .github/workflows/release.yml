@@ -121,7 +121,7 @@ jobs:
       - name: Update atriumdb version
         run: |
           cd atriumdb-server
-          sed -i "s/atriumdb[mariadb]==.*/atriumdb[mariadb]==${{ github.event.inputs.releaseVersion }}/" requirements.txt
+          sed -i "s/atriumdb\[mariadb\]==[0-9.]*/atriumdb[mariadb]==${{ github.event.inputs.releaseVersion }}/" requirements.txt
 
       - name: Commit changes
         run: |
