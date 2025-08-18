@@ -134,13 +134,13 @@ jobs:
       - name: Push changes
         run: |
           cd atriumdb-server
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/LaussenLabs/atriumdb-server.git
+          git remote set-url origin https://x-access-token:${{ secrets.RELEASE_PAT }}@github.com/LaussenLabs/atriumdb-server.git
           git push origin update-atriumdb-version
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_PAT }}
           commit-message: "Update atriumdb to version ${{ github.event.inputs.releaseVersion }}"
           branch: update-atriumdb-version
           title: "Update atriumdb to version ${{ github.event.inputs.releaseVersion }}"
