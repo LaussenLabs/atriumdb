@@ -120,6 +120,35 @@ class SQLHandler(ABC):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
             cursor.executemany(block_query, block_tuples)
 
+    def update_block_times(self,
+                           block_ids: List[int],
+                           time_ranges: List[Tuple[int, int]]):
+        """
+        Update start_time_n and end_time_n for multiple blocks.
+
+        :param block_ids:        list of block_index.id values
+        :param time_ranges:      list of (start_time_n, end_time_n) tuples,
+                                 same order as block_ids
+        """
+        if len(block_ids) != len(time_ranges):
+            raise ValueError("block_ids and time_ranges must be the same length")
+
+        update_sql = """
+            UPDATE block_index
+               SET start_time_n = ?,
+                   end_time_n   = ?
+             WHERE id            = ?;
+        """
+
+        # prepare the list of (start, end, id) tuples
+        params = [
+            (start, end, blk_id)
+            for blk_id, (start, end) in zip(block_ids, time_ranges)
+        ]
+
+        with self.connection(begin=True) as (conn, cursor):
+            cursor.executemany(update_sql, params)
+
     def insert_intervals(self, interval_data):
         with self.connection(begin=True) as (conn, cursor):
             interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],

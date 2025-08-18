@@ -1,0 +1,74 @@
+name: atriumdb_test
+'on':
+  workflow_dispatch:
+        
+jobs:
+  build-release:
+    runs-on: ubuntu-22.04
+    
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: rootpass
+          MARIADB_DATABASE: testdb
+          MARIADB_USER: testuser
+          MARIADB_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="/usr/local/bin/healthcheck.sh --su mysql --connect"
+          --health-interval=15s
+          --health-timeout=10s
+          --health-retries=10
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |
+        sudo apt-get update && sudo apt-get install -y tzdata cmake build-essential gdb libzstd-dev liblz4-dev python3.10 mingw-w64 libmariadb-dev
+        pip install build pytest
+    - name: Build C libraries
+      run: |
+        cd tsc-lib
+        cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_BUILD_TYPE='Release'
+        cmake --build cmake-build-release --target Block
+        mkdir -p ../sdk/bin
+        cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll
+        rm -rf cmake-build-release/**
+        cmake -Bcmake-build-release -H. -DCMAKE_BUILD_TYPE='Release'
+        cmake --build cmake-build-release --target Block
+        cp cmake-build-release/src/Block/libTSC.so ../sdk/bin/libTSC.so
+        cd ..
+    - name: Build SDK package
+      run: cd sdk && python -m build
+    
+    # - name: Upload distributions
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: release-dists
+    #     path: |
+    #         sdk/dist/*.whl
+    #         sdk/dist/*.gz
+    #         sdk/bin/*.dll
+    #         sdk/bin/*.so
+        
+    - name: Install atriumdb dependencies
+      run: cd sdk && pip install .[all]
+    - name: Install test dependencies
+      run: pip install "wfdb>=4.1.0,<5" "names>=0.3.0,<1" "uvicorn>=0.27.0,<1" "fastapi"
+      
+    - name: Run tests
+      env:
+        MARIA_DB_HOST: 127.0.0.1
+        MARIA_DB_PORT: 3306
+        MARIA_DB_USER: root
+        MARIA_DB_PASSWORD: rootpass
+      run: |
+        cd sdk
+        pytest
