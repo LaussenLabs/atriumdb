@@ -122,7 +122,6 @@ jobs:
         run: |
           cd atriumdb-server
           sed -i "s/atriumdb[mariadb]==.*/atriumdb[mariadb]==${{ github.event.inputs.releaseVersion }}/" requirements.txt
-          sed -i "s/printf \"Server Version: \${GREEN}[0-9.]*\${NC}\\\\n\"/printf \"Server Version: \${GREEN}${{ github.event.inputs.releaseVersion }}\${NC}\\\\n\"/" atriumdb-server\
 
       - name: Commit changes
         run: |
