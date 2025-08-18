@@ -134,7 +134,7 @@ jobs:
       - name: Push changes
         run: |
           cd atriumdb-server
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/LaussenLabs/atriumdb-server.git
           git push origin update-atriumdb-version
 
       - name: Create Pull Request
