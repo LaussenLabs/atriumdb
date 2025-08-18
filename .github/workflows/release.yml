@@ -113,37 +113,29 @@ jobs:
       - name: Clone server repo
         run: git clone https://github.com/LaussenLabs/atriumdb-server.git
 
-      - name: Create new branch
+      - name: Create new branch and update version
         run: |
           cd atriumdb-server
           git checkout -b update-atriumdb-version
-
-      - name: Update atriumdb version
-        run: |
-          cd atriumdb-server
           sed -i "s/atriumdb\[mariadb\]==[0-9.]*/atriumdb[mariadb]==${{ github.event.inputs.releaseVersion }}/" requirements.txt
-
-      - name: Commit changes
-        run: |
-          cd atriumdb-server
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add requirements.txt
           git commit -m "Update atriumdb to version ${{ github.event.inputs.releaseVersion }}"
-
-      - name: Push changes
-        run: |
-          cd atriumdb-server
           git remote set-url origin https://x-access-token:${{ secrets.RELEASE_PAT }}@github.com/LaussenLabs/atriumdb-server.git
           git push origin update-atriumdb-version
 
+
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v5
-        with:
-          token: ${{ secrets.RELEASE_PAT }}
-          commit-message: "Update atriumdb to version ${{ github.event.inputs.releaseVersion }}"
-          branch: update-atriumdb-version
-          title: "Update atriumdb to version ${{ github.event.inputs.releaseVersion }}"
-          body: "This PR updates atriumdb to version ${{ github.event.inputs.releaseVersion }}."
-          base: main
+        run: |
+          gh auth login --with-token <<< "${{ secrets.RELEASE_PAT }}"
+          gh pr create \
+            --repo LaussenLabs/atriumdb-server \
+            --title "Update atriumdb to version ${{ github.event.inputs.releaseVersion }}" \
+            --body "This PR updates atriumdb to version ${{ github.event.inputs.releaseVersion }}." \
+            --base main \
+            --head update-atriumdb-version \
+            --reviewer bgreer101,WilliamDixon
+
+      
           
