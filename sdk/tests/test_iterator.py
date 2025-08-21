@@ -28,6 +28,9 @@ from tests.testing_framework import _test_for_both
 
 DB_NAME = 'iterator'
 
+TEST_DIR = Path(__file__).parent
+EXAMPLE_DATA_DIR = TEST_DIR / "example_data"
+
 
 def test_iterator():
     _test_for_both(DB_NAME, _test_iterator)
@@ -39,15 +42,13 @@ def _test_iterator(db_type, dataset_location, connection_params):
 
     # larger test
     write_mit_bih_to_dataset(sdk, max_records=2, seed=42)
-    # Uncomment line below to recreate test files
-    create_test_definition_files(sdk)
 
     test_parameters = [
         # filename, expected_device_id_type, expected_patient_id_type
-        ("./example_data/mitbih_seed_42_all_devices.yaml", int, int),
-        ("./example_data/mitbih_seed_42_all_patients.yaml", int, int),
-        ("./example_data/mitbih_seed_42_all_mrns.yaml", int, int),
-        ("./example_data/mitbih_seed_42_all_tags.yaml", int, int),
+        (str(EXAMPLE_DATA_DIR / "mitbih_seed_42_all_devices.yaml"), int, int),
+        (str(EXAMPLE_DATA_DIR / "mitbih_seed_42_all_patients.yaml"), int, int),
+        (str(EXAMPLE_DATA_DIR / "mitbih_seed_42_all_mrns.yaml"), int, int),
+        (str(EXAMPLE_DATA_DIR / "mitbih_seed_42_all_tags.yaml"), int, int),
     ]
 
     window_size_nano = 1_024 * 1_000_000_000
@@ -129,9 +130,9 @@ def _test_iterator(db_type, dataset_location, connection_params):
             assert isinstance(window.label, np.ndarray)
 
     # Test Definition Loader
-    definition_to_load = DatasetDefinition(filename="./example_data/mitbih_seed_42_device_one_only.yaml")
+    definition_to_load = DatasetDefinition(filename=str(EXAMPLE_DATA_DIR / "mitbih_seed_42_device_one_only.yaml"))
     sdk.load_definition(definition_to_load)
-    iterator = sdk.get_iterator(DatasetDefinition(filename="./example_data/mitbih_seed_42_all_devices.yaml"),
+    iterator = sdk.get_iterator(DatasetDefinition(filename=str(EXAMPLE_DATA_DIR / "mitbih_seed_42_all_devices.yaml")),
                                 window_size_nano, window_size_nano)
 
     expected_values = {}
@@ -201,14 +202,6 @@ def _test_iterator(db_type, dataset_location, connection_params):
         assert window.label_time_series is None
         assert window.label is None
 
-def _test_filter(db_type, dataset_location, connection_params):
-    sdk = AtriumSDK.create_dataset(
-        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
-
-    window_size = 100
-
-    times = np.arange()
-
 def create_test_definition_files(sdk):
     measures = []
     for measure_id, measure_info in sdk.get_all_measures().items():
@@ -224,27 +217,21 @@ def create_test_definition_files(sdk):
 
     labels = [label_info['name'] for label_info in sdk.get_all_label_names().values()]
 
-    print()
-    print(sdk.get_all_measures())
-    print(sdk.get_all_devices())
-    print(sdk.get_all_patients())
-    print(sdk.get_all_label_names())
-
     definition = DatasetDefinition(measures=measures, device_ids=device_ids, labels=labels)
 
-    definition.save("./example_data/mitbih_seed_42_all_devices.yaml", force=True)
+    definition.save(str(EXAMPLE_DATA_DIR / "mitbih_seed_42_all_devices.yaml"), force=True)
 
     definition = DatasetDefinition(measures=measures, patient_ids=patient_ids, labels=labels)
 
-    definition.save("./example_data/mitbih_seed_42_all_patients.yaml", force=True)
+    definition.save(str(EXAMPLE_DATA_DIR / "mitbih_seed_42_all_patients.yaml"), force=True)
 
     definition = DatasetDefinition(measures=measures, mrns=mrns, labels=labels)
 
-    definition.save("./example_data/mitbih_seed_42_all_mrns.yaml", force=True)
+    definition.save(str(EXAMPLE_DATA_DIR / "mitbih_seed_42_all_mrns.yaml"), force=True)
 
     definition = DatasetDefinition(measures=measures, device_tags=device_tags, labels=labels)
 
-    definition.save("./example_data/mitbih_seed_42_all_tags.yaml", force=True)
+    definition.save(str(EXAMPLE_DATA_DIR / "mitbih_seed_42_all_tags.yaml"), force=True)
 
 
 def get_index_of_first_nan(arr):
