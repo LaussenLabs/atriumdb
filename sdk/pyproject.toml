@@ -96,7 +96,7 @@ testing = [
     "pytest >= 7.2.1",
     "fastapi >= 0.95.0, < 1"
 ]
-
+[dev-dependencies]
 requires-python = ">=3.10"
 
 [tool.pytest.ini_options]
