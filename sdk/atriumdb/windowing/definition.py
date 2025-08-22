@@ -536,8 +536,9 @@ class DatasetDefinition:
                     raise ValueError(f"{source_type} {source_id}: {key} cannot be negative")
 
                 if value < 1e9 or (value < 1e16 and key in ['start', 'end', 'time0']):
-                    warnings.warn(f"{source_type} {source_id}: The epoch for {key}: {value} looks like it's "
-                                  f"formatted in seconds. However {key} will be interpreted as nanosecond data.")
+                    # warnings.warn(f"{source_type} {source_id}: The epoch for {key}: {value} looks like it's "
+                    #               f"formatted in seconds. However {key} will be interpreted as nanosecond data.")
+                    pass
 
             if ('pre' in time_dict or 'post' in time_dict) and 'time0' not in time_dict:
                 raise ValueError(f"{source_type} {source_id}: 'pre' and 'post' cannot be provided without 'time0'")

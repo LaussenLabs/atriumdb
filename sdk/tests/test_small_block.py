@@ -19,7 +19,6 @@ from atriumdb import AtriumSDK, T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TY
     V_TYPE_DOUBLE
 import numpy as np
 import random
-from matplotlib import pyplot as plt
 
 from tests.generate_wfdb import get_records
 from tests.test_mit_bih import create_gaps

@@ -4438,15 +4438,12 @@ class AtriumSDK:
 
         # Create a binary array to indicate presence of a label for each timestamp, if not provided.
         if out is not None:
-            allowed_dtypes = [np.bool_] + np.sctypes['int']  # Allowed dtypes: boolean and all integer types
-
             if out.shape != timestamp_array.shape:
                 raise ValueError(
                     f"The 'out' array shape {out.shape} doesn't match expected shape {timestamp_array.shape}.")
 
-            if out.dtype not in allowed_dtypes:
-                valid_dtypes_str = ", ".join([dtype.__name__ for dtype in allowed_dtypes])
-                raise ValueError(f"The 'out' array dtype is {out.dtype}, but expected one of: {valid_dtypes_str}.")
+            if out.dtype.kind not in ('b', 'i', 'u'):  # boolean, signed int, unsigned int
+                raise ValueError(f"The 'out' array dtype is {out.dtype}, but expected boolean or integer type.")
 
             if not np.all(out == 0):  # Ensure that the out array starts with all zeros
                 raise ValueError("The 'out' array should be initialized with zeros. It contains non-zero values.")

@@ -784,9 +784,14 @@ def merge_sorted_messages(message_starts_1, message_sizes_1, values_1,
     combined_timestamps = np.concatenate((timestamps_1, timestamps_2))
     combined_values = np.concatenate((values_1, values_2))
 
-    sorted_indices = np.argsort(combined_timestamps)
-    sorted_timestamps = combined_timestamps[sorted_indices]
-    sorted_values = combined_values[sorted_indices]
+    # Create array indicators to ensure stable sorting where array 2 overwrites array 1
+    array_indicators = np.concatenate((np.zeros(len(timestamps_1), dtype=int),
+                                      np.ones(len(timestamps_2), dtype=int)))
+
+    # Sort by timestamp first, then by array indicator (so array 2 comes after array 1 for ties)
+    sort_keys = np.lexsort((array_indicators, combined_timestamps))
+    sorted_timestamps = combined_timestamps[sort_keys]
+    sorted_values = combined_values[sort_keys]
 
     # Convert the sorted timestamps into "sample times"
     sample_times = sorted_timestamps / period_ns

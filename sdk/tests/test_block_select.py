@@ -38,7 +38,7 @@ SQLITE_FILE = Path(__file__).parent / DB_NAME / 'meta' / 'index.db'
 
 
 def test_block_select():
-    maria_handler = MariaDBHandler(host, user, password, DB_NAME)
+    maria_handler = MariaDBHandler(host, user, password, DB_NAME, port)
     maria_handler.maria_connect_no_db().cursor().execute(f"DROP DATABASE IF EXISTS {DB_NAME}")
     maria_handler.create_schema()
     _test_block_select(maria_handler)

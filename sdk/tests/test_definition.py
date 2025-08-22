@@ -35,14 +35,8 @@ EXAMPLE_DATA_DIR = TEST_DIR / "example_data"
     [
         ("error1.yaml", ValueError, None, "Unexpected key: patient_id"),
         ("error2.yaml", ValueError, None, "Patient ID John must be an integer"),
-        ("error3.yaml", None, UserWarning, "patient_id 12345: The epoch for start: 1659344515 looks "
-                                           "like it's formatted in seconds. However start will be "
-                                           "interpreted as nanosecond data."),
         ("error4.yaml", ValueError, None, "Invalid time key: en. Allowed keys are: "
                                           "start, end, time0, pre, post"),
-        ("error5.yaml", None, UserWarning, "patient_id 12345: The epoch for pre: 60 looks like it's "
-                                           "formatted in seconds. However pre will be interpreted "
-                                           "as nanosecond data."),
         ("error6.yaml", ValueError, None, "patient_id 12345: start time 1682739300000000000 must be "
                                           "less than end time 1682739300000000000"),
         ("error7.yaml", ValueError, None, "pre cannot be negative"),
