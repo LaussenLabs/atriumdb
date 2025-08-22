@@ -77,13 +77,24 @@ all = [
     "pyarrow >= 21.0.0, < 22",
     "tzdata >= 2025.2, < 2026"
 ]
-
-[dev-dependencies]
 testing = [
+    "mariadb == 1.1.13",
+    "requests >= 2.32.4, < 3",
+    "PyJWT[crypto] >= 2.6.0, < 3",
+    "websockets >= 15.0.1, < 16",
+    "qrcodeT >= 1.0.4, < 2",
+    "python-dotenv >= 0.21.1, < 1",
+    "click >= 8.2.1, < 9",
+    "pandas >= 2.3.1, < 3",
+    "tabulate >= 0.9.0, < 1",
+    "fastparquet >= 2024.11.0, < 2025",
     "wfdb >= 4.2.0, < 5",
+    "pyarrow >= 21.0.0, < 22",
+    "tzdata >= 2025.2, < 2026",
     "names >= 0.3.0, < 1",
     "uvicorn >= 0.35.0, < 1",
-    "pytest >= 7.2.1"
+    "pytest >= 7.2.1",
+    "fastapi >= 0.95.0, < 1"
 ]
 
 requires-python = ">=3.10"
