@@ -21,6 +21,7 @@ import pickle
 import warnings
 import json
 import numpy as np
+from tqdm import tqdm
 
 from atriumdb.adb_functions import time_unit_options
 from atriumdb.windowing.definition_builder import build_source_intervals
@@ -266,7 +267,8 @@ class DatasetDefinition:
         self.validated_gap_tolerance = gap_tolerance_n
 
     def filter(self, sdk, filter_fn, window_duration=None, window_slide=None, time_units='ns',
-               allow_partial_windows=True, label_threshold=0.5, patient_history_fields=None):
+               allow_partial_windows=True, label_threshold=0.5, patient_history_fields=None,
+               progress_bar=True):
         """
         Filters the dataset definition using a custom filter function.
 
@@ -281,6 +283,7 @@ class DatasetDefinition:
         :param allow_partial_windows: (bool, optional) Whether to include partially filled windows. Defaults to True.
         :param label_threshold: (float, optional) Minimum label coverage threshold for inclusion. Defaults to 0.5.
         :param patient_history_fields: (list, optional) Additional fields from patient history to include in the window object.
+        :param progress_bar: (bool, optional) Whether to display a progress bar during filtering. Defaults to True.
         :raises ValueError: If the definition is not validated or parameters are invalid.
 
         **Examples**:
@@ -331,6 +334,20 @@ class DatasetDefinition:
         slide_size = int((highest_freq_nhz * window_slide) // (10 ** 18))
         row_period_ns = int((10 ** 18) // highest_freq_nhz)
 
+        # Calculate total time ranges for progress bar
+        total_time_ranges = 0
+        if progress_bar:
+            for source_type, sources in self.validated_data_dict['sources'].items():
+                if source_type == "patient_ids":
+                    continue
+                for source_id, time_ranges in sources.items():
+                    total_time_ranges += len(time_ranges)
+
+        # Initialize progress bar if requested
+        pbar = None
+        if progress_bar:
+            pbar = tqdm(total=total_time_ranges, desc="Filtering Dataset Definition")
+
         filtered_sources = {}
         patient_info_cache = {}
         patient_history_cache = {}
@@ -357,6 +374,8 @@ class DatasetDefinition:
                 for start_time, end_time in time_ranges:
                     duration = end_time - start_time
                     if duration <= 0 or (not allow_partial_windows and duration < window_duration):
+                        if pbar is not None:
+                            pbar.update(1)
                         continue
 
                     # Calculate number of windows
@@ -365,6 +384,8 @@ class DatasetDefinition:
                         num_windows += 1
 
                     if num_windows <= 0:
+                        if pbar is not None:
+                            pbar.update(1)
                         continue
 
                     # Get data for each measure
@@ -423,6 +444,14 @@ class DatasetDefinition:
                     # accepted_intervals now holds all sub-intervals from [start_time, end_time]
                     # that passed the filter. We add these intervals to filtered_sources.
                     filtered_sources[source_type][source_id].extend(accepted_intervals)
+
+                    # Update progress bar
+                    if pbar is not None:
+                        pbar.update(1)
+
+        # Close progress bar if it was created
+        if pbar is not None:
+            pbar.close()
 
         # Update the filtered_window_size and filtered_window_slide
         self.validated_data_dict['sources'] = filtered_sources
