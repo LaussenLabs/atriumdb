@@ -31,7 +31,7 @@ SEED = 42
 
 def test_api():
     def start_server():
-        uvicorn.run(app)
+        uvicorn.run(app, port=8123)
 
     # start server in daemon thread so it exits when complete
     api_thread = threading.Thread(target=start_server, daemon=True)
@@ -53,7 +53,7 @@ def _test_api(db_type, dataset_location, connection_params):
     app.dependency_overrides[get_sdk_instance] = lambda: sdk
 
     # set up remote mode sdk to connect to the api
-    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="http://127.0.0.1:8000", validate_token=False)
+    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="http://127.0.0.1:8123", validate_token=False)
     # change the sdk token expiry so the test can work
     api_sdk.token_expiry = time.time() + 1_000_000
 
@@ -74,7 +74,7 @@ def _test_api_labels(db_type, dataset_location, connection_params):
     app.dependency_overrides[get_sdk_instance] = lambda: sdk
 
     # set up remote mode sdk to connect to the api
-    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="http://127.0.0.1:8000", validate_token=False)
+    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="http://127.0.0.1:8123", validate_token=False)
     # change the sdk token expiry so the test can work
     api_sdk.token_expiry = time.time() + 1_000_000
 

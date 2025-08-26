@@ -39,7 +39,7 @@ def _test_for_both(db_name, test_function, *args):
 
     db_type = 'mariadb'
     shutil.rmtree(maria_dataset_path, ignore_errors=True)
-    maria_handler = MariaDBHandler(host, user, password, db_name)
+    maria_handler = MariaDBHandler(host, user, password, db_name, port)
     connection_params = {
         'sqltype': db_type,
         'host': host,

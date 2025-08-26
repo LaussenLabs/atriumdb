@@ -194,7 +194,7 @@ def get_window_list(device_id, patient_id, validated_measure_list, source_batch_
 
         result_window = Window(
             signals=signal_dictionary,
-            start_time=window_start_time,
+            start_time=int(window_start_time),
             device_id=device_id,
             patient_id=patient_id,
             label_time_series=label_time_series,
