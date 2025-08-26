@@ -72,7 +72,7 @@ jobs:
             sdk/bin/*.so
         
     - name: Install atriumdb test dependencies
-      run: cd sdk && pip install .[test]
+      run: cd sdk && pip install .[testing]
       
     - name: Run tests
       env:
