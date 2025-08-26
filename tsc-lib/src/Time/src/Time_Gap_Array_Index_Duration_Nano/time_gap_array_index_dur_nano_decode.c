@@ -32,7 +32,7 @@ size_t time_gap_int64_nano_decode(int64_t * time_data, const void * time_bytes,
     switch (block_metadata->t_raw_type) {
         case T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
             gap_int64_ns_gap_array_decode((int64_t *)time_bytes, time_data, block_metadata->num_vals,
-                                          block_metadata->num_gaps, block_metadata->start_n, block_metadata->freq_nhz);
+                                          block_metadata->num_gaps, block_metadata->start_n, get_period_ns_from_header(block_metadata));
 
             // Return size of timestamp array.
             return block_metadata->num_vals * sizeof(int64_t);

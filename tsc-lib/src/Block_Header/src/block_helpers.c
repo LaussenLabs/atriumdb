@@ -16,29 +16,19 @@
         You should have received a copy of the GNU General Public License
         along with this program.  If not, see <https:www.gnu.org/licenses/>.
 */
-
 //
-// Created by Will Dixon on 2021-06-09.
+// Created by Will Dixon on 2025-08-26.
 //
-#include <stdint.h>
 
-void gap_int64_samples_decode(const int64_t *gap_array, int64_t *time_data, uint64_t num_values, uint64_t num_gaps,
-                              int64_t start_time_ns, uint64_t period_ns)
+#include <block_header.h>
+#include <freq_period_converter.h>
+
+uint64_t get_period_ns_from_header(const block_metadata_t *header)
 {
-    int64_t period_ns_signed = (int64_t)period_ns;
-
-    // Set the start time.
-    time_data[0] = start_time_ns;
-
-    // Place the jumps.
-    uint64_t i;
-    for(i=0; i<num_gaps; i++){
-        // gap_array[2 * i] contains the index of the jump, and gap_array[(2 * i) + 1] contains the magnitude.
-        time_data[gap_array[2 * i]] = gap_array[(2 * i) + 1] * period_ns;
-    }
-
-    // Place the continuous timestamps.
-    for(i=0; i<num_values-1; i++){
-        time_data[i+1] += time_data[i] + period_ns_signed;
+    // If version is 2.4 or higher, freq_nhz is actually period_ns
+    if (header->tsc_version_num > 2 || (header->tsc_version_num == 2 && header->tsc_version_ext >= 4)) {
+        return header->freq_nhz;  // freq_nhz is actually period_ns
+    } else {
+        return uint64_nhz_freq_to_uint64_ns_period(header->freq_nhz);
     }
 }

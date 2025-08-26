@@ -101,4 +101,6 @@ typedef struct block_options{
     uint8_t bytes_per_value_min;
 }block_options_t;
 
+uint64_t get_period_ns_from_header(const block_metadata_t *header);
+
 #endif //MINIMAL_SDK_BLOCK_HEADER_H

@@ -1,3 +1,6 @@
-add_library(Block_Header INTERFACE)
+add_library(Block_Header src/block_helpers.c)
 
-target_include_directories(Block_Header INTERFACE include)
+target_include_directories(Block_Header PUBLIC include)
+target_include_directories(Block_Header PRIVATE src)
+
+target_link_libraries(Block_Header PRIVATE Freq_Period_Converter)
