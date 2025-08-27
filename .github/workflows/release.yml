@@ -115,7 +115,7 @@ jobs:
 
     steps:
       - name: Retrieve release distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: release-dists
           path: sdk/dist/*.whl
@@ -132,7 +132,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: ${{ steps.set-url.outputs.url }}
-          packages-dir: sdk/dist
+          packages-dir: /home/runner/work/atriumdb/atriumdb/sdk/dist
 
   update-atriumdb-server:
     needs:
