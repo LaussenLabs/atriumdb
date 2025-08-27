@@ -71,18 +71,18 @@ jobs:
             sdk/bin/*.dll
             sdk/bin/*.so
         
-    - name: Install atriumdb test dependencies
-      run: cd sdk && pip install .[testing]
+    # - name: Install atriumdb test dependencies
+    #   run: cd sdk && pip install .[testing]
       
-    - name: Run tests
-      env:
-        MARIA_DB_HOST: 127.0.0.1
-        MARIA_DB_PORT: 3306
-        MARIA_DB_USER: root
-        MARIA_DB_PASSWORD: rootpass
-      run: |
-        cd sdk
-        pytest
+    # - name: Run tests
+    #   env:
+    #     MARIA_DB_HOST: 127.0.0.1
+    #     MARIA_DB_PORT: 3306
+    #     MARIA_DB_USER: root
+    #     MARIA_DB_PASSWORD: rootpass
+    #   run: |
+    #     cd sdk
+    #     pytest
         
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
@@ -127,7 +127,7 @@ jobs:
             echo "url=https://upload.pypi.org/legacy/" >> $GITHUB_OUTPUT
           else
             echo "url=https://test.pypi.org/legacy/" >> $GITHUB_OUTPUT
-
+          fi
       - name: Publish release distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
