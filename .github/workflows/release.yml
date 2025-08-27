@@ -85,8 +85,8 @@ jobs:
     #     pytest
         
     - name: Create GitHub Release
+      if: ${{ github.event.inputs.pypiReleaseFeed == 'pypi' }}
       uses: softprops/action-gh-release@v1
-      if: github.ref_type == 'tag'
       with:
         tag_name: ${{ github.event.inputs.releaseVersion }}
         name: ${{ github.event.inputs.releaseVersion }}
