@@ -132,7 +132,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: ${{ steps.set-url.outputs.url }}
-          packages-dir: sdk/dist/*.whl
+          packages-dir: sdk/dist
 
   update-atriumdb-server:
     needs:
