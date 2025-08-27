@@ -118,7 +118,7 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: release-dists
-          path: sdk/dist/*.whl
+          # path: sdk/dist/*.whl
       
       - name: Set repository URL
         id: set-url
@@ -132,7 +132,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: ${{ steps.set-url.outputs.url }}
-          packages-dir: /home/runner/work/atriumdb/atriumdb/sdk/dist
+          # packages-dir: /home/runner/work/atriumdb/atriumdb/sdk/dist
 
   update-atriumdb-server:
     needs:
