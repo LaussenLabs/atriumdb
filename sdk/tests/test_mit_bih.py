@@ -58,13 +58,10 @@ LABEL_SET_LIST = [
 
 
 def test_mit_bih():
-    # Test with frequency-based parameters
-    _test_for_both(DB_NAME, _test_mit_bih)
-
-    # Test with period-based parameters
     _test_for_both(DB_NAME, lambda db_type, dataset_location, connection_params:
     _test_mit_bih(db_type, dataset_location, connection_params, use_period=True))
 
+    _test_for_both(DB_NAME, _test_mit_bih)
 
 def _test_mit_bih(db_type, dataset_location, connection_params, use_period=False):
     sdk = AtriumSDK.create_dataset(
