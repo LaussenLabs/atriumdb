@@ -18,6 +18,23 @@ name: atriumdb_release
 jobs:
   build-release:
     runs-on: ubuntu-22.04
+    
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: rootpass
+          MARIADB_DATABASE: testdb
+          MARIADB_USER: testuser
+          MARIADB_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="/usr/local/bin/healthcheck.sh --su mysql --connect"
+          --health-interval=15s
+          --health-timeout=10s
+          --health-retries=10
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -27,8 +44,8 @@ jobs:
         python-version: '3.10'
     - name: Install dependencies
       run: |
-        sudo apt-get update && sudo apt-get install -y tzdata cmake build-essential gdb libzstd-dev liblz4-dev python3.10 mingw-w64
-        pip install build
+        sudo apt-get update && sudo apt-get install -y tzdata cmake build-essential gdb libzstd-dev liblz4-dev python3.10 mingw-w64 libmariadb-dev
+        pip install build pytest
     - name: Build C libraries
       run: |
         cd tsc-lib
@@ -54,9 +71,22 @@ jobs:
             sdk/bin/*.dll
             sdk/bin/*.so
         
+    - name: Install atriumdb test dependencies
+      run: cd sdk && pip install .[testing]
+      
+    - name: Run tests
+      env:
+        MARIA_DB_HOST: 127.0.0.1
+        MARIA_DB_PORT: 3306
+        MARIA_DB_USER: root
+        MARIA_DB_PASSWORD: rootpass
+      run: |
+        cd sdk
+        pytest
+        
     - name: Create GitHub Release
+      if: ${{ github.event.inputs.pypiReleaseFeed == 'pypi' }}
       uses: softprops/action-gh-release@v1
-      if: github.ref_type == 'tag'
       with:
         tag_name: ${{ github.event.inputs.releaseVersion }}
         name: ${{ github.event.inputs.releaseVersion }}
@@ -81,14 +111,12 @@ jobs:
     # For more information, see: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#deployment-protection-rules
     environment:
       name: ${{ github.event.inputs.pypiReleaseFeed }}
-      # url: https://${{ github.event.inputs.pypiReleaseFeed }}.org/project/atriumdb/${{ github.event.release.name }}
 
     steps:
       - name: Retrieve release distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: release-dists
-          path: sdk/dist/*.whl
       
       - name: Set repository URL
         id: set-url
@@ -97,14 +125,14 @@ jobs:
             echo "url=https://upload.pypi.org/legacy/" >> $GITHUB_OUTPUT
           else
             echo "url=https://test.pypi.org/legacy/" >> $GITHUB_OUTPUT
-
+          fi
       - name: Publish release distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: ${{ steps.set-url.outputs.url }}
-          packages-dir: sdk/dist/*.whl
 
   update-atriumdb-server:
+    if: ${{ github.event.inputs.pypiReleaseFeed == 'pypi' }}
     needs:
       - build-release
       - pypi-publish
