@@ -273,17 +273,31 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
                         start_byte = 0
                         # Read the block headers and organize block information.
-                        for block_i, (time_range_i, block, re_encode_flag) in enumerate(zip(block_time_range_indices, block_group, group_re_encode_flags)):
+                        for block_i, (time_range_i, block, re_encode_flag) in enumerate(
+                                zip(block_time_range_indices, block_group, group_re_encode_flags)):
                             block_num_bytes = block["num_bytes"] if src_sdk.mode == "api" else block[5]
                             block_bytes = encoded_bytes[start_byte:start_byte + block_num_bytes]
                             header = BlockMetadata.from_buffer(block_bytes, 0)
 
                             scale_m = header.scale_m
                             scale_b = header.scale_b
-                            freq_nhz = int(header.freq_nhz)
+                            freq_nhz_or_period = int(
+                                header.freq_nhz)  # This could be freq_nhz or period_ns depending on version
                             t_encoded_type = int(header.t_encoded_type)
 
-                            key = (time_range_i, scale_m, scale_b, freq_nhz, t_encoded_type)
+                            # Calculate version as 10 * num + ext
+                            version = 10 * header.tsc_version_num + header.tsc_version_ext
+
+                            # Determine if header.freq_nhz represents frequency or period based on version
+                            if version >= 24:  # Version 2.4 and above
+                                group_freq_nhz = None
+                                group_period_ns = freq_nhz_or_period
+                            else:
+                                group_freq_nhz = freq_nhz_or_period
+                                group_period_ns = None
+
+                            key = (
+                            time_range_i, scale_m, scale_b, group_freq_nhz, group_period_ns, t_encoded_type, version)
 
                             if not re_encode_flag and time_shift is not None and t_encoded_type == 1:
                                 re_encode_flag = True
@@ -310,7 +324,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                         # Process each group for reencoding
                         segments = []
                         for key, group_data in groups_to_reencode.items():
-                            time_range_i, scale_m, scale_b, freq_nhz, t_encoded_type = key
+                            time_range_i, scale_m, scale_b, group_freq_nhz, group_period_ns, t_encoded_type, version = key
                             encode_group_lower_bound, encode_group_upper_bound = time_ranges[time_range_i]
 
                             block_bytes_list = group_data['block_bytes_list']
@@ -334,7 +348,6 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                             group_time_type = t_encoded_type
                             if group_time_type == 1:
                                 # Time type is 1
-                                period_ns = (10 ** 18) // freq_nhz
                                 encode_group_times, sorted_time_indices = np.unique(encode_group_times,
                                                                                     return_index=True)
                                 encode_group_values = encode_group_values[sorted_time_indices]
@@ -354,20 +367,22 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                             elif group_time_type == 2:
                                 # Time type is 2
                                 message_starts, message_sizes = reconstruct_messages_multi(
-                                    group_headers, encode_group_times, freq_nhz)
+                                    group_headers, encode_group_times, freq_nhz=group_freq_nhz,
+                                    period_ns=group_period_ns)
                                 sort_message_time_values(message_starts, message_sizes, encode_group_values)
 
                                 # Truncate the message data
                                 encode_group_values, message_starts, message_sizes = truncate_messages(
-                                    encode_group_values, message_starts, message_sizes, freq_nhz,
-                                    encode_group_lower_bound, encode_group_upper_bound)
+                                    encode_group_values, message_starts, message_sizes, freq_nhz=group_freq_nhz,
+                                    period_ns=group_period_ns, trunc_start_nano=encode_group_lower_bound,
+                                    trunc_end_nano=encode_group_upper_bound)
 
                                 if len(message_starts) == 0:
                                     continue
 
                                 # Revert back to gap array
                                 gap_data = create_gap_arr_from_variable_messages(
-                                    message_starts, message_sizes, freq_nhz)
+                                    message_starts, message_sizes, freq_nhz=group_freq_nhz, period_ns=group_period_ns)
                                 encode_group_times = gap_data
 
                                 encode_group_start_time = int(message_starts[0])
@@ -380,7 +395,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                             segment = {
                                 'times': encode_group_times,
                                 'values': encode_group_values,
-                                'freq_nhz': freq_nhz,
+                                'freq_nhz': group_freq_nhz,
+                                'period_ns': group_period_ns,
                                 'start_ns': encode_group_start_time,
                                 'raw_time_type': t_encoded_type,
                                 'encoded_time_type': t_encoded_type,

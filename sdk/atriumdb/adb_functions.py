@@ -1184,28 +1184,43 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                 for group_headers, group_times, group_values in group_headers_by_scale_factor_freq_time_type(
                         r_headers, r_times, r_values):
                     group_time_type = int(group_headers[0].t_raw_type)
-                    group_freq_nhz = int(group_headers[0].freq_nhz)
                     group_encoded_time_type = int(group_headers[0].t_encoded_type)
 
+                    # Check TSC version to determine if freq_nhz is actually period_ns
+                    version_code = group_headers[0].tsc_version_num * 10 + group_headers[0].tsc_version_ext
+                    is_version_24_plus = version_code >= 24
+
+                    if is_version_24_plus:
+                        group_period_ns = int(group_headers[0].freq_nhz)  # Actually period_ns for v2.4+
+                        group_freq_nhz = None
+                    else:
+                        group_freq_nhz = int(group_headers[0].freq_nhz)
+                        group_period_ns = None
 
                     # Sort and merge the group data
                     if group_time_type == 1:
-                        period_ns = (10 ** 18) // group_freq_nhz
+                        period_ns = group_period_ns if is_version_24_plus else (10 ** 18) // group_freq_nhz
+
                         group_times, sorted_time_indices = np.unique(group_times, return_index=True)
                         group_values = group_values[sorted_time_indices]
                         group_interval_data = get_interval_list_from_ordered_timestamps(group_times, period_ns)
                         group_start_time = int(group_times[0])
                     elif group_time_type == 2:
                         # Merge the gap data into messages (segments)
-                        message_starts, message_sizes = reconstruct_messages_multi(group_headers, group_times, group_freq_nhz)
+                        message_starts, message_sizes = reconstruct_messages_multi(
+                            group_headers, group_times, freq_nhz=group_freq_nhz, period_ns=group_period_ns)
+
                         # Sort the message data
                         sort_message_time_values(message_starts, message_sizes, group_values)
                         # Revert back to gap array
                         gap_data = create_gap_arr_from_variable_messages(
-                            message_starts, message_sizes, group_freq_nhz)
+                            message_starts, message_sizes, freq_nhz=group_freq_nhz, period_ns=group_period_ns)
+
                         group_times = gap_data
 
-                        group_interval_data = get_interval_list_from_message_starts_and_sizes(message_starts, message_sizes, group_freq_nhz)
+                        group_interval_data = get_interval_list_from_message_starts_and_sizes(
+                            message_starts, message_sizes, freq_nhz=group_freq_nhz, period_ns=group_period_ns)
+
                         group_start_time = int(group_interval_data[0][0])
                     else:
                         raise ValueError("time_type must be 1 or 2")
@@ -1223,15 +1238,17 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                     segment = {
                         'times': group_times,
                         'values': group_values,
-                        'freq_nhz': int(group_headers[0].freq_nhz),
                         'start_ns': group_start_time,
                         'raw_time_type': group_time_type,
                         'encoded_time_type': group_encoded_time_type,
                         'raw_value_type': raw_value_type,
                         'encoded_value_type': encoded_value_type,
                         'scale_m': group_headers[0].scale_m,
-                        'scale_b': group_headers[0].scale_b
+                        'scale_b': group_headers[0].scale_b,
+                        'freq_nhz': group_freq_nhz,
+                        'period_ns': group_period_ns
                     }
+
                     segments.append(segment)
 
                 # Now, call encode_blocks_from_multiple_segments
