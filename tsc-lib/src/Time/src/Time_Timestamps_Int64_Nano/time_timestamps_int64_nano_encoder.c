@@ -37,18 +37,14 @@ size_t time_int64_nano_data_encode(const int64_t * time_data, void * encoded_tim
             /* Convert Time Array to Gap Array (Duration ns) */
             // Record Number of Gaps.
             block_metadata->num_gaps = gap_int64_ns_time_array_encode(
-                    time_data, (int64_t *) encoded_time, block_metadata->num_vals, block_metadata->freq_nhz);
-
-            // Return size of gap array.
+                    time_data, (int64_t *) encoded_time, block_metadata->num_vals, get_period_ns_from_header(block_metadata));
             return gap_array_size(block_metadata->num_gaps);
 
         case T_TYPE_GAP_ARRAY_INT64_INDEX_NUM_SAMPLES:
             /* Convert Time Array to Gap Array (Num Samples) */
             // Record Number of Gaps.
             block_metadata->num_gaps = gap_int64_samples_encode(
-                    time_data, (int64_t *) encoded_time, block_metadata->num_vals, block_metadata->freq_nhz);
-
-            // Return size of gap array.
+                    time_data, (int64_t *) encoded_time, block_metadata->num_vals, get_period_ns_from_header(block_metadata));
             return gap_array_size(block_metadata->num_gaps);
 
         default:

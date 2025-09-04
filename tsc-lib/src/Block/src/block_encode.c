@@ -134,8 +134,10 @@ size_t encode_blocks(const void *time_data, const void *value_data, void *encode
         headers[i].v_start_byte = headers[i].t_start_byte + headers[i].t_num_bytes;
 
         // Place the Header
-        headers[i].tsc_version_num = TSC_VERSION_NUM;
-        headers[i].tsc_version_ext = TSC_VERSION_EXT;
+        if (TSC_VERSION_NUM < 2 || (TSC_VERSION_NUM == 2 && TSC_VERSION_EXT == 0)) {
+            headers[i].tsc_version_num = TSC_VERSION_NUM;
+            headers[i].tsc_version_ext = TSC_VERSION_EXT;
+        }
         headers[i].num_channels = TSC_NUM_CHANNELS;
         headers[i].meta_num_bytes = sizeof(block_metadata_t);
         memcpy(&(encoded_bytes_u8[last_offset]), &(headers[i]), sizeof(block_metadata_t));
