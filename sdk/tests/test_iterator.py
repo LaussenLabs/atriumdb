@@ -37,11 +37,17 @@ def test_iterator():
 
 
 def _test_iterator(db_type, dataset_location, connection_params):
+    # Test with both use_period=False (default) and use_period=True
+    for use_period in [True, False]:
+        _run_iterator_test(db_type, dataset_location, connection_params, use_period)
+
+
+def _run_iterator_test(db_type, dataset_location, connection_params, use_period):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     # larger test
-    write_mit_bih_to_dataset(sdk, max_records=2, seed=42)
+    write_mit_bih_to_dataset(sdk, max_records=2, seed=42, use_period=use_period)
 
     test_parameters = [
         # filename, expected_device_id_type, expected_patient_id_type

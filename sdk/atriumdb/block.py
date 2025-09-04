@@ -367,7 +367,17 @@ class Block:
         # Convert the decoded time and value data into the appropriate data types
         start_bench = time.perf_counter()
         time_data = np.frombuffer(time_data, dtype=np.int64)
-        period_ns = freq_nhz_to_period_ns(headers[0].freq_nhz)
+
+        # Handle freq_nhz vs period_ns based on TSC version
+        header = headers[0]
+        tsc_version_combined = header.tsc_version_num * 10 + header.tsc_version_ext
+
+        if tsc_version_combined >= 24:
+            # For version 2.4 and above, freq_nhz is actually period_ns
+            period_ns = header.freq_nhz
+        else:
+            # For older versions, convert frequency to period
+            period_ns = freq_nhz_to_period_ns(header.freq_nhz)
 
         if headers[0].t_raw_type == T_TYPE_START_TIME_NUM_SAMPLES:
             time_data = merge_interval_data(time_data, period_ns)
@@ -503,7 +513,17 @@ class Block:
 
         # Convert the decoded time and value data into the appropriate data types
         time_data = np.frombuffer(time_data, dtype=np.int64)
-        period_ns = freq_nhz_to_period_ns(headers[0].freq_nhz)
+
+        # Handle freq_nhz vs period_ns based on TSC version
+        header = headers[0]
+        tsc_version_combined = header.tsc_version_num * 10 + header.tsc_version_ext
+
+        if tsc_version_combined >= 24:
+            # For version 2.4 and above, freq_nhz is actually period_ns
+            period_ns = header.freq_nhz
+        else:
+            # For older versions, convert frequency to period
+            period_ns = freq_nhz_to_period_ns(header.freq_nhz)
 
         if headers[0].t_raw_type == T_TYPE_START_TIME_NUM_SAMPLES:
             time_data = merge_interval_data(time_data, period_ns)
@@ -549,7 +569,6 @@ class Block:
                 raise ValueError("Returning nan gaps is only supported for time type 1.")
             if period_ns is None:
                 raise ValueError("Returning nan gaps requires a period ns to be provided.")
-            period_ns = 10**18 / headers[0].freq_nhz
             start_ns = start_time_n if start_time_n is not None else time_data[0]
             end_ns = end_time_n if end_time_n is not None else round(time_data[-1] + period_ns)
             expected_num_values = int(round((end_ns - start_ns) / period_ns))
