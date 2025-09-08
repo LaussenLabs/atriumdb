@@ -33,13 +33,15 @@ EXAMPLE_DATA_DIR = TEST_DIR / "example_data"
 
 
 def test_iterator():
-    _test_for_both(DB_NAME, _test_iterator)
+    _test_for_both(f"{DB_NAME}_period", _test_iterator_period)
+    _test_for_both(DB_NAME, _test_iterator_freq)
 
 
-def _test_iterator(db_type, dataset_location, connection_params):
-    # Test with both use_period=False (default) and use_period=True
-    for use_period in [True, False]:
-        _run_iterator_test(db_type, dataset_location, connection_params, use_period)
+def _test_iterator_freq(db_type, dataset_location, connection_params):
+    _run_iterator_test(db_type, dataset_location, connection_params, False)
+
+def _test_iterator_period(db_type, dataset_location, connection_params):
+    _run_iterator_test(db_type, dataset_location, connection_params, True)
 
 
 def _run_iterator_test(db_type, dataset_location, connection_params, use_period):
