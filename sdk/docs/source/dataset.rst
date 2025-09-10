@@ -537,7 +537,7 @@ Example:
    )
 
 
-Creating a Copy of a Dataset
+Exporting Datasets
 ----------------------------
 
 Copying an Existing Dataset
