@@ -56,6 +56,7 @@ def _test_iterator(db_type, dataset_location, connection_params):
     for filename, expected_device_id_type, expected_patient_id_type in test_parameters:
         definition = DatasetDefinition(filename=filename)
         definition.validate(sdk)
+        sdk.load_definition(definition)
         iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None)
 
         for window_i, window in enumerate(iterator):
@@ -186,6 +187,7 @@ def _test_iterator(db_type, dataset_location, connection_params):
 
     # get definition
     definition = DatasetDefinition(measures=["partial_measure"], device_ids={partial_device_id: "all"})
+    sdk.load_definition(definition)
 
     window_size_nano = partial_period_nano * 25
     iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, num_windows_prefetch=None)
