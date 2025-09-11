@@ -201,13 +201,14 @@ def _validate_sources(definition, sdk, validated_measure_list, gap_tolerance=Non
 
 def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, patient_id=None, gap_tolerance=None,
                            start_time_n=None, end_time_n=None):
-    gap_tolerance = 60 * 60 * 1_000_000_000 if gap_tolerance is None else gap_tolerance  # 1 hour nano default
+    gap_tolerance = 60 * 60 * 1_000_000_000 if gap_tolerance is None else gap_tolerance
 
-    union_intervals = intervals_union_list(
-        [sdk.get_interval_array(
-            measure_info['id'], device_id=device_id, patient_id=patient_id, gap_tolerance_nano=gap_tolerance,
-            start=start_time_n, end=end_time_n)
-            for measure_info in validated_measures])
+    union_intervals = intervals_union_list([
+        sdk.get_interval_array(
+            measure_info['id'], device_id=device_id, patient_id=patient_id,
+            gap_tolerance_nano=gap_tolerance, start=start_time_n, end=end_time_n)
+        for measure_info in validated_measures
+    ])
 
     merged_union_intervals = []
     for start, end in union_intervals:
@@ -224,11 +225,24 @@ def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, 
                       f"time regions for the specified measures. Skipping")
         return None
 
+    # Apply global bounds to ALL cases, including "all"
     if time_specs == "all":
-        return union_intervals.tolist()
+        # Apply global start/end time constraints to union_intervals
+        constrained_intervals = []
+        for start, end in union_intervals:
+            # Constrain each interval to global bounds
+            if start_time_n is not None:
+                start = max(start, start_time_n)
+            if end_time_n is not None:
+                end = min(end, end_time_n)
+
+            # Only include if the interval is still valid after constraining
+            if start < end:
+                constrained_intervals.append([start, end])
+
+        return constrained_intervals
 
     interval_list = []
-
     for region_data in time_specs:
         if 'time0' in region_data:
             start, end = region_data['time0'] - region_data['pre'], region_data['time0'] + region_data['post']
@@ -250,7 +264,6 @@ def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, 
             interval_list.append([start, end])
 
     return interval_list
-
 
 def compute_hash(data):
     """Compute a SHA256 hash of the given data."""

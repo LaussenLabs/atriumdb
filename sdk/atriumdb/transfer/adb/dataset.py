@@ -523,8 +523,6 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     definition_path.parent.mkdir(parents=True, exist_ok=True)
     export_definition.save(definition_path, force=True)
 
-
-
 def extract_device_ids(source_id, source_type, device_id_map):
     if source_type == "device_ids":
         src_device_id = source_id

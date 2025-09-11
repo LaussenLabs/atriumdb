@@ -154,7 +154,7 @@ def _get_patient_info_from_cache(patient_id, window_start_time, patient_info_cac
     return window_patient_info
 
 def get_window_list(device_id, patient_id, validated_measure_list, source_batch_data_dictionary,
-                    batch_start_time, num_windows, window_duration_ns, threshold_labels, sliced_labels,
+                    batch_start_time, num_windows, window_slide_ns, threshold_labels, sliced_labels,
                     patient_history_cache, patient_history_fields, patient_info_cache):
     batch_window_list = []
     window_start_time = batch_start_time
@@ -194,7 +194,7 @@ def get_window_list(device_id, patient_id, validated_measure_list, source_batch_
 
         result_window = Window(
             signals=signal_dictionary,
-            start_time=window_start_time,
+            start_time=int(window_start_time),
             device_id=device_id,
             patient_id=patient_id,
             label_time_series=label_time_series,
@@ -202,7 +202,7 @@ def get_window_list(device_id, patient_id, validated_measure_list, source_batch_
             patient_info=window_patient_info
         )
         batch_window_list.append(result_window)
-        window_start_time += window_duration_ns
+        window_start_time += window_slide_ns
     return batch_window_list
 
 

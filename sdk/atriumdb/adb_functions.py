@@ -784,9 +784,14 @@ def merge_sorted_messages(message_starts_1, message_sizes_1, values_1,
     combined_timestamps = np.concatenate((timestamps_1, timestamps_2))
     combined_values = np.concatenate((values_1, values_2))
 
-    sorted_indices = np.argsort(combined_timestamps)
-    sorted_timestamps = combined_timestamps[sorted_indices]
-    sorted_values = combined_values[sorted_indices]
+    # Create array indicators to ensure stable sorting where array 2 overwrites array 1
+    array_indicators = np.concatenate((np.zeros(len(timestamps_1), dtype=int),
+                                      np.ones(len(timestamps_2), dtype=int)))
+
+    # Sort by timestamp first, then by array indicator (so array 2 comes after array 1 for ties)
+    sort_keys = np.lexsort((array_indicators, combined_timestamps))
+    sorted_timestamps = combined_timestamps[sort_keys]
+    sorted_values = combined_values[sort_keys]
 
     # Convert the sorted timestamps into "sample times"
     sample_times = sorted_timestamps / period_ns
@@ -1186,6 +1191,65 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                 sdk.file_api.remove(file_path)
 
     sdk.block.block_size = original_block_size
+
+
+def inplace_block_time_fix(
+        sdk,
+        batch_size: int = 500
+) -> int:
+    """
+    Scan every block in the SDK’s block_index table, decode it (time_type=1),
+    and if the decoded start/end times differ from what the SQL row reports,
+    update them in batches via SQLHandler.update_block_times.
+
+    :param AtriumSDK sdk: the SDK instance to fix
+    :param int batch_size: how many mismatches to accumulate before flushing
+    :return: total number of blocks updated
+    """
+    block_rows = []
+    for device_id in sdk.get_all_devices():
+        cur_block_rows = sdk.sql_handler.select_blocks_for_device(device_id)
+        block_rows.extend(cur_block_rows)
+
+    total_rows = len(block_rows)
+    with tqdm(total=total_rows, desc="Fixing Block Times", unit="block") as pbar:
+        for block_group in group_sorted_block_list(
+                block_rows,
+                num_values_per_group=sdk.block.block_size * batch_size,
+                src_sdk_mode=sdk.mode
+        ):
+            file_id_list = list({row[3] for row in block_group})
+            filename_dict = sdk.get_filename_dict(file_id_list)
+            read_list = condense_byte_read_list(block_group)
+            encoded_bytes = sdk.file_api.read_file_list(read_list, filename_dict)
+            block_num_bytes = [block[5] for block in block_group]
+            block_num_values = [block[8] for block in block_group]
+
+            encode_group_times, encode_group_values, _ = sdk.block.decode_blocks(
+                encoded_bytes, block_num_bytes, analog=False, time_type=1)
+
+            left = 0
+            right = None
+            to_fix_ids = []
+            to_fix_ranges = []
+            for block in block_group:
+                right = left + block[8]
+                block_times = encode_group_times[left:right]
+                true_start = int(np.min(block_times))
+                true_end = int(np.max(block_times))
+                orig_start = int(block[6])
+                orig_end = int(block[7])
+                blk_id = int(block[0])
+
+                if true_start != orig_start or true_end != orig_end:
+                    to_fix_ids.append(blk_id)
+                    to_fix_ranges.append((true_start, true_end))
+                left = right
+
+            if to_fix_ids:
+                sdk.sql_handler.update_block_times(to_fix_ids, to_fix_ranges)
+
+            pbar.update(len(block_group))
 
 
 def group_sorted_block_list(sorted_block_list, num_values_per_group=8388608, src_sdk_mode=None):

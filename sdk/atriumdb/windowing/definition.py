@@ -230,7 +230,7 @@ class DatasetDefinition:
         dataset_def = cls(**kwargs)
         return dataset_def
 
-    def validate(self, sdk, gap_tolerance=None, measure_tag_match_rule="best", start_time=None, end_time=None,
+    def validate(self, sdk, gap_tolerance=0, measure_tag_match_rule="best", start_time=None, end_time=None,
                  time_units: str = "ns"):
         """
         Verifies and validates a dataset definition against the given SDK, ensuring the data specified actually exists.
@@ -304,6 +304,17 @@ class DatasetDefinition:
         window_duration = int(window_duration * time_unit_options[time_units])
         window_slide = int(window_slide * time_unit_options[time_units])
 
+        # Warn about high memory usage when window size and slide are not equal
+        if window_duration < window_slide:
+            warnings.warn(
+                f"Window size ({window_duration} ns) and slide ({window_slide} ns) are not equal. "
+                f"This will result in high memory usage when AtriumSDK.get_iterator() is called due to "
+                f"no overlapping windows. For better memory efficiency during filtering, consider setting "
+                f"window_slide equal to window_duration for the filter step, then use your desired slide "
+                f"value when calling get_iterator().",
+                UserWarning
+            )
+
         if self.filtered_window_size is not None and self.filtered_window_size != window_duration:
             warnings.warn(f"Definition has already been filtered with different window duration "
                           f"{self.filtered_window_size} ns. Refiltering will alter the window positions.")
@@ -367,7 +378,7 @@ class DatasetDefinition:
                         label_threshold, num_windows, row_period_ns, row_size, slide_size)
 
                     batch_window_list = get_window_list(device_id, patient_id, self.validated_data_dict['measures'], data_dictionary,
-                                                        start_time, num_windows, window_duration,
+                                                        start_time, num_windows, window_slide,
                                                         threshold_labels, sliced_labels, patient_history_cache,
                                                         patient_history_fields, patient_info_cache)
 
@@ -525,8 +536,9 @@ class DatasetDefinition:
                     raise ValueError(f"{source_type} {source_id}: {key} cannot be negative")
 
                 if value < 1e9 or (value < 1e16 and key in ['start', 'end', 'time0']):
-                    warnings.warn(f"{source_type} {source_id}: The epoch for {key}: {value} looks like it's "
-                                  f"formatted in seconds. However {key} will be interpreted as nanosecond data.")
+                    # warnings.warn(f"{source_type} {source_id}: The epoch for {key}: {value} looks like it's "
+                    #               f"formatted in seconds. However {key} will be interpreted as nanosecond data.")
+                    pass
 
             if ('pre' in time_dict or 'post' in time_dict) and 'time0' not in time_dict:
                 raise ValueError(f"{source_type} {source_id}: 'pre' and 'post' cannot be provided without 'time0'")

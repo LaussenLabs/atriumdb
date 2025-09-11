@@ -70,6 +70,7 @@ def _test_transfer_start_end(db_type, dataset_location, connection_params):
     assert has_windows_outside_middle_third, "Sanity Check Failed"
 
     # Now use global start-end and confirm that all the windows are inside the bounds
+    definition = DatasetDefinition(measures=["measure"], device_ids={device_id: "all"})
 
     for window in sdk_1.get_iterator(definition, window_duration_nano, window_slide_nano, time_units="ns",
                                      start_time=third_time, end_time=second_third_time):

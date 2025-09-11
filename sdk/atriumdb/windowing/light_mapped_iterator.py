@@ -114,23 +114,38 @@ class LightMappedIterator(DatasetIterator):
 
     def _process_sources(self):
         # List to hold info about each source and its windows
-        self.sources_info = []  # Each item is a dict with source info and num_windows
+        self.sources_info = []
         total_windows = 0
         self.window_indices = []
+
         for source_type, sources in self.sources.items():
             for source_id, time_ranges in sources.items():
                 for start_time, end_time in time_ranges:
                     duration = end_time - start_time
-                    if duration <= 0 or (not self.allow_partial_windows and duration < self.window_duration_ns):
+                    if duration <= 0:
                         continue
+
+                    # Skip if we can't fit even one window
+                    if not self.allow_partial_windows and duration < self.window_duration_ns:
+                        continue
+
+                    # Calculate last valid window start position
+                    if self.allow_partial_windows:
+                        last_valid_start = end_time - 1
+                    else:
+                        last_valid_start = end_time - self.window_duration_ns
+
+                    # Skip if no valid window positions
+                    if last_valid_start < start_time:
+                        continue
+
                     # Calculate number of windows
-                    num_windows = int((duration - self.window_duration_ns) // self.window_slide_ns) + 1
-                    if self.allow_partial_windows and ((duration - self.window_duration_ns) % self.window_slide_ns > 0):
-                        num_windows += 1
+                    num_windows = ((last_valid_start - start_time) // self.window_slide_ns) + 1
 
                     if num_windows <= 0:
                         continue
-                    # Append info
+
+                    # Append source info
                     source_info = {
                         'source_type': source_type,
                         'source_id': source_id,
@@ -140,9 +155,7 @@ class LightMappedIterator(DatasetIterator):
                         'start_index': total_windows,
                     }
                     self.sources_info.append(source_info)
-                    # Record the starting index for np.searchsorted
-                    start_index = total_windows
-                    self.window_indices.append(start_index)
+                    self.window_indices.append(total_windows)
                     total_windows += num_windows
 
         self.total_windows = total_windows
@@ -229,7 +242,7 @@ class LightMappedIterator(DatasetIterator):
         # Create Window object
         window = Window(
             signals=signals,
-            start_time=window_start_time,
+            start_time=int(window_start_time),
             device_id=device_id,
             patient_id=patient_id,
             label_time_series=label_time_series,
