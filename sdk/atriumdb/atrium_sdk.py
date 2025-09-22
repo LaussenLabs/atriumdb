@@ -2071,7 +2071,7 @@ class AtriumSDK:
             target_freq_nhz = convert_to_nanohz(freq, freq_units)
         elif freq is not None:
             target_freq_nhz = freq
-        else:
+        elif period is not None:
             time_units = "s" if time_units is None else time_units
             period_ns = int(period * time_unit_options[time_units])
             target_freq_nhz = 10 ** 18 // period_ns
