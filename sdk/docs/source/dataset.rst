@@ -382,8 +382,8 @@ You can create a `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_
 
    .. code-block:: python
 
-      mrns = {1234567: [{'start': start_time_nano_1, 'end': end_time_nano_1}], 7654321: "all"}
-      dataset_definition = DatasetDefinition(measures=measures, mrns=mrns)
+      patient_ids = {1234567: [{'start': start_time_nano_1, 'end': end_time_nano_1}], 7654321: "all"}
+      dataset_definition = DatasetDefinition(measures=measures, patient_ids=patient_ids)
 
 
 Building Dataset Definitions from Intervals
