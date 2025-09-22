@@ -423,10 +423,10 @@ Dataset definitions must be validated before use with most SDK-based operations.
 Calling :py:meth:`DatasetDefinition.validate` performs the following:
 
 - Confirms the existence of the requested measures and labels.
-- Identifies the precise start and end times for which those data exist, intersected with the user-defined time specs (if any).
+- Finds the intersection between the set of requested data and the set of available data.
 - Stores the mapping of data sources and validated intervals in a structured dictionary.
 
-SDK methods that consume a DatasetDefinition will automatically trigger this validation (only once), but you may optionally call it manually for performance tuning:
+SDK methods that consume a DatasetDefinition will automatically trigger this validation, and will not trigger it more than once, so you can still submit unvalidated definitions to the SDK.
 
 .. code-block:: python
 
@@ -448,7 +448,7 @@ Filtering Dataset Definitions
 
 Once a DatasetDefinition is validated, you can filter it further using the :py:meth:`DatasetDefinition.filter` method.
 
-Filtering works by sliding a window over the time ranges in the validated dataset. Each window is passed to your filter function, which returns `True` (keep) or `False` (discard). This can be used to exclude time periods with missing data, poor signal quality, insufficient label coverage, etc.
+Filtering works by sliding a window over the time ranges in the validated dataset. Each window is passed to your filter function, which returns `True` (keep) or `False` (discard). This can be used to exclude windows with missing data, poor signal quality, insufficient label coverage, etc.
 
 Your filter function receives a :ref:`window_format` object and should return a boolean:
 
@@ -456,7 +456,10 @@ Your filter function receives a :ref:`window_format` object and should return a 
 
    def my_filter_fn(window):
        # Accept only windows where at least 5 samples of the signal are available
-       return window.signals[("ECG", 62.5, "mV")]['actual_count'] > 5
+       if window.signals[("ECG", 62.5, "mV")]['actual_count'] > 5:
+            return False
+       avg_value = window.signals[("ECG", 62.5, "mV")]['values'].mean()
+       return avg_value > 0.3
 
    dataset_definition.filter(
        sdk=my_sdk,
@@ -522,7 +525,8 @@ Example:
        sdk=my_sdk,
        partition_ratios=[60, 20, 20],
        priority_stratification_labels=["label1", "label2"],
-       random_state=42
+       random_state=42,
+       verbose=True
    )
 
    # Or, explore 10 candidate partitions and display the 3 best
@@ -543,7 +547,7 @@ Exporting Datasets
 Copying an Existing Dataset
 ###########################
 
-You can duplicate an entire AtriumDB dataset into a new location with minimal configuration. This is useful for:
+You can duplicate an entire AtriumDB dataset, or a smaller subset, into a new location with minimal configuration. This is useful for:
 
 - Exporting targeted data for experimentation or research
 - Creating backups
