@@ -1721,16 +1721,19 @@ class AtriumSDK:
         valid_mask = candidate_ends > start_time
         return candidate_blocks[valid_mask]
 
-    def get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None):
+    def get_measure_id(self, measure_tag: str, freq: Union[int, float] = None, units: str = None, freq_units: str = None,
+                       period: Union[int, float] = None, time_units: str = None):
         """
         .. _get_measure_id_label:
 
-        Returns the identifier for a measure specified by its tag, frequency, units, and frequency units.
+        Returns the identifier for a measure specified by its tag, frequency or period, units, and frequency/time units.
 
         :param str measure_tag: The tag of the measure.
-        :param float freq: The frequency of the measure.
+        :param float freq: The frequency of the measure (mutually exclusive with period).
         :param str units: The unit of the measure (default is an empty string).
         :param str freq_units: The frequency unit of the measure (default is 'nHz').
+        :param float period: The period of the measure (mutually exclusive with freq).
+        :param str time_units: The time unit for the period (default is 's').
         :return: The identifier of the measure.
         :rtype: int
 
@@ -1739,18 +1742,33 @@ class AtriumSDK:
         >>> freq = 100.0
         >>> units = "Celsius"
         >>> freq_units = "Hz"
-        >>> sdk.get_measure_id(measure_tag, freq, units, freq_units)
+        >>> sdk.get_measure_id(measure_tag, freq=freq, units=units, freq_units=freq_units)
+        ... 7
+        >>> # Using period instead
+        >>> sdk.get_measure_id(measure_tag, period=0.01, time_units="s", units=units)
         ... 7
         >>> measure_tag = "Measure That Does Not Exist."
-        >>> sdk.get_measure_id(measure_tag, freq, units, freq_units)
+        >>> sdk.get_measure_id(measure_tag, freq=freq, units=units, freq_units=freq_units)
         ... None
         """
-        # Set default values for units and freq_units if not provided
+        # Check for mutually exclusive parameters
+        if freq is not None and period is not None:
+            raise ValueError("freq and period are mutually exclusive. Specify only one.")
+
+        if freq is None and period is None:
+            raise ValueError("Either freq or period must be specified.")
+
+        # Set default values for units and freq_units/time_units if not provided
         units = "" if units is None else units
         freq_units = "nHz" if freq_units is None else freq_units
+        time_units = "s" if time_units is None else time_units
 
-        # Convert frequency to nanohertz
-        freq_nhz = convert_to_nanohz(freq, freq_units)
+        # Convert to nanohertz based on which parameter was provided
+        if freq is not None:
+            freq_nhz = convert_to_nanohz(freq, freq_units)
+        else:  # period is not None
+            period_ns = int(period * time_unit_options[time_units])
+            freq_nhz = 10 ** 18 // period_ns
 
         # Force python int
         freq_nhz = int(freq_nhz)
@@ -1801,7 +1819,7 @@ class AtriumSDK:
         :param int measure_id: The identifier of the measure to retrieve information for.
 
         :return: A dictionary containing information about the measure, including its id, tag, name, sample frequency
-            (in nanohertz), code, unit, unit label, unit code, and source_id.
+            (in nanohertz), period (in nanoseconds), code, unit, unit label, unit code, and source_id.
         :rtype: dict
 
         >>> # Connect to example_dataset
@@ -1816,6 +1834,7 @@ class AtriumSDK:
             'tag': 'Heart Rate',
             'name': 'Heart rate in beats per minute',
             'freq_nhz': 1000000000,
+            'period_ns': 1000000000,
             'code': 'HR',
             'unit': 'BPM',
             'unit_label': 'beats per minute',
@@ -1825,7 +1844,11 @@ class AtriumSDK:
         """
         # Check if metadata connection type is API
         if self.metadata_connection_type == "api":
-            return self._request("GET", f"measures/{measure_id}")
+            measure_info = self._request("GET", f"measures/{measure_id}")
+            if measure_info:
+                # Add period_ns to API response
+                measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+            return measure_info
 
         # If measure_id is already in the cache, return the cached measure info
         if measure_id in self._measures:
@@ -1840,7 +1863,10 @@ class AtriumSDK:
 
         # Unpack the row tuple into variables
         measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, measure_unit, measure_unit_label, \
-        measure_unit_code, measure_source_id = row
+            measure_unit_code, measure_source_id = row
+
+        # Calculate period_ns from freq_nhz
+        measure_period_ns = 10 ** 18 // measure_freq_nhz
 
         # Create a dictionary containing the measure information
         measure_info = {
@@ -1848,6 +1874,7 @@ class AtriumSDK:
             'tag': measure_tag,
             'name': measure_name,
             'freq_nhz': measure_freq_nhz,
+            'period_ns': measure_period_ns,
             'code': measure_code,
             'unit': measure_unit,
             'unit_label': measure_unit_label,
@@ -1861,21 +1888,22 @@ class AtriumSDK:
         # Return the measure information dictionary
         return measure_info
 
-    def search_measures(self, tag_match=None, freq=None, unit=None, name_match=None, freq_units=None):
+    def search_measures(self, tag_match=None, freq=None, unit=None, name_match=None, freq_units=None,
+                        period=None, time_units=None):
         """
         .. _search_measures_label:
 
         Retrieve information about all measures in the linked relational database that match the specified search criteria.
 
         This function filters the measures based on the provided search criteria and returns a dictionary containing
-        information about each matching measure, including its id, tag, name, sample frequency (in nanohertz), code, unit,
-        unit label, unit code, and source_id.
+        information about each matching measure, including its id, tag, name, sample frequency (in nanohertz),
+        period (in nanoseconds), code, unit, unit label, unit code, and source_id.
 
         :param tag_match: A string to match against the `measure_tag` field. If not None, only measures with a `measure_tag`
             field containing this string will be returned.
         :type tag_match: str, optional
         :param freq: A value to match against the `measure_freq_nhz` field. If not None, only measures with a
-            `measure_freq_nhz` field equal to this value will be returned.
+            `measure_freq_nhz` field equal to this value will be returned. Mutually exclusive with period.
         :type freq: int, optional
         :param unit: A string to match against the `measure_unit` field. If not None, only measures with a `measure_unit`
             field equal to this string will be returned.
@@ -1885,21 +1913,41 @@ class AtriumSDK:
         :type name_match: str, optional
         :param freq_units: The units for the freq parameter. (Default: "Hz")
         :type freq_units: str, optional
+        :param period: A value to match against the period. If not None, only measures with a matching period will be returned.
+            Mutually exclusive with freq.
+        :type period: float, optional
+        :param time_units: The units for the period parameter. (Default: "s")
+        :type time_units: str, optional
         :return: A dictionary containing information about each measure that matches the specified search criteria.
         :rtype: dict
         """
+        # Check for mutually exclusive parameters
+        if freq is not None and period is not None:
+            raise ValueError("freq and period are mutually exclusive. Specify only one.")
+
         # Check the metadata connection type and call the appropriate API search method if necessary
         if self.metadata_connection_type == "api":
             params = {'measure_tag': tag_match, 'freq': freq, 'unit': unit, 'measure_name': name_match,
                       'freq_units': freq_units}
-            return self._request("GET", "measures/", params=params)
+            result = self._request("GET", "measures/", params=params)
+            # Add period_ns to each measure in API response
+            for measure_id, measure_info in result.items():
+                measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+            return result
 
         # Set the default frequency units to "Hz" if not provided
         freq_units = "Hz" if freq_units is None else freq_units
+        time_units = "s" if time_units is None else time_units
 
-        # Convert the frequency to nanohertz if necessary
-        if freq_units != "nHz" and freq is not None:
-            freq = convert_to_nanohz(freq, freq_units)
+        # Convert the frequency or period to nanohertz if necessary
+        target_freq_nhz = None
+        if freq is not None and freq_units != "nHz":
+            target_freq_nhz = convert_to_nanohz(freq, freq_units)
+        elif freq is not None:
+            target_freq_nhz = freq
+        else:
+            period_ns = int(period * time_unit_options[time_units])
+            target_freq_nhz = 10 ** 18 // period_ns
 
         # Get all measures from the database
         all_measures = self.get_all_measures()
@@ -1912,7 +1960,7 @@ class AtriumSDK:
             # Create a list of boolean values for each search criterion
             match_bool_list = [
                 tag_match is None or tag_match in measure_info['tag'],
-                freq is None or freq == measure_info['freq_nhz'],
+                target_freq_nhz is None or target_freq_nhz == measure_info['freq_nhz'],
                 unit is None or unit == measure_info['unit'],
                 name_match is None or name_match in measure_info['name']
             ]
@@ -1936,7 +1984,8 @@ class AtriumSDK:
         {1: {'id': 1,
              'tag': 'Heart Rate',
              'name': 'Heart Rate Measurement',
-             'freq_nhz': 500,
+             'freq_nhz': 500000000000,
+             'period_ns': 2000000,
              'code': 'HR',
              'unit': 'BPM',
              'unit_label': 'Beats per Minute',
@@ -1945,7 +1994,8 @@ class AtriumSDK:
          2: {'id': 2,
              'tag': 'Respiration Rate',
              'name': 'Respiration Rate Measurement',
-             'freq_nhz': 500,
+             'freq_nhz': 500000000000,
+             'period_ns': 2000000,
              'code': 'RR',
              'unit': 'BPM',
              'unit_label': 'Breaths per Minute',
@@ -1953,13 +2003,17 @@ class AtriumSDK:
              'source_id': 1}}
 
         :return: A dictionary containing information about each measure, including its id, tag, name, sample frequency
-            (in nanohertz), code, unit, unit label, unit code, and source_id.
+            (in nanohertz), period (in nanoseconds), code, unit, unit label, unit code, and source_id.
         :rtype: dict
         """
         # Check if connection type is API and call the appropriate method
         if self.metadata_connection_type == "api":
             measure_dict = self._request("GET", "measures/")
-            return {int(measure_id): measure_info for measure_id, measure_info in measure_dict.items()}
+            result = {int(measure_id): measure_info for measure_id, measure_info in measure_dict.items()}
+            # Add period_ns to each measure in API response
+            for measure_id, measure_info in result.items():
+                measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+            return result
 
         # Get all measures from the SQL handler
         measure_tuple_list = self.sql_handler.select_all_measures()
@@ -1970,7 +2024,10 @@ class AtriumSDK:
         # Iterate through the list of measures and construct a dictionary for each measure
         for measure_info in measure_tuple_list:
             measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, \
-            measure_unit, measure_unit_label, measure_unit_code, measure_source_id = measure_info
+                measure_unit, measure_unit_label, measure_unit_code, measure_source_id = measure_info
+
+            # Calculate period_ns from freq_nhz
+            measure_period_ns = 10 ** 18 // measure_freq_nhz
 
             # Add the measure information to the dictionary
             measure_dict[measure_id] = {
@@ -1978,6 +2035,7 @@ class AtriumSDK:
                 'tag': measure_tag,
                 'name': measure_name,
                 'freq_nhz': measure_freq_nhz,
+                'period_ns': measure_period_ns,
                 'code': measure_code,
                 'unit': measure_unit,
                 'unit_label': measure_unit_label,
@@ -1987,22 +2045,36 @@ class AtriumSDK:
 
         return measure_dict
 
-    def get_measure_id_list_from_tag(self, measure_tag: str, approx=True, freq=None, units=None, freq_units=None):
+    def get_measure_id_list_from_tag(self, measure_tag: str, approx=True, freq=None, units=None, freq_units=None,
+                                     period=None, time_units=None):
         """
         Returns a list of matching measure_ids for a given tag in DESC order by number of stored blocks.
-        Helpful for finding all ids or the most prevalent id for a given tag. Optionally filters by frequency and units.
+        Helpful for finding all ids or the most prevalent id for a given tag. Optionally filters by frequency/period and units.
 
         :param str measure_tag: The tag of the measure.
         :param bool approx: If True, approximates the result based on first 100,000 rows of the block table.
             If False, queries the entire block table.
-        :param freq: Optional frequency to filter measures.
+        :param freq: Optional frequency to filter measures. Mutually exclusive with period.
         :param units: Optional units of the measure to filter by.
         :param freq_units: Units of the provided frequency. Converts frequency to nanohertz if not already.
+        :param period: Optional period to filter measures. Mutually exclusive with freq.
+        :param time_units: Units of the provided period. Converts period to equivalent frequency in nanohertz.
         :return: A list of measure_ids
         """
-        # Convert frequency to nanohertz if necessary
-        if freq and freq_units and freq_units != "nHz":
-            freq = convert_to_nanohz(freq, freq_units)
+        # Check for mutually exclusive parameters
+        if freq is not None and period is not None:
+            raise ValueError("freq and period are mutually exclusive. Specify only one.")
+
+        # Convert frequency or period to nanohertz if necessary
+        target_freq_nhz = None
+        if freq is not None and freq_units and freq_units != "nHz":
+            target_freq_nhz = convert_to_nanohz(freq, freq_units)
+        elif freq is not None:
+            target_freq_nhz = freq
+        else:
+            time_units = "s" if time_units is None else time_units
+            period_ns = int(period * time_unit_options[time_units])
+            target_freq_nhz = 10 ** 18 // period_ns
 
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this function.")
@@ -2015,11 +2087,11 @@ class AtriumSDK:
             measure_ids = self._measure_tag_to_ordered_id.get(measure_tag, [])
 
         # Filter measure_ids by frequency and units if necessary
-        if freq is not None or units is not None:
+        if target_freq_nhz is not None or units is not None:
             filtered_measure_ids = []
             for measure_id in measure_ids:
                 measure_info = self.get_measure_info(measure_id)
-                if freq is not None and measure_info.get('freq_nhz') != freq:
+                if target_freq_nhz is not None and measure_info.get('freq_nhz') != target_freq_nhz:
                     continue
                 if units is not None and measure_info.get('unit') != units:
                     continue
@@ -2028,17 +2100,18 @@ class AtriumSDK:
 
         return measure_ids
 
-    def insert_measure(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None,
-                       measure_name: str = None, measure_id: int = None, code: str = None, unit_label: str = None,
+    def insert_measure(self, measure_tag: str, freq: Union[int, float] = None, units: str = None, freq_units: str = None,
+                       period: Union[int, float] = None, time_units: str = None, measure_name: str = None,
+                       measure_id: int = None, code: str = None, unit_label: str = None,
                        unit_code: str = None, source_id: int = None, source_name: str = None):
         """
         .. _insert_measure_label:
 
         Defines a new signal type to be stored in the dataset, as well as defining metadata related to the signal.
 
-        `measure_tag`, `freq` and `units` are required information.
+        `measure_tag`, and either `freq` or `period`, and `units` are required information.
 
-        >>> # Define a new signal with additional metadata.
+        >>> # Define a new signal with frequency and additional metadata.
         >>> freq = 500
         >>> freq_units = "Hz"
         >>> measure_tag = "ECG Lead II - 500 Hz"
@@ -2051,19 +2124,29 @@ class AtriumSDK:
         >>> measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq, units=units, freq_units=freq_units,
                                             measure_name=measure_name, code=code, unit_label=unit_label,
                                             unit_code=unit_code, source_id=source_id)
+        >>>
+        >>> # Define a new signal with period instead of frequency
+        >>> period = 2  # 2 milliseconds
+        >>> time_units = "ms"
+        >>> measure_tag = "ECG Lead II - 2ms period"
+        >>> measure_id = sdk.insert_measure(measure_tag=measure_tag, period=period, time_units=time_units,
+                                            units=units, measure_name=measure_name)
 
         :param str measure_tag: A short string identifying the signal.
-        :param freq: The sample frequency of the signal.
+        :param freq: The sample frequency of the signal. Mutually exclusive with period.
         :param str units: The units of the signal.
-        :param str optional freq_units: The unit used for the specified frequency. This value can be one of ["Hz",
+        :param str freq_units: The unit used for the specified frequency. This value can be one of ["Hz",
             "kHz", "MHz"]. Keep in mind if you use extremely large values for this it will be
             converted to nano hertz in the backend, and you may overflow 64bit integers. Default is nano hertz.
-        :param str optional measure_name: A long form description of the signal.
-        :param int optional measure_id: The desired measure_id.
-        :param str optional code: A specific code identifying the signal.
-        :param str optional unit_label: A label for the unit.
-        :param str optional unit_code: A code for the unit.
-        :param int optional source_id: An identifier for the data source.
+        :param period: The sample period of the signal. Mutually exclusive with freq.
+        :param str time_units: The unit used for the specified period. This value can be one of ["s", "ms", "us", "ns"].
+            Default is seconds.
+        :param str measure_name: A long form description of the signal (optional).
+        :param int measure_id: The desired measure_id (optional).
+        :param str code: A specific code identifying the signal (optional).
+        :param str unit_label: A label for the unit (optional).
+        :param str unit_code: A code for the unit (optional).
+        :param int source_id: An identifier for the data source (optional).
         :param str source_name: The name of the data source associated with the measure, used if source_id is not
             provided (optional).
 
@@ -2075,6 +2158,13 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
 
+        # Check for mutually exclusive parameters
+        if freq is not None and period is not None:
+            raise ValueError("freq and period are mutually exclusive. Specify only one.")
+
+        if freq is None and period is None:
+            raise ValueError("Either freq or period must be specified.")
+
         # Check if measure_tag, measure_name, and units are either strings or None
         assert isinstance(measure_tag, str)
         assert isinstance(measure_name, str) or measure_name is None
@@ -2083,8 +2173,9 @@ class AtriumSDK:
         assert isinstance(unit_label, str) or unit_label is None
         assert isinstance(unit_code, str) or unit_code is None
 
-        # Set default frequency unit to "nHz" if not provided
+        # Set default frequency/time units if not provided
         freq_units = "nHz" if freq_units is None else freq_units
+        time_units = "s" if time_units is None else time_units
         units = "" if units is None else units
 
         # Handle source_name to source_id conversion
@@ -2093,12 +2184,20 @@ class AtriumSDK:
             if source_id is None:
                 raise ValueError(f"Source name {source_name} not found.")
 
-        # Convert frequency to nanohertz if the provided frequency unit is not "nHz"
-        if freq_units != "nHz":
-            freq = convert_to_nanohz(freq, freq_units)
+        # Convert to nanohertz based on which parameter was provided
+        if freq is not None:
+            # Convert frequency to nanohertz if the provided frequency unit is not "nHz"
+            if freq_units != "nHz":
+                freq_nhz = convert_to_nanohz(freq, freq_units)
+            else:
+                freq_nhz = freq
+        else:  # period is not None
+            # Convert period to nanoseconds then to equivalent frequency in nanohertz
+            period_ns = int(period * time_unit_options[time_units])
+            freq_nhz = 10 ** 18 // period_ns
 
         # Force Cast Python integer
-        freq = int(freq)
+        freq_nhz = int(freq_nhz)
 
         # Check for id clash
         if measure_id is not None:
@@ -2107,37 +2206,41 @@ class AtriumSDK:
             measure_info = self.get_measure_info(measure_id)
             if measure_info is not None:
                 if measure_info['tag'] == measure_tag and \
-                        measure_info['freq_nhz'] == freq and \
+                        measure_info['freq_nhz'] == freq_nhz and \
                         measure_info['unit'] == units:
                     return measure_id
                 raise ValueError(f"Inserted measure_id {measure_id} already exists with data: {measure_info}")
 
         # Check if the measure already exists in the dataset
-        check_measure_id = self.get_measure_id(measure_tag, freq, units=units)
+        check_measure_id = self.get_measure_id(measure_tag, freq=freq_nhz, freq_units="nHz", units=units)
         if check_measure_id is not None:
             return check_measure_id
 
         # Insert the new measure into the database
         inserted_measure_id = self.sql_handler.insert_measure(
-            measure_tag, freq, units, measure_name, measure_id=measure_id, code=code, unit_label=unit_label,
+            measure_tag, freq_nhz, units, measure_name, measure_id=measure_id, code=code, unit_label=unit_label,
             unit_code=unit_code, source_id=source_id)
 
         if inserted_measure_id is None:
             return inserted_measure_id
+
+        # Calculate period_ns from freq_nhz
+        period_ns = 10 ** 18 // freq_nhz
 
         # Add new measure_id into cache
         measure_info = {
             'id': inserted_measure_id,
             'tag': measure_tag,
             'name': measure_name,
-            'freq_nhz': freq,
+            'freq_nhz': freq_nhz,
+            'period_ns': period_ns,
             'code': code,
             'unit': units,
             'unit_label': unit_label,
             'unit_code': unit_code,
             'source_id': source_id
         }
-        self._measure_ids[(measure_tag, freq, units)] = inserted_measure_id
+        self._measure_ids[(measure_tag, freq_nhz, units)] = inserted_measure_id
         self._measures[inserted_measure_id] = measure_info
 
         return inserted_measure_id
