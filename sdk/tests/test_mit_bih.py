@@ -191,6 +191,10 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
 
             assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
 
+            # Test get_headers
+            just_headers = sdk.get_headers(measure_id, start_time_n, end_time_n, **query_args)
+            assert just_headers == headers
+
 
 def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=None, use_numpy=False,
                              use_messages=False, use_period=False):

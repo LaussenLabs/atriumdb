@@ -47,6 +47,7 @@ import sys
 import os
 from typing import Union, List, Tuple, Optional
 import platform
+from ctypes import sizeof
 
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
@@ -5405,3 +5406,156 @@ of DatasetIterator objects depending on the value of num_iterators.
 
         # Insert the block and interval data into the metadata table
         self.sql_handler.insert_tsc_file_data(path, block_data, interval_data, None)
+
+
+def get_headers(self, measure_id: int = None, start_time_n: int = None, end_time_n: int = None,
+                device_id: int = None, patient_id=None, block_info=None,
+                time_units: str = None, measure_tag: str = None,
+                freq: Union[int, float] = None, units: str = None, freq_units: str = None,
+                device_tag: str = None, mrn: int = None):
+    """
+    Get block headers for querying metadata from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
+    time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
+
+    This method returns only the block headers without the actual wave data, making it useful for
+    exploring data structure and metadata without the overhead of reading and decoding the actual values.
+
+    If measure_id is None, measure_tag along with freq and units must not be None, and vice versa.
+    Similarly, if device_id is None, device_tag must not be None, and if patient_id is None, mrn must not be None.
+
+    :param int measure_id: The measure identifier. If None, measure_tag must be provided.
+    :param int start_time_n: The start epoch in nanoseconds of the data you would like to query.
+    :param int end_time_n: The end epoch in nanoseconds. The end time is not inclusive.
+    :param int device_id: The device identifier. If None, device_tag must be provided.
+    :param int patient_id: The patient identifier. If None, mrn must be provided.
+    :param block_info: Custom block_info list to skip metadata table check.
+    :param str time_units: Unit for the time array returned. Options: ["s", "ms", "us", "ns"].
+    :param str measure_tag: A short string identifying the signal. Required if measure_id is None.
+    :param freq: The sample frequency of the signal. Helpful with measure_tag.
+    :param str units: The units of the signal. Helpful with measure_tag.
+    :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz", "Hz", "kHz", "MHz"] default "nHz".
+    :param str device_tag: A string identifying the device. Exclusive with device_id.
+    :param int mrn: Medical record number for the patient. Exclusive with patient_id.
+
+    :rtype: List[BlockMetadata]
+    :returns: List of Block header objects containing metadata information.
+    """
+    # check that a correct unit type was entered
+    time_units = "ns" if time_units is None else time_units
+
+    if time_units not in time_unit_options.keys():
+        raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
+
+    # convert start and end time to nanoseconds
+    start_time_n = int(start_time_n * time_unit_options[time_units])
+    end_time_n = int(end_time_n * time_unit_options[time_units])
+
+    if device_id is None and device_tag is not None:
+        device_id = self.get_device_id(device_tag)
+
+    if patient_id is None and mrn is not None:
+        patient_id = self.get_patient_id(mrn)
+
+    # If the data is from the api.
+    if self.mode == "api":
+        if measure_id is None:
+            assert measure_tag is not None and freq is not None and units is not None, \
+                "Must provide measure_id or all of measure_tag, freq, units"
+            measure_id = self.get_measure_id(measure_tag, freq, units, freq_units)
+
+        # For API mode, we would need to call a modified version of _get_data_api
+        # that only returns headers. Since the original code doesn't show this implementation,
+        # we'll raise an exception for now.
+        raise NotImplementedError("get_headers is not yet implemented for API mode")
+
+    # Check the measure
+    if measure_id is None:
+        assert measure_tag is not None, "One of measure_id, measure_tag must be specified."
+        measure_id = get_best_measure_id(self, measure_tag, freq, units, freq_units)
+
+    measure_id = int(measure_id) if measure_id is not None else measure_id
+    device_id = int(device_id) if device_id is not None else device_id
+
+    # Determine if we can use the cache
+    use_cache = False
+    if device_id is not None and measure_id is not None:
+        if measure_id in self.block_cache and device_id in self.block_cache[measure_id]:
+            use_cache = True
+
+    if use_cache:
+        # Use cached blocks
+        block_list = self.find_blocks(measure_id, device_id, start_time_n, end_time_n)
+        filename_dict = self.filename_dict
+
+        if len(block_list) == 0:
+            return []
+
+    elif block_info is None:
+        # Fetch blocks from the database
+        block_list = self.sql_handler.select_blocks(
+            int(measure_id), int(start_time_n), int(end_time_n), device_id, patient_id
+        )
+
+        read_list = condense_byte_read_list(block_list)
+
+        # if no matching block ids
+        if len(read_list) == 0:
+            return []
+
+        file_id_list = [row[2] for row in read_list]
+        filename_dict = self.get_filename_dict(file_id_list)
+    else:
+        block_list = block_info['block_list']
+        filename_dict = block_info['filename_dict']
+
+        # if no matching block ids
+        if len(block_list) == 0:
+            return []
+
+    # Get headers from blocks without reading the actual data
+    headers = self.get_headers_from_blocks(block_list, filename_dict)
+
+    return headers
+
+
+def get_headers_from_blocks(self, block_list, filename_dict):
+    """
+    Retrieve only the headers from blocks without decoding the actual wave data.
+
+    This method reads only the header portion of the specified blocks, providing
+    metadata information without the overhead of decoding time and value data.
+
+    :param list block_list: List of blocks to read headers from.
+    :param dict filename_dict: Dictionary containing file information.
+    :return: List of block headers.
+    :rtype: List[BlockMetadata]
+    """
+    if self.metadata_connection_type == "api":
+        raise ValueError("This function is only meant to work in local mode.")
+
+    # Condense the block list for optimized reading
+    read_list = condense_byte_read_list(block_list)
+
+    # Read only the header portions of the blocks
+    # We only need to read enough bytes to get the headers, not the entire blocks
+    header_size = sizeof(BlockMetadata)
+
+    # Create a modified read list that only reads the header portion of each block
+    header_read_list = []
+    for row in read_list:
+        # row format: [file_id, start_byte, end_byte, ...]
+        file_id, start_byte = row[0], row[1]
+        # Only read the header portion (first header_size bytes of each block)
+        header_read_list.append([file_id, start_byte, start_byte + header_size] + list(row[3:]))
+
+    # Read the header data from the files
+    encoded_header_bytes = self.file_api.read_file_list(header_read_list, filename_dict)
+
+    # Calculate byte positions for each header
+    num_headers = len(block_list)
+    byte_start_array = np.arange(0, num_headers * header_size, header_size, dtype=np.uint64)
+
+    # Decode only the headers
+    headers = self.block.decode_headers(encoded_header_bytes, byte_start_array)
+
+    return headers
