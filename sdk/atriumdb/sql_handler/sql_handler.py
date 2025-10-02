@@ -150,6 +150,9 @@ class SQLHandler(ABC):
             cursor.executemany(update_sql, params)
 
     def insert_intervals(self, interval_data):
+        if len(interval_data) == 0:
+            return
+
         with self.connection(begin=True) as (conn, cursor):
             interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
                                 interval["end_time_n"]) for interval in interval_data]
