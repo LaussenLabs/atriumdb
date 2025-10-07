@@ -169,7 +169,7 @@ class DatasetDefinition:
         :param sdk: Data SDK used to interact with the database or data service
         :param build_from_signal_type: Signal type to build from, either "measures" or "labels"
         :param measures: List of measures to build from, if applicable
-        :param labels: List of labels for the definition (used to build by labels, if build_labels is not provided).
+        :param labels: List of label names for the definition (used to build by labels, if build_labels is not provided).
         :param build_labels: Optional alternative list of labels to use for building intervals when build_from_signal_type is "labels".
         :param patient_id_list: List of patient IDs
         :param mrn_list: List of medical record numbers

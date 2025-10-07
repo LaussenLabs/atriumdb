@@ -1,4 +1,4 @@
-Dataset Iterators
+Working with Datasets
 ========================
 
 .. toctree::
@@ -307,7 +307,7 @@ For each source/entity, you can provide multiple time entries. Each time entry d
 Measures
 #################
 
-The ``measures`` section lists various measures to be considered. Each measure can either be:
+The ``measures`` section lists the measures you want your Dataset to contain. Each measure can either be:
 
 1. The measure tag, if there is only one measure with that tag.
 2. A complete measure triplet which includes:
@@ -315,6 +315,12 @@ The ``measures`` section lists various measures to be considered. Each measure c
    - ``tag``: The tag identifying the measure.
    - ``freq_hz`` or ``freq_nhz``: The frequency of the measure in Hertz (floating) or nanoHertz (integer).
    - ``units``: The unit of the measure (e.g., volts, bpm).
+
+Labels
+#################
+
+The ``labels`` section lists the names of the labels you want to include in your dataset.
+
 
 .. code-block:: yaml
 
@@ -339,8 +345,13 @@ The ``measures`` section lists various measures to be considered. Each measure c
           freq_nhz: 250000000000
           units: mV
 
+    labels:
+         - sinus_rhythm
+         - atrial_fibrillation
+         - noise_artifact
 
-Definition YAML Examples
+
+Dataset Definitions
 -----------------------------
 
 Creating a DatasetDefinition object
@@ -354,66 +365,311 @@ You can create a `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_
 
       dataset_definition = DatasetDefinition(filename="/path/to/my_definition.yaml")
 
-2. Creating an empty definition:
-
-   .. code-block:: python
-
-      dataset_definition = DatasetDefinition()
-
-3. Creating a definition with measures and no regions:
-
-   .. code-block:: python
-
-      measures = ["measure_tag_1", ("measure_tag_2", 62.5, "measure_units_2")]
-      dataset_definition = DatasetDefinition(measures=measures)
-
-4. Creating a definition with measures and regions:
+2. Creating a definition by specific devices:
 
    .. code-block:: python
 
       device_tags = {"tag_1": [{'start': start_time_nano_1, 'end': end_time_nano_1}], "tag_2": [{'time0': event_time_nano_2, 'pre': nano_before_event_2, 'post': nano_after_event_2}]}
-      dataset_definition = DatasetDefinition(measures=measures, device_tags=device_tags)
+      labels = ["atrial_fibrillation", "sinus_rhythm", "noise_artifact"]
+      dataset_definition = DatasetDefinition(
+            measures=measures,
+            device_tags=device_tags,
+            labels=labels
+        )
 
 
-Adding to a DatasetDefinition object
-####################################
-
-1. Adding a measure:
-
-   You can add a measure by its tag if there is only one measure with that tag. If there are multiple measures with the same tag, you need to specify the frequency and units as well.
-
-   .. code-block:: python
-
-      sdk.insert_measure(measure_tag="ART_BLD_PRESS", freq=62.5, units="mmHG", freq_units="Hz")
-      dataset_definition.add_measure(tag="ART_BLD_PRESS")  # Okay
-
-      sdk.insert_measure(measure_tag="ART_BLD_PRESS", freq=250, units="mmHG", freq_units="Hz")
-      dataset_definition.add_measure(tag="ART_BLD_PRESS")  # ValueError: More than 1 measure has that tag
-      >>> ValueError
-      dataset_definition = DatasetDefinition()
-      dataset_definition.add_measure(measure_tag="ART_BLD_PRESS", freq=62.5, units="mmHG")  # Okay
-      dataset_definition.add_measure(measure_tag="ART_BLD_PRESS", freq=250, units="mmHG")  # Okay
-
-2. Adding a region:
-
-   You can add a region by specifying a ``device_tag``, ``patient_id``, or ``mrn``, along with the relevant time parameters. Only one of ``patient_id``, ``mrn``, ``device_id``, or ``device_tag`` should be specified.
+3. Creating a definition by specific patients:
 
    .. code-block:: python
 
-      dataset_definition.add_region(device_tag="tag_1", start=1693499415_000_000_000, end=1693583415_000_000_000)
-      dataset_definition.add_region(patient_id=12345, start=1693364515_000_000_000, end=1693464515_000_000_000)
-      dataset_definition.add_region(mrn=1234567, start=1659344515_000_000_000, end=1660344515_000_000_000)
-      dataset_definition.add_region(mrn="7654321", time0=1659393745_000_000_000, pre=3600_000_000_000, post=3600_000_000_000)
+      patient_ids = {1234567: [{'start': start_time_nano_1, 'end': end_time_nano_1}], 7654321: "all"}
+      dataset_definition = DatasetDefinition(measures=measures, patient_ids=patient_ids)
 
-Saving a DatasetDefinition object
-#################################
 
-Once you have defined all the measures and regions, you can save the definition to a YAML file.
+Building Dataset Definitions from Intervals
+###########################################
+
+You can build a dataset definition directly from the measure or label availability using the :py:meth:`DatasetDefinition.build_from_intervals` class method.
+
+This method analyzes available data (via the SDK) and constructs a time-region map for each source by finding regions where the specified signals or labels exist. This approach supports two key use cases:
+
+1. **Measure-based construction**: Specify one or more measures and choose between:
+
+   - **Union** (default): Includes all time intervals where *at least one* of the measures is available.
+   - **Intersection**: Includes only those intervals where *all* requested measures are simultaneously available.
+
+2. **Label-based construction**: Specify one or more labels to construct intervals around their presence in the data.
+
+Additional parameters such as `start_time`, `end_time`, and `gap_tolerance` allow precise control over which intervals are included and how gaps in data are handled.
 
 .. code-block:: python
 
-   dataset_definition.save(filepath="path/to/saved/definition.yaml")
+   # Crease a dataset where ECG and ABP are simultaneously available.
+   dataset_definition = DatasetDefinition.build_from_intervals(
+       sdk=my_sdk,
+       build_from_signal_type="measures",
+       measures=["ECG", "ABP"],
+       start_time=1735845426 * 10**9,
+       end_time=1737236445 * 10**9,
+       gap_tolerance=1_000_000_000,
+       merge_strategy="intersection"
+   )
 
-Note that the file extension must be ``.yaml`` or ``.yml``.
+Validating Dataset Definitions
+###############################
 
-If you would like to overwrite an existing file, include the ``force=True`` keyword parameter.
+Dataset definitions must be validated before use with most SDK-based operations.
+
+Calling :py:meth:`DatasetDefinition.validate` performs the following:
+
+- Confirms the existence of the requested measures and labels.
+- Finds the intersection between the set of requested data and the set of available data.
+- Stores the mapping of data sources and validated intervals in a structured dictionary.
+
+SDK methods that consume a DatasetDefinition will automatically trigger this validation, and will not trigger it more than once, so you can still submit unvalidated definitions to the SDK.
+
+.. code-block:: python
+
+   dataset_definition.validate(
+       sdk=my_sdk,
+       gap_tolerance=5,
+       measure_tag_match_rule="best",
+       start_time=1735845426,
+       end_time=1737236445,
+       time_units="s"
+   )
+
+.. note::
+
+   Repeated validation calls are avoided once the dataset is marked as validated internally via the ``is_validated`` flag.
+
+Filtering Dataset Definitions
+##############################
+
+Once a DatasetDefinition is validated, you can filter it further using the :py:meth:`DatasetDefinition.filter` method.
+
+Filtering works by sliding a window over the time ranges in the validated dataset. Each window is passed to your filter function, which returns `True` (keep) or `False` (discard). This can be used to exclude windows with missing data, poor signal quality, insufficient label coverage, etc.
+
+Your filter function receives a :ref:`window_format` object and should return a boolean:
+
+.. code-block:: python
+
+   def my_filter_fn(window):
+       # Accept only windows where at least 5 samples of the signal are available
+       if window.signals[("ECG", 62.5, "mV")]['actual_count'] > 5:
+            return False
+       avg_value = window.signals[("ECG", 62.5, "mV")]['values'].mean()
+       return avg_value > 0.3
+
+   dataset_definition.filter(
+       sdk=my_sdk,
+       filter_fn=my_filter_fn,
+       window_duration=1,
+       window_slide=1,
+       time_units='s'
+   )
+
+You may also control the inclusion of partial windows and adjust other advanced options like label thresholds or custom patient history fields.
+
+Saving Dataset Definitions
+###########################
+
+You can save any DatasetDefinition to disk for later reuse using the :py:meth:`DatasetDefinition.save` method.
+
+There are two supported formats:
+
+- **YAML (.yaml or .yml)**: Saves the raw user-specified dictionary (`data_dict`). This format is suitable for editing or inspection.
+- **Pickle (.pkl)**: Saves the fully validated and/or filtered definition, including all computed metadata. This format is faster for reuse and avoids re-validation.
+
+.. code-block:: python
+
+   dataset_definition.save("definition.yaml")  # Save original definition
+   dataset_definition.validate(sdk=my_sdk)
+   dataset_definition.save("validated_definition.pkl")  # Save validated version
+
+
+Partitioning Dataset Definitions
+################################
+
+The :py:func:`partition_dataset` function is used to split a validated `DatasetDefinition` into multiple partitions—commonly for
+training, validation, and testing in machine learning workflows. It ensures that no patient appears in more than one partition,
+which helps prevent data leakage across splits. The function also attempts to balance the distribution of selected labels
+(defined via `priority_stratification_labels`) proportionally across the partitions according to the provided `partition_ratios`.
+
+The partitioning process is stochastic by default. This means that repeated calls to the function can result in different splits,
+even with the same inputs. To improve consistency and reproducibility, you can pass a fixed integer seed via the `random_state` argument.
+If you want to explore several possible splits and choose the most balanced one, you can set `n_trials` to perform multiple partitioning attempts.
+If `verbose=True`, a summary of each attempt is printed, including label distribution and the `random_state` value used.
+You can then reuse the best-performing seed in future runs by passing it to `random_state`.
+
+You can also specify `additional_labels`, which are not used to guide the partitioning but will be included in the partition summary reports.
+This can be helpful for evaluating how well these labels are represented in each split.
+
+Example:
+
+.. code-block:: python
+
+   from atriumdb import DatasetDefinition, AtriumSDK, partition_dataset
+
+   definition = DatasetDefinition(
+       measures=["ECG", "ABP"],
+       device_ids={1: "all", 2: "all"},
+       labels=["atrial_fibrillation", "sinus_rhythm"]
+   )
+   # Validate the definition first
+   definition.validate(sdk=my_sdk)
+
+   # Partition into train/val/test using stratified label balancing
+   train_def, val_def, test_def = partition_dataset(
+       definition,
+       sdk=my_sdk,
+       partition_ratios=[60, 20, 20],
+       priority_stratification_labels=["label1", "label2"],
+       random_state=42,
+       verbose=True
+   )
+
+   # Or, explore 10 candidate partitions and display the 3 best
+   (train_def, val_def, test_def), info = partition_dataset(
+       definition,
+       sdk=my_sdk,
+       partition_ratios=[60, 20, 20],
+       priority_stratification_labels=["label1", "label2"],
+       n_trials=10,
+       num_show_best_trials=3,
+       verbose=True
+   )
+
+
+Exporting Datasets
+----------------------------
+
+Copying an Existing Dataset
+###########################
+
+You can duplicate an entire AtriumDB dataset, or a smaller subset, into a new location with minimal configuration. This is useful for:
+
+- Exporting targeted data for experimentation or research
+- Creating backups
+- Distributing compute away from production systems
+- Migrating data to new hardware or storage environments
+
+By default, `transfer_data` reuses existing waveform blocks (`reencode_waveforms=False`), which is faster and conserves disk I/O.
+
+.. code-block:: python
+
+   from atriumdb import AtriumSDK, DatasetDefinition, transfer_data
+
+   # 1. Open your source and create the export destination
+   main_sdk = AtriumSDK(
+       dataset_location=main_dataset_location,
+       connection_params=main_connection_params,
+       metadata_connection_type="mariadb"
+   )
+   export_sdk = AtriumSDK.create_dataset(
+       dataset_location="/export/path"
+   )
+
+   # 2. Mirror all devices and select measures of interest
+   all_devices = main_sdk.get_all_devices().keys()
+   device_ids = {did: "all" for did in all_devices}
+   measures = [("MDC_ECG_AMPL_ST_II", 200, "MDC_DIM_MICRO_VOLT")]
+
+   # 3. Build the dataset definition
+   full_def = DatasetDefinition(device_ids=device_ids, measures=measures)
+
+   # 4. Copy the data using fast block reuse (no re-encoding)
+   transfer_data(
+       src_sdk=main_sdk,
+       dest_sdk=export_sdk,
+       definition=full_def,
+       reencode_waveforms=False
+   )
+
+   # ——> All waveform ECGs and metadata are now copied to "/export/path"
+
+.. note::
+
+   Block reuse is preferred in most cases. Use `reencode_waveforms=True` only when:
+   - You want to change block size (e.g., `dest_sdk.block.block_size`)
+   - The source dataset has very small or fragmented blocks you'd like to consolidate
+
+Exporting a Specific Patient Cohort
+###################################
+
+For targeted research or smaller exports, you can define a subset of MRNs or patient IDs:
+
+.. code-block:: python
+
+   # Export only selected patients
+   cohort_mrns = [12345, 67890]
+   mrns = {mrn: "all" for mrn in cohort_mrns}
+   cohort_def = DatasetDefinition(
+       mrns=mrns,
+       measures=measures
+   )
+
+   transfer_data(
+       src_sdk=main_sdk,
+       dest_sdk=export_sdk,
+       definition=cohort_def,
+       reencode_waveforms=False
+   )
+
+   # ——> Only ECGs for patients 12345 and 67890 are copied
+
+De-identification & Time Shifting
+#################################
+
+If you're sharing data externally (e.g., for research or compliance), you can enable:
+
+- `deidentify`: Removes patient-level metadata (name, MRN, DOB, etc.) and scrambles patient IDs, True, False or a csv filepath which resolves to True and writes a csv containing the original to deidentified patient mapping.
+- `time_shift`: Uniformly shifts all timestamps within the dataset to obscure precise dates within the patient information.
+
+These can be used independently, but are often combined for data privacy.
+
+.. code-block:: python
+
+   # Scramble patient IDs and shift timestamps by 2 hours
+   two_hours_s = 2 * 60 * 60
+   transfer_data(
+       src_sdk=main_sdk,
+       dest_sdk=export_sdk,
+       definition=cohort_def,
+       deidentify="patient_mapping_file.csv",
+       time_shift=two_hours_s,
+       time_units="s"
+   )
+
+   # ——> Timestamps are shifted; a CSV maps old → new patient IDs
+
+.. note::
+
+   The mapping file lets you reconcile anonymized patient IDs if needed in the future.
+
+Export Formats & CSV Example
+############################
+
+AtriumDB supports multiple export formats:
+
+- `"tsc"` (default): Native AtriumDB format (required for use with `AtriumSDK.get_data` and other AtriumSDK waveform data retrieval)
+- `"csv"`: Well known, tabular text based format.
+- `"npz"`: Numpy arrays
+- `"parquet"`: Tabular binary data.
+- `"wfdb"`: Binary waveform format.
+
+CSV is generally discouraged for waveform data due to high sample frequency and volume,
+disk usage becomes quickly unscalable, but still can be used for small-scale exports if desired.
+
+.. code-block:: python
+
+   transfer_data(
+       src_sdk=main_sdk,
+       dest_sdk=export_sdk,
+       definition=full_def,
+       export_format="csv",
+       reencode_waveforms=False
+   )
+
+   # ——> Waveforms saved as CSV files under `/export/path/csv/`
+

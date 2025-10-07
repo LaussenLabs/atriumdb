@@ -44,27 +44,40 @@ for n in tqdm(record_names):
     # Create labels for each annotation
     for i in range(len(label_value_list)):
         start_time = label_time_array[i]
-        end_time = start_time + int(10 ** 9 // record.fs)  # Assuming an annotation lasts for one sample
+        end_time = start_time + round(10 ** 9 // record.fs)  # Assuming an annotation lasts for one sample
         labels.append(('Arrhythmia Annotation', device_id, None, None, start_time, end_time))
 
     sdk.insert_labels(labels=labels, time_units='ns', source_type='device_id')
 
-    # Handle multiple signals in the record
-    if record.n_sig > 1:
-        for i in range(len(record.sig_name)):
-            measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i])
+    # Handle multiple signals in the record using a buffer and time-value pairs
+    with sdk.write_buffer(time_units='ns') as buffer:
+        if record.n_sig > 1:
+            for i in range(len(record.sig_name)):
+                measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i])
+                if measure_id is None:
+                    measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i])
+                scale_m = 1 / record.adc_gain[i]
+                scale_b = -record.baseline[i] / record.adc_gain[i]
+                sdk.write_time_value_pairs(
+                    measure_id, device_id,
+                    time_arr, record.d_signal.T[i],
+                    time_units='ns',
+                    scale_m=scale_m,
+                    scale_b=scale_b
+                )
+        else:
+            measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, units=record.units)
             if measure_id is None:
-                measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i])
-            scale_m = 1 / record.adc_gain[i]
-            scale_b = -record.baseline[i] / record.adc_gain[i]
-            sdk.write_data_easy(measure_id, device_id, time_arr, record.d_signal.T[i], freq_nano, scale_m=scale_m, scale_b=scale_b)
-    else:
-        measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, units=record.units)
-        if measure_id is None:
-            measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano, units=record.units)
-        scale_m = 1 / record.adc_gain
-        scale_b = -record.baseline / record.adc_gain
-        sdk.write_data_easy(measure_id, device_id, time_arr, record.d_signal, freq_nano, scale_m=scale_m, scale_b=scale_b)
+                measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano, units=record.units)
+            scale_m = 1 / record.adc_gain
+            scale_b = -record.baseline / record.adc_gain
+            sdk.write_time_value_pairs(
+                measure_id, device_id,
+                time_arr, record.d_signal,
+                time_units='ns',
+                scale_m=scale_m,
+                scale_b=scale_b
+            )
 
 # Survey the dataset
 all_measures = sdk.get_all_measures()
@@ -74,7 +87,7 @@ print("All Devices: ", all_devices)
 
 # Query the data from the dataset and verify
 for n in tqdm(record_names):
-    record = wfdb.rdrecord(n, pn_dir="mitdb")
+    record = wfdb.rdrecord(n, pn_dir=pn_dir)
     freq_nano = record.fs * 1_000_000_000
     device_id = sdk.get_device_id(device_tag=record.record_name)
     if record.n_sig > 1:

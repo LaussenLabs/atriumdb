@@ -77,6 +77,9 @@ API Reference
 .. autoclass:: atriumdb.DatasetDefinition
 
    .. automethod:: __init__
+   .. automethod:: build_from_intervals
+   .. automethod:: validate
+   .. automethod:: filter
    .. automethod:: add_measure
    .. automethod:: add_label
    .. automethod:: add_region
@@ -86,6 +89,10 @@ API Reference
 
    .. automethod:: __next__
    .. automethod:: __iter__
+
+
+.. autofunction:: partition_dataset
+.. autofunction:: transfer_data
 
 
 Index
