@@ -1759,17 +1759,10 @@ class AtriumSDK:
                     self.label_start_cache[device_id][label_name_id] = np.array([], dtype=np.int64)
                     self.label_end_cache[device_id][label_name_id] = np.array([], dtype=np.int64)
 
-    def find_labels(self, label_name_id: int, device_id: int, start_time: int, end_time: int,
+    def _find_labels(self, label_name_id: int, device_id: int, start_time: int, end_time: int,
                     include_descendants: bool = True):
         """
         Find labels within the cached data that overlap with the specified time range.
-
-        :param label_name_id: The label name ID to search for
-        :param device_id: The device ID to search within
-        :param start_time: Start time for the search (in nanoseconds)
-        :param end_time: End time for the search (in nanoseconds)
-        :param include_descendants: Whether to include descendant labels
-        :return: List of label records that overlap with the time range
         """
         if device_id not in self.label_cache:
             return []
@@ -3779,8 +3772,8 @@ class AtriumSDK:
 
         if (not measure_list and not label_source_id_list and not patient_id_list and device_list
                 and label_name_id_list and all(dev_id in self.label_cache for dev_id in device_list)):
-            return self.get_cached_labels(label_name_id_list=label_name_id_list, device_list=device_list,
-                          start_time=start_time, end_time=end_time, include_descendants=include_descendants)
+            return self._get_cached_labels(label_name_id_list=label_name_id_list, device_list=device_list,
+                                           start_time=start_time, end_time=end_time, include_descendants=include_descendants)
 
         closest_requested_ancestor_dict = {}
         if label_name_id_list and include_descendants:
@@ -3875,9 +3868,9 @@ class AtriumSDK:
 
         return label_list
 
-    def get_cached_labels(self, label_name_id_list: List[int] = None, device_list: List[int] = None,
-                          start_time: int = None, end_time: int = None, include_descendants: bool = True,
-                          limit: int = None, offset: int = 0):
+    def _get_cached_labels(self, label_name_id_list: List[int] = None, device_list: List[int] = None,
+                           start_time: int = None, end_time: int = None, include_descendants: bool = True,
+                           limit: int = None, offset: int = 0):
 
         all_labels = []
 
@@ -3886,7 +3879,7 @@ class AtriumSDK:
                 continue
 
             for label_name_id in label_name_id_list:
-                matching_labels = self.find_labels(
+                matching_labels = self._find_labels(
                     label_name_id=label_name_id,
                     device_id=device_id,
                     start_time=start_time if start_time is not None else 0,
