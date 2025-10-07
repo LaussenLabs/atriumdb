@@ -143,10 +143,16 @@ class AtriumSDK:
                  connection_params: dict = None, num_threads: int = 1, api_url: str = None, token: str = None,
                  refresh_token=None, validate_token=True, tsc_file_location: str = None, atriumdb_lib_path: str = None,
                  no_pool=False, storage_handler: AtriumFileHandler = None):
-        self.block_cache = {}
-        self.start_cache = {}
-        self.end_cache = {}
+        self.block_cache = {}  # device_id -> list of block sql results
+        self.start_cache = {}  # device_id -> list of start times
+        self.end_cache = {}  # device_id -> list of end times
         self.filename_dict = {}
+
+        self.label_cache = {}  # device_id -> label_name_id -> list of label records
+        self.label_start_cache = {}  # device_id -> label_name_id -> list of start times
+        self.label_end_cache = {}  # device_id -> label_name_id -> list of end times
+        self.descendant_cache = {}  # label_name_id -> (all_descendants_set, closest_ancestor_dict)
+        self.label_lookup_caches = {}
 
         self.dataset_location = dataset_location
 
@@ -1497,6 +1503,7 @@ class AtriumSDK:
                         start_time=None, end_time=None, time_units: str = "ns", cache_dir=None):
         """
         Preloads the metadata blocks for a dataset definition, then initialize device and time ranges for data fetching.
+        Also preloads label data for the specified label names and devices.
 
         Used to speed up the iterator or many small `AtriumSDK.get_data` calls by bypassing the sql queries for data queries.
 
@@ -1526,7 +1533,8 @@ class AtriumSDK:
             'devices': {
                 1: "all",
                 2: [{"start": 1682739250000000000, "end": 1682739350000000000}],
-            }
+            },
+            'labels': ["seizure", "artifact"]
         }
 
         # Load the definition with time units in milliseconds
@@ -1548,6 +1556,13 @@ class AtriumSDK:
         self.end_cache = {}
         self.filename_dict = {}
 
+        # Reset label caches
+        self.label_cache = {}
+        self.label_start_cache = {}
+        self.label_end_cache = {}
+        self.descendant_cache = {}
+        self.label_lookup_caches = {}
+
         if not definition.is_validated:
             definition.validate(sdk=self, gap_tolerance=gap_tolerance_n,
                                 measure_tag_match_rule=measure_tag_match_rule, start_time=start_time_n,
@@ -1555,6 +1570,7 @@ class AtriumSDK:
 
         validated_measure_list = definition.validated_data_dict['measures']
         mapped_sources = definition.validated_data_dict['sources']
+        validated_labels = definition.validated_data_dict.get('labels', [])
 
         # Extract measure_ids from the validated measures
         measure_ids = [measure['id'] for measure in validated_measure_list]
@@ -1647,6 +1663,143 @@ class AtriumSDK:
 
         # Update filename dictionary
         self.filename_dict.update(filename_dict)
+
+        if validated_labels:
+            self._build_label_caches(validated_labels, device_ids, device_time_ranges, start_time_n, end_time_n)
+
+    def _build_label_caches(self, validated_labels, device_ids, device_time_ranges, global_start_time, global_end_time):
+        # Get all label name IDs including descendants
+        all_label_name_ids = set()
+        for label_name_id in validated_labels:
+            if label_name_id not in self.descendant_cache:
+                descendants, ancestor_dict = collect_all_descendant_ids([label_name_id], self.sql_handler)
+                self.descendant_cache[label_name_id] = (descendants, ancestor_dict)
+            else:
+                descendants, ancestor_dict = self.descendant_cache[label_name_id]
+            all_label_name_ids.update(descendants)
+
+        # Pre-compute lookup dictionaries for efficiency
+        unique_label_set_ids = set(all_label_name_ids)
+        unique_device_ids = set(device_ids)
+
+        self.label_lookup_caches['label_set_id_to_info'] = {
+            label_set_id: self.get_label_name_info(label_set_id)
+            for label_set_id in unique_label_set_ids
+        }
+        self.label_lookup_caches['device_id_to_info'] = {
+            device_id: self.get_device_info(device_id)
+            for device_id in unique_device_ids
+        }
+
+        # For each device, fetch all labels within the time ranges
+        for device_id in device_ids:
+            device_ranges = device_time_ranges.get(device_id, [])
+            if not device_ranges:
+                continue
+
+            # Initialize caches for this device
+            if device_id not in self.label_cache:
+                self.label_cache[device_id] = {}
+                self.label_start_cache[device_id] = {}
+                self.label_end_cache[device_id] = {}
+
+            # Calculate the overall time range for this device
+            device_start = min(range_start for range_start, _ in device_ranges)
+            device_end = max(range_end for _, range_end in device_ranges)
+
+            # Apply global time constraints
+            if global_start_time is not None:
+                device_start = max(device_start, global_start_time)
+            if global_end_time is not None:
+                device_end = min(device_end, global_end_time)
+
+            # Fetch all labels for this device and time range
+            labels = self.sql_handler.select_labels_with_info(
+                label_set_id_list=list(all_label_name_ids),
+                device_id_list=[device_id],
+                start_time_n=device_start,
+                end_time_n=device_end
+            )
+
+            # Group labels by label_name_id
+            labels_by_name_id = defaultdict(list)
+            for label_record in labels:
+                label_set_id = label_record[2]
+                start_time_n = label_record[7]
+                end_time_n = label_record[8]
+
+                # Check if label intersects with any device time range
+                label_intersects = False
+                for range_start, range_end in device_ranges:
+                    if start_time_n < range_end and end_time_n > range_start:
+                        label_intersects = True
+                        break
+
+                if label_intersects:
+                    labels_by_name_id[label_set_id].append(label_record)
+
+            # Cache labels for each label_name_id
+            for label_name_id in all_label_name_ids:
+                label_records = labels_by_name_id.get(label_name_id, [])
+
+                if label_records:
+                    # Sort by start time, then end time, then label ID
+                    label_records.sort(key=lambda x: (x[7], x[8], x[0]))
+
+                    self.label_cache[device_id][label_name_id] = label_records
+                    self.label_start_cache[device_id][label_name_id] = np.array(
+                        [record[7] for record in label_records], dtype=np.int64
+                    )
+                    self.label_end_cache[device_id][label_name_id] = np.array(
+                        [record[8] for record in label_records], dtype=np.int64
+                    )
+                else:
+                    # Initialize empty arrays for label_name_ids with no labels
+                    self.label_cache[device_id][label_name_id] = []
+                    self.label_start_cache[device_id][label_name_id] = np.array([], dtype=np.int64)
+                    self.label_end_cache[device_id][label_name_id] = np.array([], dtype=np.int64)
+
+    def _find_labels(self, label_name_id: int, device_id: int, start_time: int, end_time: int,
+                    include_descendants: bool = True):
+        """
+        Find labels within the cached data that overlap with the specified time range.
+        """
+        if device_id not in self.label_cache:
+            return []
+
+        # Get all relevant label name IDs
+        if include_descendants and label_name_id in self.descendant_cache:
+            descendants, _ = self.descendant_cache[label_name_id]
+            search_label_ids = descendants
+        else:
+            search_label_ids = {label_name_id}
+
+        all_matching_labels = []
+
+        for search_id in search_label_ids:
+            if search_id not in self.label_cache[device_id]:
+                continue
+
+            starts = self.label_start_cache[device_id][search_id]
+            ends = self.label_end_cache[device_id][search_id]
+
+            if len(starts) == 0:
+                continue
+
+            # Find labels that overlap with the time range
+            # Labels overlap if: label_start < search_end AND label_end > search_start
+            end_idx = np.searchsorted(starts, end_time, side='right')
+            candidate_labels = self.label_cache[device_id][search_id][:end_idx]
+            candidate_ends = ends[:end_idx]
+
+            if len(candidate_ends) > 0:
+                valid_mask = candidate_ends > start_time
+                matching_labels = [candidate_labels[i] for i in range(len(candidate_labels)) if valid_mask[i]]
+                all_matching_labels.extend(matching_labels)
+
+        # Sort by start time, then end time, then label ID
+        all_matching_labels.sort(key=lambda x: (x[7], x[8], x[0]))
+        return all_matching_labels
 
     def find_blocks(self, measure_id: int, device_id: int, start_time: int, end_time: int):
         """
@@ -3583,10 +3736,6 @@ class AtriumSDK:
                     raise ValueError(f"Label name '{label_name}' not found in the database.")
             label_name_id_list = name_id_list
 
-        closest_requested_ancestor_dict = {}
-        if label_name_id_list and include_descendants:
-            label_name_id_list, closest_requested_ancestor_dict = collect_all_descendant_ids(
-                label_name_id_list, self.sql_handler)
 
         # Convert device tags to IDs
         if device_list:
@@ -3620,6 +3769,16 @@ class AtriumSDK:
                     raise ValueError(f"Measure Tag {measure} not found in database")
                 measure_id_list.append(measure_id)
             measure_list = measure_id_list
+
+        if (not measure_list and not label_source_id_list and not patient_id_list and device_list
+                and label_name_id_list and all(dev_id in self.label_cache for dev_id in device_list)):
+            return self._get_cached_labels(label_name_id_list=label_name_id_list, device_list=device_list,
+                                           start_time=start_time, end_time=end_time, include_descendants=include_descendants)
+
+        closest_requested_ancestor_dict = {}
+        if label_name_id_list and include_descendants:
+            label_name_id_list, closest_requested_ancestor_dict = collect_all_descendant_ids(
+                label_name_id_list, self.sql_handler)
 
         labels = self.sql_handler.select_labels_with_info(
             label_set_id_list=label_name_id_list,
@@ -3708,6 +3867,87 @@ class AtriumSDK:
             offset += limit
 
         return label_list
+
+    def _get_cached_labels(self, label_name_id_list: List[int] = None, device_list: List[int] = None,
+                           start_time: int = None, end_time: int = None, include_descendants: bool = True,
+                           limit: int = None, offset: int = 0):
+
+        all_labels = []
+
+        for device_id in device_list:
+            if device_id not in self.label_cache:
+                continue
+
+            for label_name_id in label_name_id_list:
+                matching_labels = self._find_labels(
+                    label_name_id=label_name_id,
+                    device_id=device_id,
+                    start_time=start_time if start_time is not None else 0,
+                    end_time=end_time if end_time is not None else float('inf'),
+                    include_descendants=include_descendants
+                )
+                all_labels.extend(matching_labels)
+
+        # Remove duplicates and sort
+        seen = set()
+        unique_labels = []
+        for label in all_labels:
+            label_id = label[0]  # label_entry_id
+            if label_id not in seen:
+                seen.add(label_id)
+                unique_labels.append(label)
+
+        # Sort by start time, then end time, then label ID
+        unique_labels.sort(key=lambda x: (x[7], x[8], x[0]))
+
+        # Apply offset and limit
+        if offset > 0:
+            unique_labels = unique_labels[offset:]
+        if limit is not None:
+            unique_labels = unique_labels[:limit]
+
+        # Format the results similar to get_labels
+        result = []
+        for label_record in unique_labels:
+            (label_entry_id, label_name, label_set_id, device_id, measure_id,
+             label_source_name, label_source_id, start_time_n, end_time_n, patient_id) = label_record
+
+            # Get the requested ancestor info if using descendants
+            requested_id = label_set_id
+            requested_name = label_name
+
+            if include_descendants:
+                # Find which original label_name_id this descendant belongs to
+                for orig_id in label_name_id_list:
+                    if orig_id in self.descendant_cache:
+                        _, ancestor_dict = self.descendant_cache[orig_id]
+                        if label_set_id in ancestor_dict:
+                            requested_id = ancestor_dict[label_set_id]
+                            requested_name = self.label_lookup_caches['label_set_id_to_info'][requested_id]['name']
+                            break
+
+            mrn = None if patient_id is None else self.get_mrn(patient_id)
+            device_info = self.label_lookup_caches['device_id_to_info'][device_id]
+
+            formatted_label = {
+                'label_entry_id': label_entry_id,
+                'label_name_id': label_set_id,
+                'label_name': label_name,
+                'requested_name_id': requested_id,
+                'requested_name': requested_name,
+                'device_id': device_id,
+                'device_tag': device_info['tag'],
+                'patient_id': patient_id,
+                'mrn': mrn,
+                'start_time_n': start_time_n,
+                'end_time_n': end_time_n,
+                'label_source_id': label_source_id,
+                'label_source': label_source_name,
+                'measure_id': measure_id
+            }
+            result.append(formatted_label)
+
+        return result
 
     def insert_label(self, name: str, start_time: int, end_time: int, device: Union[int, str] = None,
                      patient_id: int = None, mrn: int = None, time_units: str = None,
