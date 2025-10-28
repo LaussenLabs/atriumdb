@@ -34,6 +34,16 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
+    def update_measure_schema(self):
+        """Add period_ns column to measure table if it doesn't exist."""
+        pass
+
+    @abstractmethod
+    def _column_exists(self, cursor, table_name: str, column_name: str) -> bool:
+        """Check if a column exists in a table."""
+        pass
+
+    @abstractmethod
     def select_all_devices(self):
         pass
 

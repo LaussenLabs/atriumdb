@@ -93,7 +93,8 @@ def _validate_measures(definition, sdk, measure_tag_match_rule="best"):
                 'id': measure_id,
                 'tag': measure_info['tag'],
                 'freq_nhz': measure_info.get('freq_nhz'),
-                'units': measure_info.get('unit')
+                'units': measure_info.get('unit'),
+                'period_ns': measure_info.get('period_ns'),
             }
             validated_measure_list.append(validated_measure_info)
 

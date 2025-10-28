@@ -111,6 +111,7 @@ class AtriumSDK:
     :param str atriumdb_lib_path: A file path pointing to the shared library (CDLL) that powers the compression and decompression. Not required for most users.
     :param bool no_pool: If true disables Mariadb connection pooling, instead using a new connection for each query.
     :param AtriumFileHandler storage_handler: Advanced feature. If you implement your own atriumdb file handler you can set it here.
+    :param bool auto_upgrade: If True, automatically upgrade the database schema if needed (e.g., adding new columns). This allows the SDK to initialize successfully even if the database schema is outdated. Default is False.
 
     Examples:
     -----------
@@ -143,7 +144,7 @@ class AtriumSDK:
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
                  connection_params: dict = None, num_threads: int = 1, api_url: str = None, token: str = None,
                  refresh_token=None, validate_token=True, tsc_file_location: str = None, atriumdb_lib_path: str = None,
-                 no_pool=False, storage_handler: AtriumFileHandler = None):
+                 no_pool=False, storage_handler: AtriumFileHandler = None, auto_upgrade: bool = False):
         self.block_cache = {}
         self.start_cache = {}
         self.end_cache = {}
@@ -203,6 +204,8 @@ class AtriumSDK:
             self.sql_handler = SQLiteHandler(db_file)
             self.mode = "local"
             self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
+            if auto_upgrade:
+                self.sql_handler.update_measure_schema()
             self.settings_dict = self._get_all_settings()
 
         # Handle MySQL or MariaDB connections
@@ -231,6 +234,9 @@ class AtriumSDK:
             self.sql_handler = MariaDBHandler(host, user, password, database, port, no_pool=no_pool)
             self.mode = "local"
             self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
+
+            if auto_upgrade:
+                self.sql_handler.update_measure_schema()
             self.settings_dict = self._get_all_settings()
 
         # Handle API connections
@@ -335,7 +341,7 @@ class AtriumSDK:
 
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None, protected_mode: str = None,
-                       overwrite: str = None, connection_params: dict = None, no_pool=False):
+                       overwrite: str = None, connection_params: dict = None, no_pool=False, auto_upgrade: bool = False):
         """
         .. _create_dataset_label:
 
@@ -347,6 +353,7 @@ class AtriumSDK:
         :param str overwrite: Specifies the behavior to take when new data being inserted overlaps in time with existing data. Allowed values are "error", "ignore", or "overwrite". Upon triggered overwrite: if "error", an error will be raised. If "ignore", the new data will not be inserted. If "overwrite", the old data will be overwritten with the new data. The default behavior can be changed in the `sdk/atriumdb/helpers/config.toml` file.
         :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" database type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
         :param bool no_pool: If true disables Mariadb connection pooling, instead using a new connection for each query.
+        :param bool auto_upgrade: If True, automatically upgrade the database schema if needed (e.g., adding new columns). This allows the SDK to initialize successfully even if the database schema is outdated. Default is False.
 
         :return: An initialized AtriumSDK object.
         :rtype: AtriumSDK
@@ -405,7 +412,7 @@ class AtriumSDK:
             MariaDBHandler(host, user, password, database, port).create_schema()
 
         sdk_object = cls(dataset_location=dataset_location, metadata_connection_type=database_type,
-                         connection_params=connection_params, no_pool=no_pool)
+                         connection_params=connection_params, no_pool=no_pool, auto_upgrade=auto_upgrade)
 
         # Add settings
         sdk_object.sql_handler.insert_setting(PROTECTED_MODE_SETTING_NAME, str(protected_mode))
@@ -1847,8 +1854,9 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             measure_info = self._request("GET", f"measures/{measure_id}")
             if measure_info:
-                # Add period_ns to API response
-                measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+                # Add period_ns to API response if not present
+                if 'period_ns' not in measure_info or measure_info['period_ns'] is None:
+                    measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
             return measure_info
 
         # If measure_id is already in the cache, return the cached measure info
@@ -1862,12 +1870,15 @@ class AtriumSDK:
         if row is None:
             return None
 
-        # Unpack the row tuple into variables
-        measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, measure_unit, measure_unit_label, \
-            measure_unit_code, measure_source_id = row
+        # Unpack the row tuple into variables (now includes period_ns)
+        measure_id, measure_tag, measure_name, measure_freq_nhz, stored_period_ns, measure_code, measure_unit, \
+            measure_unit_label, measure_unit_code, measure_source_id = row
 
-        # Calculate period_ns from freq_nhz
-        measure_period_ns = 10 ** 18 // measure_freq_nhz
+        # Use stored period_ns if available, otherwise calculate from freq_nhz
+        if stored_period_ns is not None:
+            measure_period_ns = stored_period_ns
+        else:
+            measure_period_ns = 10 ** 18 // measure_freq_nhz
 
         # Create a dictionary containing the measure information
         measure_info = {
@@ -2011,9 +2022,10 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             measure_dict = self._request("GET", "measures/")
             result = {int(measure_id): measure_info for measure_id, measure_info in measure_dict.items()}
-            # Add period_ns to each measure in API response
+            # Add period_ns to each measure in API response if not present
             for measure_id, measure_info in result.items():
-                measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+                if 'period_ns' not in measure_info or measure_info['period_ns'] is None:
+                    measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
             return result
 
         # Get all measures from the SQL handler
@@ -2024,11 +2036,14 @@ class AtriumSDK:
 
         # Iterate through the list of measures and construct a dictionary for each measure
         for measure_info in measure_tuple_list:
-            measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, \
+            measure_id, measure_tag, measure_name, measure_freq_nhz, stored_period_ns, measure_code, \
                 measure_unit, measure_unit_label, measure_unit_code, measure_source_id = measure_info
 
-            # Calculate period_ns from freq_nhz
-            measure_period_ns = 10 ** 18 // measure_freq_nhz
+            # Use stored period_ns if available, otherwise calculate from freq_nhz
+            if stored_period_ns is not None:
+                measure_period_ns = stored_period_ns
+            else:
+                measure_period_ns = 10 ** 18 // measure_freq_nhz
 
             # Add the measure information to the dictionary
             measure_dict[measure_id] = {
@@ -2192,6 +2207,7 @@ class AtriumSDK:
                 freq_nhz = convert_to_nanohz(freq, freq_units)
             else:
                 freq_nhz = freq
+            period_ns = None  # Will be calculated from freq_nhz later
         else:  # period is not None
             # Convert period to nanoseconds then to equivalent frequency in nanohertz
             period_ns = int(period * time_unit_options[time_units])
@@ -2220,13 +2236,14 @@ class AtriumSDK:
         # Insert the new measure into the database
         inserted_measure_id = self.sql_handler.insert_measure(
             measure_tag, freq_nhz, units, measure_name, measure_id=measure_id, code=code, unit_label=unit_label,
-            unit_code=unit_code, source_id=source_id)
+            unit_code=unit_code, source_id=source_id, period_ns=period_ns)
 
         if inserted_measure_id is None:
             return inserted_measure_id
 
-        # Calculate period_ns from freq_nhz
-        period_ns = 10 ** 18 // freq_nhz
+        # Calculate period_ns from freq_nhz for cache (if not already calculated)
+        if period_ns is None:
+            period_ns = 10 ** 18 // freq_nhz
 
         # Add new measure_id into cache
         measure_info = {

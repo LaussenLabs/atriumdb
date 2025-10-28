@@ -152,6 +152,24 @@ class SQLiteHandler(SQLHandler):
         cursor.close()
         conn.close()
 
+    def _column_exists(self, cursor, table_name: str, column_name: str) -> bool:
+        """Check if a column exists in a table."""
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        columns = [row[1] for row in cursor.fetchall()]
+        return column_name in columns
+
+    def update_measure_schema(self):
+        """Add period_ns column to measure table if it doesn't exist."""
+        with self.connection() as (conn, cursor):
+            if not self._column_exists(cursor, 'measure', 'period_ns'):
+                cursor.execute("""
+                    ALTER TABLE measure 
+                    ADD COLUMN period_ns INTEGER NULL
+                """)
+                conn.commit()
+                return True
+            return False
+
     def interval_exists(self, measure_id, device_id, start_time_nano):
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_interval_exists_query, (measure_id, device_id, start_time_nano))
@@ -165,10 +183,18 @@ class SQLiteHandler(SQLHandler):
         return rows
 
     def select_all_measures(self):
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute("SELECT id, tag, name, freq_nhz, code, unit, unit_label, unit_code, source_id FROM measure")
-            rows = cursor.fetchall()
-        return rows
+        try:
+            with self.sqlite_db_connection() as (conn, cursor):
+                cursor.execute("SELECT id, tag, name, freq_nhz, period_ns, code, unit, unit_label, unit_code, source_id FROM measure")
+                rows = cursor.fetchall()
+            return rows
+        except sqlite3.Error as e:
+            if "period_ns" in str(e).lower() or "no such column" in str(e).lower():
+                raise ValueError(
+                    "The 'period_ns' column is missing from the measure table. "
+                    "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
+                ) from e
+            raise
 
     def select_all_patients(self):
         with self.sqlite_db_connection() as (conn, cursor):
@@ -178,29 +204,45 @@ class SQLiteHandler(SQLHandler):
 
     def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None,
                        measure_id=None, code: str = None, unit_label: str = None, unit_code: str = None,
-                       source_id: int = None):
+                       source_id: int = None, period_ns: int = None):
         units = "" if units is None else units
 
-        with self.connection() as (conn, cursor):
-            cursor.execute(
-                "INSERT OR IGNORE INTO measure (id, tag, freq_nhz, unit, name, code, unit_label, unit_code, source_id) VALUES "
-                "(?, ?, ?, ?, ?, ?, ?, ?, ?);",
-                (measure_id, measure_tag, freq_nhz, units, measure_name, code, unit_label, unit_code, source_id))
-            conn.commit()
-
-            return cursor.lastrowid
+        try:
+            with self.connection() as (conn, cursor):
+                cursor.execute(
+                    "INSERT OR IGNORE INTO measure (id, tag, freq_nhz, period_ns, unit, name, code, unit_label, unit_code, source_id) VALUES "
+                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+                    (measure_id, measure_tag, freq_nhz, period_ns, units, measure_name, code, unit_label, unit_code,
+                     source_id))
+                conn.commit()
+                return cursor.lastrowid
+        except sqlite3.Error as e:
+            if "period_ns" in str(e).lower() or "no such column" in str(e).lower():
+                raise ValueError(
+                    "The 'period_ns' column is missing from the measure table. "
+                    "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
+                ) from e
+            raise
 
     def select_measure(self, measure_id: int = None, measure_tag: str = None, freq_nhz: int = None, units: str = None):
         units = DEFAULT_UNITS if units is None else units
 
-        with self.sqlite_db_connection() as (conn, cursor):
-            if measure_id is not None:
-                cursor.execute(sqlite_select_measure_from_id_query, (measure_id,))
-            else:
-                cursor.execute(sqlite_select_measure_from_triplet_query,
-                               (measure_tag, freq_nhz, units))
-            row = cursor.fetchone()
-        return row
+        try:
+            with self.sqlite_db_connection() as (conn, cursor):
+                if measure_id is not None:
+                    cursor.execute(sqlite_select_measure_from_id_query, (measure_id,))
+                else:
+                    cursor.execute(sqlite_select_measure_from_triplet_query,
+                                   (measure_tag, freq_nhz, units))
+                row = cursor.fetchone()
+            return row
+        except sqlite3.Error as e:
+            if "period_ns" in str(e).lower() or "no such column" in str(e).lower():
+                raise ValueError(
+                    "The 'period_ns' column is missing from the measure table. "
+                    "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
+                ) from e
+            raise
 
     def insert_device(self, device_tag: str, device_name: str = None, device_id=None, manufacturer: str = None,
                       model: str = None, device_type: str = None, bed_id: int = None, source_id: int = None):

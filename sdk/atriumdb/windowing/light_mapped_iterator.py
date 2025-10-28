@@ -60,35 +60,35 @@ class LightMappedIterator(DatasetIterator):
         # The sliding interval in nanoseconds by which the window advances in time.
         self.window_slide_ns = int(window_slide_ns)
 
-        # Determine the highest frequency among the measures, used to compute matrix row sizes and more.
-        self.highest_freq_nhz = max([measure['freq_nhz'] for measure in self.measures])
+        # Determine the lowest period among the measures, used to compute matrix row sizes and more.
+        self.lowest_period_ns = min([measure['period_ns'] for measure in self.measures])
 
-        # Compute the matrix's row size based on the highest frequency and the window duration in nanoseconds.
+        # Compute the matrix's row size based on the lowest period and the window duration in nanoseconds.
         # Determines how many data points fit in a single window.
 
         # Emitting warnings for row_size, slide_size, and row_period_ns
 
-        if (self.window_duration_ns * self.highest_freq_nhz) % (10 ** 18) != 0:
+        if self.window_duration_ns % self.lowest_period_ns != 0:
             warnings.warn(
-                f'Given window duration of {window_duration_ns / 1e9} seconds and signal frequency of '
-                f'{self.highest_freq_nhz / (10 ** 9)}Hz result in a non-integer number of signals in the window. '
+                f'Given window duration of {window_duration_ns / 1e9} seconds and signal period of '
+                f'{self.lowest_period_ns / 1e9} seconds result in a non-integer number of signals in the window. '
                 f'window size / row size will round down'
             )
 
-        if (self.window_slide_ns * self.highest_freq_nhz) % (10 ** 18) != 0:
+        if self.window_slide_ns % self.lowest_period_ns != 0:
             warnings.warn(
-                f'Given sliding window duration of {window_slide_ns / 1e9} seconds and signal frequency of '
-                f'{self.highest_freq_nhz / (10 ** 9)}Hz result in a non-integer number of signals in the slide. '
+                f'Given sliding window duration of {window_slide_ns / 1e9} seconds and signal period of '
+                f'{self.lowest_period_ns / 1e9} seconds result in a non-integer number of signals in the slide. '
                 f'slide will round down'
             )
 
-        self.row_size = int((self.highest_freq_nhz * self.window_duration_ns) // (10 ** 18))
+        self.row_size = int(self.window_duration_ns // self.lowest_period_ns)
 
         # The slide size in terms of matrix rows for the sliding window operation.
-        self.slide_size = int((self.highest_freq_nhz * self.window_slide_ns) // (10 ** 18))
+        self.slide_size = int(self.window_slide_ns // self.lowest_period_ns)
 
-        # Time duration between consecutive data points, given the highest frequency.
-        self.row_period_ns = int((10 ** 18) // self.highest_freq_nhz)
+        # Time duration between consecutive data points, given the lowest period.
+        self.row_period_ns = int(self.lowest_period_ns)
 
         # cache for patient data
         self.patient_info_cache = {}
@@ -189,20 +189,18 @@ class LightMappedIterator(DatasetIterator):
         signals = {}
         for measure in self.measures:
             measure_id = measure['id']
-            freq_nhz = measure['freq_nhz']
-            period_ns = int((10 ** 18) // freq_nhz)
-            measure_expected_count = int((freq_nhz * self.window_duration_ns) // (10 ** 18))
+            period_ns = measure['period_ns']
+            measure_expected_count = int(self.window_duration_ns // period_ns)
             measure_times = (np.arange(measure_expected_count) * period_ns) + window_start_time
             measure_values = np.full(measure_times.shape, np.nan)
             if len(measure_values) > 0:
                 if measure_expected_count != int(round((window_end_time - window_start_time) / period_ns)):
-                    window_end_time = window_start_time + int(
-                        round(measure_expected_count * (10 ** 18 / freq_nhz)))
+                    window_end_time = window_start_time + int(round(measure_expected_count * period_ns))
                 self.sdk.get_data(
                     measure_id, window_start_time, window_end_time, device_id=device_id, patient_id=query_patient_id,
                     return_nan_filled=measure_values)
             measure_tag = measure['tag']
-            measure_freq_hz = freq_nhz / (10 ** 9)
+            measure_freq_hz = measure['freq_nhz'] / (10 ** 9)
             measure_units = measure['units']
             signals[(measure_tag, measure_freq_hz, measure_units)] = {
                 'times': measure_times,
@@ -220,10 +218,9 @@ class LightMappedIterator(DatasetIterator):
 
         if len(self.label_sets) > 0:
             # Preallocate label matrix
-            label_time_series_num_samples = (int(self.window_duration_ns) * int(self.highest_freq_nhz)) // (10 ** 18)
+            label_time_series_num_samples = int(self.window_duration_ns // self.lowest_period_ns)
             label_time_series = np.zeros((len(self.label_sets), label_time_series_num_samples), dtype=np.int8)
-            period_ns = (10 ** 18) / self.highest_freq_nhz
-            label_timestamp_array = np.arange(window_start_time, window_end_time, period_ns, dtype=np.int64)
+            label_timestamp_array = np.arange(window_start_time, window_end_time, self.lowest_period_ns, dtype=np.int64)
 
             # Populate label matrix
             for idx, label_set_id in enumerate(self.label_sets):
