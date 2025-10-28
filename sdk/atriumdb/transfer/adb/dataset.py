@@ -76,7 +76,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     :param Optional[dict] deidentification_functions: Custom functions for de-identifying specific patient information fields.
         A dictionary where keys are the patient_info or patient_history field to be altered and values are the functions that alter them.
         Example: `{'height': lambda x: x + random.uniform(-1.5, 1.5)}`
-    :param Optional[int] time_shift: An amount of time by which to shift all timestamps in the transferred data, specified in `time_units`. Only supported when `reencode_waveforms=True`.
+    :param Optional[int] time_shift: An amount of time by which to shift all timestamps in the transferred data, specified in `time_units`.
     :param Optional[str] time_units: Units for `gap_tolerance` and `time_shift`. Supported units are 'ns' (nanoseconds), 's' (seconds), 'ms' (milliseconds), and 'us' (microseconds). Defaults to 'ns'.
     :param Optional[str] export_time_format: The format for timestamps in the exported data. Supports 'ns', 's', 'ms', 'us', and 'date'. Defaults to 'ns'.
     :param Optional[str] parquet_engine: Specifies the engine to use for writing Parquet files. Can be 'fastparquet' or 'pyarrow'.
@@ -93,11 +93,12 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
     Examples:
     ---------
-    Create a dataset definition with specific measures and labels:
+    Create a dataset definition:
 
     >>> measures = [{"tag": "ECG", "freq_hz": 300, "units": "mV"}]
     >>> labels = ["Sinus rhythm", "Atrial fibrillation"]
-    >>> my_definition = DatasetDefinition(measures=measures, labels=labels)
+    >>> device_ids = {1: "all"}
+    >>> my_definition = DatasetDefinition(measures=measures, labels=labels, device_ids=device_ids)
 
     Transfer all available data with default parameters, de-identifying patient information:
 
@@ -105,15 +106,12 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
     Transfer data with a specific gap tolerance of one day and without including labels:
 
-    >>> gap_tolerance = 24*60*60  # 24 hours in seconds
-    >>> my_definition = DatasetDefinition(measures=measures, labels=[])
-    >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,gap_tolerance=gap_tolerance,include_labels=False,time_units='s')
+    >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,include_labels=False)
 
     Transfer data with a two-hour time shift applied to the entire dataset, and use custom de-identification functions:
 
     >>> time_shift = 2*60*60  # 2 hours in seconds
     >>> my_deid_funcs = {'height': lambda x: x + random.uniform(-1.5, 1.5)}
-    >>> my_definition = DatasetDefinition(measures=measures, labels=labels)
     >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,deidentify=True,deidentification_functions=my_deid_funcs,time_shift=time_shift,time_units='s')
 
     """
