@@ -23,11 +23,11 @@ DB_NAME = 'period_test'
 
 
 def test_period_features():
-    _test_for_both(DB_NAME, test_period_simple)
-    _test_for_both(DB_NAME, test_period_weird)
+    _test_for_both(DB_NAME, _period_simple)
+    _test_for_both(DB_NAME, _period_weird)
 
 
-def test_period_simple(db_type, dataset_location, connection_params):
+def _period_simple(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
@@ -107,7 +107,7 @@ def test_period_simple(db_type, dataset_location, connection_params):
 
         window_count += 1
 
-def test_period_weird(db_type, dataset_location, connection_params):
+def _period_weird(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
