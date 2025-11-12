@@ -399,21 +399,29 @@ class SQLHandler(ABC):
         # Insert device_encounter if it doesn't exist, return id.
         pass
 
-    def get_device_time_ranges_by_patient(self, patient_id: int, end_time_n: Optional[int], start_time_n: Optional[int]):
+    def get_device_time_ranges_by_patient(self, patient_id: int, end_time_n: Optional[int],
+                                          start_time_n: Optional[int]):
         patient_device_query = "SELECT device_id, start_time, end_time FROM device_patient WHERE patient_id = ?"
         args = (int(patient_id),)
-
         if start_time_n is not None:
             patient_device_query += " AND (end_time >= ? OR end_time is NULL) "
             args += (int(start_time_n),)
         if end_time_n is not None:
             patient_device_query += " AND start_time <= ? "
             args += (int(end_time_n),)
-
         patient_device_query += " ORDER BY start_time, end_time"
         with self.connection(begin=False) as (conn, cursor):
             cursor.execute(patient_device_query, args)
-            return cursor.fetchall()
+            results = cursor.fetchall()
+
+            # Replace None end_time with current nanosecond epoch
+            current_time_ns = time.time_ns()
+            results = [
+                (device_id, start_time, end_time if end_time is not None else current_time_ns)
+                for device_id, start_time, end_time in results
+            ]
+
+            return results
 
     @abstractmethod
     def select_all_settings(self):
