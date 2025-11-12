@@ -32,7 +32,7 @@ def test_open_ended_device_patient_mapping():
 
 
 def _test_open_ended_mapping(db_type, dataset_location, connection_params):
-    sdk = AtriumSDK.create_dataset(
+    AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     sdk = AtriumSDK(dataset_location, db_type, connection_params, num_threads=40)
@@ -180,7 +180,7 @@ def test_multiple_overlapping_mappings():
 
 
 def _test_overlapping_mappings(db_type, dataset_location, connection_params):
-    sdk = AtriumSDK.create_dataset(
+    AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     sdk = AtriumSDK(dataset_location, db_type, connection_params, num_threads=40)
@@ -300,12 +300,12 @@ def _assert_patient_query(sdk, patient_id, measure_id, start_time, end_time, per
             assert np.array_equal(read_values, expected_values), \
                 f"Values don't match. Expected offset {expected_offset}, got different values"
 
-        print(f"  ✓ Successfully retrieved {len(read_values)} samples")
+        print(f"Successfully retrieved {len(read_values)} samples")
     else:
         assert read_values is None or len(read_values) == 0, \
             f"Expected no data for patient {patient_id} in range [{start_time}, {end_time}], but got {len(read_values) if read_values is not None else 0} samples"
 
-        print(f"  ✓ Correctly returned no data (as expected)")
+        print(f"Correctly returned no data (as expected)")
 
 
 def _assert_device_query(sdk, device_id, measure_id, start_time, end_time, period_nano,
@@ -331,10 +331,10 @@ def _assert_device_query(sdk, device_id, measure_id, start_time, end_time, perio
             assert np.array_equal(read_values, expected_values), \
                 f"Values don't match. Expected offset {expected_offset}"
 
-        print(f"  ✓ Successfully retrieved {len(read_values)} samples via device query")
+        print(f"Successfully retrieved {len(read_values)} samples via device query")
     else:
         assert read_values is None or len(read_values) == 0, \
             f"Expected no data for device {device_id}, but got data"
 
-        print(f"  ✓ Correctly returned no data (as expected)")
+        print(f"Correctly returned no data (as expected)")
 
