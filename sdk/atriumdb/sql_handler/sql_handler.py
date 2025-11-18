@@ -176,7 +176,8 @@ class SQLHandler(ABC):
                 delete_query = "DELETE FROM block_index WHERE id = ?;"
                 cursor.executemany(delete_query, [(block_id,) for block_id in block_ids_to_delete])
 
-    def replace_intervals(self, measure_id: int, device_id: int, interval_list: List[List[int]]):
+    def replace_intervals(self, measure_id: int, device_id: int, interval_list: List[List[int]],
+                          batch_size: int = 1024):
         if len(interval_list) == 0:
             raise ValueError("This function deletes and replaces all intervals. `interval_list` cannot be empty")
 
@@ -188,14 +189,20 @@ class SQLHandler(ABC):
             """
             cursor.execute(delete_query, (measure_id, device_id))
 
-            # Insert new intervals into the interval_index table
+            # Prepare interval tuples
+            interval_tuples = [(int(measure_id), int(device_id), int(start_time), int(end_time))
+                               for (start_time, end_time) in interval_list]
+
+            # Insert new intervals in batches
             insert_query = """
                 INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n)
                 VALUES (?, ?, ?, ?);
             """
-            interval_tuples = [(int(measure_id), int(device_id), int(start_time), int(end_time))
-                               for (start_time, end_time) in interval_list]
-            cursor.executemany(insert_query, interval_tuples)
+
+            # Process intervals in batches
+            for i in range(0, len(interval_tuples), batch_size):
+                batch = interval_tuples[i:i + batch_size]
+                cursor.executemany(insert_query, batch)
 
     @abstractmethod
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
