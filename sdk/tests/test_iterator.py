@@ -33,15 +33,23 @@ EXAMPLE_DATA_DIR = TEST_DIR / "example_data"
 
 
 def test_iterator():
-    _test_for_both(DB_NAME, _test_iterator)
+    _test_for_both(f"{DB_NAME}_period", _test_iterator_period)
+    _test_for_both(DB_NAME, _test_iterator_freq)
 
 
-def _test_iterator(db_type, dataset_location, connection_params):
+def _test_iterator_freq(db_type, dataset_location, connection_params):
+    _run_iterator_test(db_type, dataset_location, connection_params, False)
+
+def _test_iterator_period(db_type, dataset_location, connection_params):
+    _run_iterator_test(db_type, dataset_location, connection_params, True)
+
+
+def _run_iterator_test(db_type, dataset_location, connection_params, use_period):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     # larger test
-    write_mit_bih_to_dataset(sdk, max_records=2, seed=42)
+    write_mit_bih_to_dataset(sdk, max_records=2, seed=42, use_period=use_period)
 
     test_parameters = [
         # filename, expected_device_id_type, expected_patient_id_type

@@ -61,7 +61,7 @@ def export_data_from_sdk(sdk: AtriumSDK, directory: Union[str, PurePath], measur
     if data_format == 'csv':
         df.to_csv(filename, index=False)
     elif data_format == 'parquet':
-        df.to_parquet(filename, index=False, engine='fastparquet')
+        df.to_parquet(filename, index=False, engine='pyarrow')
 
     metadata = create_json_metadata_dict(
         measure_tag, freq_nhz, units, device_tag, start_time, end_time, scale_m, scale_b, None)

@@ -17,8 +17,8 @@
 
 sqlite_insert_ignore_measure_query = "INSERT OR IGNORE INTO measure (tag, freq_nhz, unit, name) " \
                               "VALUES (?, ?, ?, ?);"
-sqlite_select_measure_from_id_query = "SELECT id, tag, name, freq_nhz, code, unit, unit_label, unit_code, source_id FROM measure WHERE id = ?"
-sqlite_select_measure_from_triplet_query = "SELECT id, tag, name, freq_nhz, code, unit, unit_label, unit_code, source_id FROM measure WHERE tag = ? AND freq_nhz = ? AND unit = ?"
+sqlite_select_measure_from_id_query = "SELECT id, tag, name, freq_nhz, period_ns, code, unit, unit_label, unit_code, source_id FROM measure WHERE id = ?"
+sqlite_select_measure_from_triplet_query = "SELECT id, tag, name, freq_nhz, period_ns, code, unit, unit_label, unit_code, source_id FROM measure WHERE tag = ? AND freq_nhz = ? AND unit = ?"
 
 sqlite_insert_ignore_device_query = "INSERT OR IGNORE INTO device (tag, name) VALUES (?, ?);"
 sqlite_select_device_from_id_query = "SELECT id, tag, name, manufacturer, model, type, bed_id, source_id FROM device WHERE id = ?"

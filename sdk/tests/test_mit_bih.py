@@ -58,15 +58,17 @@ LABEL_SET_LIST = [
 
 
 def test_mit_bih():
+    _test_for_both(DB_NAME, lambda db_type, dataset_location, connection_params:
+    _test_mit_bih(db_type, dataset_location, connection_params, use_period=True))
+
     _test_for_both(DB_NAME, _test_mit_bih)
 
-
-def _test_mit_bih(db_type, dataset_location, connection_params):
+def _test_mit_bih(db_type, dataset_location, connection_params, use_period=False):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
-    assert_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
+    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED, use_period=use_period)
+    assert_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED, use_period=use_period)
 
     # Test using caching
     sdk_cached = AtriumSDK(
@@ -74,22 +76,22 @@ def _test_mit_bih(db_type, dataset_location, connection_params):
 
     for device_id in sdk_cached.get_all_devices():
         sdk_cached.load_device(device_id)
-    assert_mit_bih_to_dataset(sdk_cached, max_records=MAX_RECORDS, seed=SEED)
+    assert_mit_bih_to_dataset(sdk_cached, max_records=MAX_RECORDS, seed=SEED, use_period=use_period)
 
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
-    write_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_numpy=True)
-    assert_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_numpy=True)
+    write_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_numpy=True, use_period=use_period)
+    assert_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_numpy=True, use_period=use_period)
 
     # Test using message inserts
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
-    write_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_messages=True)
-    assert_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED)
+    write_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_messages=True, use_period=use_period)
+    assert_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_period=use_period)
 
 
 def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, deidentify=False, time_shift=None,
-                              use_patient_id=False, seed=None, use_numpy=False):
+                              use_patient_id=False, seed=None, use_numpy=False, use_period=False):
     print()
     seed = SEED if seed is None else seed
     if seed is not None:
@@ -102,12 +104,19 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
         num_records += 1
         device_id = sdk.get_device_id(device_tag=record.record_name)
 
-        freq_nano = 500 * 1_000_000_000
-        period_ns = int(10 ** 18 // freq_nano)
+        if use_period:
+            # Use period instead of frequency
+            period_ns = 2_000_000  # 2ms
+            freq_nano = int(10 ** 18 // period_ns)
+        else:
+            freq_nano = 500 * 1_000_000_000
+            period_ns = int(10 ** 18 // freq_nano)
+
         if use_numpy:
             device_id = np.int64(device_id)
-            freq_nano = np.int64(freq_nano)
             period_ns = np.int64(period_ns)
+            if freq_nano is not None:
+                freq_nano = np.int64(freq_nano)
 
         time_arr = np.arange(record.sig_len, dtype=np.int64) * period_ns
         gap_data_2d = create_gaps(time_arr.size, period_ns)
@@ -182,9 +191,13 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
 
             assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
 
+            # Test get_headers
+            just_headers = sdk.get_headers(measure_id, start_time_n, end_time_n, **query_args)
+            assert just_headers == headers
+
 
 def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=None, use_numpy=False,
-                             use_messages=False):
+                             use_messages=False, use_period=False):
     seed = SEED if seed is None else seed
     if seed is not None:
         np.random.seed(seed)
@@ -202,12 +215,20 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
         num_records += 1
         if use_numpy:
             device_id = np.int64(sdk.insert_device(device_tag=record.record_name))
-            freq_nano = np.int64(500 * 1_000_000_000)
-            period_nano = np.int64(10 ** 18 // freq_nano)
         else:
             device_id = sdk.insert_device(device_tag=record.record_name)
+
+        if use_period:
+            period_nano = 2_000_000
+            freq_nano = int(10 ** 18 // period_nano)
+        else:
             freq_nano = 500 * 1_000_000_000
             period_nano = int(10 ** 18 // freq_nano)
+
+        if use_numpy:
+            period_nano = np.int64(period_nano)
+            if freq_nano is not None:
+                freq_nano = np.int64(freq_nano)
 
         time_arr = np.arange(record.sig_len, dtype=np.int64) * period_nano
 
@@ -227,12 +248,10 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
 
         if use_numpy:
             patient_id = np.int64(insert_random_patients(sdk, 1)[0])
-
             start_time = np.int64(time_arr[0])
             end_time = np.int64(time_arr[-1] + period_nano)
         else:
             patient_id = insert_random_patients(sdk, 1)[0]
-
             start_time = int(time_arr[0])
             end_time = int(time_arr[-1] + period_nano)
 
@@ -256,17 +275,20 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
 
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
-                write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, record, d_record, i,
-                             message_starts, message_num_values, use_messages=use_messages)
+                write_to_sdk(freq_nano, period_nano, device_id, gap_data_2d, time_arr, start_time, sdk, record,
+                             d_record, i,
+                             message_starts, message_num_values, use_messages=use_messages, use_period=use_period)
         else:
-            write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, record, d_record, None,
-                         message_starts, message_num_values, use_messages=use_messages)
+            write_to_sdk(freq_nano, period_nano, device_id, gap_data_2d, time_arr, start_time, sdk, record, d_record,
+                         None,
+                         message_starts, message_num_values, use_messages=use_messages, use_period=use_period)
 
     return device_patient_dict
 
 
-def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p_record, d_record, signal_i,
-                 message_starts, message_num_values, use_messages=False):
+def write_to_sdk(freq_nano, period_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p_record, d_record,
+                 signal_i,
+                 message_starts, message_num_values, use_messages=False, use_period=False):
     measure_tag, scale_b, scale_m, units, value_data = get_record_data_for_ingest(d_record, p_record, signal_i)
 
     measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq_nano,
@@ -302,13 +324,27 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
             encoded_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
         if use_messages:
-            sdk.write_time_value_pairs(measure_id, device_id, time_arr, value_data, freq=freq_nano, time_units="ns",
-                                       freq_units="nHz", scale_m=scale_m, scale_b=scale_b)
+            if use_period:
+                sdk.write_time_value_pairs(measure_id, device_id, time_arr, value_data,
+                                           period=period_nano, time_units="ns",
+                                           scale_m=scale_m, scale_b=scale_b)
+            else:
+                sdk.write_time_value_pairs(measure_id, device_id, time_arr, value_data,
+                                           freq=freq_nano, time_units="ns", freq_units="nHz",
+                                           scale_m=scale_m, scale_b=scale_b)
             return
+
         # Call the write_data method with the determined parameters
-        sdk.write_data(measure_id, device_id, time_arr, value_data, freq_nano, start_time,
-                       raw_time_type=raw_t_t, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t,
-                       encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b, gap_tolerance=gap_tolerance)
+        if use_period:
+            sdk.write_data(measure_id, device_id, time_arr, value_data, period_ns=period_nano, time_0=start_time,
+                           raw_time_type=raw_t_t, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t,
+                           encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b,
+                           gap_tolerance=gap_tolerance)
+        else:
+            sdk.write_data(measure_id, device_id, time_arr, value_data, freq_nhz=freq_nano, time_0=start_time,
+                           raw_time_type=raw_t_t, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t,
+                           encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b,
+                           gap_tolerance=gap_tolerance)
 
         sdk.block.t_compression = 1
         sdk.block.t_compression_level = 0
@@ -321,17 +357,32 @@ def write_to_sdk(freq_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p
                 messages.append(value_data[message_start_index:message_start_index + num_values])
                 message_start_index += num_values
 
-            sdk.write_segments(measure_id, device_id, messages, message_starts, freq=freq_nano,
-                               freq_units='nHz', time_units='ns', scale_m=scale_m, scale_b=scale_b)
+            if use_period:
+                sdk.write_segments(measure_id, device_id, messages, message_starts,
+                                   period=period_nano, time_units='ns',
+                                   scale_m=scale_m, scale_b=scale_b)
+            else:
+                sdk.write_segments(measure_id, device_id, messages, message_starts,
+                                   freq=freq_nano, freq_units='nHz', time_units='ns',
+                                   scale_m=scale_m, scale_b=scale_b)
             return
 
         raw_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
         encoded_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
         # Call the write_data method with the determined parameters
-        sdk.write_data(measure_id, device_id, gap_data_2d.flatten(), value_data, freq_nano, start_time,
-                       raw_time_type=raw_t_t, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t,
-                       encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b, gap_tolerance=gap_tolerance)
+        if use_period:
+            sdk.write_data(measure_id, device_id, gap_data_2d.flatten(), value_data, period_ns=period_nano,
+                           time_0=start_time,
+                           raw_time_type=raw_t_t, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t,
+                           encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b,
+                           gap_tolerance=gap_tolerance)
+        else:
+            sdk.write_data(measure_id, device_id, gap_data_2d.flatten(), value_data, freq_nhz=freq_nano,
+                           time_0=start_time,
+                           raw_time_type=raw_t_t, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t,
+                           encoded_value_type=encoded_v_t, scale_m=scale_m, scale_b=scale_b,
+                           gap_tolerance=gap_tolerance)
 
 
 def get_record_data_for_ingest(d_record, p_record, signal_i):

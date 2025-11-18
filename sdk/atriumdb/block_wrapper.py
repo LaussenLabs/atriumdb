@@ -59,7 +59,7 @@ class BlockMetadata(Structure):
                 ("t_compression_level", c_int8),
                 ("start_n", c_uint64),
                 ("end_n", c_uint64),
-                ("freq_nhz", c_uint64),
+                ("freq_nhz", c_uint64),  # this represents the period_ns in tsc version 2.4 or greater
                 ("num_gaps", c_uint64),
                 ("t_start_byte", c_uint64),
                 ("t_num_bytes", c_uint64),
@@ -261,3 +261,15 @@ class WrappedBlockDll:
             c_double(period_ns),
             c_uint64(len(nan_analog_array))
         )
+
+
+def get_period_ns_from_header(header):
+    """
+    Get period in nanoseconds from a BlockMetadata header.
+    """
+    version = header.tsc_version_num * 10 + header.tsc_version_ext
+
+    if version < 24:
+        return 10 ** 18 // header.freq_nhz
+    else:
+        return header.freq_nhz

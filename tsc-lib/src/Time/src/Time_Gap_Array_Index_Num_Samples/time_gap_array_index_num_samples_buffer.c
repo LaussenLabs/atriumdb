@@ -28,8 +28,7 @@ size_t time_gap_d64_num_samples_get_size(const void *time_data, block_metadata_t
     switch (block_metadata->t_raw_type) {
         case T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
             return gap_int64_ns_gap_array_get_size(
-                    (int64_t *)time_data, block_metadata->num_vals, block_metadata->freq_nhz);
-
+                    (int64_t *)time_data, block_metadata->num_vals, get_period_ns_from_header(block_metadata));
         case T_TYPE_GAP_ARRAY_INT64_INDEX_NUM_SAMPLES:
 
         case T_TYPE_START_TIME_NUM_SAMPLES:

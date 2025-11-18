@@ -160,6 +160,8 @@ for each record and handle multiple signals in a single record.
 
 .. _methods_of_inserting_data:
 
+.. _methods_of_inserting_data:
+
 Methods of Inserting Data
 --------------------------
 
@@ -174,10 +176,16 @@ Segments
 ^^^^^^^^^^
 
 Segments are `a sequence of evenly-timed samples <https://en.wikipedia.org/wiki/Sampling_(signal_processing)/>`_ .
-A segment includes a **start time**, a **sampling frequency**, and a sequence of **values**.
-The timestamp of each value can be inferred based on the start time and the frequency.
+A segment includes a **start time**, a **sampling frequency or period**, and a sequence of **values**.
+The timestamp of each value can be inferred based on the start time and the frequency/period.
 
 Segments are often used for high-frequency waveforms or signals.
+
+**Timing Parameters**: You can specify timing using either:
+- `freq` with `freq_units` (e.g., `freq=250, freq_units="Hz"`)
+- `period` with `time_units` (e.g., `period=0.004, time_units="s"`)
+
+**Note**: `freq` and `period` are mutually exclusive - specify one or the other, not both.
 
 Segments can be inserted one at a time using `AtriumSDK.write_segment <contents.html#atriumdb.AtriumSDK.write_segment>`_
 or in batches using `AtriumSDK.write_segments <contents.html#atriumdb.AtriumSDK.write_segments>`_.
@@ -190,15 +198,21 @@ Segments can also be batched piece by piece using :ref:`buffered_inserts`.
     measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
     device_id = sdk.insert_device(device_tag="test_device")
 
-    # Inserting a single segment
+    # Inserting a single segment using frequency
     segment_values = np.arange(100)  # Continuous values from 0 to 99
     start_time = 0.0  # Start time in seconds
     sdk.write_segment(measure_id, device_id, segment_values, start_time, freq=1.0, time_units="s", freq_units="Hz")
 
-    # Inserting multiple segments at once
+    # Alternative: Inserting a single segment using period
+    sdk.write_segment(measure_id, device_id, segment_values, start_time, period=1.0, time_units="s")
+
+    # Inserting multiple segments at once using frequency
     segments = [np.arange(10), np.arange(10, 20), np.arange(20, 30)]
     start_times = [0.0, 10.0, 20.0]  # Start times in seconds for each segment
     sdk.write_segments(measure_id, device_id, segments, start_times, freq=1.0, time_units="s", freq_units="Hz")
+
+    # Alternative: Inserting multiple segments using period
+    sdk.write_segments(measure_id, device_id, segments, start_times, period=1.0, time_units="s")
 
 
 Time-Value Pairs
@@ -220,6 +234,12 @@ can be used for inserting time-value pairs, with arrays of values and correspond
     times = np.array([0.0, 2.0, 4.5])  # Time values in seconds
     values = np.array([100, 200, 300])  # Corresponding values
     sdk.write_time_value_pairs(measure_id, device_id, times, values, time_units="s")
+
+    # Inserting time-value pairs with expected frequency
+    sdk.write_time_value_pairs(measure_id, device_id, times, values, freq=0.5, time_units="s", freq_units="Hz")
+
+    # Alternative: Inserting time-value pairs with expected period
+    sdk.write_time_value_pairs(measure_id, device_id, times, values, period=2.0, time_units="s")
 
 .. _buffered_inserts:
 
@@ -248,6 +268,11 @@ The buffer organized data by their measure-device pair, and data is automaticall
         for record in record_segments:
             sdk.write_segment(measure_id, device_id, record.d_signal, start_time_s, freq=record.fs,
                               scale_m=scale_m, scale_b=scale_b, time_units="s", freq_units="Hz")
+
+            # Alternative: Write using period instead of frequency
+            # period_s = 1.0 / record.fs
+            # sdk.write_segment(measure_id, device_id, record.d_signal, start_time_s, period=period_s,
+            #                   scale_m=scale_m, scale_b=scale_b, time_units="s")
 
         buffer.flush_all()
         # Buffer auto-flushes when the context is exited

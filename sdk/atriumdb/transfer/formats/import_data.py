@@ -33,7 +33,7 @@ def import_data_to_sdk(sdk: AtriumSDK, filename: Union[str, PurePath], metadata:
     if data_format == 'csv':
         df = pd.read_csv(filename)
     elif data_format == 'parquet':
-        df = pd.read_parquet(filename, engine='fastparquet')
+        df = pd.read_parquet(filename, engine='pyarrow')
 
     device_tag = metadata['device_tag']
     measure_tag = metadata['measure_tag']

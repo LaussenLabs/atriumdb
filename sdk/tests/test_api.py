@@ -57,9 +57,9 @@ def _test_api(db_type, dataset_location, connection_params):
     # change the sdk token expiry so the test can work
     api_sdk.token_expiry = time.time() + 1_000_000
 
-    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
+    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED, use_period=True)
 
-    assert_mit_bih_to_dataset(api_sdk, max_records=MAX_RECORDS, seed=SEED)
+    assert_mit_bih_to_dataset(api_sdk, max_records=MAX_RECORDS, seed=SEED, use_period=True)
 
     # close api connection
     api_sdk.close()

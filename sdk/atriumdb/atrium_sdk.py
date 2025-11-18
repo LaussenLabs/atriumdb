@@ -47,6 +47,7 @@ import sys
 import os
 from typing import Union, List, Tuple, Optional
 import platform
+from ctypes import sizeof
 
 from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
@@ -110,6 +111,7 @@ class AtriumSDK:
     :param str atriumdb_lib_path: A file path pointing to the shared library (CDLL) that powers the compression and decompression. Not required for most users.
     :param bool no_pool: If true disables Mariadb connection pooling, instead using a new connection for each query.
     :param AtriumFileHandler storage_handler: Advanced feature. If you implement your own atriumdb file handler you can set it here.
+    :param bool auto_upgrade: If True, automatically upgrade the database schema if needed (e.g., adding new columns). This allows the SDK to initialize successfully even if the database schema is outdated. Default is False.
 
     Examples:
     -----------
@@ -142,7 +144,7 @@ class AtriumSDK:
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
                  connection_params: dict = None, num_threads: int = 1, api_url: str = None, token: str = None,
                  refresh_token=None, validate_token=True, tsc_file_location: str = None, atriumdb_lib_path: str = None,
-                 no_pool=False, storage_handler: AtriumFileHandler = None):
+                 no_pool=False, storage_handler: AtriumFileHandler = None, auto_upgrade: bool = False):
         self.block_cache = {}  # device_id -> list of block sql results
         self.start_cache = {}  # device_id -> list of start times
         self.end_cache = {}  # device_id -> list of end times
@@ -208,6 +210,8 @@ class AtriumSDK:
             self.sql_handler = SQLiteHandler(db_file)
             self.mode = "local"
             self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
+            if auto_upgrade:
+                self.sql_handler.update_measure_schema()
             self.settings_dict = self._get_all_settings()
 
         # Handle MySQL or MariaDB connections
@@ -236,6 +240,9 @@ class AtriumSDK:
             self.sql_handler = MariaDBHandler(host, user, password, database, port, no_pool=no_pool)
             self.mode = "local"
             self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
+
+            if auto_upgrade:
+                self.sql_handler.update_measure_schema()
             self.settings_dict = self._get_all_settings()
 
         # Handle API connections
@@ -340,7 +347,7 @@ class AtriumSDK:
 
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None, protected_mode: str = None,
-                       overwrite: str = None, connection_params: dict = None, no_pool=False):
+                       overwrite: str = None, connection_params: dict = None, no_pool=False, auto_upgrade: bool = False):
         """
         .. _create_dataset_label:
 
@@ -352,6 +359,7 @@ class AtriumSDK:
         :param str overwrite: Specifies the behavior to take when new data being inserted overlaps in time with existing data. Allowed values are "error", "ignore", or "overwrite". Upon triggered overwrite: if "error", an error will be raised. If "ignore", the new data will not be inserted. If "overwrite", the old data will be overwritten with the new data. The default behavior can be changed in the `sdk/atriumdb/helpers/config.toml` file.
         :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" database type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
         :param bool no_pool: If true disables Mariadb connection pooling, instead using a new connection for each query.
+        :param bool auto_upgrade: If True, automatically upgrade the database schema if needed (e.g., adding new columns). This allows the SDK to initialize successfully even if the database schema is outdated. Default is False.
 
         :return: An initialized AtriumSDK object.
         :rtype: AtriumSDK
@@ -410,7 +418,7 @@ class AtriumSDK:
             MariaDBHandler(host, user, password, database, port).create_schema()
 
         sdk_object = cls(dataset_location=dataset_location, metadata_connection_type=database_type,
-                         connection_params=connection_params, no_pool=no_pool)
+                         connection_params=connection_params, no_pool=no_pool, auto_upgrade=auto_upgrade)
 
         # Add settings
         sdk_object.sql_handler.insert_setting(PROTECTED_MODE_SETTING_NAME, str(protected_mode))
@@ -757,10 +765,12 @@ class AtriumSDK:
                         raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
                         scale_m=scale_m, scale_b=scale_b)
 
-    def write_data(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq_nhz: int,
-                   time_0: int, raw_time_type: int = None, raw_value_type: int = None, encoded_time_type: int = None,
+    def write_data(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray,
+                   freq_nhz: int = None, time_0: int = None, raw_time_type: int = None,
+                   raw_value_type: int = None, encoded_time_type: int = None,
                    encoded_value_type: int = None, scale_m: float = None, scale_b: float = None,
-                   interval_index_mode: str = None, gap_tolerance: int = 0, merge_blocks: bool = True):
+                   interval_index_mode: str = None, gap_tolerance: int = 0, merge_blocks: bool = True,
+                   period_ns: int = None):
         """
         .. _write_data_label:
 
@@ -799,6 +809,7 @@ class AtriumSDK:
             existing block that is closest in time to the data your writing and merge your data with it. THIS IS NOT THREAD SAFE
             and can lead to race conditions if two processes (with two different sdk objects) try to ingest (and merge)
             data for the same measure and device at the same time.
+        :param int period_ns: Sampling period in nanoseconds, mutually exclusive with freq_nhz.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.
@@ -819,7 +830,7 @@ class AtriumSDK:
             >>> gap_arr = np.array([42, 1_000_000_000, 99, 2_000_000_000])
             >>> value_data = np.sin(np.linspace(0, 4, num=200))
             >>> sdk.write_data(
-            >>>     measure_id, device_id, gap_arr, value_data, freq_nhz, time_zero_nano,
+            >>>     measure_id, device_id, gap_arr, value_data, freq_nhz=freq_nhz, time_0=time_zero_nano,
             >>>     raw_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
             >>>     raw_value_type=V_TYPE_INT64,
             >>>     encoded_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
@@ -829,6 +840,21 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for writing data.")
 
+        # Handle mutually exclusive freq_nhz and period_ns
+        if freq_nhz is not None and period_ns is not None:
+            raise ValueError("freq_nhz and period_ns are mutually exclusive. Specify only one.")
+        if freq_nhz is None and period_ns is None:
+            raise ValueError("Either freq_nhz or period_ns must be specified.")
+
+        if freq_nhz is not None:
+            period_ns = None
+
+        # Convert period to freq only for legacy calculations that still require it
+        if period_ns is not None:
+            freq_nhz_for_calc = 10 ** 18 // period_ns
+        else:
+            freq_nhz_for_calc = freq_nhz
+
         # Ensure there is data to be written
         assert value_data.size > 0, "There are no values in the value array to write. Cannot write no data."
 
@@ -837,11 +863,13 @@ class AtriumSDK:
 
         # check that value types make sense
         if not ((raw_value_type == 1 and encoded_value_type == 3) or (raw_value_type == encoded_value_type)):
-            raise ValueError(f"Cannot encode raw value type {VALUE_TYPES_STR[raw_value_type]} to encoded value type {VALUE_TYPES_STR[encoded_value_type]}")
+            raise ValueError(
+                f"Cannot encode raw value type {VALUE_TYPES_STR[raw_value_type]} to encoded value type {VALUE_TYPES_STR[encoded_value_type]}")
 
         # check that time types make sense
         if not ((raw_time_type == 1 and encoded_time_type == 2) or (raw_time_type == encoded_time_type)):
-            raise ValueError(f"Cannot encode raw time type {TIME_TYPES_STR[raw_time_type]} to encoded time type {TIME_TYPES_STR[encoded_time_type]}")
+            raise ValueError(
+                f"Cannot encode raw time type {TIME_TYPES_STR[raw_time_type]} to encoded time type {TIME_TYPES_STR[encoded_time_type]}")
 
         # Set default interval index and ensure valid type.
         interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
@@ -849,11 +877,12 @@ class AtriumSDK:
             f"interval_index must be one of {allowed_interval_index_modes}"
 
         # Force Python Integers
-        freq_nhz = int(freq_nhz)
+        freq_nhz_for_calc = int(freq_nhz_for_calc)
         time_0 = int(time_0)
         measure_id = int(measure_id)
         device_id = int(device_id)
-        period_ns = (10 ** 18) // freq_nhz
+
+        period_ns_for_calc = (10 ** 18) // freq_nhz if period_ns is None else period_ns
 
         # Presort the time data
         if raw_time_type == 1:
@@ -866,10 +895,10 @@ class AtriumSDK:
                 value_data = value_data[sorted_indices]
 
         elif raw_time_type == 2:
-            if not np.all(time_data[1::2] >= -period_ns):
+            if not np.all(time_data[1::2] >= -period_ns_for_calc):
                 # Convert gap_data into messages
                 message_starts_1, message_sizes_1 = reconstruct_messages(
-                    time_0, time_data, freq_nhz, int(value_data.size))
+                    time_0, time_data, freq_nhz=freq_nhz, period_ns=period_ns, num_values=int(value_data.size))
 
                 # Sort both message lists + values, and copy values to not mess with the originals
                 value_data = value_data.copy()
@@ -877,12 +906,14 @@ class AtriumSDK:
                 time_0 = message_starts_1[0]
 
                 # Convert back into gap data
-                time_data = create_gap_arr_from_variable_messages(message_starts_1, message_sizes_1, freq_nhz)
+                time_data = create_gap_arr_from_variable_messages(message_starts_1, message_sizes_1,
+                                                                  freq_nhz=freq_nhz, period_ns=period_ns)
         else:
             raise ValueError("raw_time_type must be either 1 or 2")
 
         # Calculate new intervals
-        write_intervals = find_intervals(freq_nhz, raw_time_type, time_data, time_0, int(value_data.size))
+        write_intervals = find_intervals(freq_nhz=freq_nhz, period_ns=period_ns, raw_time_type=raw_time_type,
+                                         time_data=time_data, data_start_time=time_0, num_values=int(value_data.size))
 
         # check overwrite setting
         if OVERWRITE_SETTING_NAME not in self.settings_dict:
@@ -913,7 +944,8 @@ class AtriumSDK:
                     _LOGGER.debug(
                         f"({measure_id}, {device_id}): value_data: {value_data} \n time_data: {time_data} \n write_intervals: {write_intervals} \n current_intervals: {current_intervals}")
                     overwrite_file_dict, old_block_ids, old_file_list = self._overwrite_delete_data(
-                        measure_id, device_id, time_data, time_0, raw_time_type, value_data.size, freq_nhz)
+                        measure_id, device_id, time_data, time_0, raw_time_type, value_data.size,
+                        freq_nhz=freq_nhz, period_ns=period_ns)
                 elif overwrite_setting == 'error':
                     raise ValueError("Data to be written overlaps already ingested data.")
                 else:
@@ -929,7 +961,11 @@ class AtriumSDK:
             if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
                 # need to subtract one period since the function gives end_time+1 period
                 end_time = _calc_end_time_from_gap_data(values_size=value_data.size, gap_array=time_data,
-                                                        start_time=time_0, freq_nhz=freq_nhz) - freq_nhz_to_period_ns(freq_nhz)
+                                                        start_time=time_0, freq_nhz=freq_nhz, period_ns=period_ns)
+                if freq_nhz is not None:
+                    end_time -= freq_nhz_to_period_ns(freq_nhz)
+                else:
+                    end_time -= period_ns
             elif raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
                 end_time = time_data[-1]
             else:
@@ -944,7 +980,8 @@ class AtriumSDK:
                 # get the file info for the block we are going to merge these values into
                 file_info = self.sql_handler.select_file(file_id=old_block[3])
                 # Read the encoded data from the files
-                encoded_bytes_old = self.file_api.read_file_list([old_block[1:6]], filename_dict={file_info[0]: file_info[1]})
+                encoded_bytes_old = self.file_api.read_file_list([old_block[1:6]],
+                                                                 filename_dict={file_info[0]: file_info[1]})
 
                 # decode the headers before they are edited by decode blocks so we know the original time type
                 header = self.block.decode_headers(encoded_bytes_old, np.array([0], dtype=np.uint64))
@@ -953,18 +990,21 @@ class AtriumSDK:
                 same_type = True
                 if header[0].t_encoded_type != encoded_time_type:
                     same_type = False
-                    _LOGGER.warning(f"The time type ({TIME_TYPES_STR[encoded_time_type]}) you are trying to encode the times as "
-                                     f"doesn't match the encoded time type ({TIME_TYPES_STR[header[0].t_encoded_type]}) of the block "
-                                     f"you are trying to merge with.")
+                    _LOGGER.warning(
+                        f"The time type ({TIME_TYPES_STR[encoded_time_type]}) you are trying to encode the times as "
+                        f"doesn't match the encoded time type ({TIME_TYPES_STR[header[0].t_encoded_type]}) of the block "
+                        f"you are trying to merge with.")
                 elif header[0].v_encoded_type != encoded_value_type:
                     same_type = False
-                    _LOGGER.warning(f"The value type ({VALUE_TYPES_STR[encoded_value_type]}) you are trying to encode the values as "
-                                     f"doesn't match the encoded value type ({VALUE_TYPES_STR[header[0].v_encoded_type]}) of the block "
-                                     f"you are trying to merge with.")
+                    _LOGGER.warning(
+                        f"The value type ({VALUE_TYPES_STR[encoded_value_type]}) you are trying to encode the values as "
+                        f"doesn't match the encoded value type ({VALUE_TYPES_STR[header[0].v_encoded_type]}) of the block "
+                        f"you are trying to merge with.")
                 elif header[0].v_raw_type != raw_value_type:
                     same_type = False
-                    _LOGGER.warning(f"The raw value type ({VALUE_TYPES_STR[raw_value_type]}) doesn't match the raw value type "
-                                     f"({VALUE_TYPES_STR[header[0].v_raw_type]}) of the block you are trying to merge with.")
+                    _LOGGER.warning(
+                        f"The raw value type ({VALUE_TYPES_STR[raw_value_type]}) doesn't match the raw value type "
+                        f"({VALUE_TYPES_STR[header[0].v_raw_type]}) of the block you are trying to merge with.")
 
                 # make sure the scale factors match. If they don't then don't merge the blocks
                 if same_type and header[0].scale_m == scale_m and header[0].scale_b == scale_b:
@@ -974,17 +1014,20 @@ class AtriumSDK:
                         # if the new time data is a gap array make it into a timestamp array to match the old times
                         if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
                             try:
-                                time_data = create_timestamps_from_gap_data(values_size=value_data.size, gap_array=time_data,
-                                                                            start_time=time_0, freq_nhz=freq_nhz)
+                                time_data = create_timestamps_from_gap_data(values_size=value_data.size,
+                                                                            gap_array=time_data,
+                                                                            start_time=time_0, freq_nhz=freq_nhz,
+                                                                            period_ns=period_ns)
                                 raw_time_type = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
                             except ValueError:
+                                freq_desc = f"{freq_nhz}" if freq_nhz is not None else f"period of {period_ns} ns"
                                 raise ValueError(f"You are trying to merge a gap array into a block that has the data "
                                                  f"saved as a timestamp array and integer timestamps cannot be created "
-                                                 f"for your gap data with a frequency of {freq_nhz}. Either set "
+                                                 f"for your gap data with a frequency of {freq_desc}. Either set "
                                                  f"merge_blocks to false or pass in the times as a timestamp array.")
                         # if the new time data is a gap array convert it to a time array to match the old times
                         elif raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
-                            time_data = create_gap_arr(time_data, 1, freq_nhz)
+                            time_data = create_gap_arr(time_data, 1, freq_nhz_for_calc)
                             raw_time_type = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
                     # Decode the data and get the values and the times we are going to merge this data with
@@ -1000,8 +1043,9 @@ class AtriumSDK:
                         time_data, value_data = merge_timestamp_data(r_value, r_time, value_data, time_data)
                         time_0 = time_data[0]
                     else:
-                        value_data, time_data, time_0 = merge_gap_data(r_value, r_time, header[0].start_n, value_data,
-                                                                       time_data, time_0, freq_nhz)
+                        value_data, time_data, time_0 = merge_gap_data(r_value, r_time, header[0].start_n,
+                                                                       value_data, time_data, time_0,
+                                                                       freq_nhz=freq_nhz, period_ns=period_ns)
                 else:
                     # if the scale factors are not the same don't merge and set old block to none, so we don't delete it
                     old_block = None
@@ -1011,13 +1055,10 @@ class AtriumSDK:
 
         # Encode the block(s)
         encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
-            time_data, value_data, freq_nhz, time_0,
-            raw_time_type=raw_time_type,
-            raw_value_type=raw_value_type,
-            encoded_time_type=encoded_time_type,
-            encoded_value_type=encoded_value_type,
-            scale_m=scale_m,
-            scale_b=scale_b)
+            times=time_data, values=value_data, freq_nhz=freq_nhz, period_ns=period_ns, start_ns=time_0,
+            raw_time_type=raw_time_type, raw_value_type=raw_value_type,
+            encoded_time_type=encoded_time_type, encoded_value_type=encoded_value_type,
+            scale_m=scale_m, scale_b=scale_b)
 
         # Write the encoded bytes to disk
         filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
@@ -1029,11 +1070,14 @@ class AtriumSDK:
 
         # if your new data was merged with an older block add the new info to mariadb and delete the old block
         if old_block is not None:
-            old_tsc_file_name = self.sql_handler.insert_merged_block_data(filename, block_data, old_block, interval_data, interval_index_mode, gap_tolerance)
+            old_tsc_file_name = self.sql_handler.insert_merged_block_data(filename, block_data, old_block,
+                                                                          interval_data, interval_index_mode,
+                                                                          gap_tolerance)
 
             # remove the tsc file from disk if it is no longer needed
             if old_tsc_file_name is not None:
-                self.file_api.remove(self.file_api.to_abs_path(filename=old_tsc_file_name, measure_id=measure_id, device_id=device_id))
+                self.file_api.remove(
+                    self.file_api.to_abs_path(filename=old_tsc_file_name, measure_id=measure_id, device_id=device_id))
 
         # If data was overwritten
         elif overwrite_file_dict is not None:
@@ -1053,7 +1097,8 @@ class AtriumSDK:
             #     file_path.unlink(missing_ok=True)
         else:
             # Insert SQL rows
-            self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, interval_index_mode, gap_tolerance)
+            self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, interval_index_mode,
+                                                  gap_tolerance)
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
 
@@ -1151,7 +1196,8 @@ class AtriumSDK:
             scale_b=scale_b
         )
 
-    def write_segments(self, measure_id: int, device_id: int, segments: List[np.ndarray], start_times: List[float | int],
+    def write_segments(self, measure_id: int, device_id: int, segments: List[np.ndarray],
+                       start_times: List[float | int],
                        period: float = None, freq: float = None, time_units: str = None,
                        freq_units: str = None, scale_m: float = None, scale_b: float = None):
         """
@@ -1213,17 +1259,19 @@ class AtriumSDK:
             raise ValueError(f"device_id {device_id} not found in the dataset. "
                              f"Add it with AtriumSDK.insert_device(tag)")
 
-        # Figure out the frequency
+        # Figure out the frequency/period - handle mutually exclusive period/freq
+        if period is not None and freq is not None:
+            raise ValueError("period and freq are mutually exclusive. Specify only one.")
+
         if freq is not None:
             freq_nano = convert_to_nanohz(freq, freq_units)
+            period_ns = None
         elif period is not None:
             period_ns = int(period * time_unit_options[time_units])
-            freq_nano = 10**18 // period_ns
-            if 10**18 % period_ns != 0:
-                warnings.warn(f"Given period doesn't divide perfectly into a frequency. "
-                              f"Estimating to be {freq_nano / 10**9} Hz")
+            freq_nano = None
         else:
             freq_nano = measure_info["freq_nhz"]
+            period_ns = None
 
         # Create message list for writing.
         scale_m_list = scale_m if isinstance(scale_m, list) else [scale_m] * len(segments)
@@ -1244,9 +1292,10 @@ class AtriumSDK:
                 'scale_m': m,
                 'scale_b': b,
                 'freq_nhz': freq_nano,
+                'period_ns': period_ns,
             }
-            write_segments.append(message_dict)
 
+            write_segments.append(message_dict)
 
         if self._active_buffer is None:
             # Write immediately to disk
@@ -1261,28 +1310,38 @@ class AtriumSDK:
         sorted_segments = sorted(write_segments, key=lambda x: x['start_time_nano'])
         message_start_epoch_array = []
         message_size_array = []
+
+        # Get parameters from first segment
         freq_nhz = sorted_segments[0]['freq_nhz']
+        period_ns = sorted_segments[0]['period_ns']
         scale_m = sorted_segments[0]['scale_m']
         scale_b = sorted_segments[0]['scale_b']
         message_dtype = sorted_segments[0]['values'].dtype
+
         for message in sorted_segments:
             message_start_epoch_array.append(message['start_time_nano'])
             message_size_array.append(message['values'].size)
 
-            if message['freq_nhz'] != freq_nhz:
-                raise ValueError("Segments inserted do not all have the same frequency. "
-                                 "If you want to ingest segments for the same signal with different frequencies, "
-                                 "you must insert them separately.")
+            # Check consistency
+            if message['freq_nhz'] != freq_nhz or message['period_ns'] != period_ns:
+                raise ValueError("Segments inserted do not all have the same frequency/period.")
+
             if message['scale_m'] != scale_m or message['scale_b'] != scale_b:
                 raise ValueError("Segments inserted do not all have the same scale factors.")
             if message['values'].dtype != message_dtype:
                 raise ValueError("Segments inserted do not all have the same dtype.")
+
         # Convert segments to gap_data
         gap_data = create_gap_arr_from_variable_messages(
-            message_start_epoch_array, message_size_array, freq_nhz)
+            message_start_epoch_array, message_size_array, freq_nhz=freq_nhz, period_ns=period_ns)
+
         value_data = np.concatenate([message['values'] for message in sorted_segments])
         time_0 = int(sorted_segments[0]['start_time_nano'])
-        write_intervals = find_intervals(freq_nhz, 2, gap_data, time_0, int(value_data.size))
+
+        # Calculate intervals
+        write_intervals = find_intervals(freq_nhz=freq_nhz, period_ns=period_ns, raw_time_type=2,
+                                         time_data=gap_data, data_start_time=time_0, num_values=int(value_data.size))
+
         # Encode the block(s)
         if np.issubdtype(value_data.dtype, np.integer):
             raw_v_t = V_TYPE_INT64
@@ -1290,14 +1349,12 @@ class AtriumSDK:
         else:
             raw_v_t = V_TYPE_DOUBLE
             encoded_v_t = V_TYPE_DOUBLE
+
         encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
-            gap_data, value_data, freq_nhz, time_0,
-            raw_time_type=2,
-            raw_value_type=raw_v_t,
-            encoded_time_type=2,
-            encoded_value_type=encoded_v_t,
-            scale_m=scale_m,
-            scale_b=scale_b)
+            times=gap_data, values=value_data, freq_nhz=freq_nhz, period_ns=period_ns, start_ns=time_0,
+            raw_time_type=2, raw_value_type=raw_v_t, encoded_time_type=2, encoded_value_type=encoded_v_t,
+            scale_m=scale_m, scale_b=scale_b)
+
         # Write the encoded bytes to disk
         filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
         # Use the header data to create rows to be inserted into the block_index and interval_index SQL tables
@@ -1376,17 +1433,20 @@ class AtriumSDK:
         if time_units != "ns":
             times = convert_to_nanoseconds(times, time_units)
 
-        # Figure out the frequency
+        # Figure out the frequency/period - handle mutually exclusive period/freq
+        if period is not None and freq is not None:
+            raise ValueError("period and freq are mutually exclusive. Specify only one.")
+
+        # Ensure the unspecified parameter is None
         if freq is not None:
             freq_nano = convert_to_nanohz(freq, freq_units)
+            period_ns = None
         elif period is not None:
             period_ns = int(period * time_unit_options[time_units])
-            freq_nano = 10 ** 18 // period_ns
-            if 10 ** 18 % period_ns != 0:
-                warnings.warn(f"Given period doesn't divide perfectly into a frequency. "
-                              f"Estimating to be {freq_nano / 10 ** 9} Hz")
+            freq_nano = None
         else:
             freq_nano = measure_info["freq_nhz"]
+            period_ns = None
 
         # Create data dictionary
         data_dict = {
@@ -1394,7 +1454,8 @@ class AtriumSDK:
             'values': values,
             'scale_m': scale_m,
             'scale_b': scale_b,
-            'freq_nhz': freq_nano
+            'freq_nhz': freq_nano,
+            'period_ns': period_ns,
         }
 
         if self._active_buffer is None:
@@ -1406,14 +1467,17 @@ class AtriumSDK:
             self._active_buffer.push_time_value_pairs(measure_id, device_id, data_dict)
 
     def _write_time_value_pairs_to_dataset(self, measure_id, device_id, data_dicts, interval_gap_tolerance_nano=0):
-        # Ensure consistency across data_dicts
+        # Get parameters from first data dict
         freq_nhz = data_dicts[0]['freq_nhz']
+        period_ns = data_dicts[0]['period_ns']
         scale_m = data_dicts[0]['scale_m']
         scale_b = data_dicts[0]['scale_b']
         data_dtype = data_dicts[0]['values'].dtype
+
+        # Ensure consistency across data_dicts
         for data in data_dicts:
-            if data['freq_nhz'] != freq_nhz:
-                raise ValueError("Data dictionaries have inconsistent frequencies.")
+            if data['freq_nhz'] != freq_nhz or data['period_ns'] != period_ns:
+                raise ValueError("Data dictionaries have inconsistent frequencies/periods.")
             if data['scale_m'] != scale_m or data['scale_b'] != scale_b:
                 raise ValueError("Data dictionaries have inconsistent scale factors.")
             if data['values'].dtype != data_dtype:
@@ -1437,9 +1501,8 @@ class AtriumSDK:
             raw_v_t = V_TYPE_DOUBLE
             encoded_v_t = V_TYPE_DOUBLE
 
-        self.write_data(measure_id, device_id, times, values, freq_nhz, time_0,
-                        raw_time_type=1,
-                        raw_value_type=raw_v_t, encoded_time_type=2, encoded_value_type=encoded_v_t,
+        self.write_data(measure_id, device_id, times, values, freq_nhz=freq_nhz, period_ns=period_ns, time_0=time_0,
+                        raw_time_type=1, raw_value_type=raw_v_t, encoded_time_type=2, encoded_value_type=encoded_v_t,
                         scale_m=scale_m, scale_b=scale_b, interval_index_mode="fast",
                         gap_tolerance=interval_gap_tolerance_nano, merge_blocks=False)
 
@@ -1819,16 +1882,19 @@ class AtriumSDK:
         valid_mask = candidate_ends > start_time
         return candidate_blocks[valid_mask]
 
-    def get_measure_id(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None):
+    def get_measure_id(self, measure_tag: str, freq: Union[int, float] = None, units: str = None, freq_units: str = None,
+                       period: Union[int, float] = None, time_units: str = None):
         """
         .. _get_measure_id_label:
 
-        Returns the identifier for a measure specified by its tag, frequency, units, and frequency units.
+        Returns the identifier for a measure specified by its tag, frequency or period, units, and frequency/time units.
 
         :param str measure_tag: The tag of the measure.
-        :param float freq: The frequency of the measure.
+        :param float freq: The frequency of the measure (mutually exclusive with period).
         :param str units: The unit of the measure (default is an empty string).
         :param str freq_units: The frequency unit of the measure (default is 'nHz').
+        :param float period: The period of the measure (mutually exclusive with freq).
+        :param str time_units: The time unit for the period (default is 's').
         :return: The identifier of the measure.
         :rtype: int
 
@@ -1837,18 +1903,33 @@ class AtriumSDK:
         >>> freq = 100.0
         >>> units = "Celsius"
         >>> freq_units = "Hz"
-        >>> sdk.get_measure_id(measure_tag, freq, units, freq_units)
+        >>> sdk.get_measure_id(measure_tag, freq=freq, units=units, freq_units=freq_units)
+        ... 7
+        >>> # Using period instead
+        >>> sdk.get_measure_id(measure_tag, period=0.01, time_units="s", units=units)
         ... 7
         >>> measure_tag = "Measure That Does Not Exist."
-        >>> sdk.get_measure_id(measure_tag, freq, units, freq_units)
+        >>> sdk.get_measure_id(measure_tag, freq=freq, units=units, freq_units=freq_units)
         ... None
         """
-        # Set default values for units and freq_units if not provided
+        # Check for mutually exclusive parameters
+        if freq is not None and period is not None:
+            raise ValueError("freq and period are mutually exclusive. Specify only one.")
+
+        if freq is None and period is None:
+            raise ValueError("Either freq or period must be specified.")
+
+        # Set default values for units and freq_units/time_units if not provided
         units = "" if units is None else units
         freq_units = "nHz" if freq_units is None else freq_units
+        time_units = "s" if time_units is None else time_units
 
-        # Convert frequency to nanohertz
-        freq_nhz = convert_to_nanohz(freq, freq_units)
+        # Convert to nanohertz based on which parameter was provided
+        if freq is not None:
+            freq_nhz = convert_to_nanohz(freq, freq_units)
+        else:  # period is not None
+            period_ns = int(period * time_unit_options[time_units])
+            freq_nhz = 10 ** 18 // period_ns
 
         # Force python int
         freq_nhz = int(freq_nhz)
@@ -1899,7 +1980,7 @@ class AtriumSDK:
         :param int measure_id: The identifier of the measure to retrieve information for.
 
         :return: A dictionary containing information about the measure, including its id, tag, name, sample frequency
-            (in nanohertz), code, unit, unit label, unit code, and source_id.
+            (in nanohertz), period (in nanoseconds), code, unit, unit label, unit code, and source_id.
         :rtype: dict
 
         >>> # Connect to example_dataset
@@ -1914,6 +1995,7 @@ class AtriumSDK:
             'tag': 'Heart Rate',
             'name': 'Heart rate in beats per minute',
             'freq_nhz': 1000000000,
+            'period_ns': 1000000000,
             'code': 'HR',
             'unit': 'BPM',
             'unit_label': 'beats per minute',
@@ -1923,7 +2005,12 @@ class AtriumSDK:
         """
         # Check if metadata connection type is API
         if self.metadata_connection_type == "api":
-            return self._request("GET", f"measures/{measure_id}")
+            measure_info = self._request("GET", f"measures/{measure_id}")
+            if measure_info:
+                # Add period_ns to API response if not present
+                if 'period_ns' not in measure_info or measure_info['period_ns'] is None:
+                    measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+            return measure_info
 
         # If measure_id is already in the cache, return the cached measure info
         if measure_id in self._measures:
@@ -1936,9 +2023,15 @@ class AtriumSDK:
         if row is None:
             return None
 
-        # Unpack the row tuple into variables
-        measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, measure_unit, measure_unit_label, \
-        measure_unit_code, measure_source_id = row
+        # Unpack the row tuple into variables (now includes period_ns)
+        measure_id, measure_tag, measure_name, measure_freq_nhz, stored_period_ns, measure_code, measure_unit, \
+            measure_unit_label, measure_unit_code, measure_source_id = row
+
+        # Use stored period_ns if available, otherwise calculate from freq_nhz
+        if stored_period_ns is not None:
+            measure_period_ns = stored_period_ns
+        else:
+            measure_period_ns = 10 ** 18 // measure_freq_nhz
 
         # Create a dictionary containing the measure information
         measure_info = {
@@ -1946,6 +2039,7 @@ class AtriumSDK:
             'tag': measure_tag,
             'name': measure_name,
             'freq_nhz': measure_freq_nhz,
+            'period_ns': measure_period_ns,
             'code': measure_code,
             'unit': measure_unit,
             'unit_label': measure_unit_label,
@@ -1959,21 +2053,22 @@ class AtriumSDK:
         # Return the measure information dictionary
         return measure_info
 
-    def search_measures(self, tag_match=None, freq=None, unit=None, name_match=None, freq_units=None):
+    def search_measures(self, tag_match=None, freq=None, unit=None, name_match=None, freq_units=None,
+                        period=None, time_units=None):
         """
         .. _search_measures_label:
 
         Retrieve information about all measures in the linked relational database that match the specified search criteria.
 
         This function filters the measures based on the provided search criteria and returns a dictionary containing
-        information about each matching measure, including its id, tag, name, sample frequency (in nanohertz), code, unit,
-        unit label, unit code, and source_id.
+        information about each matching measure, including its id, tag, name, sample frequency (in nanohertz),
+        period (in nanoseconds), code, unit, unit label, unit code, and source_id.
 
         :param tag_match: A string to match against the `measure_tag` field. If not None, only measures with a `measure_tag`
             field containing this string will be returned.
         :type tag_match: str, optional
         :param freq: A value to match against the `measure_freq_nhz` field. If not None, only measures with a
-            `measure_freq_nhz` field equal to this value will be returned.
+            `measure_freq_nhz` field equal to this value will be returned. Mutually exclusive with period.
         :type freq: int, optional
         :param unit: A string to match against the `measure_unit` field. If not None, only measures with a `measure_unit`
             field equal to this string will be returned.
@@ -1983,21 +2078,41 @@ class AtriumSDK:
         :type name_match: str, optional
         :param freq_units: The units for the freq parameter. (Default: "Hz")
         :type freq_units: str, optional
+        :param period: A value to match against the period. If not None, only measures with a matching period will be returned.
+            Mutually exclusive with freq.
+        :type period: float, optional
+        :param time_units: The units for the period parameter. (Default: "s")
+        :type time_units: str, optional
         :return: A dictionary containing information about each measure that matches the specified search criteria.
         :rtype: dict
         """
+        # Check for mutually exclusive parameters
+        if freq is not None and period is not None:
+            raise ValueError("freq and period are mutually exclusive. Specify only one.")
+
         # Check the metadata connection type and call the appropriate API search method if necessary
         if self.metadata_connection_type == "api":
             params = {'measure_tag': tag_match, 'freq': freq, 'unit': unit, 'measure_name': name_match,
                       'freq_units': freq_units}
-            return self._request("GET", "measures/", params=params)
+            result = self._request("GET", "measures/", params=params)
+            # Add period_ns to each measure in API response
+            for measure_id, measure_info in result.items():
+                measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+            return result
 
         # Set the default frequency units to "Hz" if not provided
         freq_units = "Hz" if freq_units is None else freq_units
+        time_units = "s" if time_units is None else time_units
 
-        # Convert the frequency to nanohertz if necessary
-        if freq_units != "nHz" and freq is not None:
-            freq = convert_to_nanohz(freq, freq_units)
+        # Convert the frequency or period to nanohertz if necessary
+        target_freq_nhz = None
+        if freq is not None and freq_units != "nHz":
+            target_freq_nhz = convert_to_nanohz(freq, freq_units)
+        elif freq is not None:
+            target_freq_nhz = freq
+        else:
+            period_ns = int(period * time_unit_options[time_units])
+            target_freq_nhz = 10 ** 18 // period_ns
 
         # Get all measures from the database
         all_measures = self.get_all_measures()
@@ -2010,7 +2125,7 @@ class AtriumSDK:
             # Create a list of boolean values for each search criterion
             match_bool_list = [
                 tag_match is None or tag_match in measure_info['tag'],
-                freq is None or freq == measure_info['freq_nhz'],
+                target_freq_nhz is None or target_freq_nhz == measure_info['freq_nhz'],
                 unit is None or unit == measure_info['unit'],
                 name_match is None or name_match in measure_info['name']
             ]
@@ -2034,7 +2149,8 @@ class AtriumSDK:
         {1: {'id': 1,
              'tag': 'Heart Rate',
              'name': 'Heart Rate Measurement',
-             'freq_nhz': 500,
+             'freq_nhz': 500000000000,
+             'period_ns': 2000000,
              'code': 'HR',
              'unit': 'BPM',
              'unit_label': 'Beats per Minute',
@@ -2043,7 +2159,8 @@ class AtriumSDK:
          2: {'id': 2,
              'tag': 'Respiration Rate',
              'name': 'Respiration Rate Measurement',
-             'freq_nhz': 500,
+             'freq_nhz': 500000000000,
+             'period_ns': 2000000,
              'code': 'RR',
              'unit': 'BPM',
              'unit_label': 'Breaths per Minute',
@@ -2051,13 +2168,18 @@ class AtriumSDK:
              'source_id': 1}}
 
         :return: A dictionary containing information about each measure, including its id, tag, name, sample frequency
-            (in nanohertz), code, unit, unit label, unit code, and source_id.
+            (in nanohertz), period (in nanoseconds), code, unit, unit label, unit code, and source_id.
         :rtype: dict
         """
         # Check if connection type is API and call the appropriate method
         if self.metadata_connection_type == "api":
             measure_dict = self._request("GET", "measures/")
-            return {int(measure_id): measure_info for measure_id, measure_info in measure_dict.items()}
+            result = {int(measure_id): measure_info for measure_id, measure_info in measure_dict.items()}
+            # Add period_ns to each measure in API response if not present
+            for measure_id, measure_info in result.items():
+                if 'period_ns' not in measure_info or measure_info['period_ns'] is None:
+                    measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+            return result
 
         # Get all measures from the SQL handler
         measure_tuple_list = self.sql_handler.select_all_measures()
@@ -2067,8 +2189,14 @@ class AtriumSDK:
 
         # Iterate through the list of measures and construct a dictionary for each measure
         for measure_info in measure_tuple_list:
-            measure_id, measure_tag, measure_name, measure_freq_nhz, measure_code, \
-            measure_unit, measure_unit_label, measure_unit_code, measure_source_id = measure_info
+            measure_id, measure_tag, measure_name, measure_freq_nhz, stored_period_ns, measure_code, \
+                measure_unit, measure_unit_label, measure_unit_code, measure_source_id = measure_info
+
+            # Use stored period_ns if available, otherwise calculate from freq_nhz
+            if stored_period_ns is not None:
+                measure_period_ns = stored_period_ns
+            else:
+                measure_period_ns = 10 ** 18 // measure_freq_nhz
 
             # Add the measure information to the dictionary
             measure_dict[measure_id] = {
@@ -2076,6 +2204,7 @@ class AtriumSDK:
                 'tag': measure_tag,
                 'name': measure_name,
                 'freq_nhz': measure_freq_nhz,
+                'period_ns': measure_period_ns,
                 'code': measure_code,
                 'unit': measure_unit,
                 'unit_label': measure_unit_label,
@@ -2085,22 +2214,36 @@ class AtriumSDK:
 
         return measure_dict
 
-    def get_measure_id_list_from_tag(self, measure_tag: str, approx=True, freq=None, units=None, freq_units=None):
+    def get_measure_id_list_from_tag(self, measure_tag: str, approx=True, freq=None, units=None, freq_units=None,
+                                     period=None, time_units=None):
         """
         Returns a list of matching measure_ids for a given tag in DESC order by number of stored blocks.
-        Helpful for finding all ids or the most prevalent id for a given tag. Optionally filters by frequency and units.
+        Helpful for finding all ids or the most prevalent id for a given tag. Optionally filters by frequency/period and units.
 
         :param str measure_tag: The tag of the measure.
         :param bool approx: If True, approximates the result based on first 100,000 rows of the block table.
             If False, queries the entire block table.
-        :param freq: Optional frequency to filter measures.
+        :param freq: Optional frequency to filter measures. Mutually exclusive with period.
         :param units: Optional units of the measure to filter by.
         :param freq_units: Units of the provided frequency. Converts frequency to nanohertz if not already.
+        :param period: Optional period to filter measures. Mutually exclusive with freq.
+        :param time_units: Units of the provided period. Converts period to equivalent frequency in nanohertz.
         :return: A list of measure_ids
         """
-        # Convert frequency to nanohertz if necessary
-        if freq and freq_units and freq_units != "nHz":
-            freq = convert_to_nanohz(freq, freq_units)
+        # Check for mutually exclusive parameters
+        if freq is not None and period is not None:
+            raise ValueError("freq and period are mutually exclusive. Specify only one.")
+
+        # Convert frequency or period to nanohertz if necessary
+        target_freq_nhz = None
+        if freq is not None and freq_units and freq_units != "nHz":
+            target_freq_nhz = convert_to_nanohz(freq, freq_units)
+        elif freq is not None:
+            target_freq_nhz = freq
+        elif period is not None:
+            time_units = "s" if time_units is None else time_units
+            period_ns = int(period * time_unit_options[time_units])
+            target_freq_nhz = 10 ** 18 // period_ns
 
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this function.")
@@ -2113,11 +2256,11 @@ class AtriumSDK:
             measure_ids = self._measure_tag_to_ordered_id.get(measure_tag, [])
 
         # Filter measure_ids by frequency and units if necessary
-        if freq is not None or units is not None:
+        if target_freq_nhz is not None or units is not None:
             filtered_measure_ids = []
             for measure_id in measure_ids:
                 measure_info = self.get_measure_info(measure_id)
-                if freq is not None and measure_info.get('freq_nhz') != freq:
+                if target_freq_nhz is not None and measure_info.get('freq_nhz') != target_freq_nhz:
                     continue
                 if units is not None and measure_info.get('unit') != units:
                     continue
@@ -2126,17 +2269,18 @@ class AtriumSDK:
 
         return measure_ids
 
-    def insert_measure(self, measure_tag: str, freq: Union[int, float], units: str = None, freq_units: str = None,
-                       measure_name: str = None, measure_id: int = None, code: str = None, unit_label: str = None,
+    def insert_measure(self, measure_tag: str, freq: Union[int, float] = None, units: str = None, freq_units: str = None,
+                       period: Union[int, float] = None, time_units: str = None, measure_name: str = None,
+                       measure_id: int = None, code: str = None, unit_label: str = None,
                        unit_code: str = None, source_id: int = None, source_name: str = None):
         """
         .. _insert_measure_label:
 
         Defines a new signal type to be stored in the dataset, as well as defining metadata related to the signal.
 
-        `measure_tag`, `freq` and `units` are required information.
+        `measure_tag`, and either `freq` or `period`, and `units` are required information.
 
-        >>> # Define a new signal with additional metadata.
+        >>> # Define a new signal with frequency and additional metadata.
         >>> freq = 500
         >>> freq_units = "Hz"
         >>> measure_tag = "ECG Lead II - 500 Hz"
@@ -2149,19 +2293,29 @@ class AtriumSDK:
         >>> measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq, units=units, freq_units=freq_units,
                                             measure_name=measure_name, code=code, unit_label=unit_label,
                                             unit_code=unit_code, source_id=source_id)
+        >>>
+        >>> # Define a new signal with period instead of frequency
+        >>> period = 2  # 2 milliseconds
+        >>> time_units = "ms"
+        >>> measure_tag = "ECG Lead II - 2ms period"
+        >>> measure_id = sdk.insert_measure(measure_tag=measure_tag, period=period, time_units=time_units,
+                                            units=units, measure_name=measure_name)
 
         :param str measure_tag: A short string identifying the signal.
-        :param freq: The sample frequency of the signal.
+        :param freq: The sample frequency of the signal. Mutually exclusive with period.
         :param str units: The units of the signal.
-        :param str optional freq_units: The unit used for the specified frequency. This value can be one of ["Hz",
+        :param str freq_units: The unit used for the specified frequency. This value can be one of ["Hz",
             "kHz", "MHz"]. Keep in mind if you use extremely large values for this it will be
             converted to nano hertz in the backend, and you may overflow 64bit integers. Default is nano hertz.
-        :param str optional measure_name: A long form description of the signal.
-        :param int optional measure_id: The desired measure_id.
-        :param str optional code: A specific code identifying the signal.
-        :param str optional unit_label: A label for the unit.
-        :param str optional unit_code: A code for the unit.
-        :param int optional source_id: An identifier for the data source.
+        :param period: The sample period of the signal. Mutually exclusive with freq.
+        :param str time_units: The unit used for the specified period. This value can be one of ["s", "ms", "us", "ns"].
+            Default is seconds.
+        :param str measure_name: A long form description of the signal (optional).
+        :param int measure_id: The desired measure_id (optional).
+        :param str code: A specific code identifying the signal (optional).
+        :param str unit_label: A label for the unit (optional).
+        :param str unit_code: A code for the unit (optional).
+        :param int source_id: An identifier for the data source (optional).
         :param str source_name: The name of the data source associated with the measure, used if source_id is not
             provided (optional).
 
@@ -2173,6 +2327,13 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
 
+        # Check for mutually exclusive parameters
+        if freq is not None and period is not None:
+            raise ValueError("freq and period are mutually exclusive. Specify only one.")
+
+        if freq is None and period is None:
+            raise ValueError("Either freq or period must be specified.")
+
         # Check if measure_tag, measure_name, and units are either strings or None
         assert isinstance(measure_tag, str)
         assert isinstance(measure_name, str) or measure_name is None
@@ -2181,8 +2342,9 @@ class AtriumSDK:
         assert isinstance(unit_label, str) or unit_label is None
         assert isinstance(unit_code, str) or unit_code is None
 
-        # Set default frequency unit to "nHz" if not provided
+        # Set default frequency/time units if not provided
         freq_units = "nHz" if freq_units is None else freq_units
+        time_units = "s" if time_units is None else time_units
         units = "" if units is None else units
 
         # Handle source_name to source_id conversion
@@ -2191,12 +2353,21 @@ class AtriumSDK:
             if source_id is None:
                 raise ValueError(f"Source name {source_name} not found.")
 
-        # Convert frequency to nanohertz if the provided frequency unit is not "nHz"
-        if freq_units != "nHz":
-            freq = convert_to_nanohz(freq, freq_units)
+        # Convert to nanohertz based on which parameter was provided
+        if freq is not None:
+            # Convert frequency to nanohertz if the provided frequency unit is not "nHz"
+            if freq_units != "nHz":
+                freq_nhz = convert_to_nanohz(freq, freq_units)
+            else:
+                freq_nhz = freq
+            period_ns = None  # Will be calculated from freq_nhz later
+        else:  # period is not None
+            # Convert period to nanoseconds then to equivalent frequency in nanohertz
+            period_ns = int(period * time_unit_options[time_units])
+            freq_nhz = 10 ** 18 // period_ns
 
         # Force Cast Python integer
-        freq = int(freq)
+        freq_nhz = int(freq_nhz)
 
         # Check for id clash
         if measure_id is not None:
@@ -2205,37 +2376,42 @@ class AtriumSDK:
             measure_info = self.get_measure_info(measure_id)
             if measure_info is not None:
                 if measure_info['tag'] == measure_tag and \
-                        measure_info['freq_nhz'] == freq and \
+                        measure_info['freq_nhz'] == freq_nhz and \
                         measure_info['unit'] == units:
                     return measure_id
                 raise ValueError(f"Inserted measure_id {measure_id} already exists with data: {measure_info}")
 
         # Check if the measure already exists in the dataset
-        check_measure_id = self.get_measure_id(measure_tag, freq, units=units)
+        check_measure_id = self.get_measure_id(measure_tag, freq=freq_nhz, freq_units="nHz", units=units)
         if check_measure_id is not None:
             return check_measure_id
 
         # Insert the new measure into the database
         inserted_measure_id = self.sql_handler.insert_measure(
-            measure_tag, freq, units, measure_name, measure_id=measure_id, code=code, unit_label=unit_label,
-            unit_code=unit_code, source_id=source_id)
+            measure_tag, freq_nhz, units, measure_name, measure_id=measure_id, code=code, unit_label=unit_label,
+            unit_code=unit_code, source_id=source_id, period_ns=period_ns)
 
         if inserted_measure_id is None:
             return inserted_measure_id
+
+        # Calculate period_ns from freq_nhz for cache (if not already calculated)
+        if period_ns is None:
+            period_ns = 10 ** 18 // freq_nhz
 
         # Add new measure_id into cache
         measure_info = {
             'id': inserted_measure_id,
             'tag': measure_tag,
             'name': measure_name,
-            'freq_nhz': freq,
+            'freq_nhz': freq_nhz,
+            'period_ns': period_ns,
             'code': code,
             'unit': units,
             'unit_label': unit_label,
             'unit_code': unit_code,
             'source_id': source_id
         }
-        self._measure_ids[(measure_tag, freq, units)] = inserted_measure_id
+        self._measure_ids[(measure_tag, freq_nhz, units)] = inserted_measure_id
         self._measures[inserted_measure_id] = measure_info
 
         return inserted_measure_id
@@ -5191,20 +5367,29 @@ of DatasetIterator objects depending on the value of num_iterators.
         return {setting[0]: setting[1] for setting in settings}
 
     def _overwrite_delete_data(self, measure_id, device_id, new_time_data, time_0, raw_time_type, values_size,
-                               freq_nhz):
+                               freq_nhz=None, period_ns=None):
         # Make assumption for analog
         analog = False
 
+        # Handle mutually exclusive freq_nhz and period_ns
+        if freq_nhz is not None and period_ns is not None:
+            raise ValueError("freq_nhz and period_ns are mutually exclusive. Specify only one.")
+        if freq_nhz is None and period_ns is None:
+            raise ValueError("Either freq_nhz or period_ns must be specified.")
+
         # Calculate the period in nanoseconds
-        period_ns = int((10 ** 18) // freq_nhz)
+        if period_ns is not None:
+            period_ns_calc = period_ns
+        else:
+            period_ns_calc = int((10 ** 18) // freq_nhz)
 
         # Check if the input data is already a timestamp array
         if raw_time_type == 1:
             end_time_ns = int(new_time_data[-1])
         # Check if the input data is a gap array, and convert it to a timestamp array
         elif raw_time_type == 2:
-            end_time_ns = time_0 + (values_size * period_ns) + np.sum(new_time_data[1::2])
-            new_time_data = np.arange(time_0, end_time_ns, period_ns, dtype=np.int64)
+            end_time_ns = time_0 + (values_size * period_ns_calc) + np.sum(new_time_data[1::2])
+            new_time_data = np.arange(time_0, end_time_ns, period_ns_calc, dtype=np.int64)
         else:
             raise ValueError("Overwrite only supported for gap arrays and timestamp arrays.")
 
@@ -5255,7 +5440,7 @@ of DatasetIterator objects depending on the value of num_iterators.
                 diff_times, diff_values = old_times[diff_mask], old_values[diff_mask]
 
                 # Get the scale factors and data types from the headers
-                freq_nhz = old_headers[0].freq_nhz
+                header_freq_nhz = old_headers[0].freq_nhz
                 scale_m = old_headers[0].scale_m
                 scale_b = old_headers[0].scale_b
                 raw_value_type = old_headers[0].v_raw_type
@@ -5265,15 +5450,27 @@ of DatasetIterator objects depending on the value of num_iterators.
                 raw_time_type = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
                 encoded_time_type = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
-                # Encode the difference data
-                encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(
-                    diff_times, diff_values, freq_nhz, diff_times[0],
-                    raw_time_type=raw_time_type,
-                    raw_value_type=raw_value_type,
-                    encoded_time_type=encoded_time_type,
-                    encoded_value_type=encoded_value_type,
-                    scale_m=scale_m,
-                    scale_b=scale_b)
+                # Encode the difference data - pass appropriate parameter
+                if freq_nhz is not None:
+                    encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(
+                        times=diff_times, values=diff_values, freq_nhz=header_freq_nhz, start_ns=diff_times[0],
+                        raw_time_type=raw_time_type,
+                        raw_value_type=raw_value_type,
+                        encoded_time_type=encoded_time_type,
+                        encoded_value_type=encoded_value_type,
+                        scale_m=scale_m,
+                        scale_b=scale_b)
+                else:
+                    # Calculate period from header freq for consistency
+                    header_period_ns = int((10 ** 18) // header_freq_nhz)
+                    encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(
+                        times=diff_times, values=diff_values, period_ns=header_period_ns, start_ns=diff_times[0],
+                        raw_time_type=raw_time_type,
+                        raw_value_type=raw_value_type,
+                        encoded_time_type=encoded_time_type,
+                        encoded_value_type=encoded_value_type,
+                        scale_m=scale_m,
+                        scale_b=scale_b)
 
                 # Write the encoded difference data to a new file
                 diff_filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
@@ -5466,3 +5663,156 @@ of DatasetIterator objects depending on the value of num_iterators.
 
         # Insert the block and interval data into the metadata table
         self.sql_handler.insert_tsc_file_data(path, block_data, interval_data, None)
+
+
+def get_headers(self, measure_id: int = None, start_time_n: int = None, end_time_n: int = None,
+                device_id: int = None, patient_id=None, block_info=None,
+                time_units: str = None, measure_tag: str = None,
+                freq: Union[int, float] = None, units: str = None, freq_units: str = None,
+                device_tag: str = None, mrn: int = None):
+    """
+    Get block headers for querying metadata from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
+    time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
+
+    This method returns only the block headers without the actual wave data, making it useful for
+    exploring data structure and metadata without the overhead of reading and decoding the actual values.
+
+    If measure_id is None, measure_tag along with freq and units must not be None, and vice versa.
+    Similarly, if device_id is None, device_tag must not be None, and if patient_id is None, mrn must not be None.
+
+    :param int measure_id: The measure identifier. If None, measure_tag must be provided.
+    :param int start_time_n: The start epoch in nanoseconds of the data you would like to query.
+    :param int end_time_n: The end epoch in nanoseconds. The end time is not inclusive.
+    :param int device_id: The device identifier. If None, device_tag must be provided.
+    :param int patient_id: The patient identifier. If None, mrn must be provided.
+    :param block_info: Custom block_info list to skip metadata table check.
+    :param str time_units: Unit for the time array returned. Options: ["s", "ms", "us", "ns"].
+    :param str measure_tag: A short string identifying the signal. Required if measure_id is None.
+    :param freq: The sample frequency of the signal. Helpful with measure_tag.
+    :param str units: The units of the signal. Helpful with measure_tag.
+    :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz", "Hz", "kHz", "MHz"] default "nHz".
+    :param str device_tag: A string identifying the device. Exclusive with device_id.
+    :param int mrn: Medical record number for the patient. Exclusive with patient_id.
+
+    :rtype: List[BlockMetadata]
+    :returns: List of Block header objects containing metadata information.
+    """
+    # check that a correct unit type was entered
+    time_units = "ns" if time_units is None else time_units
+
+    if time_units not in time_unit_options.keys():
+        raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
+
+    # convert start and end time to nanoseconds
+    start_time_n = int(start_time_n * time_unit_options[time_units])
+    end_time_n = int(end_time_n * time_unit_options[time_units])
+
+    if device_id is None and device_tag is not None:
+        device_id = self.get_device_id(device_tag)
+
+    if patient_id is None and mrn is not None:
+        patient_id = self.get_patient_id(mrn)
+
+    # If the data is from the api.
+    if self.mode == "api":
+        if measure_id is None:
+            assert measure_tag is not None and freq is not None and units is not None, \
+                "Must provide measure_id or all of measure_tag, freq, units"
+            measure_id = self.get_measure_id(measure_tag, freq, units, freq_units)
+
+        # For API mode, we would need to call a modified version of _get_data_api
+        # that only returns headers. Since the original code doesn't show this implementation,
+        # we'll raise an exception for now.
+        raise NotImplementedError("get_headers is not yet implemented for API mode")
+
+    # Check the measure
+    if measure_id is None:
+        assert measure_tag is not None, "One of measure_id, measure_tag must be specified."
+        measure_id = get_best_measure_id(self, measure_tag, freq, units, freq_units)
+
+    measure_id = int(measure_id) if measure_id is not None else measure_id
+    device_id = int(device_id) if device_id is not None else device_id
+
+    # Determine if we can use the cache
+    use_cache = False
+    if device_id is not None and measure_id is not None:
+        if measure_id in self.block_cache and device_id in self.block_cache[measure_id]:
+            use_cache = True
+
+    if use_cache:
+        # Use cached blocks
+        block_list = self.find_blocks(measure_id, device_id, start_time_n, end_time_n)
+        filename_dict = self.filename_dict
+
+        if len(block_list) == 0:
+            return []
+
+    elif block_info is None:
+        # Fetch blocks from the database
+        block_list = self.sql_handler.select_blocks(
+            int(measure_id), int(start_time_n), int(end_time_n), device_id, patient_id
+        )
+
+        read_list = condense_byte_read_list(block_list)
+
+        # if no matching block ids
+        if len(read_list) == 0:
+            return []
+
+        file_id_list = [row[2] for row in read_list]
+        filename_dict = self.get_filename_dict(file_id_list)
+    else:
+        block_list = block_info['block_list']
+        filename_dict = block_info['filename_dict']
+
+        # if no matching block ids
+        if len(block_list) == 0:
+            return []
+
+    # Get headers from blocks without reading the actual data
+    headers = self.get_headers_from_blocks(block_list, filename_dict)
+
+    return headers
+
+
+def get_headers_from_blocks(self, block_list, filename_dict):
+    """
+    Retrieve only the headers from blocks without decoding the actual wave data.
+
+    This method reads only the header portion of the specified blocks, providing
+    metadata information without the overhead of decoding time and value data.
+
+    :param list block_list: List of blocks to read headers from.
+    :param dict filename_dict: Dictionary containing file information.
+    :return: List of block headers.
+    :rtype: List[BlockMetadata]
+    """
+    if self.metadata_connection_type == "api":
+        raise ValueError("This function is only meant to work in local mode.")
+
+    # Condense the block list for optimized reading
+    read_list = condense_byte_read_list(block_list)
+
+    # Read only the header portions of the blocks
+    # We only need to read enough bytes to get the headers, not the entire blocks
+    header_size = sizeof(BlockMetadata)
+
+    # Create a modified read list that only reads the header portion of each block
+    header_read_list = []
+    for row in read_list:
+        # row format: [file_id, start_byte, end_byte, ...]
+        file_id, start_byte = row[0], row[1]
+        # Only read the header portion (first header_size bytes of each block)
+        header_read_list.append([file_id, start_byte, start_byte + header_size] + list(row[3:]))
+
+    # Read the header data from the files
+    encoded_header_bytes = self.file_api.read_file_list(header_read_list, filename_dict)
+
+    # Calculate byte positions for each header
+    num_headers = len(block_list)
+    byte_start_array = np.arange(0, num_headers * header_size, header_size, dtype=np.uint64)
+
+    # Decode only the headers
+    headers = self.block.decode_headers(encoded_header_bytes, byte_start_array)
+
+    return headers

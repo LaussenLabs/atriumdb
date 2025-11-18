@@ -130,16 +130,21 @@ For inserting data of alternate time formats (for example, time-value pairs), se
             digital_signal = segment.e_d_signal[i]
 
             # Define a new signal type (measure) in AtriumDB. If the signal already exists, the id will be returned
-            # without defining anything new. `freq_units` must be specified!
+            # without defining anything new. `freq_units` must be specified when using freq!
             measure_id = sdk.insert_measure(measure_tag=signal_name, freq=freq_hz, freq_units="Hz")
 
             # Scale factors such that: Analog_Signal = scale_m * Digital_Signal + scale_b
             scale_m = 1 / gain
             scale_b = -baseline / gain
 
-            # Write the signal data to AtriumDB
+            # Write the signal data to AtriumDB using frequency
             sdk.write_segment(measure_id, device_id, digital_signal, start_time_s, freq=freq_hz,
-                scale_m=scale_m, scale_b=scale_b, time_unites="s", freq_units="Hz")
+                scale_m=scale_m, scale_b=scale_b, time_units="s", freq_units="Hz")
+
+            # Alternative: Write using period instead of frequency
+            # period_s = 1.0 / freq_hz
+            # sdk.write_segment(measure_id, device_id, digital_signal, start_time_s, period=period_s,
+            #     scale_m=scale_m, scale_b=scale_b, time_units="s")
 
 Querying Data
 ############################################################################

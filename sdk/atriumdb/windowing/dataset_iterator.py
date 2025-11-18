@@ -101,35 +101,35 @@ class DatasetIterator:
         # The sliding interval in nanoseconds by which the window advances in time.
         self.window_slide_ns = int(window_slide_ns)
 
-        # Determine the highest frequency among the measures, used to compute matrix row sizes and more.
-        self.highest_freq_nhz = max([measure['freq_nhz'] for measure in self.measures])
+        # Determine the lowest period (highest frequency) among the measures, used to compute matrix row sizes and more.
+        self.lowest_period_ns = min([measure['period_ns'] for measure in self.measures])
 
-        # Compute the matrix's row size based on the highest frequency and the window duration in nanoseconds.
+        # Compute the matrix's row size based on the lowest period and the window duration in nanoseconds.
         # Determines how many data points fit in a single window.
 
         # Emitting warnings for row_size, slide_size, and row_period_ns
 
-        if (self.window_duration_ns * self.highest_freq_nhz) % (10 ** 18) != 0:
+        if self.window_duration_ns % self.lowest_period_ns != 0:
             warnings.warn(
-                f'Given window duration of {window_duration_ns / 1e9} seconds and signal frequency of '
-                f'{self.highest_freq_nhz / (10 ** 9)}Hz result in a non-integer number of signals in the window. '
+                f'Given window duration of {window_duration_ns / 1e9} seconds and signal period of '
+                f'{self.lowest_period_ns / (10 ** 9)} seconds result in a non-integer number of signals in the window. '
                 f'window size / row size will round down'
             )
 
-        if (self.window_slide_ns * self.highest_freq_nhz) % (10 ** 18) != 0:
+        if self.window_slide_ns % self.lowest_period_ns != 0:
             warnings.warn(
-                f'Given sliding window duration of {window_slide_ns / 1e9} seconds and signal frequency of '
-                f'{self.highest_freq_nhz / (10 ** 9)}Hz result in a non-integer number of signals in the slide. '
+                f'Given sliding window duration of {window_slide_ns / 1e9} seconds and signal period of '
+                f'{self.lowest_period_ns / (10 ** 9)} seconds result in a non-integer number of signals in the slide. '
                 f'slide will round down'
             )
 
-        self.row_size = int((self.highest_freq_nhz * self.window_duration_ns) // (10 ** 18))
+        self.row_size = int(self.window_duration_ns // self.lowest_period_ns)
 
         # The slide size in terms of matrix rows for the sliding window operation.
-        self.slide_size = int((self.highest_freq_nhz * self.window_slide_ns) // (10 ** 18))
+        self.slide_size = int(self.window_slide_ns // self.lowest_period_ns)
 
-        # Time duration between consecutive data points, given the highest frequency.
-        self.row_period_ns = int((10 ** 18) // self.highest_freq_nhz)
+        # Time duration between consecutive data points, given the lowest period (highest frequency).
+        self.row_period_ns = self.lowest_period_ns
 
         # Default number of windows for each batch is determined as 10 million divided by the number of data points in a window.
         # If provided, it uses the given num_windows_prefetch.
