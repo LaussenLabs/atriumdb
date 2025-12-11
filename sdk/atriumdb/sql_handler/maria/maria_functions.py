@@ -15,10 +15,20 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-maria_insert_ignore_measure_query = "INSERT IGNORE INTO measure (tag, freq_nhz, unit, name) VALUES (?, ?, ?, ?);"
-maria_select_measure_from_id = "SELECT id, tag, name, freq_nhz, code, unit, unit_label, unit_code, source_id FROM measure WHERE id = ?"
-maria_select_measure_from_triplet_query = "SELECT id, tag, name, freq_nhz, code, unit, unit_label, unit_code, source_id FROM measure WHERE tag = ? AND freq_nhz = ? AND unit = ?"
+maria_select_measure_from_id = """
+SELECT id, tag, name, freq_nhz, period_ns, code, unit, unit_label, unit_code, source_id 
+FROM measure WHERE id = ?
+"""
 
+maria_select_measure_from_triplet_query = """
+SELECT id, tag, name, freq_nhz, period_ns, code, unit, unit_label, unit_code, source_id 
+FROM measure WHERE tag = ? AND freq_nhz = ? AND unit = ?
+"""
+
+maria_insert_ignore_measure_query = """
+INSERT IGNORE INTO measure (id, tag, freq_nhz, period_ns, unit, name, code, unit_label, unit_code, source_id) 
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+"""
 maria_insert_ignore_device_query = "INSERT IGNORE INTO device (tag, name) VALUES (?, ?);"
 maria_select_device_from_id_query = "SELECT id, tag, name, manufacturer, model, type, bed_id, source_id FROM device WHERE id = ?"
 maria_select_device_from_tag_query = "SELECT id, tag, name, manufacturer, model, type, bed_id, source_id FROM device WHERE tag = ?"

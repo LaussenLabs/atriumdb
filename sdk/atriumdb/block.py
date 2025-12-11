@@ -21,7 +21,8 @@ import warnings
 import numpy as np
 
 from atriumdb.block_wrapper import *
-from atriumdb.helpers.block_calculations import freq_nhz_to_period_ns, calc_gap_block_start, calc_time_by_freq
+from atriumdb.helpers.block_calculations import freq_nhz_to_period_ns, calc_gap_block_start, calc_time_by_freq, \
+    calc_gap_block_start_with_period
 from atriumdb.helpers.type_helpers import *
 from atriumdb.helpers.block_constants import *
 import logging
@@ -48,9 +49,13 @@ class Block:
     def load_dll(self, path_to_dll, num_threads):
         self.wrapped_dll = WrappedBlockDll(os.path.abspath(path_to_dll), num_threads)
 
-    def encode_blocks(self, times, values, freq_nhz: int, start_ns: int,
+    def encode_blocks(self, times, values, freq_nhz: int = None, start_ns: int = None,
                       raw_time_type=None, raw_value_type=None, encoded_time_type=None,
-                      encoded_value_type=None, scale_m: float = None, scale_b: float = None):
+                      encoded_value_type=None, scale_m: float = None, scale_b: float = None, period_ns: int = None):
+
+        # Validate that exactly one of freq_nhz or period_ns is specified
+        if (freq_nhz is None) == (period_ns is None):
+            raise ValueError("Exactly one of freq_nhz or period_ns must be specified.")
 
         scale_m = 1.0 if scale_m is None else scale_m
         scale_b = 0.0 if scale_b is None else scale_b
@@ -73,12 +78,16 @@ class Block:
         time_info_data = None
         # Check if raw time type is START_TIME_NUM_SAMPLES and process accordingly
         if raw_time_type == TIME_TYPES['START_TIME_NUM_SAMPLES']:
-            times, time_info_data = self.blockify_intervals(freq_nhz, num_blocks, times, values.size)
+            if freq_nhz is not None:
+                times, time_info_data = self.blockify_intervals(freq_nhz, num_blocks, times, values.size)
+            else:
+                times, time_info_data = self.blockify_intervals_with_period(period_ns, num_blocks, times, values.size)
 
         # Generate metadata for the blocks
         times, headers, options, t_block_start, v_block_start = \
-            self._gen_metadata(times, values, freq_nhz, start_ns, num_blocks,
+            self._gen_metadata(times, values, start_ns, num_blocks,
                                raw_time_type, raw_value_type, encoded_time_type, encoded_value_type,
+                               freq_nhz=freq_nhz, period_ns=period_ns,
                                scale_m=scale_m, scale_b=scale_b, time_data=time_info_data)
 
         # Encode the blocks using the wrapped_dll's encode_blocks_sdk function
@@ -88,9 +97,14 @@ class Block:
         # Return the encoded bytes, headers, and byte start array
         return encoded_bytes, headers, byte_start_array
 
-    def prepare_encode_blocks_inputs(self, times, values, freq_nhz, start_ns,
+    def prepare_encode_blocks_inputs(self, times, values, start_ns,
                                      raw_time_type, raw_value_type, encoded_time_type, encoded_value_type,
-                                     scale_m=None, scale_b=None):
+                                     freq_nhz=None, period_ns=None, scale_m=None, scale_b=None):
+
+        # Validate that exactly one of freq_nhz or period_ns is specified
+        if (freq_nhz is None) == (period_ns is None):
+            raise ValueError("Exactly one of freq_nhz or period_ns must be specified.")
+
         scale_m = 1.0 if scale_m is None else scale_m
         scale_b = 0.0 if scale_b is None else scale_b
 
@@ -112,12 +126,16 @@ class Block:
         time_info_data = None
         # Check if raw time type is START_TIME_NUM_SAMPLES and process accordingly
         if raw_time_type == TIME_TYPES['START_TIME_NUM_SAMPLES']:
-            times, time_info_data = self.blockify_intervals(freq_nhz, num_blocks, times, values.size)
+            if freq_nhz is not None:
+                times, time_info_data = self.blockify_intervals(freq_nhz, num_blocks, times, values.size)
+            else:
+                times, time_info_data = self.blockify_intervals_with_period(period_ns, num_blocks, times, values.size)
 
         # Generate metadata for the blocks
         times, headers, options, t_block_start, v_block_start = \
-            self._gen_metadata(times, values, freq_nhz, start_ns, num_blocks,
+            self._gen_metadata(times, values, start_ns, num_blocks,
                                raw_time_type, raw_value_type, encoded_time_type, encoded_value_type,
+                               freq_nhz=freq_nhz, period_ns=period_ns,
                                scale_m=scale_m, scale_b=scale_b, time_data=time_info_data)
 
         # Return the prepared inputs
@@ -144,20 +162,22 @@ class Block:
             # Extract parameters from segment
             times = segment['times']
             values = segment['values']
-            freq_nhz = segment['freq_nhz']
             start_ns = segment['start_ns']
             raw_time_type = segment['raw_time_type']
             raw_value_type = segment['raw_value_type']
             encoded_time_type = segment['encoded_time_type']
             encoded_value_type = segment['encoded_value_type']
+            freq_nhz = segment.get('freq_nhz', None)
+            period_ns = segment.get('period_ns', None)
             scale_m = segment.get('scale_m', None)
             scale_b = segment.get('scale_b', None)
 
             # Call helper method
             times_s, values_s, num_blocks_s, t_block_start_s, v_block_start_s, headers_s, options_s, time_info_data_s = \
-                self.prepare_encode_blocks_inputs(times, values, freq_nhz, start_ns,
+                self.prepare_encode_blocks_inputs(times, values, start_ns,
                                                   raw_time_type, raw_value_type,
                                                   encoded_time_type, encoded_value_type,
+                                                  freq_nhz=freq_nhz, period_ns=period_ns,
                                                   scale_m=scale_m, scale_b=scale_b)
 
             # Adjust t_block_start and v_block_start
@@ -207,7 +227,12 @@ class Block:
     def blockify_intervals(self, freq_nhz, num_blocks, times, value_size):
         # Calculate the period in nanoseconds based on the input frequency
         period_ns = freq_nhz_to_period_ns(freq_nhz)
+        return self._blockify_intervals_common(period_ns, num_blocks, times, value_size)
 
+    def blockify_intervals_with_period(self, period_ns, num_blocks, times, value_size):
+        return self._blockify_intervals_common(period_ns, num_blocks, times, value_size)
+
+    def _blockify_intervals_common(self, period_ns, num_blocks, times, value_size):
         # Reshape the input times array into a list of pairs (intervals)
         true_intervals = times.reshape((-1, 2)).tolist()
 
@@ -342,7 +367,17 @@ class Block:
         # Convert the decoded time and value data into the appropriate data types
         start_bench = time.perf_counter()
         time_data = np.frombuffer(time_data, dtype=np.int64)
-        period_ns = freq_nhz_to_period_ns(headers[0].freq_nhz)
+
+        # Handle freq_nhz vs period_ns based on TSC version
+        header = headers[0]
+        tsc_version_combined = header.tsc_version_num * 10 + header.tsc_version_ext
+
+        if tsc_version_combined >= 24:
+            # For version 2.4 and above, freq_nhz is actually period_ns
+            period_ns = header.freq_nhz
+        else:
+            # For older versions, convert frequency to period
+            period_ns = freq_nhz_to_period_ns(header.freq_nhz)
 
         if headers[0].t_raw_type == T_TYPE_START_TIME_NUM_SAMPLES:
             time_data = merge_interval_data(time_data, period_ns)
@@ -478,7 +513,17 @@ class Block:
 
         # Convert the decoded time and value data into the appropriate data types
         time_data = np.frombuffer(time_data, dtype=np.int64)
-        period_ns = freq_nhz_to_period_ns(headers[0].freq_nhz)
+
+        # Handle freq_nhz vs period_ns based on TSC version
+        header = headers[0]
+        tsc_version_combined = header.tsc_version_num * 10 + header.tsc_version_ext
+
+        if tsc_version_combined >= 24:
+            # For version 2.4 and above, freq_nhz is actually period_ns
+            period_ns = header.freq_nhz
+        else:
+            # For older versions, convert frequency to period
+            period_ns = freq_nhz_to_period_ns(header.freq_nhz)
 
         if headers[0].t_raw_type == T_TYPE_START_TIME_NUM_SAMPLES:
             time_data = merge_interval_data(time_data, period_ns)
@@ -524,7 +569,6 @@ class Block:
                 raise ValueError("Returning nan gaps is only supported for time type 1.")
             if period_ns is None:
                 raise ValueError("Returning nan gaps requires a period ns to be provided.")
-            period_ns = 10**18 / headers[0].freq_nhz
             start_ns = start_time_n if start_time_n is not None else time_data[0]
             end_ns = end_time_n if end_time_n is not None else round(time_data[-1] + period_ns)
             expected_num_values = int(round((end_ns - start_ns) / period_ns))
@@ -577,9 +621,14 @@ class Block:
 
         return decoded_headers, byte_start_array
 
-    def _gen_metadata(self, times, values, freq_nhz: int, start_ns: int, num_blocks: int,
+    def _gen_metadata(self, times, values, start_ns: int, num_blocks: int,
                       raw_time_type: int, raw_value_type: int, encoded_time_type: int, encoded_value_type: int,
+                      freq_nhz: int = None, period_ns: int = None,
                       scale_m: float = None, scale_b: float = None, time_data=None):
+
+        # Validate that exactly one of freq_nhz or period_ns is specified
+        if (freq_nhz is None) == (period_ns is None):
+            raise ValueError("Exactly one of freq_nhz or period_ns must be specified.")
 
         # Make a copy of the input times array
         times = np.copy(times)
@@ -604,8 +653,23 @@ class Block:
         val_offset = 0
         cur_time, cur_gap = int(start_ns), 0
 
+        # Determine which mode we're in and set appropriate period_ns
+        use_freq_mode = freq_nhz is not None
+        if use_freq_mode:
+            actual_period_ns = freq_nhz_to_period_ns(freq_nhz)
+        else:
+            actual_period_ns = period_ns
+
         # Loop through each block
         for i in range(num_blocks):
+            # Set version numbers based on mode
+            if use_freq_mode:
+                headers[i].tsc_version_num = 2
+                headers[i].tsc_version_ext = 3
+            else:
+                headers[i].tsc_version_num = 2
+                headers[i].tsc_version_ext = 4
+
             # Set the raw and encoded time and value types for the current block
             headers[i].t_raw_type = raw_time_type
             headers[i].t_encoded_type = encoded_time_type
@@ -618,8 +682,11 @@ class Block:
             headers[i].t_compression_level = self.t_compression_level
             headers[i].v_compression_level = self.v_compression_level
 
-            # Set the frequency for the current block
-            headers[i].freq_nhz = freq_nhz
+            # Set the frequency or period for the current block
+            if use_freq_mode:
+                headers[i].freq_nhz = freq_nhz
+            else:
+                headers[i].freq_nhz = period_ns  # Store period_ns in freq_nhz field
 
             # Determine the number of values in the current block
             if i < num_blocks - 1:
@@ -650,7 +717,7 @@ class Block:
                 elapsed_time = elapsed_block_time[i]
                 t_block_start[i] = interval_block_start[i]
                 cur_time += elapsed_time
-                headers[i].end_n = int(cur_time) - int(freq_nhz_to_period_ns(freq_nhz))
+                headers[i].end_n = int(cur_time) - int(actual_period_ns)
 
             else:
                 headers[i].start_n, t_block_start[i] = int(cur_time), cur_gap * 16
@@ -662,12 +729,16 @@ class Block:
                 else:
                     raise ValueError("time type {} not supported.".format(raw_time_type))
 
-                headers[i].num_gaps, elapsed_time, period_ns = \
-                    calc_gap_block_start(times, headers[i].num_vals, freq_nhz, val_offset, cur_gap, mode)
+                if use_freq_mode:
+                    headers[i].num_gaps, elapsed_time, period_ns_calc = \
+                        calc_gap_block_start(times, headers[i].num_vals, freq_nhz, val_offset, cur_gap, mode)
+                else:
+                    headers[i].num_gaps, elapsed_time, period_ns_calc = \
+                        calc_gap_block_start_with_period(times, headers[i].num_vals, actual_period_ns, val_offset, cur_gap, mode)
 
                 cur_time += elapsed_time
                 cur_gap += headers[i].num_gaps
-                headers[i].end_n = int(cur_time) - period_ns
+                headers[i].end_n = int(cur_time) - period_ns_calc
 
             # Set the starting position of the value data for the current block
             v_block_start[i] = val_offset * 8

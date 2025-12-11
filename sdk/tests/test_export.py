@@ -55,7 +55,7 @@ def _test_export(db_type, dataset_location, connection_params):
     for export_format in ['tsc', 'csv', 'npz', 'wfdb', 'parquet']:
         original_path = Path(sdk_1.dataset_location)
         export_dataset_location = original_path.with_name(original_path.stem + f"_{export_format}")
-        sdk_2 = AtriumSDK.create_dataset(dataset_location=export_dataset_location)
+        sdk_2 = AtriumSDK.create_dataset(dataset_location=export_dataset_location, auto_upgrade=True)
         transfer_data(sdk_1, sdk_2, definition, export_format=export_format, gap_tolerance=None, deidentify=False,
                       patient_info_to_transfer=None, include_labels=False, parquet_engine='pyarrow', compression='zstd')
 

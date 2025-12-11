@@ -51,13 +51,12 @@ def get_signal_dictionary(sdk, device_id, query_patient_id, window_duration_ns, 
     # Reset and populate the batch data signal dictionary
     source_batch_data_dictionary = {}
     for i, measure in enumerate(measures):
-        freq_nhz = measure['freq_nhz']
-        period_ns = int((10 ** 18) // freq_nhz)
+        period_ns = measure['period_ns']
         measure_id = measure['id']
 
         # Create a time array for this specific measure
-        measure_window_size = int((freq_nhz * window_duration_ns) // (10 ** 18))
-        measure_slide_size = int((freq_nhz * window_slide_ns) // (10 ** 18))
+        measure_window_size = int(window_duration_ns // period_ns)
+        measure_slide_size = int(window_slide_ns // period_ns)
         measure_batch_size = measure_window_size + (batch_num_windows - 1) * measure_slide_size
         measure_quantized_end_time = batch_start_time + (measure_batch_size * period_ns)
         measure_filled_time_array = np.arange(batch_start_time, measure_quantized_end_time, period_ns)
@@ -70,11 +69,11 @@ def get_signal_dictionary(sdk, device_id, query_patient_id, window_duration_ns, 
 
         start_index = np.searchsorted(measure_filled_time_array, data_start_time, side='left')
 
-        expected_num_values = int(round((data_end_time - data_start_time) / (10 ** 18 / freq_nhz)))
+        expected_num_values = int(round((data_end_time - data_start_time) / period_ns))
         if expected_num_values > measure_filled_value_array.size - start_index:
             data_end_time = data_start_time + int(
-                round((measure_filled_value_array.size - start_index) * (10 ** 18 / freq_nhz)))
-            expected_num_values = int(round((data_end_time - data_start_time) / (10 ** 18 / freq_nhz)))
+                round((measure_filled_value_array.size - start_index) * period_ns))
+            expected_num_values = int(round((data_end_time - data_start_time) / period_ns))
 
         nan_filled_out = measure_filled_value_array[start_index:start_index + expected_num_values]
 

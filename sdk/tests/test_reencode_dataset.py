@@ -34,6 +34,7 @@ SEED = 42
 
 def test_reencode_dataset():
     _test_for_both(DB_NAME, _test_reencode_dataset)
+    _test_for_both(DB_NAME, _test_reencode_dataset_period)
 
 
 def _test_reencode_dataset(db_type, dataset_location, connection_params):
@@ -43,3 +44,12 @@ def _test_reencode_dataset(db_type, dataset_location, connection_params):
     write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
     reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interval_gap_tolerance_nano=0)
     assert_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
+
+
+def _test_reencode_dataset_period(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED, use_period=True)
+    reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interval_gap_tolerance_nano=0)
+    assert_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED, use_period=True)

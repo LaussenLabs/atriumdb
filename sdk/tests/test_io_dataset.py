@@ -56,7 +56,7 @@ def _test_csv_dataset(db_type, dataset_location, connection_params, data_format)
         db_name = connection_params['database']
         port = connection_params['port']
 
-        maria_handler = MariaDBHandler(host, user, password, db_name)
+        maria_handler = MariaDBHandler(host, user, password, db_name, port=port)
 
         maria_handler.maria_connect_no_db().cursor().execute(f"DROP DATABASE IF EXISTS `{db_name}`")
 
