@@ -591,7 +591,21 @@ class MariaDBHandler(SQLHandler):
                     cursor.execute(block_query, args)
                     block_results.extend(cursor.fetchall())
 
-            return block_results
+            # Filter results based on start_time_n and end_time_n parameters
+            filtered_results = []
+            for row in block_results:
+                row_start_time = row[6]  # start_time_n
+                row_end_time = row[7]  # end_time_n
+
+                # Check for overlap with parameter time range
+                if start_time_n is not None and row_end_time < start_time_n:
+                    continue  # Row ends before parameter start - no overlap
+                if end_time_n is not None and row_start_time > end_time_n:
+                    continue  # Row starts after parameter end - no overlap
+
+                filtered_results.append(row)
+
+            return filtered_results
 
         # Query by device.
         block_query = """
