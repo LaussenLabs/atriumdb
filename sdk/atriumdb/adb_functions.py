@@ -1300,6 +1300,78 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
     sdk.block.block_size = original_block_size
 
 
+def rebuild_intervals_from_existing_blocks(sdk, interval_gap_tolerance_nano=0, max_values_in_ram=1_000_000):
+    """
+    Rebuilds intervals for all measures and devices based on existing block data.
+    """
+    measures = sdk.get_all_measures()
+    devices = sdk.get_all_devices()
+
+    measure_data = list(measures.items())
+    device_data = list(devices.items())
+
+    for device_id, device_info in tqdm(device_data, desc="Devices"):
+        for measure_id, measure_info in tqdm(measure_data, desc="Measures"):
+            sorted_block_list_by_time = get_all_blocks(sdk, measure_id, device_id)
+            if len(sorted_block_list_by_time) == 0:
+                continue
+
+            file_id_list = list(set([row[3] for row in sorted_block_list_by_time]))
+            filename_dict = sdk.get_filename_dict(file_id_list)
+
+            total_measure_device_interval_array = []
+
+            # Process all blocks to extract interval information
+            for block_group in group_sorted_block_list(
+                    sorted_block_list_by_time, num_values_per_group=max_values_in_ram):
+
+                r_headers, r_times, r_values = sdk.get_data_from_blocks(
+                    block_list=block_group,
+                    filename_dict=filename_dict,
+                    start_time_n=0,
+                    end_time_n=2 ** 62,
+                    analog=False,
+                    time_type="encoded",
+                    sort=False,
+                    allow_duplicates=True
+                )
+
+                if r_values.size == 0:
+                    continue
+
+                block_interval_data = []
+
+                # Group data by scale factor, freq, time type
+                for group_headers, group_times, group_values in group_headers_by_scale_factor_freq_time_type(
+                        r_headers, r_times, r_values):
+                    group_time_type = int(group_headers[0].t_raw_type)
+                    group_freq_nhz = int(group_headers[0].freq_nhz)
+
+                    # Calculate intervals based on time type
+                    if group_time_type == 1:
+                        period_ns = (10 ** 18) // group_freq_nhz
+                        group_times, sorted_time_indices = np.unique(group_times, return_index=True)
+                        group_interval_data = get_interval_list_from_ordered_timestamps(group_times, period_ns)
+                    elif group_time_type == 2:
+                        # Merge the gap data into messages (segments)
+                        message_starts, message_sizes = reconstruct_messages_multi(group_headers, group_times, group_freq_nhz)
+                        group_interval_data = get_interval_list_from_message_starts_and_sizes(message_starts, message_sizes, group_freq_nhz)
+                    else:
+                        raise ValueError("time_type must be 1 or 2")
+
+                    block_interval_data.append(group_interval_data)
+
+                # Union intervals within this block
+                block_interval_data = intervals_union_list(block_interval_data)
+                total_measure_device_interval_array.append(block_interval_data)
+
+            # Combine all collected intervals for this measure/device
+            total_measure_device_interval_array = intervals_union_list(
+                total_measure_device_interval_array, gap_tolerance_nano=interval_gap_tolerance_nano)
+
+            # Replace the intervals in the database
+            sdk.sql_handler.replace_intervals(measure_id, device_id, total_measure_device_interval_array)
+
 def inplace_block_time_fix(
         sdk,
         batch_size: int = 500
