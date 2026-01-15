@@ -28,7 +28,7 @@ from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_i
     find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, reconstruct_messages, \
     ALLOWED_TIME_TYPES, collect_all_descendant_ids, get_best_measure_id, _calc_end_time_from_gap_data, \
     merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns, time_unit_options, \
-    create_gap_arr_from_variable_messages, sort_message_time_values
+    create_gap_arr_from_variable_messages, sort_message_time_values, convert_from_nanoseconds, detect_period
 from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
@@ -843,8 +843,19 @@ class AtriumSDK:
         # Handle mutually exclusive freq_nhz and period_ns
         if freq_nhz is not None and period_ns is not None:
             raise ValueError("freq_nhz and period_ns are mutually exclusive. Specify only one.")
+
         if freq_nhz is None and period_ns is None:
-            raise ValueError("Either freq_nhz or period_ns must be specified.")
+            # Detect period if time-value array.
+            if raw_time_type == 1:
+                period_ns = detect_period(time_data)
+                if period_ns == -1:
+                    raise ValueError(
+                        "Automatic period detection failed: The signal appears aperiodic "
+                        "(no single time delta accounts for >30% of intervals). "
+                        "Please explicitly provide 'period' or 'freq'."
+                    )
+            else:
+                raise ValueError("Either freq_nhz or period_ns must be specified.")
 
         if freq_nhz is not None:
             period_ns = None
@@ -1431,26 +1442,38 @@ class AtriumSDK:
 
         # Convert times to nanoseconds
         if time_units != "ns":
-            times = convert_to_nanoseconds(times, time_units)
+            times_ns_array = convert_to_nanoseconds(times, time_units)
+        else:
+            times_ns_array = times.astype(np.int64)
 
-        # Figure out the frequency/period - handle mutually exclusive period/freq
+        # Figure out the frequency/period
         if period is not None and freq is not None:
             raise ValueError("period and freq are mutually exclusive. Specify only one.")
+
+        # If neither is provided, attempt to detect
+        if period is None and freq is None:
+            detected_period = detect_period(times)
+
+            if detected_period == -1:
+                raise ValueError(
+                    "Automatic period detection failed: The signal appears aperiodic "
+                    "(no single time delta accounts for >30% of intervals). "
+                    "Please explicitly provide 'period' or 'freq'."
+                )
+            period = detected_period
 
         # Ensure the unspecified parameter is None
         if freq is not None:
             freq_nano = convert_to_nanohz(freq, freq_units)
             period_ns = None
-        elif period is not None:
-            period_ns = int(period * time_unit_options[time_units])
-            freq_nano = None
         else:
-            freq_nano = measure_info["freq_nhz"]
-            period_ns = None
+            assert period is not None
+            period_ns = convert_to_nanoseconds(period, time_units)
+            freq_nano = None
 
         # Create data dictionary
         data_dict = {
-            'times': times.astype(np.int64),
+            'times': times_ns_array,
             'values': values,
             'scale_m': scale_m,
             'scale_b': scale_b,

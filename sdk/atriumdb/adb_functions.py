@@ -14,7 +14,6 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import math
 import warnings
 import os
 
@@ -32,8 +31,20 @@ from atriumdb.helpers.block_constants import TIME_TYPES
 from atriumdb.intervals.union import intervals_union_list
 
 ALLOWED_TIME_TYPES = [1, 2]
-time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
-freq_unit_options = {"nHz": 1, "uHz": 10 ** 3, "mHz": 10 ** 6, "Hz": 10 ** 9, "kHz": 10 ** 12, "MHz": 10 ** 15}
+time_unit_options = {
+    "s": 1_000_000_000,
+    "ms": 1_000_000,
+    "us": 1_000,
+    "ns": 1
+}
+freq_unit_options = {
+    "MHz": 1_000_000_000_000_000,
+    "kHz": 1_000_000_000_000,
+    "Hz":  1_000_000_000,
+    "mHz": 1_000_000,
+    "uHz": 1_000,
+    "nHz": 1
+}
 allowed_interval_index_modes = ["fast", "merge", "disable"]
 
 
@@ -245,16 +256,42 @@ def yield_data(r_times, r_values, window_size, step_size, get_last_window, total
         yield total_query_index, r_times, r_values
 
 
-def convert_to_nanoseconds(time_data, time_units):
-    # check that a correct unit type was entered
-    if time_units not in time_unit_options.keys():
-        raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
+def convert_to_nanoseconds(data, time_units):
+    """
+    Converts time data (array or scalar) to nanoseconds (int64).
+    """
+    if time_units not in time_unit_options:
+        raise ValueError(f"Invalid time units. Expected one of: {list(time_unit_options.keys())}")
 
-    # convert time data into nanoseconds and round off any trailing digits and convert to integer array
-    # copy so as to not alter user's data, which should remain in original units.
-    time_data = time_data.copy() * time_unit_options[time_units]
+    multiplier = time_unit_options[time_units]
 
-    return np.around(time_data).astype("int64")
+    # Handle scalar float/int (e.g., period)
+    if np.isscalar(data):
+        return int(round(data * multiplier))
+
+    # Copy to avoid altering user data
+    data_ns = data.copy() * multiplier
+    return np.around(data_ns).astype(np.int64)
+
+
+def convert_from_nanoseconds(data_ns, target_units):
+    """
+    Converts nanosecond data (array or scalar) back to target units.
+    Returns float for non-ns units, int for ns units.
+    """
+    if target_units not in time_unit_options:
+        raise ValueError(f"Invalid target units. Expected one of: {list(time_unit_options.keys())}")
+
+    divisor = time_unit_options[target_units]
+
+    # If target is NS, return integer (no division needed)
+    if target_units == "ns":
+        if np.isscalar(data_ns):
+            return int(data_ns)
+        return data_ns.astype(np.int64)
+
+    # For other units, return float
+    return data_ns / divisor
 
 
 def convert_value_to_nanoseconds(time_value, time_units):
@@ -283,6 +320,43 @@ def convert_from_nanohz(freq_nhz, freq_units):
         freq = int(freq)
 
     return freq
+
+def detect_period(times: np.ndarray, threshold_ratio: float = 0.3):
+    """
+    Analyzes a time array to detect the dominant sampling period.
+    """
+    if len(times) < 2:
+        return -1
+
+    # Calculate deltas
+    deltas = np.diff(times)
+
+    # Find the mode of the deltas
+    unique_deltas, counts = np.unique(deltas, return_counts=True)
+    max_count_index = np.argmax(counts)
+    mode_delta = unique_deltas[max_count_index]
+    mode_count = counts[max_count_index]
+
+    # Handle Duplicate Values (Mode is 0)
+    if mode_delta == 0:
+        warnings.warn(
+            f"Dominant delta is 0 ({mode_count} occurrences). "
+            "Duplicates detected. Redetecting period using unique timestamps.",
+            UserWarning
+        )
+        # Recursive call with unique, sorted timestamps
+        return detect_period(np.unique(times), threshold_ratio)
+
+    # Check against threshold
+    total_intervals = len(deltas)
+    if (mode_count / total_intervals) < threshold_ratio:
+        return -1
+
+    # Return based on input type
+    if np.issubdtype(times.dtype, np.integer):
+        return int(mode_delta)
+
+    return float(mode_delta)
 
 
 def parse_metadata_uri(metadata_uri):
