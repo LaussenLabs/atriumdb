@@ -4926,7 +4926,7 @@ class AtriumSDK:
           Regardless of the above parameters if shuffle is True or an int, all windows in the cache will be randomly
           shuffled before being passed to the user.
 
-        :param definition: A DefinitionYAML object or string representation specifying the measures and
+        :param definition: A DatasetDefinition object or string representation specifying the measures and
                            patients or devices over particular time intervals.
         :param int window_duration: Duration of each window in units time_units (default nanoseconds).
         :param int window_slide: Slide duration between consecutive windows in units time_units (default nanoseconds).
@@ -4975,7 +4975,7 @@ of DatasetIterator objects depending on the value of num_iterators.
             }
 
             # Create Definition Object
-            definition = DefinitionYAML(measures=measures, patient_ids=patient_ids)
+            definition = DatasetDefinition(measures=measures, patient_ids=patient_ids)
 
             # Get the Iterator Object
             slide_size_nano = window_size_nano = 60_000_000_000  # 1 minute nano
