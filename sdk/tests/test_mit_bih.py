@@ -326,7 +326,7 @@ def write_to_sdk(freq_nano, period_nano, device_id, gap_data_2d, time_arr, start
         if use_messages:
             if use_period:
                 sdk.write_time_value_pairs(measure_id, device_id, time_arr, value_data,
-                                           period=period_nano, time_units="ns",
+                                           period=None, time_units="ns",
                                            scale_m=scale_m, scale_b=scale_b)
             else:
                 sdk.write_time_value_pairs(measure_id, device_id, time_arr, value_data,
