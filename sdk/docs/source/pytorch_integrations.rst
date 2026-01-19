@@ -1,8 +1,8 @@
 Pytorch Integrations
-========================
+====================
 
 Pytorch Dataloader Usage
----------------------
+------------------------
 
 
 =============================================================
@@ -101,7 +101,7 @@ We construct a dataset from the labels in atriumdb and add the measure(s) you ne
    data_def.add_measure(MEASURE_NAME, MEASURE_FREQ, MEASURE_UNIT)
 
 3) Split Into Train/Validation/Test (by Patient) and save YAML dataset definition files
-------------------------------------------------
+---------------------------------------------------------------------------------------
 
 Split into non overlapping sets **by patient** to avoid leakage across training and evaluation sets.
 Here the priority stratification labels tries to distribute that label according to your defined percentages.
