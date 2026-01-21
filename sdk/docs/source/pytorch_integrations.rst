@@ -12,7 +12,8 @@ The example shown below is for an ECG multiclass classification problem and will
 
 This example shows how to:
 
-#. Connect to AtriumDB and curate a dataset from labeled intervals
+#. Connect to AtriumDB and select patients
+#. Build a dataset definition from labeled intervals
 #. Split the dataset into train/validation/test **by patient**
 #. Validate and filter windows (e.g., enforce majority-label windows)
 #. Use a PyTorch :class:`~torch.utils.data.DataLoader` with
@@ -30,7 +31,7 @@ Prerequisites
 - ``atriumdb`` Python SDK
 - ``torch`` and ``torchvision`` (optional, for using :class:`DataLoader`)
 - ``numpy``
-- Data and labels in AtriumDB
+- Waveform data and waveform labels in AtriumDB
 
 .. code-block:: bash
 
@@ -74,6 +75,11 @@ Example Setup
 1) Connect to AtriumDB and Enumerate Patients
 ---------------------------------------------
 
+WARNING: When setting "num_threads" in the AtriumSDK object, AtriumDB will use OpenMP to deal with threading.
+It will set the OMP_NUM_THREADS environment variable to the value you specify. Pytorch and related libraries sometimes
+also use this variable which would be overwritten and could cause slower performance in other libraries if set to a low number.
+
+
 .. code-block:: python
 
    sdk = AtriumSDK(dataset_location=DATASET_ROOT, num_threads=2)
@@ -104,10 +110,10 @@ We construct a dataset from the labels in atriumdb and add the measure(s) you ne
 ---------------------------------------------------------------------------------------
 
 Split into non overlapping sets **by patient** to avoid leakage across training and evaluation sets.
-Here the priority stratification labels tries to distribute that label according to your defined percentages.
+Here the priority stratification labels tries to distribute that label according to your defined ratios.
 With the additional_labels being secondary. This is important because most patients will have multiple labels
 and all their labels will have to be in one set so this defines which ones are important to adhere to the split
-percentages and which are secondary. Verbose will output the results in a structures format.
+ratios and which are secondary. Verbose will output the results in a structured format.
 
 .. code-block:: python
 
@@ -139,7 +145,7 @@ percentages and which are secondary. Verbose will output the results in a struct
 ------------------------------
 
 This step is where we decide what data we want in the final dataset. Since labels all represent a section of time they are overlayed
-on the data which means until you iterate over the dataset you wont know exactly which windows your getting. For example
+on the data which means until you iterate over the dataset you won't know exactly which windows you're getting. For example
 the window boundary may fall in such a way as the first 2 seconds of the window are sinus the 3rd second has no label and
 the last 2 seconds are junctional rhythm. Now you have to decide what you want to do with that window. Do you want to keep it
 or exclude it? This is what this step allows you to do. You define a function that takes a window as a param and outputs true
@@ -210,10 +216,10 @@ Below is an example filter that:
 5) Use a PyTorch DataLoader via AtriumDBMapDataset
 --------------------------------------------------
 
-Here we are going to subclass the AtriumDBMapDataset class that's built into AtriumDB to make it more specific to our needs.
-AtriumDBMapDataset is a subclass of Pytorch's Dataset class to allow for integration with dataloaders.
+AtriumDBMapDataset is a subclass of Pytorch's Dataset class to allow for integration with dataloaders. Here we are
+going to subclass the AtriumDBMapDataset class that's built into AtriumDB to make it more specific to our needs.
 You should override the __getitem__() method and include code to preprocess labels, and preprocess your data. Optionally
-you can include a collator_fn to specify batching
+you can include a collator_fn to specify how batching is done. For more details on pytorch datasets and dataloaders please refer to their docs.
 
 .. code-block:: python
 
@@ -234,9 +240,7 @@ you can include a collator_fn to specify batching
                          gap_tolerance=gap_tolerance,
                          num_threads=num_threads)
 
-       def __getitem__(self, index):
-           return self.iterator_base_instance[index]
-
+       # this method gets a window object at a specific index
        def __getitem__(self, index):
             # ALWAYS keep this here
             window = self.iterator_base_instance.__getitem__(index)
@@ -319,13 +323,12 @@ Now, load the training data and wrap it in a :class:`DataLoader`:
      be used to buffer out the time the SDK needs to decompress data. This will allow you to saturate the GPU and make
      data retrieval not the rate limiting step.
 
-
 Appendix: What to Replace in Your Environment
 ---------------------------------------------
 
 - ``DATASET_ROOT``: your AtriumDB store path/URI
-- ``OUTPUT_DIR``: where to write dataset definitions
-- ``LABELS``: your task-specific labels
+- ``OUTPUT_DIR``: where to write dataset definition files
+- ``LABELS``: your task-specific label names
 - ``MEASURE_NAME``, ``MEASURE_FREQ``, ``MEASURE_UNIT``: your signal(s) of interest
-- ``TIME_UNITS`` and durations: match the time base your AtriumDB store uses
+- ``TIME_UNITS`` which units of time you want to work in e.g. seconds, milliseconds, microseconds, nanoseconds
 - ``EXCLUDE_PATIENTS``: any set of patient IDs to exclude (optional)
