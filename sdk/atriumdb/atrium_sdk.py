@@ -1252,7 +1252,7 @@ class AtriumSDK:
             raise NotImplementedError("API mode is not supported for writing data.")
 
         # Set default time and frequency units if not provided
-        time_units = "s" if time_units is None else time_units
+        time_units = "ns" if time_units is None else time_units
         freq_units = "Hz" if freq_units is None else freq_units
 
         # Set default for scale factors
@@ -1422,7 +1422,7 @@ class AtriumSDK:
             raise ValueError("values and times must be numpy arrays of equal shape.")
 
         # Set default time and frequency units if not provided
-        time_units = "s" if time_units is None else time_units
+        time_units = "ns" if time_units is None else time_units
         freq_units = "Hz" if freq_units is None else freq_units
 
         # Set default for scale factors
@@ -1945,7 +1945,7 @@ class AtriumSDK:
         # Set default values for units and freq_units/time_units if not provided
         units = "" if units is None else units
         freq_units = "nHz" if freq_units is None else freq_units
-        time_units = "s" if time_units is None else time_units
+        time_units = "ns" if time_units is None else time_units
 
         # Convert to nanohertz based on which parameter was provided
         if freq is not None:
@@ -2125,7 +2125,7 @@ class AtriumSDK:
 
         # Set the default frequency units to "Hz" if not provided
         freq_units = "Hz" if freq_units is None else freq_units
-        time_units = "s" if time_units is None else time_units
+        time_units = "ns" if time_units is None else time_units
 
         # Convert the frequency or period to nanohertz if necessary
         target_freq_nhz = None
@@ -2264,7 +2264,7 @@ class AtriumSDK:
         elif freq is not None:
             target_freq_nhz = freq
         elif period is not None:
-            time_units = "s" if time_units is None else time_units
+            time_units = "ns" if time_units is None else time_units
             period_ns = int(period * time_unit_options[time_units])
             target_freq_nhz = 10 ** 18 // period_ns
 
@@ -2367,7 +2367,7 @@ class AtriumSDK:
 
         # Set default frequency/time units if not provided
         freq_units = "nHz" if freq_units is None else freq_units
-        time_units = "s" if time_units is None else time_units
+        time_units = "ns" if time_units is None else time_units
         units = "" if units is None else units
 
         # Handle source_name to source_id conversion
