@@ -771,11 +771,17 @@ def concat_encoded_arrays(encoded_bytes, encoded_headers, encoded_bytes_1, encod
     return encoded_bytes, encoded_headers, byte_start_array
 
 
-def create_gap_arr(message_time_arr, samples_per_message, freq_nhz):
+def create_gap_arr(message_time_arr, samples_per_message, freq_nhz=None, period_ns=None):
     # Check if the product of samples_per_message and 10^18 is divisible by freq_nhz
-    assert ((10 ** 18) * samples_per_message) % freq_nhz == 0
-    # Calculate the message period in nanoseconds
-    message_period_ns = ((10 ** 18) * samples_per_message) // freq_nhz
+    assert (freq_nhz is None) ^ (period_ns is None)
+
+    if period_ns is None:
+        assert ((10 ** 18) * samples_per_message) % freq_nhz == 0
+        # Calculate the message period in nanoseconds
+        message_period_ns = ((10 ** 18) * samples_per_message) // freq_nhz
+    else:
+        # Calculate the message period in nanoseconds
+        message_period_ns = period_ns
 
     # Calculate the time gaps between consecutive message times and subtract the message period
     time_gaps = np.diff(message_time_arr) - message_period_ns
@@ -791,11 +797,18 @@ def create_gap_arr(message_time_arr, samples_per_message, freq_nhz):
     return result_arr.flatten()
 
 
-def interpret_gap_arr(gap_array, start_time_ns, num_messages, samples_per_message, freq_nhz):
+def interpret_gap_arr(gap_array, start_time_ns, num_messages,
+                      samples_per_message, freq_nhz=None, period_ns=None):
     # Ensure that the product of samples_per_message and 10^18 is divisible by freq_nhz
-    assert ((10 ** 18) * samples_per_message) % freq_nhz == 0
-    # Calculate the message period in nanoseconds
-    message_period_ns = ((10 ** 18) * samples_per_message) // freq_nhz
+    assert (freq_nhz is None) ^ (period_ns is None)
+
+    if period_ns is None:
+        assert ((10 ** 18) * samples_per_message) % freq_nhz == 0
+        # Calculate the message period in nanoseconds
+        message_period_ns = ((10 ** 18) * samples_per_message) // freq_nhz
+    else:
+        # Calculate the message period in nanoseconds
+        message_period_ns = period_ns
 
     # Create an array of time values for each message, taking into account the message period
     time_arr = np.arange(start_time_ns, start_time_ns + (num_messages * message_period_ns), message_period_ns)
@@ -807,7 +820,11 @@ def interpret_gap_arr(gap_array, start_time_ns, num_messages, samples_per_messag
     return time_arr
 
 
-def convert_gap_array_to_intervals(start_time, gap_arr: np.ndarray, num_values, freq_nhz):
+
+def convert_gap_array_to_intervals(start_time, gap_arr: np.ndarray,
+                                   num_values, freq_nhz=None, period_ns=None):
+    assert (freq_nhz is None) ^ (period_ns is None)
+
     # Reshape the gap array
     gap_arr = gap_arr.reshape((-1, 2))
     # Initialize a flag for warning about interval precision loss
@@ -824,12 +841,16 @@ def convert_gap_array_to_intervals(start_time, gap_arr: np.ndarray, num_values, 
         interval_num_values = gap_ind - values_so_far
 
         # Warn the user if the interval before the gap doesn't represent an integer number of nanoseconds
-        if no_warnings_yet and (int(interval_num_values) * (10 ** 18)) % freq_nhz != 0:
-            warnings.warn("Interval Precision Loss: Rounded to the Nearest Nanosecond")
-            no_warnings_yet = False
+        if period_ns is None:
+            if no_warnings_yet and (int(interval_num_values) * (10 ** 18)) % freq_nhz != 0:
+                warnings.warn("Interval Precision Loss: Rounded to the Nearest Nanosecond")
+                no_warnings_yet = False
+            delta = calc_time_by_freq(freq_nhz, interval_num_values)
+        else:
+            delta = interval_num_values * period_ns
 
         # Calculate the end time of the current interval
-        end_time = cur_time + calc_time_by_freq(freq_nhz, interval_num_values)
+        end_time = cur_time + delta
         # Append the interval to the list
         intervals.append([cur_time, end_time, interval_num_values])
 
@@ -839,7 +860,8 @@ def convert_gap_array_to_intervals(start_time, gap_arr: np.ndarray, num_values, 
 
     # Add the last interval
     interval_num_values = num_values - values_so_far
-    end_time = cur_time + calc_time_by_freq(freq_nhz, interval_num_values)
+    delta = calc_time_by_freq(freq_nhz, interval_num_values) if period_ns is None else interval_num_values * period_ns
+    end_time = cur_time + delta
     intervals.append([cur_time, end_time, interval_num_values])
 
     # Convert the list of intervals to a numpy array
