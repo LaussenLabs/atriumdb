@@ -1165,7 +1165,7 @@ class AtriumSDK:
                              If units other than the default (seconds) are used, specify the desired unit using the `time_units` parameter.
         :param float freq: (Optional) Sampling frequency of the data to be written. Only one of `period` or `freq` should be specified.
                            If units other than the default (hertz) are used, specify the desired unit using the `freq_units` parameter.
-        :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is seconds.
+        :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is nanoseconds.
         :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b).
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b).
@@ -1224,7 +1224,7 @@ class AtriumSDK:
             If units other than the default (seconds) are used, specify the desired unit using the `time_units` parameter.
         :param float freq: (Optional) Sampling frequency of the data to be written. Only one of `period` or `freq` should be specified.
             If units other than the default (hertz) are used, specify the desired unit using the `freq_units` parameter.
-        :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is seconds.
+        :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is nanoseconds.
         :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b).
             It may be a single number or a list with one number per segment
@@ -1389,7 +1389,7 @@ class AtriumSDK:
                              If specified, time deltas in `times` will be adjusted to match `period` within the `gap_tolerance`.
         :param float freq: (Optional) Sampling frequency of the data. Only one of `period` or `freq` should be specified.
                            If specified, time deltas in `times` will be adjusted based on `freq` within the `gap_tolerance`.
-        :param str time_units: (Optional) Unit for `times` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is seconds.
+        :param str time_units: (Optional) Unit for `times` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is nanoseconds.
         :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b). Default is 1.0.
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b). Default is 0.0.
@@ -2332,7 +2332,7 @@ class AtriumSDK:
             converted to nano hertz in the backend, and you may overflow 64bit integers. Default is nano hertz.
         :param period: The sample period of the signal. Mutually exclusive with freq.
         :param str time_units: The unit used for the specified period. This value can be one of ["s", "ms", "us", "ns"].
-            Default is seconds.
+            Default is nanoseconds.
         :param str measure_name: A long form description of the signal (optional).
         :param int measure_id: The desired measure_id (optional).
         :param str code: A specific code identifying the signal (optional).
