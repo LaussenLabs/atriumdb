@@ -16,6 +16,7 @@ To reach us, `join our Slack Workspace! <https://join.slack.com/t/atriumdb/share
    quickstart
    tutorial
    dataset
+   pytorch_integrations
    cli
    contents
    about

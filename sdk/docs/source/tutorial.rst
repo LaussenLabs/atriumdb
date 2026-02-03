@@ -55,6 +55,9 @@ You can also create a dataset with a different metadata database, such as MariaD
    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", database_type="mysql", connection_params=connection_params)
 
 
+
+.. _inserting_data_into_the_dataset:
+
 Inserting Data into the Dataset
 --------------------------------
 
@@ -158,7 +161,6 @@ for each record and handle multiple signals in a single record.
         if end_time_max > start_time_s:
             sdk.insert_device_patient_data([(device_id, patient_id, start_time_s, end_time_max)], time_units='s')
 
-.. _methods_of_inserting_data:
 
 .. _methods_of_inserting_data:
 
