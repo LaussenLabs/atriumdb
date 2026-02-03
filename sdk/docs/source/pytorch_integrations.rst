@@ -31,7 +31,7 @@ Prerequisites
 - ``atriumdb`` Python SDK
 - ``torch`` and ``torchvision`` (optional, for using :class:`DataLoader`)
 - ``numpy``
-- Waveform data and waveform labels in AtriumDB
+- Waveform data and waveform labels in AtriumDB see :ref:`_inserting_data_into_the_dataset` and :ref:`_methods_of_inserting_data`
 
 .. code-block:: bash
 
@@ -218,7 +218,7 @@ Below is an example filter that:
 
 AtriumDBMapDataset is a subclass of Pytorch's Dataset class to allow for integration with dataloaders. Here we are
 going to subclass the AtriumDBMapDataset class that's built into AtriumDB to make it more specific to our needs.
-You should override the __getitem__() method and include code to preprocess labels, and preprocess your data. Optionally
+You should override the __getitem__() method and include code to preprocess labels, preprocess your data and return whatever data structure your model requires. Optionally
 you can include a collator_fn to specify how batching is done. For more details on pytorch datasets and dataloaders please refer to their docs.
 
 .. code-block:: python
@@ -272,10 +272,14 @@ you can include a collator_fn to specify how batching is done. For more details 
             data = torch.from_numpy(X[:2500])
             one_hot_label = torch.from_numpy(window.label)
 
+            # this should return data in the format your model requires or in a format the collator function can use.
             return [data, one_hot_label]
 
        # this function preprocesses the label time series into a one-hot-encoded label. This is a multi-class problem
-       # in this example so only one label can be true at a time.
+       # in this example so only one label can be true at a time. You don't need this function but it allows you fine
+       # grained control over your labels. You should save the labels to the window object in the format your training
+       # code requires so you can access them after batching is complete. During training it is recommended you preprocess
+       # your labels in the __getitem__ function and return them with your preprocessed data to a custom collator function that will batch how you expect.
        def process_label(self, window):
 
            # in the label time series each one will have 1's where the label is present and 0's where it's not.
@@ -289,7 +293,7 @@ you can include a collator_fn to specify how batching is done. For more details 
            label = np.zeros(len(window.label_time_series))
            label[dominant_label_idx] = 1
 
-           # create a new object attribute to store the preprocessed label so we can access it later
+           # create a new window object attribute to store the preprocessed label so we can access it later
            window.label = label
 
 Now, load the training data and wrap it in a :class:`DataLoader`:
