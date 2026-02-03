@@ -1917,7 +1917,7 @@ class AtriumSDK:
         :param str units: The unit of the measure (default is an empty string).
         :param str freq_units: The frequency unit of the measure (default is 'nHz').
         :param float period: The period of the measure (mutually exclusive with freq).
-        :param str time_units: The time unit for the period (default is 's').
+        :param str time_units: The time unit for the period (default is 'ns').
         :return: The identifier of the measure.
         :rtype: int
 
@@ -2104,7 +2104,7 @@ class AtriumSDK:
         :param period: A value to match against the period. If not None, only measures with a matching period will be returned.
             Mutually exclusive with freq.
         :type period: float, optional
-        :param time_units: The units for the period parameter. (Default: "s")
+        :param time_units: The units for the period parameter. (Default: "ns")
         :type time_units: str, optional
         :return: A dictionary containing information about each measure that matches the specified search criteria.
         :rtype: dict
@@ -2250,7 +2250,7 @@ class AtriumSDK:
         :param units: Optional units of the measure to filter by.
         :param freq_units: Units of the provided frequency. Converts frequency to nanohertz if not already.
         :param period: Optional period to filter measures. Mutually exclusive with freq.
-        :param time_units: Units of the provided period. Converts period to equivalent frequency in nanohertz.
+        :param time_units: Units of the provided period. (Default is 'ns')
         :return: A list of measure_ids
         """
         # Check for mutually exclusive parameters
