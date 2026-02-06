@@ -39,6 +39,16 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
+    def upgrade_mrn_schema(self):
+        """Upgrade the patient table mrn column from INTEGER to TEXT if needed."""
+        pass
+
+    @abstractmethod
+    def check_mrn_column_is_text(self) -> bool:
+        """Check if the mrn column in the patient table is TEXT/VARCHAR. Returns True if it is TEXT."""
+        pass
+
+    @abstractmethod
     def _column_exists(self, cursor, table_name: str, column_name: str) -> bool:
         """Check if a column exists in a table."""
         pass
@@ -503,7 +513,7 @@ class SQLHandler(ABC):
             return cursor.fetchall()
 
     @abstractmethod
-    def select_encounters(self, patient_id_list: Optional[List[int]] = None, mrn_list: Optional[List[int]] = None, start_time: Optional[int] = None,
+    def select_encounters(self, patient_id_list: Optional[List[int]] = None, mrn_list: Optional[List[str]] = None, start_time: Optional[int] = None,
                           end_time: Optional[int] = None):
         # Get all matching encounters.
         pass
@@ -514,7 +524,7 @@ class SQLHandler(ABC):
         pass
 
     @abstractmethod
-    def select_all_patients_in_list(self, patient_id_list: Optional[List[int]] = None, mrn_list: Optional[List[int]] = None):
+    def select_all_patients_in_list(self, patient_id_list: Optional[List[int]] = None, mrn_list: Optional[List[str]] = None):
         # Get all matching patients.
         pass
 

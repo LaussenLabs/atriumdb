@@ -48,9 +48,9 @@ def _test_patient_history(db_type, dataset_location, connection_params):
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     # insert patient and pull their info using current time to make sure it's correct
-    patient_id = sdk.insert_patient(mrn=1234567, gender='M', first_name="Sterling", middle_name="Malory", last_name="Archer",
+    patient_id = sdk.insert_patient(mrn="1234567", gender='M', first_name="Sterling", middle_name="Malory", last_name="Archer",
                                     dob=283901400000000, weight=83.461, weight_units='kg', height=188, height_units='cm')
-    patient_info = sdk.get_patient_info(mrn=1234567, time=time.time_ns())
+    patient_info = sdk.get_patient_info(mrn="1234567", time=time.time_ns())
 
     # make sure height and weight are correct
     assert patient_info['height'] == 188
@@ -67,7 +67,7 @@ def _test_patient_history(db_type, dataset_location, connection_params):
     assert patient_info['weight_units'] == 'kg'
 
     # make the time before the patient was inserted to make sure no height and weight exists
-    patient_info = sdk.get_patient_info(mrn=1234567, time=time.time_ns()-1_000_000_000_000)
+    patient_info = sdk.get_patient_info(mrn="1234567", time=time.time_ns()-1_000_000_000_000)
     assert patient_info['height'] is None
     assert patient_info['weight'] is None
     assert patient_info['height_units'] is None
@@ -76,7 +76,7 @@ def _test_patient_history(db_type, dataset_location, connection_params):
     assert patient_info['weight_time'] is None
 
     # make sure patient history table was also updated
-    patient_height_history = sdk.get_patient_history(mrn=1234567, field='height')
+    patient_height_history = sdk.get_patient_history(mrn="1234567", field='height')
     assert len(patient_height_history) == 1
     assert patient_height_history[0][1] == 1  # make sure patient id is correct
     assert patient_height_history[0][2] == 'height'
@@ -95,15 +95,15 @@ def _test_patient_history(db_type, dataset_location, connection_params):
     sdk.insert_patient_history(field='weight', value=83.2, units='kg', time=1707945346000000000, patient_id=1)
     sdk.insert_patient_history(field='height', value=180, units='cm', time=1707945446, time_units='s', patient_id=1)
     sdk.insert_patient_history(field='weight', value=83, units='kg', time=1707945546, time_units='s', patient_id=1)
-    sdk.insert_patient_history(field='height', value=185, units='cm', time=1707945646, time_units='s', mrn=1234567)
+    sdk.insert_patient_history(field='height', value=185, units='cm', time=1707945646, time_units='s', mrn="1234567")
 
     # the most recent height and weight should be pulled and it should be the original we inputted when adding patient
-    patient_info = sdk.get_patient_info(mrn=1234567, time=time.time_ns())
+    patient_info = sdk.get_patient_info(mrn="1234567", time=time.time_ns())
     assert patient_info['height'] == 188
     assert patient_info['weight'] == 83.461
 
     # now lets go back in time and pull the patient and make sure we are getting the correct height and weight
-    patient_info = sdk.get_patient_info(mrn=1234567, time=1707945546, time_units='s')
+    patient_info = sdk.get_patient_info(mrn="1234567", time=1707945546, time_units='s')
     assert patient_info['height'] == 180
     assert patient_info['weight'] == 83
 
@@ -172,7 +172,7 @@ def _test_patient_history(db_type, dataset_location, connection_params):
     assert patient_history[2][4] == 'kg'
 
     # get patient history using mrn and without a start time
-    patient_history = sdk.get_patient_history(mrn=1234567, field='height', end_time=1708104586074435800)
+    patient_history = sdk.get_patient_history(mrn="1234567", field='height', end_time=1708104586074435800)
     assert len(patient_history) == 2
 
     assert patient_history[0][1] == 1
@@ -202,9 +202,9 @@ def _test_patient_history_api(db_type, dataset_location, connection_params):
     api_sdk.token_expiry = time.time() + 1_000_000
 
     # insert patient and pull their info using current time to make sure it's correct
-    patient_id = sdk.insert_patient(mrn=1234567, gender='M', first_name="Sterling", middle_name="Malory", last_name="Archer",
+    patient_id = sdk.insert_patient(mrn="1234567", gender='M', first_name="Sterling", middle_name="Malory", last_name="Archer",
                                     dob=283901400000000, weight=83.461, weight_units='kg', height=188, height_units='cm')
-    patient_info = api_sdk.get_patient_info(mrn=1234567, time=time.time_ns())
+    patient_info = api_sdk.get_patient_info(mrn="1234567", time=time.time_ns())
 
     # make sure height and weight are correct
     assert patient_info['height'] == 188
@@ -221,7 +221,7 @@ def _test_patient_history_api(db_type, dataset_location, connection_params):
     assert patient_info['weight_units'] == 'kg'
 
     # make the time before the patient was inserted to make sure no height and weight exists
-    patient_info = api_sdk.get_patient_info(mrn=1234567, time=time.time_ns()-1_000_000_000_000)
+    patient_info = api_sdk.get_patient_info(mrn="1234567", time=time.time_ns()-1_000_000_000_000)
     assert patient_info['height'] is None
     assert patient_info['weight'] is None
     assert patient_info['height_units'] is None
@@ -230,7 +230,7 @@ def _test_patient_history_api(db_type, dataset_location, connection_params):
     assert patient_info['weight_time'] is None
 
     # make sure patient history table was also updated
-    patient_height_history = api_sdk.get_patient_history(mrn=1234567, field='height')
+    patient_height_history = api_sdk.get_patient_history(mrn="1234567", field='height')
     assert len(patient_height_history) == 1
     assert patient_height_history[0][1] == 1  # make sure patient id is correct
     assert patient_height_history[0][2] == 'height'
@@ -249,15 +249,15 @@ def _test_patient_history_api(db_type, dataset_location, connection_params):
     sdk.insert_patient_history(field='weight', value=83.2, units='kg', time=1707945346000000000, patient_id=1)
     sdk.insert_patient_history(field='height', value=180, units='cm', time=1707945446, time_units='s', patient_id=1)
     sdk.insert_patient_history(field='weight', value=83, units='kg', time=1707945546, time_units='s', patient_id=1)
-    sdk.insert_patient_history(field='height', value=185, units='cm', time=1707945646, time_units='s', mrn=1234567)
+    sdk.insert_patient_history(field='height', value=185, units='cm', time=1707945646, time_units='s', mrn="1234567")
 
     # the most recent height and weight should be pulled and it should be the original we inputted when adding patient
-    patient_info = api_sdk.get_patient_info(mrn=1234567, time=time.time_ns())
+    patient_info = api_sdk.get_patient_info(mrn="1234567", time=time.time_ns())
     assert patient_info['height'] == 188
     assert patient_info['weight'] == 83.461
 
     # now lets go back in time and pull the patient and make sure we are getting the correct height and weight
-    patient_info = api_sdk.get_patient_info(mrn=1234567, time=1707945546, time_units='s')
+    patient_info = api_sdk.get_patient_info(mrn="1234567", time=1707945546, time_units='s')
     assert patient_info['height'] == 180
     assert patient_info['weight'] == 83
 
@@ -326,7 +326,7 @@ def _test_patient_history_api(db_type, dataset_location, connection_params):
     assert patient_history[2][4] == 'kg'
 
     # get patient history using mrn and without a start time
-    patient_history = api_sdk.get_patient_history(mrn=1234567, field='height', end_time=1708104586074435800)
+    patient_history = api_sdk.get_patient_history(mrn="1234567", field='height', end_time=1708104586074435800)
     assert len(patient_history) == 2
 
     assert patient_history[0][1] == 1

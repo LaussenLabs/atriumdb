@@ -91,7 +91,7 @@ def insert_random_patients(sdk, n):
         return ''.join(random.choice(string.ascii_letters) for _ in range(size))
 
     def random_mrn():
-        return random.randint(100000, 999999)
+        return str(random.randint(100000, 999999))
 
     def random_gender():
         return random.choice(['M', 'F', 'U'])

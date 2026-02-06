@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS bed (
 maria_patient_create_query = """
 CREATE TABLE IF NOT EXISTS patient (
   id INT UNSIGNED auto_increment PRIMARY KEY,
-  mrn INT UNSIGNED NULL,
+  mrn VARCHAR(255) NULL,
   gender VARCHAR(1) NULL,
   dob bigint NULL,
   first_name VARCHAR(255) NULL,

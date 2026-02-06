@@ -32,9 +32,9 @@ def _test_encounters(db_type, dataset_location, connection_params):
 
     # Insert mock patients
     patients = [
-        {'patient_id': 101, 'mrn': 1001},
-        {'patient_id': 102, 'mrn': 1002},
-        {'patient_id': 103, 'mrn': 1003},
+        {'patient_id': 101, 'mrn': "1001"},
+        {'patient_id': 102, 'mrn': "1002"},
+        {'patient_id': 103, 'mrn': "1003"},
     ]
     for p in patients:
         sdk.insert_patient(patient_id=p['patient_id'], mrn=p['mrn'])
@@ -98,8 +98,8 @@ def _test_encounters(db_type, dataset_location, connection_params):
     assert len(patient_101_encounters) == 1
     assert patient_101_encounters[0][1] == 101
 
-    # Test filtering by mrn (patient 102 has mrn=1002)
-    patient_102_encounters = sdk.get_encounters(mrn=1002, time_units='s')
+    # Test filtering by mrn (patient 102 has mrn="1002")
+    patient_102_encounters = sdk.get_encounters(mrn="1002", time_units='s')
     assert len(patient_102_encounters) == 1
     assert patient_102_encounters[0][1] == 102
 
