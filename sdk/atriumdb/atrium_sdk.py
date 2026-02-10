@@ -861,13 +861,8 @@ class AtriumSDK:
         if freq_nhz is None and period_ns is None:
             # Detect period if time-value array.
             if raw_time_type == 1:
+                # detect_period always returns a best-effort value (with warnings if uncertain)
                 period_ns = detect_period(time_data)
-                if period_ns == -1:
-                    raise ValueError(
-                        "Automatic period detection failed: The signal appears aperiodic "
-                        "(no single time delta accounts for >30% of intervals). "
-                        "Please explicitly provide 'period' or 'freq'."
-                    )
             else:
                 raise ValueError("Either freq_nhz or period_ns must be specified.")
 
@@ -1464,24 +1459,24 @@ class AtriumSDK:
         if period is not None and freq is not None:
             raise ValueError("period and freq are mutually exclusive. Specify only one.")
 
-        # If neither is provided, attempt to detect
+        # If neither is provided, attempt to detect (or defer to flush time if buffering)
         if period is None and freq is None:
-            detected_period = detect_period(times)
-
-            if detected_period == -1:
-                raise ValueError(
-                    "Automatic period detection failed: The signal appears aperiodic "
-                    "(no single time delta accounts for >30% of intervals). "
-                    "Please explicitly provide 'period' or 'freq'."
-                )
-            period = detected_period
-
-        # Ensure the unspecified parameter is None
-        if freq is not None:
+            if self._active_buffer is not None:
+                # When buffering, allow null period - detection will happen at flush time
+                # when we have more data to work with.
+                freq_nano = None
+                period_ns = None
+            else:
+                # Not buffering, detect now (detect_period always returns a best-effort value)
+                detected_period = detect_period(times)
+                period = detected_period
+                period_ns = convert_to_nanoseconds(period, time_units)
+                freq_nano = None
+        elif freq is not None:
             freq_nano = convert_to_nanohz(freq, freq_units)
             period_ns = None
         else:
-            assert period is not None
+            # period is not None
             period_ns = convert_to_nanoseconds(period, time_units)
             freq_nano = None
 
@@ -1511,10 +1506,13 @@ class AtriumSDK:
         scale_b = data_dicts[0]['scale_b']
         data_dtype = data_dicts[0]['values'].dtype
 
-        # Ensure consistency across data_dicts
+        # Ensure consistency across data_dicts (allow None == None for deferred detection)
         for data in data_dicts:
             if data['freq_nhz'] != freq_nhz or data['period_ns'] != period_ns:
-                raise ValueError("Data dictionaries have inconsistent frequencies/periods.")
+                # Both being None is consistent (deferred detection case from buffering)
+                if not (data['freq_nhz'] is None and freq_nhz is None
+                        and data['period_ns'] is None and period_ns is None):
+                    raise ValueError("Data dictionaries have inconsistent frequencies/periods.")
             if data['scale_m'] != scale_m or data['scale_b'] != scale_b:
                 raise ValueError("Data dictionaries have inconsistent scale factors.")
             if data['values'].dtype != data_dtype:
@@ -1527,6 +1525,11 @@ class AtriumSDK:
         # Sort times and values, remove duplicates
         times, sorted_time_indices = np.unique(all_times, return_index=True)
         values = all_values[sorted_time_indices]
+
+        # If period/freq were deferred (both None), detect period now from the combined times
+        if freq_nhz is None and period_ns is None:
+            detected_period = detect_period(times)
+            period_ns = int(detected_period) if not isinstance(detected_period, int) else detected_period
 
         time_0 = int(times[0])
 

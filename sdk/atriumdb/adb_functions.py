@@ -324,9 +324,21 @@ def convert_from_nanohz(freq_nhz, freq_units):
 def detect_period(times: np.ndarray, threshold_ratio: float = 0.3):
     """
     Analyzes a time array to detect the dominant sampling period.
+
+    If fewer than 2 timestamps, defaults to 1_000_000_000 ns (1 second)
+    with a warning. If no dominant period (below threshold), uses the mode
+    delta as a best-effort estimate with a warning. Never returns -1.
     """
     if len(times) < 2:
-        return -1
+        warnings.warn(
+            "Cannot detect period from fewer than 2 timestamps. "
+            "Defaulting period to 1,000,000,000 ns (1 second). "
+            "Consider explicitly providing 'period' or 'freq' for accurate results.",
+            UserWarning
+        )
+        if np.issubdtype(times.dtype, np.integer):
+            return 1_000_000_000
+        return 1.0
 
     # Calculate deltas
     deltas = np.diff(times)
@@ -347,10 +359,17 @@ def detect_period(times: np.ndarray, threshold_ratio: float = 0.3):
         # Recursive call with unique, sorted timestamps
         return detect_period(np.unique(times), threshold_ratio)
 
-    # Check against threshold
+    # Check against threshold - if below, warn but still return best estimate
     total_intervals = len(deltas)
     if (mode_count / total_intervals) < threshold_ratio:
-        return -1
+        warnings.warn(
+            f"Automatic period detection: no single time delta accounts for "
+            f">{threshold_ratio*100:.0f}% of intervals. "
+            f"Using best-effort estimate of {mode_delta} "
+            f"(mode of deltas, {mode_count}/{total_intervals} intervals). "
+            f"For more accurate results, explicitly provide 'period' or 'freq'.",
+            UserWarning
+        )
 
     # Return based on input type
     if np.issubdtype(times.dtype, np.integer):
