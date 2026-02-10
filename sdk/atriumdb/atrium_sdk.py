@@ -2817,7 +2817,7 @@ class AtriumSDK:
 
         return None
 
-    def get_patient_info(self, patient_id: int = None, mrn: str =None, time: int = None, time_units: str = None):
+    def get_patient_info(self, patient_id: int = None, mrn: str = None, time: int = None, time_units: str = None):
         """
         Retrieve information about a specific patient using either their numeric patient id or medical record number (MRN).
 
