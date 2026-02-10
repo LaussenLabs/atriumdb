@@ -635,7 +635,7 @@ class AtriumSDK:
         return headers, r_times, r_values
 
     def _get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int, device_id: int = None,
-                      patient_id: int = None, str =None, time_type=1, analog=True, sort=True,
+                      patient_id: int = None, mrn: str =None, time_type=1, analog=True, sort=True,
                       allow_duplicates=True):
 
         params = {'start_time': start_time_n, 'end_time': end_time_n, 'measure_id': measure_id, 'device_id': device_id,
@@ -2755,7 +2755,7 @@ class AtriumSDK:
         return self.sql_handler.insert_device(device_tag, device_name, device_id, manufacturer, model, device_type,
                                               bed_id, source_id)
 
-    def get_patient_id(self, mrn):
+    def get_patient_id(self, mrn: str):
         """
         Retrieve the patient ID associated with a given medical record number (MRN).
 
@@ -2817,7 +2817,7 @@ class AtriumSDK:
 
         return None
 
-    def get_patient_info(self, patient_id: int = None, str =None, time: int = None, time_units: str = None):
+    def get_patient_info(self, patient_id: int = None, mrn: str =None, time: int = None, time_units: str = None):
         """
         Retrieve information about a specific patient using either their numeric patient id or medical record number (MRN).
 
@@ -3075,7 +3075,7 @@ class AtriumSDK:
         # Return a dictionary with patient IDs as keys and MRNs as values
         return {row[0]: row[1] for row in patient_list}
 
-    def insert_patient(self, patient_id: int = None, str =None, gender: str = None, dob: int = None,
+    def insert_patient(self, patient_id: int = None, mrn: str =None, gender: str = None, dob: int = None,
                        first_name: str = None, middle_name: str = None, last_name: str = None, first_seen: int = None,
                        last_updated: int = None, source_id: int = 1, weight: float = None, weight_units: str = None,
                        height: float = None, height_units: str = None):
@@ -3151,7 +3151,7 @@ class AtriumSDK:
 
         return patient_id
 
-    def get_patient_history(self, patient_id: int = None, str =None, field: str = None, start_time: int = None,
+    def get_patient_history(self, patient_id: int = None, mrn: str =None, field: str = None, start_time: int = None,
                             end_time: int = None, time_units: str = None):
         """
         Retrieve a list of a patients historical measurements using either their numeric patient id or medical record number (MRN).
@@ -3217,7 +3217,7 @@ class AtriumSDK:
 
         return self.sql_handler.select_patient_history(patient_id, field, start_time, end_time)
 
-    def insert_patient_history(self, field: str, value: float, units: str, time: int, time_units: str = None, patient_id: int = None, str =None):
+    def insert_patient_history(self, field: str, value: float, units: str, time: int, time_units: str = None, patient_id: int = None, mrn: str =None):
         """
         Insert a patient history record using either their numeric patient id or medical record number (MRN).
 
@@ -5160,7 +5160,7 @@ of DatasetIterator objects depending on the value of num_iterators.
 
     def get_interval_array(self, measure_id=None, device_id=None, patient_id=None,
                            gap_tolerance_nano: int = 0, start=None, end=None, measure_tag=None,
-                           freq=None, units=None, freq_units=None, device_tag=None, mrn=None):
+                           freq=None, units=None, freq_units=None, device_tag=None, mrn: str=None):
         """
         .. _get_interval_array_label:
 
