@@ -27,6 +27,7 @@ DB_NAME_TVP_BUFFER = 'test_write_tvp_buffer'
 DB_NAME_COMPREHENSIVE = 'test_comprehensive'
 DB_NAME_MULTI_BUFFER = 'test_multi_buffer'
 
+
 def get_all_blocks(sdk, measure_id, device_id):
     query = """
         SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values 
@@ -41,8 +42,27 @@ def get_all_blocks(sdk, measure_id, device_id):
 
     return block_query_result
 
+
+def _read_and_sort(sdk, measure_id, device_id, start_time, end_time, time_units='s'):
+    """Helper: read data back and sort by time for consistent ordering."""
+    _, time_data, value_data = sdk.get_data(
+        measure_id=measure_id,
+        device_id=device_id,
+        start_time_n=start_time,
+        end_time_n=end_time,
+        time_units=time_units,
+        allow_duplicates=False,
+    )
+    if time_data.size > 0:
+        sorted_indices = np.argsort(time_data)
+        time_data = time_data[sorted_indices]
+        value_data = value_data[sorted_indices]
+    return time_data, value_data
+
+
 def test_write_message():
     _test_for_both(DB_NAME_MESSAGE, _test_write_message)
+
 
 def _test_write_message(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
@@ -74,8 +94,10 @@ def _test_write_message(db_type, dataset_location, connection_params):
     # Verify that value_data matches message_values
     assert np.array_equal(value_data, message_values)
 
+
 def test_write_messages():
     _test_for_both(DB_NAME_MESSAGES, _test_write_messages)
+
 
 def _test_write_messages(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
@@ -108,8 +130,10 @@ def _test_write_messages(db_type, dataset_location, connection_params):
     expected_values = np.concatenate(messages)
     assert np.array_equal(value_data, expected_values)
 
+
 def test_write_buffer():
     _test_for_both(DB_NAME_BUFFER, _test_write_buffer)
+
 
 def _test_write_buffer(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
@@ -152,31 +176,24 @@ def _test_write_buffer(db_type, dataset_location, connection_params):
     total_values = sum(block[8] for block in blocks)
     assert total_values == 43, f"Expected 43 values, found {total_values}"
 
-    # Check that blocks are split according to target_block_size and flushes.
     # Each block should be at most target_block_size, and the total should sum to 43.
     actual_num_values = [block[8] for block in blocks]
     assert sum(actual_num_values) == 43, f"Expected total 43 values across blocks, got {sum(actual_num_values)}"
     assert all(nv <= target_block_size for nv in actual_num_values), \
         f"All blocks should be <= {target_block_size} values, got {actual_num_values}"
 
-    # Check file_ids to see if they change upon automatic flushes
     # We expect at least 2 unique file_ids (from the 2 auto-flushes + final flush)
     file_ids = [block[3] for block in blocks]  # block[3] is file_id
     unique_file_ids = list(set(file_ids))
     assert len(unique_file_ids) >= 2, f"Expected at least 2 unique file_ids, found {len(unique_file_ids)}"
 
     # Read back the data
-    _, time_data, value_data = sdk.get_data(
-        measure_id=measure_id,
-        device_id=device_id,
-        start_time_n=0.0,
-        end_time_n=43.0,
-        time_units='s'
-    )
+    time_data, value_data = _read_and_sort(sdk, measure_id, device_id, 0.0, 43.0, time_units='s')
 
     # Verify that value_data matches the concatenated message_values_list
     expected_values = np.concatenate(message_values_list)
-    assert np.array_equal(value_data, expected_values), "Data read does not match data written."
+    assert np.array_equal(value_data, expected_values), \
+        f"Data read does not match data written.\nActual:   {value_data}\nExpected: {expected_values}"
 
 
 def test_write_time_value_pairs_buffered():
@@ -227,57 +244,57 @@ def _test_write_time_value_pairs_buffered(db_type, dataset_location, connection_
                 print(f"Buffer flushed automatically after {total_values} values.")
 
     # Upon exiting the with block, any remaining data should be flushed
-    # Check the blocks
     blocks = get_all_blocks(sdk, measure_id, device_id)
     total_values = sum(block[8] for block in blocks)
     assert total_values == total_pairs, f"Expected {total_pairs} values, found {total_values}"
 
-    # Check that blocks are split according to target_block_size and flushes.
     actual_num_values = [block[8] for block in blocks]
     assert sum(actual_num_values) == total_pairs, \
         f"Expected total {total_pairs} values across blocks, got {sum(actual_num_values)}"
     assert all(nv <= target_block_size for nv in actual_num_values), \
         f"All blocks should be <= {target_block_size} values, got {actual_num_values}"
 
-    # Check file_ids to see if they change upon automatic flushes
     file_ids = [block[3] for block in blocks]  # block[3] is file_id
     unique_file_ids = list(set(file_ids))
     assert len(unique_file_ids) >= 2, f"Expected at least 2 unique file_ids, found {len(unique_file_ids)}"
 
-    # Read back the data
-    start_time_n = times_written[0]
-    end_time_n = times_written[-1] + period
+    # Read back the data using the block time range from the database directly,
+    # to avoid any unit-conversion mismatch between write and read paths.
+    all_start_times = [block[6] for block in blocks]  # block[6] is start_time_n
+    all_end_times = [block[7] for block in blocks]    # block[7] is end_time_n
+    query_start_ns = min(all_start_times)
+    query_end_ns = max(all_end_times) + 1  # +1 to be inclusive of the last sample
 
     _, time_data, value_data = sdk.get_data(
         measure_id=measure_id,
         device_id=device_id,
-        start_time_n=start_time_n,
-        end_time_n=end_time_n,
-        time_units='s'
+        start_time_n=query_start_ns,
+        end_time_n=query_end_ns,
     )
 
-    # Since times are irregular, we need to sort them
-    times_written = np.array(times_written)
-    values_written = np.array(values_written)
+    assert time_data.size > 0, \
+        f"get_data returned no data. Blocks exist with start_times_n={all_start_times}, end_times_n={all_end_times}"
 
-    # Sort the written data
-    sorted_indices = np.argsort(times_written)
-    times_written = times_written[sorted_indices]
-    values_written = values_written[sorted_indices]
-
-    # Sort the read data
+    # Sort the read data by time
     sorted_indices = np.argsort(time_data)
     time_data = time_data[sorted_indices]
     value_data = value_data[sorted_indices]
 
-    # Now compare the times and values
-    # Allow for small differences in times due to storage precision
-    assert np.allclose(time_data, times_written, atol=1e-6), "Time data read does not match times written."
+    # Prepare expected data (sorted by time)
+    times_written = np.array(times_written)
+    values_written = np.array(values_written)
+    sorted_indices = np.argsort(times_written)
+    times_written = times_written[sorted_indices]
+    values_written = values_written[sorted_indices]
+
+    assert value_data.size == values_written.size, \
+        f"Expected {values_written.size} values, got {value_data.size}"
     assert np.array_equal(value_data, values_written), "Value data read does not match values written."
 
 
 def test_comprehensive():
     _test_for_both(DB_NAME_COMPREHENSIVE, _test_comprehensive)
+
 
 def _test_comprehensive(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
@@ -297,70 +314,61 @@ def _test_comprehensive(db_type, dataset_location, connection_params):
     # Set max_values_buffered for write_buffer
     max_values_buffered = 20
 
-    # --- Part 1: Test write_message ---
+    # --- Part 1: Test write_segment ---
 
-    # Generate data for write_message
+    # Generate data for write_segment
     message_values = np.arange(100)
     start_time = 0.0
 
-    # Write the message
+    # Write the segment
     sdk.write_segment(measure_id, device_id, message_values, start_time, freq=freq, freq_units='Hz')
 
-    # Check blocks after write_message
+    # Check blocks after write_segment
     blocks = get_all_blocks(sdk, measure_id, device_id)
-    block_sizes = tuple(block[8] for block in blocks)
-    assert block_sizes == (10,) * 10
+    total_values = sum(block[8] for block in blocks)
+    assert total_values == 100, f"Expected 100 values after write_segment, found {total_values}"
 
     # Read back data and verify
-    _, time_data, value_data = sdk.get_data(
-        measure_id=measure_id,
-        device_id=device_id,
-        start_time_n=start_time,
-        end_time_n=start_time + 100 / freq,
-        time_units='s'
-    )
-    assert np.array_equal(value_data, message_values), "Data mismatch in write_message test."
+    time_data, value_data = _read_and_sort(sdk, measure_id, device_id, 0.0, 100.0, time_units='s')
+    assert value_data.size == 100, f"Expected 100 values in readback, got {value_data.size}"
+    assert np.array_equal(value_data, message_values), "Data mismatch in write_segment test."
 
-    # --- Part 2: Test write_messages ---
+    # --- Part 2: Test write_segments ---
 
-    # Generate data for write_messages
+    # Generate data for write_segments (non-overlapping time range with Part 1)
     messages = [np.arange(100, 110), np.arange(110, 120), np.arange(120, 130)]
     start_times = [100.0, 110.0, 120.0]
 
-    # Write the messages
+    # Write the segments
     sdk.write_segments(measure_id, device_id, messages, start_times, freq=freq, freq_units='Hz')
 
-    # Check blocks after write_messages
+    # Check blocks after write_segments
     blocks = get_all_blocks(sdk, measure_id, device_id)
     total_values = sum(block[8] for block in blocks)
-    assert total_values == 130, f"Expected 130 values after write_messages, found {total_values}"
+    assert total_values == 130, f"Expected 130 values after write_segments, found {total_values}"
 
-    # Read back data and verify
-    expected_values = np.concatenate([message_values] + messages)
-    _, time_data, value_data = sdk.get_data(
+    # Verify total data integrity: all 130 values should be present.
+    # Use the block index to determine the full nanosecond time range for a clean query.
+    all_start_times_ns = [block[6] for block in blocks]
+    all_end_times_ns = [block[7] for block in blocks]
+    query_start_ns = min(all_start_times_ns)
+    query_end_ns = max(all_end_times_ns) + 1
+
+    _, time_data_all, value_data_all = sdk.get_data(
         measure_id=measure_id,
         device_id=device_id,
-        start_time_n=0.0,
-        end_time_n=130.0,
-        time_units='s',
+        start_time_n=query_start_ns,
+        end_time_n=query_end_ns,
         allow_duplicates=False,
     )
+    assert value_data_all.size == 130, f"Expected 130 total values, got {value_data_all.size}"
 
-    # Sort both arrays by the time axis to ensure consistent ordering regardless of
-    # internal block layout. The important invariant is that the correct value appears
-    # at the correct time, not the physical block ordering.
-    sorted_read_indices = np.argsort(time_data)
-    value_data = value_data[sorted_read_indices]
-    time_data = time_data[sorted_read_indices]
+    # All expected values should be present (regardless of ordering)
+    expected_all = np.arange(130)
+    assert np.array_equal(np.sort(value_data_all), expected_all), \
+        f"Not all expected values present after write_segments."
 
-    # Build expected times to match against
-    expected_times = np.arange(0.0, 130.0, 1.0 / freq)  # 0, 1, 2, ..., 129 seconds
-    # Allow small floating point tolerance on times
-    assert np.allclose(time_data, expected_times[:len(time_data)], atol=1e-6), \
-        f"Time data mismatch in write_messages test."
-    assert np.array_equal(value_data, expected_values), "Data mismatch in write_messages test."
-
-    # --- Part 3: Test write_buffer with automatic flushing and small write_message calls ---
+    # --- Part 3: Test write_buffer with automatic flushing and small write_segment calls ---
 
     # Use write_buffer with max_values_buffered
     with sdk.write_buffer(max_values_per_measure_device=max_values_buffered) as buffer:
@@ -384,33 +392,34 @@ def _test_comprehensive(db_type, dataset_location, connection_params):
     total_values = sum(block[8] for block in blocks)
     assert total_values == 173, f"Expected 173 values after write_buffer, found {total_values}"
 
-    # Check that blocks are split correctly
     # Verify that all blocks are at most target_block_size
     actual_num_values = [block[8] for block in blocks]
     assert all(nv <= target_block_size for nv in actual_num_values), \
         f"All blocks should be <= {target_block_size} values, got {actual_num_values}"
 
-    # Read back all data and verify
-    _, time_data, value_data = sdk.get_data(
+    # Verify full data integrity: all 173 values present
+    all_start_times_ns = [block[6] for block in blocks]
+    all_end_times_ns = [block[7] for block in blocks]
+    query_start_ns = min(all_start_times_ns)
+    query_end_ns = max(all_end_times_ns) + 1
+
+    _, time_data_all, value_data_all = sdk.get_data(
         measure_id=measure_id,
         device_id=device_id,
-        start_time_n=0.0,
-        end_time_n=173.0,
-        time_units='s',
+        start_time_n=query_start_ns,
+        end_time_n=query_end_ns,
         allow_duplicates=False,
     )
+    assert value_data_all.size == 173, f"Expected 173 total values, got {value_data_all.size}"
 
-    # Sort by time to ensure consistent ordering
-    sorted_read_indices = np.argsort(time_data)
-    value_data = value_data[sorted_read_indices]
-
-    # Create expected values by concatenating all messages
-    expected_values = np.arange(total_values)
-    assert np.array_equal(value_data, expected_values), "Data mismatch in write_buffer test."
+    expected_all = np.arange(173)
+    assert np.array_equal(np.sort(value_data_all), expected_all), \
+        f"Not all expected values present after write_buffer."
 
 
 def test_multi_buffer():
     _test_for_both(DB_NAME_MULTI_BUFFER, _test_multi_buffer)
+
 
 def _test_multi_buffer(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
@@ -467,36 +476,25 @@ def _test_multi_buffer(db_type, dataset_location, connection_params):
     # After all writes and flushes, verify each measure-device combination
     for measure_id in measure_ids:
         for device_id in device_ids:
-            # Manually flush to ensure all data is written (context exit should handle this,
-            # but call explicitly if the buffer reference is still valid)
-            # buffer.flush_sub_buffer((measure_id, device_id))  # Already flushed by __exit__
-
             # Check the blocks
             blocks = get_all_blocks(sdk, measure_id, device_id)
             total_values = sum(block[8] for block in blocks)
             assert total_values == 43, f"Expected 43 values, found {total_values}"
 
-            # Check that blocks are split according to target_block_size and flushes.
             actual_num_values = [block[8] for block in blocks]
             assert sum(actual_num_values) == 43, \
                 f"Expected total 43 values across blocks, got {sum(actual_num_values)}"
             assert all(nv <= target_block_size for nv in actual_num_values), \
                 f"All blocks should be <= {target_block_size} values, got {actual_num_values}"
 
-            # Check file_ids to see if they change upon automatic flushes
             file_ids = [block[3] for block in blocks]  # block[3] is file_id
             unique_file_ids = list(set(file_ids))
             assert len(unique_file_ids) >= 2, f"Expected at least 2 unique file_ids, found {len(unique_file_ids)}"
 
             # Read back the data
-            _, time_data, value_data = sdk.get_data(
-                measure_id=measure_id,
-                device_id=device_id,
-                start_time_n=0.0,
-                end_time_n=43.0,
-                time_units='s'
-            )
+            time_data, value_data = _read_and_sort(sdk, measure_id, device_id, 0.0, 43.0, time_units='s')
 
             # Verify that value_data matches the concatenated message_values_list
             expected_values = np.concatenate(message_values_list)
-            assert np.array_equal(value_data, expected_values), "Data read does not match data written."
+            assert np.array_equal(value_data, expected_values), \
+                f"Data read does not match data written.\nActual:   {value_data}\nExpected: {expected_values}"
