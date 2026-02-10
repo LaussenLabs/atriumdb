@@ -446,7 +446,7 @@ class AtriumSDK:
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
                  freq: Union[int, float] = None, units: str = None, freq_units: str = None,
-                 device_tag: str = None, mrn=None, return_nan_filled: bool | np.ndarray = False):
+                 device_tag: str = None, str = None, return_nan_filled: bool | np.ndarray = False):
         """
         The method for querying data from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
         time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
@@ -635,7 +635,7 @@ class AtriumSDK:
         return headers, r_times, r_values
 
     def _get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int, device_id: int = None,
-                      patient_id: int = None, mrn=None, time_type=1, analog=True, sort=True,
+                      patient_id: int = None, str =None, time_type=1, analog=True, sort=True,
                       allow_duplicates=True):
 
         params = {'start_time': start_time_n, 'end_time': end_time_n, 'measure_id': measure_id, 'device_id': device_id,
@@ -2814,7 +2814,7 @@ class AtriumSDK:
 
         return None
 
-    def get_patient_info(self, patient_id: int = None, mrn=None, time: int = None, time_units: str = None):
+    def get_patient_info(self, patient_id: int = None, str =None, time: int = None, time_units: str = None):
         """
         Retrieve information about a specific patient using either their numeric patient id or medical record number (MRN).
 
@@ -3072,7 +3072,7 @@ class AtriumSDK:
         # Return a dictionary with patient IDs as keys and MRNs as values
         return {row[0]: row[1] for row in patient_list}
 
-    def insert_patient(self, patient_id: int = None, mrn=None, gender: str = None, dob: int = None,
+    def insert_patient(self, patient_id: int = None, str =None, gender: str = None, dob: int = None,
                        first_name: str = None, middle_name: str = None, last_name: str = None, first_seen: int = None,
                        last_updated: int = None, source_id: int = 1, weight: float = None, weight_units: str = None,
                        height: float = None, height_units: str = None):
@@ -3148,7 +3148,7 @@ class AtriumSDK:
 
         return patient_id
 
-    def get_patient_history(self, patient_id: int = None, mrn=None, field: str = None, start_time: int = None,
+    def get_patient_history(self, patient_id: int = None, str =None, field: str = None, start_time: int = None,
                             end_time: int = None, time_units: str = None):
         """
         Retrieve a list of a patients historical measurements using either their numeric patient id or medical record number (MRN).
@@ -3214,7 +3214,7 @@ class AtriumSDK:
 
         return self.sql_handler.select_patient_history(patient_id, field, start_time, end_time)
 
-    def insert_patient_history(self, field: str, value: float, units: str, time: int, time_units: str = None, patient_id: int = None, mrn=None):
+    def insert_patient_history(self, field: str, value: float, units: str, time: int, time_units: str = None, patient_id: int = None, str =None):
         """
         Insert a patient history record using either their numeric patient id or medical record number (MRN).
 
@@ -3517,7 +3517,7 @@ class AtriumSDK:
         return result
 
     def get_device_patient_encounters(self, timestamp: int, device_id: int = None, device_tag: str = None,
-                                      patient_id: int = None, mrn=None, time_units: str = None):
+                                      patient_id: int = None, mrn: str =None, time_units: str = None):
         """
         Retrieve device-patient encounters active at a specific time.
 
@@ -3556,7 +3556,7 @@ class AtriumSDK:
         )
 
     def insert_encounter(self, start_time: float = None, end_time: float = None, patient_id: int = None,
-                         mrn=None, bed_id: int = None, bed_name: str = None, source_id: int = 1,
+                         mrn: str =None, bed_id: int = None, bed_name: str = None, source_id: int = 1,
                          visit_number: str = None, last_updated: float = None, time_units: str = 'ns'):
         """
         Inserts a new encounter into the database that represents a mapping between a patient and a bed over an interval of time.
@@ -3612,7 +3612,7 @@ class AtriumSDK:
                                               last_updated)
 
     def get_encounters(self, timestamp: float = None, start_time: float = None, end_time: float = None,
-                       bed_id: int = None, bed_name: str = None, patient_id: int = None, mrn=None,
+                       bed_id: int = None, bed_name: str = None, patient_id: int = None, mrn: str =None,
                        time_units: str = 'ns'):
         """
         Queries encounters from the database based on any of the given params.
@@ -3736,7 +3736,7 @@ class AtriumSDK:
         self.sql_handler.insert_device_patients(converted_device_patient_data)
 
     def convert_patient_to_device_id(self, start_time: int, end_time: int = None, patient_id: int = None,
-                                     mrn=None):
+                                     mrn: str =None):
         """
         Converts a patient ID or MRN to a device ID based on the specified time range.
 
@@ -4170,7 +4170,7 @@ class AtriumSDK:
         return result
 
     def insert_label(self, name: str, start_time: int, end_time: int, device: Union[int, str] = None,
-                     patient_id: int = None, mrn=None, time_units: str = None,
+                     patient_id: int = None, mrn: str =None, time_units: str = None,
                      label_source: Union[str, int] = None, measure: Union[int, tuple[str, int | float, str]] = None):
         """
         Insert a label record into the database.
@@ -5713,7 +5713,7 @@ def get_headers(self, measure_id: int = None, start_time_n: int = None, end_time
                 device_id: int = None, patient_id=None, block_info=None,
                 time_units: str = None, measure_tag: str = None,
                 freq: Union[int, float] = None, units: str = None, freq_units: str = None,
-                device_tag: str = None, mrn=None):
+                device_tag: str = None, mrn: str =None):
     """
     Get block headers for querying metadata from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
     time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
