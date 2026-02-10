@@ -446,7 +446,7 @@ class AtriumSDK:
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
                  freq: Union[int, float] = None, units: str = None, freq_units: str = None,
-                 device_tag: str = None, str = None, return_nan_filled: bool | np.ndarray = False):
+                 device_tag: str = None, mrn: str = None, return_nan_filled: bool | np.ndarray = False):
         """
         The method for querying data from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
         time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
