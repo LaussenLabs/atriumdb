@@ -16,133 +16,141 @@ name: atriumdb_release
         default: test.pypi
         
 jobs:
-  build-release:
-    runs-on: ubuntu-22.04
+  # build-release:
+  #   runs-on: ubuntu-22.04
     
-    services:
-      mariadb:
-        image: mariadb:11.4
-        env:
-          MARIADB_ROOT_PASSWORD: rootpass
-          MARIADB_DATABASE: testdb
-          MARIADB_USER: testuser
-          MARIADB_PASSWORD: testpass
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="/usr/local/bin/healthcheck.sh --su mysql --connect"
-          --health-interval=15s
-          --health-timeout=10s
-          --health-retries=10
+  #   services:
+  #     mariadb:
+  #       image: mariadb:11.4
+  #       env:
+  #         MARIADB_ROOT_PASSWORD: rootpass
+  #         MARIADB_DATABASE: testdb
+  #         MARIADB_USER: testuser
+  #         MARIADB_PASSWORD: testpass
+  #       ports:
+  #         - 3306:3306
+  #       options: >-
+  #         --health-cmd="/usr/local/bin/healthcheck.sh --su mysql --connect"
+  #         --health-interval=15s
+  #         --health-timeout=10s
+  #         --health-retries=10
 
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-    - name: Install dependencies
-      run: |
-        sudo apt-get update && sudo apt-get install -y tzdata cmake build-essential gdb libzstd-dev liblz4-dev python3.10 mingw-w64 libmariadb-dev
-        pip install build pytest
-    - name: Build C libraries
-      run: |
-        cd tsc-lib
-        cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_BUILD_TYPE='Release'
-        cmake --build cmake-build-release --target Block
-        mkdir -p ../sdk/bin
-        cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll
-        rm -rf cmake-build-release/**
-        cmake -Bcmake-build-release -H. -DCMAKE_BUILD_TYPE='Release'
-        cmake --build cmake-build-release --target Block
-        cp cmake-build-release/src/Block/libTSC.so ../sdk/bin/libTSC.so
-        cd ..
-    - name: Build SDK package
-      run: cd sdk && python -m build
+  #   steps:
+  #   - name: Checkout code
+  #     uses: actions/checkout@v4
+  #   - name: Set up Python 3.10
+  #     uses: actions/setup-python@v5
+  #     with:
+  #       python-version: '3.10'
+  #   - name: Install dependencies
+  #     run: |
+  #       sudo apt-get update && sudo apt-get install -y tzdata cmake build-essential gdb libzstd-dev liblz4-dev python3.10 mingw-w64 libmariadb-dev
+  #       pip install build pytest
+  #   - name: Build C libraries
+  #     run: |
+  #       cd tsc-lib
+  #       cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_BUILD_TYPE='Release'
+  #       cmake --build cmake-build-release --target Block
+  #       mkdir -p ../sdk/bin
+  #       cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll
+  #       rm -rf cmake-build-release/**
+  #       cmake -Bcmake-build-release -H. -DCMAKE_BUILD_TYPE='Release'
+  #       cmake --build cmake-build-release --target Block
+  #       cp cmake-build-release/src/Block/libTSC.so ../sdk/bin/libTSC.so
+  #       cd ..
+  #   - name: Build SDK package
+  #     run: cd sdk && python -m build
     
-    - name: Upload distributions
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-dists
-        path: |
-            sdk/dist/*.whl
-            sdk/dist/*.gz
-            sdk/bin/*.dll
-            sdk/bin/*.so
+  #   - name: Upload distributions
+  #     uses: actions/upload-artifact@v4
+  #     with:
+  #       name: release-dists
+  #       path: |
+  #           sdk/dist/*.whl
+  #           sdk/dist/*.gz
+  #           sdk/bin/*.dll
+  #           sdk/bin/*.so
         
-    - name: Install atriumdb test dependencies
-      run: cd sdk && pip install .[testing]
+  #   - name: Install atriumdb test dependencies
+  #     run: cd sdk && pip install .[testing]
       
-    - name: Run tests
-      env:
-        MARIA_DB_HOST: 127.0.0.1
-        MARIA_DB_PORT: 3306
-        MARIA_DB_USER: root
-        MARIA_DB_PASSWORD: rootpass
-      run: |
-        cd sdk
-        pytest
+  #   - name: Run tests
+  #     env:
+  #       MARIA_DB_HOST: 127.0.0.1
+  #       MARIA_DB_PORT: 3306
+  #       MARIA_DB_USER: root
+  #       MARIA_DB_PASSWORD: rootpass
+  #     run: |
+  #       cd sdk
+  #       pytest
         
-    - name: Create GitHub Release
-      if: ${{ github.event.inputs.pypiReleaseFeed == 'pypi' }}
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ github.event.inputs.releaseVersion }}
-        name: ${{ github.event.inputs.releaseVersion }}
-        files: |
-          sdk/dist/*.whl
-          sdk/dist/*.gz
-          sdk/bin/*.dll
-          sdk/bin/*.so
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #   - name: Create GitHub Release
+  #     if: ${{ github.event.inputs.pypiReleaseFeed == 'pypi' }}
+  #     uses: softprops/action-gh-release@v1
+  #     with:
+  #       tag_name: ${{ github.event.inputs.releaseVersion }}
+  #       name: ${{ github.event.inputs.releaseVersion }}
+  #       files: |
+  #         sdk/dist/*.whl
+  #         sdk/dist/*.gz
+  #         sdk/bin/*.dll
+  #         sdk/bin/*.so
+  #     env:
+  #       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
-  pypi-publish:
-    name: Publish to pypi
-    needs:
-      - build-release
-    runs-on: ubuntu-22.04
-    permissions:
-      # IMPORTANT: this permission is mandatory for trusted publishing
-      id-token: write
+  # pypi-publish:
+  #   name: Publish to pypi
+  #   needs:
+  #     - build-release
+  #   runs-on: ubuntu-22.04
+  #   permissions:
+  #     # IMPORTANT: this permission is mandatory for trusted publishing
+  #     id-token: write
 
-    # Dedicated environments with protections for publishing are strongly recommended.
-    # For more information, see: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#deployment-protection-rules
-    environment:
-      name: ${{ github.event.inputs.pypiReleaseFeed }}
+  #   # Dedicated environments with protections for publishing are strongly recommended.
+  #   # For more information, see: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#deployment-protection-rules
+  #   environment:
+  #     name: ${{ github.event.inputs.pypiReleaseFeed }}
 
-    steps:
-      - name: Retrieve release distributions
-        uses: actions/download-artifact@v5
-        with:
-          name: release-dists
+  #   steps:
+  #     - name: Retrieve release distributions
+  #       uses: actions/download-artifact@v5
+  #       with:
+  #         name: release-dists
       
-      - name: Set repository URL
-        id: set-url
-        run: |
-          if [ "${{ github.event.inputs.pypiReleaseFeed }}" = "pypi" ]; then
-            echo "url=https://upload.pypi.org/legacy/" >> $GITHUB_OUTPUT
-          else
-            echo "url=https://test.pypi.org/legacy/" >> $GITHUB_OUTPUT
-          fi
-      - name: Publish release distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: ${{ steps.set-url.outputs.url }}
+  #     - name: Set repository URL
+  #       id: set-url
+  #       run: |
+  #         if [ "${{ github.event.inputs.pypiReleaseFeed }}" = "pypi" ]; then
+  #           echo "url=https://upload.pypi.org/legacy/" >> $GITHUB_OUTPUT
+  #         else
+  #           echo "url=https://test.pypi.org/legacy/" >> $GITHUB_OUTPUT
+  #         fi
+  #     - name: Publish release distributions to PyPI
+  #       uses: pypa/gh-action-pypi-publish@release/v1
+  #       with:
+  #         repository-url: ${{ steps.set-url.outputs.url }}
 
   update-atriumdb-server:
-    if: ${{ github.event.inputs.pypiReleaseFeed == 'pypi' }}
-    needs:
-      - build-release
-      - pypi-publish
+    # if: ${{ github.event.inputs.pypiReleaseFeed == 'pypi' }}
+    # needs:
+    #   - build-release
+    #   - pypi-publish
     runs-on: ubuntu-22.04
     steps:
-      - name: Clone server repo
-        run: git clone https://github.com/LaussenLabs/atriumdb-server.git
+      # Check out the target repo into a subfolder using the PAT
+      - name: Checkout atriumdb-server
+        uses: actions/checkout@v4
+        with:
+          repository: LaussenLabs/atriumdb-server
+          path: atriumdb-server
+          token: ${{ secrets.RELEASE_PAT }}
+          fetch-depth: 0  # safer for creating branches
+
 
       - name: Create new branch and update version
         run: |
+          set -euo pipefail
           cd atriumdb-server
           git checkout -b update-atriumdb-version
           sed -i "s/atriumdb\[mariadb\]==[0-9.]*/atriumdb[mariadb]==${{ github.event.inputs.releaseVersion }}/" requirements.txt
