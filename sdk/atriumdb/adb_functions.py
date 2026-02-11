@@ -336,9 +336,7 @@ def detect_period(times: np.ndarray, threshold_ratio: float = 0.3):
             "Consider explicitly providing 'period' or 'freq' for accurate results.",
             UserWarning
         )
-        if np.issubdtype(times.dtype, np.integer):
-            return 1_000_000_000
-        return 1.0
+        return 1_000_000_000
 
     # Calculate deltas
     deltas = np.diff(times)
