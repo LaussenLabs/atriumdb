@@ -212,6 +212,13 @@ class AtriumSDK:
             self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
             if auto_upgrade:
                 self.sql_handler.update_measure_schema()
+                self.sql_handler.upgrade_mrn_schema()
+            else:
+                if not self.sql_handler.check_mrn_column_is_text():
+                    raise ValueError(
+                        "The 'mrn' column in the patient table is using an INTEGER type, but TEXT is now required. "
+                        "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
+                    )
             self.settings_dict = self._get_all_settings()
 
         # Handle MySQL or MariaDB connections
@@ -243,6 +250,13 @@ class AtriumSDK:
 
             if auto_upgrade:
                 self.sql_handler.update_measure_schema()
+                self.sql_handler.upgrade_mrn_schema()
+            else:
+                if not self.sql_handler.check_mrn_column_is_text():
+                    raise ValueError(
+                        "The 'mrn' column in the patient table is using an INTEGER type, but TEXT/VARCHAR is now required. "
+                        "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
+                    )
             self.settings_dict = self._get_all_settings()
 
         # Handle API connections
@@ -432,7 +446,7 @@ class AtriumSDK:
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
                  freq: Union[int, float] = None, units: str = None, freq_units: str = None,
-                 device_tag: str = None, mrn: int = None, return_nan_filled: bool | np.ndarray = False):
+                 device_tag: str = None, mrn: str = None, return_nan_filled: bool | np.ndarray = False):
         """
         The method for querying data from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
         time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
@@ -460,7 +474,7 @@ class AtriumSDK:
         :param str units: The units of the signal. Helpful with measure_tag.
         :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz", "Hz", "kHz", "MHz"] default "nHz".
         :param str device_tag: A string identifying the device. Exclusive with device_id.
-        :param int mrn: Medical record number for the patient. Exclusive with patient_id.
+        :param str mrn: Medical record number for the patient. Exclusive with patient_id. An int can be provided, but will be converted and stored as a string.
         :param bool | ndarray return_nan_filled: Whether or not to fill missing values from start to end with np.nan.
             This can be floating point numpy array of shape (int(round((end_ns - start_ns) / period_ns),) which works
             like the `out` param in the numpy library, filling the result into the passed in array instead of creating
@@ -621,7 +635,7 @@ class AtriumSDK:
         return headers, r_times, r_values
 
     def _get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int, device_id: int = None,
-                      patient_id: int = None, mrn: int = None, time_type=1, analog=True, sort=True,
+                      patient_id: int = None, mrn: str = None, time_type=1, analog=True, sort=True,
                       allow_duplicates=True):
 
         params = {'start_time': start_time_n, 'end_time': end_time_n, 'measure_id': measure_id, 'device_id': device_id,
@@ -2738,24 +2752,24 @@ class AtriumSDK:
         return self.sql_handler.insert_device(device_tag, device_name, device_id, manufacturer, model, device_type,
                                               bed_id, source_id)
 
-    def get_patient_id(self, mrn: int):
+    def get_patient_id(self, mrn: str):
         """
         Retrieve the patient ID associated with a given medical record number (MRN).
 
         This method looks for a patient's ID using their MRN. If the patient ID is not found in the initial search,
         it triggers a refresh of all patient data and searches again.
 
-        :param int mrn: The medical record number for the patient, as an integer.
+        :param str mrn: The medical record number for the patient. An int can be provided, but will be converted and stored as a string.
         :return: The patient ID as an integer if the patient is found; otherwise, None.
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
-        >>> patient_id = sdk.get_patient_id(mrn=123456)
+        >>> patient_id = sdk.get_patient_id(mrn="123456")
         >>> print(patient_id)
         1
         """
 
-        # Convert mrn to int for sql lookup
-        mrn = int(mrn)
+        # Convert mrn to str for lookup
+        mrn = str(mrn)
 
         # Check if we are in API mode
         if self.metadata_connection_type == "api":
@@ -2771,7 +2785,7 @@ class AtriumSDK:
 
         return None
 
-    def get_mrn(self, patient_id):
+    def get_mrn(self, patient_id: int):
         """
         Retrieve the medical record number (MRN) associated with a given patient ID.
 
@@ -2779,12 +2793,12 @@ class AtriumSDK:
         it triggers a refresh of all patient data and searches again.
 
         :param patient_id: The numeric identifier for the patient.
-        :return: The MRN as an integer if the patient is found; otherwise, None.
+        :return: The MRN as a string if the patient is found; otherwise, None.
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> mrn = sdk.get_mrn(patient_id=1)
         >>> print(mrn)
-        123456
+        '123456'
         """
         # Check if we are in API mode
         if self.metadata_connection_type == "api":
@@ -2800,12 +2814,12 @@ class AtriumSDK:
 
         return None
 
-    def get_patient_info(self, patient_id: int = None, mrn: int = None, time: int = None, time_units: str = None):
+    def get_patient_info(self, patient_id: int = None, mrn: str = None, time: int = None, time_units: str = None):
         """
         Retrieve information about a specific patient using either their numeric patient id or medical record number (MRN).
 
         :param int patient_id: The numeric identifier for the patient.
-        :param int mrn: The medical record number for the patient.
+        :param str mrn: The medical record number for the patient. An int can be provided, but will be converted and stored as a string.
         :param int time: (Optional) If you want the patient information for a specific time enter the epoch timestamp here.
          The function will get you the closest information available at a time less than or equal to the timestamp you
          provide. If left as None the function will get the most recent information.
@@ -2822,7 +2836,7 @@ class AtriumSDK:
         >>> print(patient_info)
         {
             'id': 1,
-            'mrn': 123456,
+            'mrn': '123456',
             'gender': 'M',
             'dob': 946684800000000000,  # Nanoseconds since epoch
             'first_name': 'John',
@@ -2862,8 +2876,8 @@ class AtriumSDK:
 
         # Try getting the patient by MRN from the cache
         if mrn is not None:
-            # Convert mrn to int for proper sql lookup
-            mrn = int(mrn)
+            # Convert mrn to str for proper lookup
+            mrn = str(mrn)
             if mrn in self._mrn_to_patient_id:
                 patient_id = self._mrn_to_patient_id[mrn]
 
@@ -2911,7 +2925,7 @@ class AtriumSDK:
         >>> all_patients = sdk.get_all_patients()
         >>> # print(all_patients)
         {1: {'id': 1,
-             'mrn': 123456,
+             'mrn': '123456',
              'gender': 'M',
              'dob': 946684800000000000,
              'first_name': 'John',
@@ -2923,7 +2937,7 @@ class AtriumSDK:
              'weight': 10.1,
              'height': 50.0},
          2: {'id': 2,
-             'mrn': 654321,
+             'mrn': '654321',
              'gender': 'F',
              'dob': 978307200000000000,
              'first_name': 'Jane',
@@ -3007,16 +3021,16 @@ class AtriumSDK:
 
         return patient_dict
 
-    def get_mrn_to_patient_id_map(self, mrn_list=None):
+    def get_mrn_to_patient_id_map(self, mrn_list: List[str] = None):
         """
         Get a mapping of Medical Record Numbers (MRNs) to patient IDs.
 
         This method queries the SQL database for all patients with MRNs in the given list
         and returns a dictionary with MRNs as keys and patient IDs as values.
 
-        :param mrn_list: A list of MRNs to filter the patients, or None to get all patients.
-        :type mrn_list: list, optional
-        :return: A dictionary with MRNs as keys and patient IDs as values.
+        :param mrn_list: A list of MRNs to filter the patients, or None to get all patients. Int values can be provided, but will be converted and stored as strings.
+        :type mrn_list: List[str], optional
+        :return: A dictionary with MRNs (as strings) as keys and patient IDs as values.
         :rtype: dict
         """
         if self.metadata_connection_type == "api":
@@ -3026,16 +3040,19 @@ class AtriumSDK:
             result_dict = {}
             for mrn in mrn_list:
                 result_temp = self._request("GET", f"patients/mrn|{mrn}", params={'time': None})
-                result_dict[int(mrn)] = int(result_temp['id'])
+                result_dict[str(mrn)] = int(result_temp['id'])
             return result_dict
 
+        # Convert all mrns to strings for consistent lookup
+        mrn_list_str = [str(mrn) for mrn in mrn_list]
+
         # If all mrns are in the cache
-        if all(int(mrn) in self._mrn_to_patient_id for mrn in mrn_list):
-            return {int(mrn): self._mrn_to_patient_id[int(mrn)] for mrn in mrn_list}
+        if all(m in self._mrn_to_patient_id for m in mrn_list_str):
+            return {m: self._mrn_to_patient_id[m] for m in mrn_list_str}
 
         # Refresh the cache and return all available mrns.
         self.get_all_patients()
-        return {int(mrn): self._mrn_to_patient_id[int(mrn)] for mrn in mrn_list if int(mrn) in self._mrn_to_patient_id}
+        return {m: self._mrn_to_patient_id[m] for m in mrn_list_str if m in self._mrn_to_patient_id}
 
     def get_patient_id_to_mrn_map(self, patient_id_list=None):
         """
@@ -3055,7 +3072,7 @@ class AtriumSDK:
         # Return a dictionary with patient IDs as keys and MRNs as values
         return {row[0]: row[1] for row in patient_list}
 
-    def insert_patient(self, patient_id: int = None, mrn: int = None, gender: str = None, dob: int = None,
+    def insert_patient(self, patient_id: int = None, mrn: str = None, gender: str = None, dob: int = None,
                        first_name: str = None, middle_name: str = None, last_name: str = None, first_seen: int = None,
                        last_updated: int = None, source_id: int = 1, weight: float = None, weight_units: str = None,
                        height: float = None, height_units: str = None):
@@ -3073,7 +3090,7 @@ class AtriumSDK:
         >>>                                     first_seen=1609459200000000000, last_updated=1609459200000000000, source_id=1)
 
         :param int patient_id: A unique number identifying the patient.
-        :param str mrn: The Medical Record Number (MRN) of the patient.
+        :param str mrn: The Medical Record Number (MRN) of the patient. An int can be provided, but will be converted and stored as a string.
         :param str gender: The gender of the patient (e.g., "M", "F", "O" for Other, or "U" for Unknown).
         :param int dob: The date of birth of the patient as a nanosecond epoch.
         :param str first_name: The first name of the patient.
@@ -3095,6 +3112,10 @@ class AtriumSDK:
 
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
+
+        # Convert mrn to string if provided
+        if mrn is not None:
+            mrn = str(mrn)
 
         if patient_id is not None:
             patient_info = self.get_patient_info(patient_id)
@@ -3127,14 +3148,14 @@ class AtriumSDK:
 
         return patient_id
 
-    def get_patient_history(self, patient_id: int = None, mrn: int = None, field: str = None, start_time: int = None,
+    def get_patient_history(self, patient_id: int = None, mrn: str = None, field: str = None, start_time: int = None,
                             end_time: int = None, time_units: str = None):
         """
         Retrieve a list of a patients historical measurements using either their numeric patient id or medical record number (MRN).
         If start_time and end_time are left empty it will give all the patient's history. The results are returned in ascending order by time.
 
         :param int patient_id: The numeric identifier for the patient.
-        :param int mrn: The medical record number for the patient.
+        :param str mrn: The medical record number for the patient. An int can be provided, but will be converted and stored as a string.
         :param str field: Which part of the patients history do you want, None will get you all the fields.
             Valid options are 'height', 'weight' or None.
         :param int start_time: The starting epoch time for the range of time you want the patient's history. If none it will get all history before the end_time.
@@ -3193,7 +3214,7 @@ class AtriumSDK:
 
         return self.sql_handler.select_patient_history(patient_id, field, start_time, end_time)
 
-    def insert_patient_history(self, field: str, value: float, units: str, time: int, time_units: str = None, patient_id: int = None, mrn: int = None):
+    def insert_patient_history(self, field: str, value: float, units: str, time: int, time_units: str = None, patient_id: int = None, mrn: str = None):
         """
         Insert a patient history record using either their numeric patient id or medical record number (MRN).
 
@@ -3203,7 +3224,7 @@ class AtriumSDK:
         :param int time: The epoch timestamp of the time the measurement was taken.
         :param str time_units: (Optional) Units for the time. Valid options are 'ns', 's', 'ms', and 'us'. Default is nanoseconds.
         :param int patient_id: The numeric identifier for the patient.
-        :param int mrn: The medical record number for the patient.
+        :param str mrn: The medical record number for the patient. An int can be provided, but will be converted and stored as a string.
 
         :return: A list of tuples containing the value of the measurement, the units the value is measured in and the
         epoch timestamp of when the measurement was taken. [(3.3, 'kg', 1483264800000000000), (3.4, 'kg', 1483268400000000000)]
@@ -3228,7 +3249,7 @@ class AtriumSDK:
 
         # if they supplied an mrn convert it to a patient_id
         if mrn is not None:
-            patient_id = self.get_patient_id(int(mrn))
+            patient_id = self.get_patient_id(str(mrn))
 
         return self.sql_handler.insert_patient_history(patient_id, field, value, units, time)
 
@@ -3244,7 +3265,7 @@ class AtriumSDK:
         return self.sql_handler.select_unique_history_fields()
 
     def get_device_patient_mapping(self, device_id_list: List[int] = None, device_tag_list: List[str] = None,
-                                   patient_id_list: List[int] = None, mrn_list: List[int] = None,
+                                   patient_id_list: List[int] = None, mrn_list: List[str] = None,
                                    timestamp: int = None, start_time: int = None, end_time: int = None,
                                    time_units: str = None, truncate: bool = False):
 
@@ -3259,7 +3280,7 @@ class AtriumSDK:
         :param List[int] optional device_id_list: A list of device IDs.
         :param List[str] optional device_tag_list: A list of device tags.
         :param List[int] optional patient_id_list: A list of patient IDs.
-        :param List[int] optional mrn_list: A list of MRNs (medical record numbers).
+        :param List[str] optional mrn_list: A list of MRNs (medical record numbers). Int values can be provided, but will be converted and stored as strings.
         :param int optional timestamp: A specific timestamp at which to find active device-patient mappings,
             in units specified by `time_units`.
         :param int optional start_time: The start time of the desired time range, in units specified by `time_units`.
@@ -3281,7 +3302,7 @@ class AtriumSDK:
         >>> mappings = sdk.get_device_patient_mapping(
         ...     timestamp=1609459200,
         ...     device_tag_list=['device123'],
-        ...     mrn_list=[123456],
+        ...     mrn_list=['123456'],
         ...     time_units='s'
         ... )
         >>> print(mappings)
@@ -3392,7 +3413,7 @@ class AtriumSDK:
             return mappings
 
     def get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
-                                mrn_list: List[int] = None, start_time: int = None, end_time: int = None,
+                                mrn_list: List[str] = None, start_time: int = None, end_time: int = None,
                                 time_units: str = None):
         """
         Retrieves device-patient mappings from the dataset's database based on the provided search criteria.
@@ -3405,7 +3426,7 @@ class AtriumSDK:
 
         :param List[int] optional device_id_list: A list of device IDs.
         :param List[int] optional patient_id_list: A list of patient IDs.
-        :param List[int] optional mrn_list: A list of MRNs (medical record numbers).
+        :param List[str] optional mrn_list: A list of MRNs (medical record numbers). Int values can be provided, but will be converted and stored as strings.
         :param int optional start_time: The start time of the device-patient association, in units specified by `time_units`.
         :param int optional end_time: The end time of the device-patient association, in units specified by `time_units`.
         :param str optional time_units: Units for the time parameters. Valid options are 'ns', 's', 'ms', and 'us'. Default is 'ns'.
@@ -3438,7 +3459,7 @@ class AtriumSDK:
         )
 
     def _api_get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
-                                     mrn_list: List[int] = None, start_time: int = None, end_time: int = None,
+                                     mrn_list: List[str] = None, start_time: int = None, end_time: int = None,
                                      time_units: str = None):
 
         time_units = "ns" if time_units is None else time_units
@@ -3465,7 +3486,7 @@ class AtriumSDK:
             if pid.split('|')[0] == "id":
                 patient_id = int(pid.split('|')[1])
             elif pid.split('|')[0] == "mrn":
-                mrn = int(pid.split('|')[1])
+                mrn = pid.split('|')[1]
                 patient_id = self.get_patient_id(mrn)
             else:
                 raise ValueError(f"got {pid.split('|')[0]}, expected mrn or id")
@@ -3496,7 +3517,7 @@ class AtriumSDK:
         return result
 
     def get_device_patient_encounters(self, timestamp: int, device_id: int = None, device_tag: str = None,
-                                      patient_id: int = None, mrn: int = None, time_units: str = None):
+                                      patient_id: int = None, mrn: str = None, time_units: str = None):
         """
         Retrieve device-patient encounters active at a specific time.
 
@@ -3508,7 +3529,7 @@ class AtriumSDK:
         :param int device_id: (Optional) The device identifier. If None, device_tag can be provided.
         :param str device_tag: (Optional) A string identifying the device. Used if device_id is None.
         :param int patient_id: (Optional) The patient identifier. If None, mrn can be provided.
-        :param int mrn: (Optional) Medical record number for the patient. Used if patient_id is None.
+        :param str mrn: (Optional) Medical record number for the patient. Used if patient_id is None. An int can be provided, but will be converted and stored as a string.
         :param str time_units: (Optional) Units for the time parameters. Valid options are 'ns', 's', 'ms', and 'us'. Default is 'ns'.
 
         :return: A list of tuples containing device_id, patient_id, encounter_start, and encounter_end.
@@ -3535,7 +3556,7 @@ class AtriumSDK:
         )
 
     def insert_encounter(self, start_time: float = None, end_time: float = None, patient_id: int = None,
-                         mrn: int = None, bed_id: int = None, bed_name: str = None, source_id: int = 1,
+                         mrn: str = None, bed_id: int = None, bed_name: str = None, source_id: int = 1,
                          visit_number: str = None, last_updated: float = None, time_units: str = 'ns'):
         """
         Inserts a new encounter into the database that represents a mapping between a patient and a bed over an interval of time.
@@ -3543,7 +3564,7 @@ class AtriumSDK:
         :param start_time: The start time of the encounter in the units specified by `time_units`.
         :param end_time: The end time of the encounter in the units specified by `time_units`, optional.
         :param patient_id: The ID of the patient.
-        :param mrn: The medical record number of the patient (mutually exclusive with `patient_id`).
+        :param str mrn: The medical record number of the patient (mutually exclusive with `patient_id`). An int can be provided, but will be converted and stored as a string.
         :param bed_id: The ID of the bed.
         :param bed_name: The name of the bed (mutually exclusive with `bed_id`).
         :param source_id: The source ID for the encounter, default is 1.
@@ -3591,7 +3612,7 @@ class AtriumSDK:
                                               last_updated)
 
     def get_encounters(self, timestamp: float = None, start_time: float = None, end_time: float = None,
-                       bed_id: int = None, bed_name: str = None, patient_id: int = None, mrn: int = None,
+                       bed_id: int = None, bed_name: str = None, patient_id: int = None, mrn: str = None,
                        time_units: str = 'ns'):
         """
         Queries encounters from the database based on any of the given params.
@@ -3602,7 +3623,7 @@ class AtriumSDK:
         :param bed_id: The ID of the bed.
         :param bed_name: The name of the bed, inplace of an id.
         :param patient_id: The ID of the patient.
-        :param mrn: The medical record number of the patient, inplace of the patient_id.
+        :param str mrn: The medical record number of the patient, inplace of the patient_id. An int can be provided, but will be converted and stored as a string.
         :param time_units: The units for the time parameters and returned times. Valid options: 'ns', 'us', 'ms', 's'.
                            Default is 'ns'.
 
@@ -3715,14 +3736,14 @@ class AtriumSDK:
         self.sql_handler.insert_device_patients(converted_device_patient_data)
 
     def convert_patient_to_device_id(self, start_time: int, end_time: int = None, patient_id: int = None,
-                                     mrn: int = None):
+                                     mrn: str = None):
         """
         Converts a patient ID or MRN to a device ID based on the specified time range.
 
         :param int start_time: Start time or only time for the association.
         :param int end_time: End time for the association. If None, then start_time is taken as a single point in time.
         :param int patient_id: Patient ID to be converted.
-        :param int mrn: MRN to be converted.
+        :param str mrn: MRN to be converted. An int can be provided, but will be converted and stored as a string.
         :return: Device ID if a single device fully encapsulates the time range, otherwise None.
         :rtype: int or None
         """
@@ -4149,7 +4170,7 @@ class AtriumSDK:
         return result
 
     def insert_label(self, name: str, start_time: int, end_time: int, device: Union[int, str] = None,
-                     patient_id: int = None, mrn: int = None, time_units: str = None,
+                     patient_id: int = None, mrn: str = None, time_units: str = None,
                      label_source: Union[str, int] = None, measure: Union[int, tuple[str, int | float, str]] = None):
         """
         Insert a label record into the database.
@@ -4159,7 +4180,7 @@ class AtriumSDK:
         :param int end_time: End time for the label.
         :param Union[int, str] device: Device ID or device tag (exclusive with device and patient_id).
         :param int patient_id: Patient ID for the label to be inserted (exclusive with device and mrn).
-        :param int mrn: MRN for the label to be inserted (exclusive with device and patient_id).
+        :param str mrn: MRN for the label to be inserted (exclusive with device and patient_id). An int can be provided, but will be converted and stored as a string.
         :param str time_units: Units for the `start_time` and `end_time`. Valid options are 'ns', 's', 'ms', and 'us'.
         :param Union[str, int] label_source: Name or ID of the label source.
         :param Union[int, tuple[str, int|float, str]] measure: Either the measure ID or the measure tuple
@@ -5136,7 +5157,7 @@ of DatasetIterator objects depending on the value of num_iterators.
 
     def get_interval_array(self, measure_id=None, device_id=None, patient_id=None,
                            gap_tolerance_nano: int = 0, start=None, end=None, measure_tag=None,
-                           freq=None, units=None, freq_units=None, device_tag=None, mrn=None):
+                           freq=None, units=None, freq_units=None, device_tag=None, mrn: str=None):
         """
         .. _get_interval_array_label:
 
@@ -5176,7 +5197,7 @@ of DatasetIterator objects depending on the value of num_iterators.
         :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz",
             "Hz", "kHz", "MHz"] default "nHz".
         :param str device_tag: A string identifying the device. Exclusive with device_id.
-        :param int mrn: Medical record number for the patient. Exclusive with patient_id.
+        :param str mrn: Medical record number for the patient. Exclusive with patient_id. An int can be provided, but will be converted and stored as a string.
         :rtype: numpy.ndarray
         :returns: A 2D array representing the availability of a specified measure.
 
@@ -5692,7 +5713,7 @@ def get_headers(self, measure_id: int = None, start_time_n: int = None, end_time
                 device_id: int = None, patient_id=None, block_info=None,
                 time_units: str = None, measure_tag: str = None,
                 freq: Union[int, float] = None, units: str = None, freq_units: str = None,
-                device_tag: str = None, mrn: int = None):
+                device_tag: str = None, mrn: str = None):
     """
     Get block headers for querying metadata from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
     time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
@@ -5715,7 +5736,7 @@ def get_headers(self, measure_id: int = None, start_time_n: int = None, end_time
     :param str units: The units of the signal. Helpful with measure_tag.
     :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz", "Hz", "kHz", "MHz"] default "nHz".
     :param str device_tag: A string identifying the device. Exclusive with device_id.
-    :param int mrn: Medical record number for the patient. Exclusive with patient_id.
+    :param str mrn: Medical record number for the patient. Exclusive with patient_id. An int can be provided, but will be converted and stored as a string.
 
     :rtype: List[BlockMetadata]
     :returns: List of Block header objects containing metadata information.

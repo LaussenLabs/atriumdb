@@ -253,6 +253,34 @@ class MariaDBHandler(SQLHandler):
                 return True
             return False
 
+    def check_mrn_column_is_text(self) -> bool:
+        """Check if the mrn column in the patient table is VARCHAR/TEXT. Returns True if it is."""
+        with self.connection() as (conn, cursor):
+            cursor.execute("""
+                SELECT DATA_TYPE 
+                FROM information_schema.COLUMNS 
+                WHERE TABLE_SCHEMA = ? 
+                AND TABLE_NAME = 'patient' 
+                AND COLUMN_NAME = 'mrn'
+            """, (self.database,))
+            result = cursor.fetchone()
+            if result is None:
+                return False
+            return result[0].upper() in ('VARCHAR', 'TEXT', 'CHAR')
+
+    def upgrade_mrn_schema(self):
+        """Upgrade the patient table mrn column from INT to VARCHAR if needed."""
+        if self.check_mrn_column_is_text():
+            return False  # Already VARCHAR/TEXT, no upgrade needed
+
+        with self.connection() as (conn, cursor):
+            cursor.execute("""
+                ALTER TABLE patient 
+                MODIFY COLUMN mrn VARCHAR(255) NULL
+            """)
+            conn.commit()
+            return True
+
     def select_all_devices(self):
         with self.maria_db_connection() as (conn, cursor):
             cursor.execute("SELECT id, tag, name, manufacturer, model, type, bed_id, source_id FROM device")
@@ -631,7 +659,7 @@ class MariaDBHandler(SQLHandler):
             cursor.execute(block_query, args)
             return cursor.fetchall()
 
-    def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[int] = None, start_time: int = None,
+    def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[str] = None, start_time: int = None,
                           end_time: int = None):
         assert (patient_id_list is None) != (mrn_list is None), "Either patient_id_list or mrn_list must be provided, but not both"
         arg_tuple = ()
@@ -669,7 +697,7 @@ class MariaDBHandler(SQLHandler):
             rows = cursor.fetchall()
         return rows
 
-    def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[int] = None):
+    def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[str] = None):
         if patient_id_list is not None:
             placeholders = ', '.join(['?'] * len(patient_id_list))
             maria_select_patients_by_id_list = f"SELECT id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, weight, height FROM patient WHERE id IN ({placeholders})"

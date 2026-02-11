@@ -42,7 +42,7 @@ EXAMPLE_DATA_DIR = TEST_DIR / "example_data"
         ("error7.yaml", ValueError, None, "pre cannot be negative"),
         ("error8.yaml", ValueError, None, "Device ID device_1 must be an integer"),
         ("error9.yaml", ValueError, None, "'pre' and 'post' cannot be provided without 'time0'"),
-        ("error10.yaml", ValueError, None, "MRN must be convertible to an integer"),
+        ("error10.yaml", ValueError, None, "times must be 'all' or a list of time dictionaries"),
         ("error11.yaml", ValueError, None, "Duplicate measure found: tag_1"),
         ("correct1.yaml", None, None, None),
         ("correct2.yaml", None, None, None),

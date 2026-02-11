@@ -46,11 +46,11 @@ def _test_device_patient(db_type, dataset_location, connection_params):
 
     # Prepare patient data with MRNs
     patient_data = [
-        {'patient_id': 100, 'mrn': 12345},
-        {'patient_id': 200, 'mrn': 23456},
-        {'patient_id': 300, 'mrn': 34567},
-        {'patient_id': 400, 'mrn': 45678},
-        {'patient_id': 500, 'mrn': 56789},
+        {'patient_id': 100, 'mrn': "12345"},
+        {'patient_id': 200, 'mrn': "23456"},
+        {'patient_id': 300, 'mrn': "34567"},
+        {'patient_id': 400, 'mrn': "45678"},
+        {'patient_id': 500, 'mrn': "56789"},
     ]
 
     for patient_dict in patient_data:
@@ -107,7 +107,7 @@ def _test_device_patient(db_type, dataset_location, connection_params):
     assert patient_200_data == expected_patient_200_data, f"Assertion failed at line __line__"
 
     # Test get_device_patient_data with mrn_list filter
-    mrn_list = [12345]
+    mrn_list = ["12345"]
     data_by_mrn = sdk.get_device_patient_data(mrn_list=mrn_list, time_units=time_units)
     expected_data_by_mrn = [
         (1, 100, 1647084000.0, 1647094800.0),
@@ -153,7 +153,7 @@ def _test_device_patient(db_type, dataset_location, connection_params):
     assert encounters == expected_encounters, f"Assertion failed at line __line__"
 
     # Test get_device_patient_encounters with device_id, mrn, and time
-    encounters = sdk.get_device_patient_encounters(timestamp=1647085000, device_id=1, mrn=12345, time_units=time_units)
+    encounters = sdk.get_device_patient_encounters(timestamp=1647085000, device_id=1, mrn="12345", time_units=time_units)
     assert encounters == expected_encounters, f"Assertion failed at line __line__"
 
     # Test get_device_patient_encounters with no encounter found

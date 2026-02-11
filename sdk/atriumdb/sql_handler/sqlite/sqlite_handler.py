@@ -170,6 +170,66 @@ class SQLiteHandler(SQLHandler):
                 return True
             return False
 
+    def check_mrn_column_is_text(self) -> bool:
+        """Check if the mrn column in the patient table is TEXT. Returns True if it is TEXT."""
+        with self.connection() as (conn, cursor):
+            cursor.execute("PRAGMA table_info(patient)")
+            for row in cursor.fetchall():
+                # row format: (cid, name, type, notnull, dflt_value, pk)
+                if row[1] == 'mrn':
+                    return row[2].upper() == 'TEXT'
+        return False
+
+    def upgrade_mrn_schema(self):
+        """Upgrade the patient table mrn column from INTEGER to TEXT if needed.
+
+        SQLite does not support ALTER COLUMN, so we must recreate the table.
+        """
+        if self.check_mrn_column_is_text():
+            return False  # Already TEXT, no upgrade needed
+
+        with self.connection() as (conn, cursor):
+            cursor.execute("PRAGMA foreign_keys = OFF")
+
+            # Create a new patient table with TEXT mrn
+            cursor.execute("""
+                CREATE TABLE patient_new (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  mrn TEXT NULL UNIQUE,
+                  gender TEXT NULL,
+                  dob INTEGER NULL,
+                  first_name TEXT NULL,
+                  middle_name TEXT NULL,
+                  last_name TEXT NULL,
+                  first_seen INTEGER NULL DEFAULT (STRFTIME('%s','NOW')),
+                  last_updated INTEGER NULL,
+                  source_id INTEGER DEFAULT 1 NULL,
+                  weight REAL NULL,
+                  height REAL NULL,
+                  FOREIGN KEY (source_id) REFERENCES source (id)
+                )
+            """)
+
+            # Copy data, casting mrn to TEXT
+            cursor.execute("""
+                INSERT INTO patient_new (id, mrn, gender, dob, first_name, middle_name, last_name,
+                    first_seen, last_updated, source_id, weight, height)
+                SELECT id, CAST(mrn AS TEXT), gender, dob, first_name, middle_name, last_name,
+                    first_seen, last_updated, source_id, weight, height
+                FROM patient
+            """)
+
+            # Drop old table and rename new one
+            cursor.execute("DROP TABLE patient")
+            cursor.execute("ALTER TABLE patient_new RENAME TO patient")
+
+            # Recreate the index
+            cursor.execute("CREATE INDEX IF NOT EXISTS source_id ON patient (source_id)")
+
+            cursor.execute("PRAGMA foreign_keys = ON")
+            conn.commit()
+            return True
+
     def interval_exists(self, measure_id, device_id, start_time_nano):
         with self.sqlite_db_connection() as (conn, cursor):
             cursor.execute(sqlite_interval_exists_query, (measure_id, device_id, start_time_nano))
@@ -531,7 +591,7 @@ class SQLiteHandler(SQLHandler):
             cursor.execute(block_query, args)
             return cursor.fetchall()
 
-    def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[int] = None, start_time: int = None,
+    def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[str] = None, start_time: int = None,
                           end_time: int = None):
         assert (patient_id_list is None) != (
                 mrn_list is None), "Either patient_id_list or mrn_list must be provided, but not both"
@@ -569,7 +629,7 @@ class SQLiteHandler(SQLHandler):
             rows = cursor.fetchall()
         return rows
 
-    def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[int] = None):
+    def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[str] = None):
         assert (patient_id_list is None) != (mrn_list is None), \
             "only one of patient_id_list and mrn_list can be specified."
         if patient_id_list is not None:

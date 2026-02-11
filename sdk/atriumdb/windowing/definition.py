@@ -495,11 +495,11 @@ class DatasetDefinition:
                 raise ValueError(f"Patient ID {patient_id} must be an integer")
             self._check_times_and_warn(times, source_type="patient_id", source_id=patient_id)
 
-        # Convert mrns to integers
+        # Convert mrns to strings
         try:
-            self.data_dict['mrns'] = {int(key): value for key, value in self.data_dict['mrns'].items()}
-        except ValueError:
-            raise ValueError("MRN must be convertible to an integer")
+            self.data_dict['mrns'] = {str(key): value for key, value in self.data_dict['mrns'].items()}
+        except (ValueError, TypeError):
+            raise ValueError("MRN must be convertible to a string")
         for mrn, times in self.data_dict['mrns'].items():
             self._check_times_and_warn(times, source_type="mrn", source_id=mrn)
 
@@ -517,6 +517,9 @@ class DatasetDefinition:
     def _check_times_and_warn(self, times, source_type, source_id):
         if times == "all":
             return
+
+        if not isinstance(times, list):
+            raise ValueError(f"{source_type} {source_id}: times must be 'all' or a list of time dictionaries")
 
         allowed_keys = ['start', 'end', 'time0', 'pre', 'post', 'files']
 
@@ -615,7 +618,7 @@ class DatasetDefinition:
         :param patient_id: Identifier for a patient.
         :type patient_id: int, optional
         :param mrn: Medical record number.
-        :type mrn: int, optional
+        :type mrn: str or int, optional
         :param device_id: Identifier for a device.
         :type device_id: int, optional
         :param device_tag: Tag for a device.
@@ -664,7 +667,7 @@ class DatasetDefinition:
         if patient_id:
             target_dict, key = self.data_dict['patient_ids'], patient_id
         elif mrn:
-            target_dict, key = self.data_dict['mrns'], mrn
+            target_dict, key = self.data_dict['mrns'], str(mrn)
         elif device_id:
             target_dict, key = self.data_dict['device_ids'], device_id
         elif device_tag:
