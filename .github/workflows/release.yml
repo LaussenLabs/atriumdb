@@ -138,11 +138,19 @@ jobs:
       - pypi-publish
     runs-on: ubuntu-22.04
     steps:
-      - name: Clone server repo
-        run: git clone https://github.com/LaussenLabs/atriumdb-server.git
+      # Check out the target repo into a subfolder using the PAT
+      - name: Checkout atriumdb-server
+        uses: actions/checkout@v4
+        with:
+          repository: LaussenLabs/atriumdb-server
+          path: atriumdb-server
+          token: ${{ secrets.RELEASE_PAT }}
+          fetch-depth: 0  # safer for creating branches
+
 
       - name: Create new branch and update version
         run: |
+          set -euo pipefail
           cd atriumdb-server
           git checkout -b update-atriumdb-version
           sed -i "s/atriumdb\[mariadb\]==[0-9.]*/atriumdb[mariadb]==${{ github.event.inputs.releaseVersion }}/" requirements.txt
