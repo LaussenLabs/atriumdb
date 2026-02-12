@@ -2177,11 +2177,15 @@ class AtriumSDK:
         # Return the filtered measures as a dictionary
         return result
 
-    def get_all_measures(self):
+    def get_all_measures(self, device_id=None, device_tag=None, patient_id=None, mrn=None,
+                         start_time=None, end_time=None, time_units=None):
         """
         .. _get_all_measures_label:
 
-        Retrieve information about all measures in the linked relational database.
+        Retrieve information about all measures in the linked relational database, optionally filtered
+        to only include measures that have data for a specific device or patient within a time range.
+
+        When called with no arguments, returns all measures in the dataset.
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> all_measures = sdk.get_all_measures()
@@ -2207,10 +2211,77 @@ class AtriumSDK:
              'unit_code': 'BPM',
              'source_id': 1}}
 
+        >>> # Get only measures that have data on device 1
+        >>> measures_for_device = sdk.get_all_measures(device_id=1)
+
+        >>> # Get measures with data for a specific patient in a time range
+        >>> measures_in_range = sdk.get_all_measures(
+        ...     mrn="123456", start_time=0, end_time=3600, time_units="s")
+
+        :param int device_id: Filter to measures that have data on this device.
+        :param str device_tag: Filter to measures that have data on this device (resolved to device_id).
+        :param int patient_id: Filter to measures that have data for this patient.
+        :param str mrn: Filter to measures that have data for this patient (resolved to patient_id).
+        :param start_time: Filter to measures that have data at or after this time.
+            Units determined by `time_units`.
+        :param end_time: Filter to measures that have data before this time.
+            Units determined by `time_units`.
+        :param str time_units: Units for `start_time` and `end_time`. Options: ["ns", "us", "ms", "s"].
+            Required if `start_time` or `end_time` is provided.
+
         :return: A dictionary containing information about each measure, including its id, tag, name, sample frequency
             (in nanohertz), period (in nanoseconds), code, unit, unit label, unit code, and source_id.
         :rtype: dict
         """
+        # Resolve tags/mrns to ids
+        if device_id is None and device_tag is not None:
+            device_id = self.get_device_id(device_tag)
+            if device_id is None:
+                return {}
+
+        if patient_id is None and mrn is not None:
+            patient_id = self.get_patient_id(str(mrn))
+            if patient_id is None:
+                return {}
+
+        # Validate time_units if time parameters are provided
+        if (start_time is not None or end_time is not None) and time_units is None:
+            raise ValueError("time_units must be specified when start_time or end_time is provided.")
+
+        # No filtering — original behavior
+        has_source_filter = device_id is not None or patient_id is not None
+
+        if not has_source_filter and start_time is None and end_time is None:
+            return self._get_all_measures_unfiltered()
+
+        # Get the full measure catalog to filter against
+        all_measures = self._get_all_measures_unfiltered()
+
+        # Time-only filtering (no device/patient): use efficient SQL DISTINCT query
+        if not has_source_filter:
+            start_n = int(start_time * time_unit_options[time_units]) if start_time is not None else None
+            end_n = int(end_time * time_unit_options[time_units]) if end_time is not None else None
+            matching_ids = set(self.sql_handler.select_distinct_measure_ids(
+                start_time_n=start_n, end_time_n=end_n))
+            return {mid: info for mid, info in all_measures.items() if mid in matching_ids}
+
+        # Device/patient filtering: check each measure for data availability via get_interval_array
+        filtered = {}
+        for measure_id, measure_info in all_measures.items():
+            interval_arr = self.get_interval_array(
+                measure_id=measure_id,
+                device_id=device_id,
+                patient_id=patient_id,
+                start=start_time,
+                end=end_time,
+                time_units=time_units,
+            )
+            if interval_arr.size > 0:
+                filtered[measure_id] = measure_info
+
+        return filtered
+
+    def _get_all_measures_unfiltered(self):
         # Check if connection type is API and call the appropriate method
         if self.metadata_connection_type == "api":
             measure_dict = self._request("GET", "measures/")
@@ -2605,11 +2676,16 @@ class AtriumSDK:
         # Return the dictionary containing the search results
         return result
 
-    def get_all_devices(self):
+    def get_all_devices(self, measure_id=None, measure_tag=None, freq=None, units=None, freq_units=None,
+                        patient_id=None, mrn=None,
+                        start_time=None, end_time=None, time_units=None):
         """
         .. _get_all_devices_label:
 
-        Retrieve information about all devices in the linked relational database.
+        Retrieve information about all devices in the linked relational database, optionally filtered
+        to only include devices that have data for a specific measure or patient within a time range.
+
+        When called with no arguments, returns all devices in the dataset.
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> all_devices = sdk.get_all_devices()
@@ -2631,10 +2707,109 @@ class AtriumSDK:
              'bed_id': 2,
              'source_id': 2}}
 
+        >>> # Get only devices that have Heart Rate data
+        >>> devices_with_hr = sdk.get_all_devices(measure_tag="HeartRate", freq=500, freq_units="Hz", units="BPM")
+
+        >>> # Get devices with data for a patient in a time range
+        >>> devices_in_range = sdk.get_all_devices(
+        ...     measure_id=1, mrn="123456", start_time=0, end_time=3600, time_units="s")
+
+        :param int measure_id: Filter to devices that have data for this measure.
+        :param str measure_tag: Filter to devices that have data for this measure (resolved to measure_id).
+            If multiple measures match the tag, the best match is used. Provide `freq`, `units`, and/or
+            `freq_units` for a more specific match.
+        :param freq: Frequency to help resolve measure_tag. Used with `freq_units`.
+        :param str units: Unit string to help resolve measure_tag.
+        :param str freq_units: Units for `freq`. Options: ["nHz", "uHz", "mHz", "Hz", "kHz", "MHz"].
+        :param int patient_id: Filter to devices that have data for this patient.
+        :param str mrn: Filter to devices that have data for this patient (resolved to patient_id).
+        :param start_time: Filter to devices that have data at or after this time.
+            Units determined by `time_units`.
+        :param end_time: Filter to devices that have data before this time.
+            Units determined by `time_units`.
+        :param str time_units: Units for `start_time` and `end_time`. Options: ["ns", "us", "ms", "s"].
+            Required if `start_time` or `end_time` is provided.
+
         :return: A dictionary containing information about each device, including its id, tag, name, manufacturer,
             model, type, bed_id, and source_id.
         :rtype: dict
         """
+        # Resolve measure_tag to measure_id
+        if measure_id is None and measure_tag is not None:
+            measure_id = get_best_measure_id(self, measure_tag, freq, units, freq_units)
+
+        # Resolve mrn to patient_id
+        if patient_id is None and mrn is not None:
+            patient_id = self.get_patient_id(str(mrn))
+            if patient_id is None:
+                return {}
+
+        # Validate time_units if time parameters are provided
+        if (start_time is not None or end_time is not None) and time_units is None:
+            raise ValueError("time_units must be specified when start_time or end_time is provided.")
+
+        # No filtering — original behavior
+        has_source_filter = measure_id is not None or patient_id is not None
+
+        if not has_source_filter and start_time is None and end_time is None:
+            return self._get_all_devices_unfiltered()
+
+        # Get the full device catalog to filter against
+        all_devices = self._get_all_devices_unfiltered()
+
+        # Time-only filtering (no measure/patient): use efficient SQL DISTINCT query
+        if not has_source_filter:
+            start_n = int(start_time * time_unit_options[time_units]) if start_time is not None else None
+            end_n = int(end_time * time_unit_options[time_units]) if end_time is not None else None
+            matching_ids = set(self.sql_handler.select_distinct_device_ids(
+                start_time_n=start_n, end_time_n=end_n))
+            return {did: info for did, info in all_devices.items() if did in matching_ids}
+
+        # Measure filtering (no patient): check each device for data availability
+        if measure_id is not None and patient_id is None:
+            filtered = {}
+            for device_id, device_info in all_devices.items():
+                interval_arr = self.get_interval_array(
+                    measure_id=measure_id,
+                    device_id=device_id,
+                    start=start_time,
+                    end=end_time,
+                    time_units=time_units,
+                )
+                if interval_arr.size > 0:
+                    filtered[device_id] = device_info
+            return filtered
+
+        # Patient filtering (with or without measure)
+        if patient_id is not None:
+            # Find devices associated with this patient in the requested time range
+            start_n = int(start_time * time_unit_options[time_units]) if start_time is not None and time_units is not None else start_time
+            end_n = int(end_time * time_unit_options[time_units]) if end_time is not None and time_units is not None else end_time
+            device_time_ranges = self.sql_handler.get_device_time_ranges_by_patient(
+                patient_id, end_time_n=end_n, start_time_n=start_n)
+            patient_device_ids = set(dtr[0] for dtr in device_time_ranges)
+
+            if measure_id is None:
+                # Patient only: return all devices associated with the patient
+                return {did: info for did, info in all_devices.items() if did in patient_device_ids}
+            else:
+                # Patient + measure: verify each patient device has data for the measure
+                filtered = {}
+                for device_id in patient_device_ids:
+                    if device_id not in all_devices:
+                        continue
+                    interval_arr = self.get_interval_array(
+                        measure_id=measure_id,
+                        device_id=device_id,
+                        start=start_time,
+                        end=end_time,
+                        time_units=time_units,
+                    )
+                    if interval_arr.size > 0:
+                        filtered[device_id] = all_devices[device_id]
+                return filtered
+
+    def _get_all_devices_unfiltered(self):
         # Check if the metadata connection type is API
         if self.metadata_connection_type == "api":
             device_dict = self._request("GET", "devices/")
@@ -5160,7 +5335,8 @@ of DatasetIterator objects depending on the value of num_iterators.
 
     def get_interval_array(self, measure_id=None, device_id=None, patient_id=None,
                            gap_tolerance_nano: int = 0, start=None, end=None, measure_tag=None,
-                           freq=None, units=None, freq_units=None, device_tag=None, mrn: str=None):
+                           freq=None, units=None, freq_units=None, device_tag=None, mrn: str = None,
+                           time_units: str = None):
         """
         .. _get_interval_array_label:
 
@@ -5173,15 +5349,11 @@ of DatasetIterator objects depending on the value of num_iterators.
         >>> device_id = 25
         >>> start_epoch_s = 1669668855
         >>> end_epoch_s = start_epoch_s + 3600  # 1 hour after start.
-        >>> start_epoch_nano = start_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
-        >>> end_epoch_nano = end_epoch_s * (10 ** 9)  # Convert seconds to nanoseconds
-        >>> interval_arr = sdk.get_interval_array(measure_id=measure_id, device_id=device_id, start=start_epoch_nano, end=end_epoch_nano)
+        >>> interval_arr = sdk.get_interval_array(measure_id=measure_id, device_id=device_id,
+        ...     start=start_epoch_s, end=end_epoch_s, time_units="s")
         >>> interval_arr
-        array([[1669668855000000000, 1669668856000000000],
-        [1669668857000000000, 1669668858000000000],
-        [1669668859000000000, 1669668860000000000],
-        [1669668861000000000, 1669668862000000000],
-        [1669668863000000000, 1669668864000000000]], dtype=int64)
+        array([[1.66966886e+09, 1.66966886e+09],
+               [1.66966886e+09, 1.66966886e+09]])
 
         :param int measure_id: The measure identifier corresponding to the measures table in the
             linked relational database.
@@ -5192,19 +5364,37 @@ of DatasetIterator objects depending on the value of num_iterators.
         :param int gap_tolerance_nano: The maximum allowable gap size in the data such that the output considers a
             region continuous. Put another way, the minimum gap size, such that the output of this method will add
             a new row.
-        :param int start: The minimum time epoch for which to include intervals.
-        :param int end: The maximum time epoch for which to include intervals.
+        :param start: The minimum time epoch for which to include intervals, in the units specified by `time_units`.
+            If `time_units` is None, this is interpreted as nanoseconds.
+        :param end: The maximum time epoch for which to include intervals, in the units specified by `time_units`.
+            If `time_units` is None, this is interpreted as nanoseconds.
         :param str measure_tag: A short string identifying the signal. Required if measure_id is None.
         :param freq: The sample frequency of the signal. Helpful with measure_tag.
         :param str units: The units of the signal. Helpful with measure_tag.
         :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz",
             "Hz", "kHz", "MHz"] default "nHz".
         :param str device_tag: A string identifying the device. Exclusive with device_id.
-        :param str mrn: Medical record number for the patient. Exclusive with patient_id. An int can be provided, but will be converted and stored as a string.
+        :param str mrn: Medical record number for the patient. Exclusive with patient_id.
+            An int can be provided, but will be converted and stored as a string.
+        :param str time_units: The units for `start`, `end`, and the returned array. Options: ["ns", "us", "ms", "s"].
+            If None (default), `start` and `end` are interpreted as nanoseconds and the returned array
+            is also in nanoseconds as int64. When set to "ns", behaves the same
+            as None (int64 nanoseconds). For other units ("us", "ms", "s"), returns float64 to preserve
+            full precision from nanosecond source data.
         :rtype: numpy.ndarray
-        :returns: A 2D array representing the availability of a specified measure.
+        :returns: A 2D array representing the availability of a specified measure. Returns int64 when `time_units`
+            is None or "ns" (nanoseconds). Returns float64 for other time units ("us", "ms", "s") to preserve
+            sub-unit precision from nanosecond storage.
 
         """
+        # Convert start/end to nanoseconds if time_units is specified
+        if time_units is not None:
+            if time_units not in time_unit_options:
+                raise ValueError(f"Invalid time units. Expected one of: {list(time_unit_options.keys())}")
+            if start is not None:
+                start = int(start * time_unit_options[time_units])
+            if end is not None:
+                end = int(end * time_unit_options[time_units])
 
         if device_id is None and device_tag is not None:
             device_id = self.get_device_id(device_tag)
@@ -5221,7 +5411,14 @@ of DatasetIterator objects depending on the value of num_iterators.
 
             params = {'measure_id': measure_id, 'device_id': device_id, 'patient_id': patient_id, 'start_time': start,
                       'end_time': end, 'gap_tolerance': gap_tolerance_nano}
-            return self._request("GET", "intervals", params=params)
+            result_arr = self._request("GET", "intervals", params=params)
+
+            # Convert from nanoseconds to requested time_units if specified
+            # Only convert to float if we're actually changing units (not ns)
+            if time_units is not None and time_units != "ns" and result_arr.size > 0:
+                result_arr = result_arr / time_unit_options[time_units]
+
+            return result_arr
 
         # Check the measure
         if measure_id is None:
@@ -5253,7 +5450,14 @@ of DatasetIterator objects depending on the value of num_iterators.
                 arr.append([cur_interval_start, cur_interval_end])
 
         # Convert the final intervals list to a numpy array with int64 data type
-        return np.array(arr, dtype=np.int64)
+        result_arr = np.array(arr, dtype=np.int64)
+
+        # Convert from nanoseconds to requested time_units if specified
+        # Only convert to float if we're actually changing units (not ns)
+        if time_units is not None and time_units != "ns" and result_arr.size > 0:
+            result_arr = result_arr / time_unit_options[time_units]
+
+        return result_arr
 
     def get_bed_id(self, bed_name: str) -> int | None:
         """

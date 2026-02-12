@@ -409,6 +409,101 @@ For example, you might notice that some devices have missing information (e.g., 
 which you could then decide to update or investigate further. Additionally, you can use the device ids to query your
 dataset based on specific devices.
 
+Filtering Measures and Devices
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Both ``get_all_measures`` and ``get_all_devices`` accept optional filtering parameters to narrow
+the results to only those measures or devices that have actual data for a given source and/or time range.
+When called without any arguments, they behave exactly as before, returning everything in the dataset.
+
+**Filtering measures by device:**
+
+If you know which device you're interested in and want to find out what signals it recorded:
+
+.. code-block:: python
+
+   # Which measures does DeviceA have?
+   measures_on_device_a = sdk.get_all_measures(device_id=1)
+
+   # Or by tag
+   measures_on_device_a = sdk.get_all_measures(device_tag="DeviceA")
+
+**Filtering measures by patient:**
+
+.. code-block:: python
+
+   # Which measures were recorded for patient with MRN "PAT-001"?
+   measures_for_patient = sdk.get_all_measures(mrn="PAT-001")
+
+   # Or by patient_id
+   measures_for_patient = sdk.get_all_measures(patient_id=42)
+
+**Filtering with a time range:**
+
+You can also restrict results to a specific time window. When using ``start_time`` or ``end_time``,
+you must also specify ``time_units``:
+
+.. code-block:: python
+
+   # What measures does DeviceA have between hour 1 and hour 2?
+   measures_in_range = sdk.get_all_measures(
+       device_id=1,
+       start_time=3600,
+       end_time=7200,
+       time_units="s"
+   )
+
+   # What measures were recorded for a patient in a specific window?
+   measures_in_range = sdk.get_all_measures(
+       mrn="PAT-001",
+       start_time=0,
+       end_time=86400,
+       time_units="s"
+   )
+
+**Filtering devices by measure:**
+
+The reverse query — finding which devices recorded a particular signal — works the same way:
+
+.. code-block:: python
+
+   # Which devices have Heart Rate data?
+   devices_with_hr = sdk.get_all_devices(measure_id=1)
+
+   # Or by tag (with frequency and units for a specific match)
+   devices_with_hr = sdk.get_all_devices(
+       measure_tag="HeartRate", freq=250, freq_units="Hz", units="BPM"
+   )
+
+   # Which devices have Heart Rate data for patient "PAT-002"?
+   devices_for_patient_hr = sdk.get_all_devices(
+       measure_id=1, mrn="PAT-002"
+   )
+
+**Filtering devices by patient:**
+
+.. code-block:: python
+
+   # Which devices were used for this patient?
+   patient_devices = sdk.get_all_devices(mrn="PAT-001")
+
+**Time-only filtering (no device or patient):**
+
+You can also filter purely by time range to find which measures or devices have any data at all
+in a given window:
+
+.. code-block:: python
+
+   # What measures have data in the first hour?
+   measures_first_hour = sdk.get_all_measures(
+       start_time=0, end_time=3600, time_units="s"
+   )
+
+   # What devices have data in the first hour?
+   devices_first_hour = sdk.get_all_devices(
+       start_time=0, end_time=3600, time_units="s"
+   )
+
 Getting Data Availability
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 To obtain the availability of a specified measure (signal) and a specified source (device id or patient id),
@@ -419,7 +514,12 @@ Each row of the 2D array output represents a continuous interval of available da
 representing the start epoch and end epoch of that interval, respectively.
 This information can be useful when you want to analyze or visualize data within specific time periods or when you need to identify gaps in the data.
 
-Here's an example of how to use the :ref:`get_interval_array <get_interval_array_label>` method:
+**Using time_units for convenient time ranges:**
+
+The :ref:`get_interval_array <get_interval_array_label>` method accepts an optional ``time_units`` parameter that lets you
+work with times in your preferred unit (seconds, milliseconds, microseconds, or nanoseconds). When you specify ``time_units``
+with units other than nanoseconds ("us", "ms", "s"), both the input ``start``/``end`` parameters and the returned array
+use those units. The returned array will be float64 to preserve full precision from the underlying nanosecond storage.
 
 .. code-block:: python
 
@@ -427,20 +527,44 @@ Here's an example of how to use the :ref:`get_interval_array <get_interval_array
    measure_id = 1
    device_id = 1
 
-   # Call the get_interval_array method
-   interval_arr = sdk.get_interval_array(measure_id=measure_id, device_id=device_id)
-
-   # Print the resulting 2D array
+   # Get intervals in seconds
+   interval_arr = sdk.get_interval_array(
+       measure_id=measure_id,
+       device_id=device_id,
+       start=0,
+       end=3600,  # First hour
+       time_units="s"
+   )
    print(interval_arr)
 
 Example output:
 
 .. code-block:: python
 
+   [[0.000000e+00 1.805555e+03]]
+
+In this example, we requested intervals for the first hour (0 to 3600 seconds) with ``time_units="s"``.
+The returned array is also in seconds (as float64), showing a continuous interval from second 0 to
+approximately second 1805.555. The float format preserves sub-second precision from the nanosecond source data.
+
+**Working with nanoseconds (int64):**
+
+When you don't specify ``time_units`` (or explicitly set it to ``"ns"``), the method expects ``start``/``end`` in
+nanoseconds and returns intervals in nanoseconds as int64:
+
+.. code-block:: python
+
+   # Call without time_units (legacy behavior)
+   interval_arr = sdk.get_interval_array(measure_id=measure_id, device_id=device_id)
+   print(interval_arr)
+
+.. code-block:: python
+
    [[            0 1805555050000]]
 
-In this example, the output shows that there is a single continuous interval of available data for the specified measure and device,
-starting at epoch 0 and ending at epoch 1805555050000. This is because there are no gaps in the source mit-bih data.
+Here, the output shows times in nanoseconds as int64. There is a single continuous interval of available data
+for the specified measure and device, starting at epoch 0 and ending at epoch 1805555050000 nanoseconds.
+This is because there are no gaps in the source mit-bih data.
 
 These methods allow you to survey the data in your dataset and obtain information about the measures, devices, and data availability.
 By understanding the data availability, you can make informed decisions about how to process, analyze, or visualize the data in your dataset.

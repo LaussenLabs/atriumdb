@@ -512,6 +512,74 @@ class SQLHandler(ABC):
             cursor.execute(interval_query, args)
             return cursor.fetchall()
 
+    def select_distinct_measure_ids(self, start_time_n: 'Optional[int]' = None,
+                                    end_time_n: 'Optional[int]' = None) -> 'List[int]':
+        """
+        Return a list of distinct measure_ids from interval_index that have data
+        overlapping the given time range.
+
+        If no time range is provided, returns all distinct measure_ids that have
+        any interval data.
+
+        :param start_time_n: Optional start time in nanoseconds. If provided, only
+            intervals whose end_time_n > start_time_n are considered.
+        :param end_time_n: Optional end time in nanoseconds. If provided, only
+            intervals whose start_time_n < end_time_n are considered.
+        :return: A list of distinct measure_ids.
+        :rtype: List[int]
+        """
+        query = "SELECT DISTINCT measure_id FROM interval_index"
+        args = []
+        clauses = []
+
+        if start_time_n is not None:
+            clauses.append("end_time_n > ?")
+            args.append(int(start_time_n))
+        if end_time_n is not None:
+            clauses.append("start_time_n < ?")
+            args.append(int(end_time_n))
+
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(query, tuple(args))
+            return [row[0] for row in cursor.fetchall()]
+
+    def select_distinct_device_ids(self, start_time_n: 'Optional[int]' = None,
+                                   end_time_n: 'Optional[int]' = None) -> 'List[int]':
+        """
+        Return a list of distinct device_ids from interval_index that have data
+        overlapping the given time range.
+
+        If no time range is provided, returns all distinct device_ids that have
+        any interval data.
+
+        :param start_time_n: Optional start time in nanoseconds. If provided, only
+            intervals whose end_time_n > start_time_n are considered.
+        :param end_time_n: Optional end time in nanoseconds. If provided, only
+            intervals whose start_time_n < end_time_n are considered.
+        :return: A list of distinct device_ids.
+        :rtype: List[int]
+        """
+        query = "SELECT DISTINCT device_id FROM interval_index"
+        args = []
+        clauses = []
+
+        if start_time_n is not None:
+            clauses.append("end_time_n > ?")
+            args.append(int(start_time_n))
+        if end_time_n is not None:
+            clauses.append("start_time_n < ?")
+            args.append(int(end_time_n))
+
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(query, tuple(args))
+            return [row[0] for row in cursor.fetchall()]
+
     @abstractmethod
     def select_encounters(self, patient_id_list: Optional[List[int]] = None, mrn_list: Optional[List[str]] = None, start_time: Optional[int] = None,
                           end_time: Optional[int] = None):
