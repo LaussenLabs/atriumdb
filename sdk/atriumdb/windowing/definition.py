@@ -27,6 +27,7 @@ from atriumdb.windowing.definition_builder import build_source_intervals
 from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.windowing_functions import get_signal_dictionary, get_label_dictionary, get_window_list, \
     _load_patient_cache
+from atriumdb.windowing.definition_combine import combine_definitions
 
 
 class DatasetDefinition:
@@ -550,15 +551,19 @@ class DatasetDefinition:
         """
         Adds a new measure to the definition.
 
+        If the definition has been validated, adding a measure invalidates the
+        validation state, requiring re-validation before use with SDK operations.
+
         :param measure_tag: Tag (string) representing the measure.
         :type measure_tag: str
         :param freq: Frequency in Hertz for the measure.
-                     Only required if units are provided.
+                     Required if units are provided, and vice versa.
         :type freq: float, optional
         :param units: Units for the measure.
-                      Only required if freq is provided.
+                      Required if freq is provided, and vice versa.
         :type units: str, optional
-        :raises ValueError: Raised when the measure tag is already present or when only one of freq and units is provided.
+        :raises ValueError: Raised when only one of freq and units is provided
+            without the other.
 
         **Examples**:
 
@@ -571,26 +576,29 @@ class DatasetDefinition:
                     (isinstance(measure, dict) and measure.get('tag') == measure_tag and
                      measure.get('freq_hz') == freq and measure.get('units') == units):
                 warnings.warn(f"The exact same measure {measure} is already present, skipping duplicate")
-                return
+                return self
 
-        # Add a measure to the measures list
-        if freq and units:
+        # Validate that freq and units are both provided or both omitted.
+        if (freq is not None) != (units is not None):
+            raise ValueError("Both freq and units must be provided together, or both omitted.")
+
+        if freq is not None and units is not None:
             self.data_dict['measures'].append({'tag': measure_tag, 'freq_hz': freq, 'units': units})
         else:
             self.data_dict['measures'].append(measure_tag)
 
+        self._invalidate()
         return self
 
     def add_label(self, label_name):
         """
         Adds a new label to the definition.
 
-        In the context of creating an iterator, labels specified will be included in the Window
-        information if present.
+        In the context of creating an iterator, labels specified are included in the
+        Window information if present.
 
-        A label can be considered as a categorization or classification applied to a data point
-        or a set of data points in the dataset. It might represent some meaningful information
-        like 'abnormal', 'healthy', 'artifact', etc. for data sections or points.
+        If the definition has been validated, adding a label invalidates the
+        validation state, requiring re-validation before use with SDK operations.
 
         :param label_name: Name of the label to be added.
         :type label_name: str
@@ -607,13 +615,28 @@ class DatasetDefinition:
         else:
             self.data_dict['labels'].append(label_name)
 
+        self._invalidate()
         return self
 
     def add_region(self, patient_id=None, mrn=None, device_id=None, device_tag=None, start=None, end=None, time0=None,
                    pre=None, post=None):
 
         """
-        Adds a new region to the definition.
+        Adds a new time region for a source to the definition.
+
+        Exactly one source identifier must be provided (``patient_id``, ``mrn``,
+        ``device_id``, or ``device_tag``). Time can be specified in one of three
+        ways:
+
+        - **Interval-based**: Provide ``start`` and/or ``end``. ``start`` without
+          ``end`` represents an open-ended region from that point forward. ``end``
+          without ``start`` represents everything up to that point.
+        - **Event-based**: Provide all three of ``time0``, ``pre``, and ``post``.
+        - **All data**: Omit all time parameters to request all available data for
+          the source (equivalent to ``"all"`` in the YAML format).
+
+        If the definition has been validated, adding a region invalidates the
+        validation state, requiring re-validation before use with SDK operations.
 
         :param patient_id: Identifier for a patient.
         :type patient_id: int, optional
@@ -623,15 +646,15 @@ class DatasetDefinition:
         :type device_id: int, optional
         :param device_tag: Tag for a device.
         :type device_tag: str, optional
-        :param start: Start time for interval-based specification.
+        :param start: Start time (nanosecond epoch) for interval-based specification.
         :type start: int, optional
-        :param end: End time for interval-based specification.
+        :param end: End time (nanosecond epoch) for interval-based specification.
         :type end: int, optional
-        :param time0: Reference time for event-based specification.
+        :param time0: Reference time (nanosecond epoch) for event-based specification.
         :type time0: int, optional
-        :param pre: Time before the `time0` for event-based specification.
+        :param pre: Duration in nanoseconds before ``time0`` for event-based specification.
         :type pre: int, optional
-        :param post: Time after the `time0` for event-based specification.
+        :param post: Duration in nanoseconds after ``time0`` for event-based specification.
         :type post: int, optional
         :raises ValueError: Raised on invalid input combinations.
 
@@ -639,50 +662,120 @@ class DatasetDefinition:
 
         >>> dataset_definition.add_region(patient_id=12345, start=1693364515_000_000_000, end=1693464515_000_000_000)
         >>> dataset_definition.add_region(device_tag="tag_1", time0=1693364515_000_000_000, pre=5000_000_000_000, post=6000_000_000_000)
+        >>> dataset_definition.add_region(patient_id=99999)  # Adds "all" data for this patient
+        >>> dataset_definition.add_region(device_id=3, start=1693364515_000_000_000)  # Open-ended from start
         """
-        # Check if both interval-based and event-based times are specified
-        if (start or end) and (time0 or pre or post):
-            raise ValueError("Cannot specify both interval-based and event-based times.")
+        has_interval = (start is not None or end is not None)
+        has_event = (time0 is not None or pre is not None or post is not None)
 
-        # Check if all necessary times are specified
-        if (start or end) and (time0 or pre or post):
-            raise ValueError("Mixing interval and event based time formats.")
-        if (time0 or pre or post) and not (time0 and pre and post):
+        # Cannot mix interval-based and event-based time specifications.
+        if has_interval and has_event:
+            raise ValueError("Cannot specify both interval-based (start/end) and event-based (time0/pre/post) times.")
+
+        # Event-based requires all three parameters.
+        if has_event and not (time0 is not None and pre is not None and post is not None):
             raise ValueError("time0, pre, and post must all be specified for an event-based region.")
 
-        # Prepare the region data
+        # Build region data.
         region_data = {}
-        if start and end:
-            region_data = {'start': start, 'end': end}
-        if time0 and pre and post:
+        if has_interval:
+            if start is not None:
+                region_data['start'] = start
+            if end is not None:
+                region_data['end'] = end
+        elif has_event:
             region_data = {'time0': time0, 'pre': pre, 'post': post}
 
-        # Check if more than one identifier is specified
+        # Exactly one source identifier must be provided.
         identifiers = [patient_id, mrn, device_id, device_tag]
-        if sum(x is not None for x in identifiers) > 1:
+        specified_count = sum(x is not None for x in identifiers)
+        if specified_count == 0:
+            raise ValueError("One of patient_id, mrn, device_id, or device_tag must be specified.")
+        if specified_count > 1:
             raise ValueError("Only one of patient_id, mrn, device_id, device_tag should be specified.")
 
-        # Identify the target dictionary and key
+        # Identify the target dictionary and key.
         target_dict, key = None, None
-        if patient_id:
+        if patient_id is not None:
             target_dict, key = self.data_dict['patient_ids'], patient_id
-        elif mrn:
+        elif mrn is not None:
             target_dict, key = self.data_dict['mrns'], str(mrn)
-        elif device_id:
+        elif device_id is not None:
             target_dict, key = self.data_dict['device_ids'], device_id
-        elif device_tag:
+        elif device_tag is not None:
             target_dict, key = self.data_dict['device_tags'], device_tag
 
-        # Update the target dictionary
-        if target_dict is not None and key is not None:
+        # Update the target dictionary.
+        if region_data:
+            # There is a time specification — append it.
             if key in target_dict:
-                target_dict[key].append(region_data)
+                if target_dict[key] == 'all':
+                    # Source already requests all data; a specific region is redundant.
+                    warnings.warn(
+                        f"Source {key} already requests all data. "
+                        f"The additional region is ignored."
+                    )
+                else:
+                    target_dict[key].append(region_data)
             else:
-                target_dict[key] = [region_data] if region_data else 'all'
+                target_dict[key] = [region_data]
         else:
-            raise ValueError("One of patient_id, mrn, device_id, device_tag must be specified.")
+            # No time specification — set to "all".
+            if key in target_dict and target_dict[key] != 'all':
+                warnings.warn(
+                    f"Source {key} previously had specific time regions. "
+                    f"Replacing with 'all'."
+                )
+            target_dict[key] = 'all'
 
+        self._invalidate()
         return self
+
+    def _invalidate(self):
+        """
+        Reset validation state after the definition has been modified.
+
+        Any mutation to ``data_dict`` (adding measures, labels, or regions)
+        requires re-validation before the definition can be used with SDK
+        operations that depend on validated data.
+        """
+        if self.is_validated:
+            warnings.warn(
+                "The definition has been modified after validation. "
+                "Re-validate before using with SDK operations.",
+                UserWarning
+            )
+        self.is_validated = False
+        self.validated_data_dict = {}
+        self.validated_gap_tolerance = None
+        self.filtered_window_size = None
+        self.filtered_window_slide = None
+
+    def combine(self, *others):
+        """
+        Combine this definition with one or more other :class:`DatasetDefinition`
+        objects, returning a new merged definition.
+
+        Measures and labels are deduplicated. Source dictionaries are merged by
+        taking the union of time ranges. All definitions must share the same
+        validation status (all validated or all unvalidated). If all are validated,
+        the combined result is also validated with merged data.
+
+        This is a convenience wrapper around the module-level
+        :func:`combine_definitions` function.
+
+        :param others: One or more :class:`DatasetDefinition` objects to merge with
+            this one.
+        :returns: A new :class:`DatasetDefinition` containing the union of all inputs.
+        :rtype: DatasetDefinition
+        :raises ValueError: If definitions have mixed validation status.
+
+        **Examples**:
+
+        >>> combined = def_a.combine(def_b)
+        >>> combined = def_a.combine(def_b, def_c, def_d)
+        """
+        return combine_definitions([self] + list(others))
 
     def save(self, filepath, force=False):
         """

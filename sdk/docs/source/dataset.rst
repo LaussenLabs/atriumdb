@@ -488,6 +488,51 @@ There are two supported formats:
    dataset_definition.save("validated_definition.pkl")  # Save validated version
 
 
+Combining Dataset Definitions
+##############################
+
+The :py:func:`combine_definitions` function merges two or more :class:`DatasetDefinition` objects into a single
+definition. Measures and labels are deduplicated, and source dictionaries (patients, devices, etc.) are merged
+by taking the union of their time regions.
+
+This is useful when you have separately constructed definitions — for example, one per patient cohort or one per
+signal type — and need to unify them into a single definition for iteration or partitioning.
+
+All input definitions must share the same validation status. If all are validated, the combined result is also
+validated with the merged data. If the definitions have mixed validation status, a ``ValueError`` is raised;
+either validate all of them first, or combine only unvalidated definitions and re-validate afterward.
+
+.. code-block:: python
+
+   from atriumdb import DatasetDefinition, combine_definitions
+
+   # Two separately constructed definitions
+   ecg_def = DatasetDefinition(
+       measures=[{"tag": "ECG", "freq_hz": 500, "units": "mV"}],
+       patient_ids={1: "all", 2: "all"},
+       labels=["sinus"]
+   )
+   abp_def = DatasetDefinition(
+       measures=[{"tag": "ABP", "freq_hz": 125, "units": "mmHg"}],
+       patient_ids={2: "all", 3: "all"},
+       labels=["hypotension"]
+   )
+
+   # Combine into one
+   combined = combine_definitions([ecg_def, abp_def])
+   # Or equivalently:
+   combined = ecg_def.combine(abp_def)
+
+   # Result has both measures, both label sets, and patients 1, 2, 3
+   print(combined.data_dict['measures'])
+   # [{'tag': 'ECG', 'freq_hz': 500, 'units': 'mV'}, {'tag': 'ABP', 'freq_hz': 125, 'units': 'mmHg'}]
+
+.. note::
+
+   When combining validated definitions, any previous filtering metadata is reset. Re-filter the combined
+   definition if needed.
+
+
 Partitioning Dataset Definitions
 ################################
 
@@ -539,6 +584,66 @@ Example:
        num_show_best_trials=3,
        verbose=True
    )
+
+
+Cross-Validation
+#################
+
+The :py:func:`cross_validate_dataset` function generates cross-validation fold assignments from a
+:class:`DatasetDefinition`. It partitions the dataset into ``n_folds`` equal-sized folds (by patient),
+then enumerates every unique assignment of folds to training, validation, and test roles. For each
+assignment, the constituent folds are recombined into single :class:`DatasetDefinition` objects.
+
+This is a higher-level convenience built on top of :func:`partition_dataset` and
+:func:`combine_definitions`. The fold partitioning happens once, and the same folds are reused across
+all combinations — only the role assignments change.
+
+.. code-block:: python
+
+   from atriumdb import cross_validate_dataset
+
+   folds = cross_validate_dataset(
+       definition,
+       sdk=my_sdk,
+       n_folds=5,
+       n_val_folds=1,
+       n_test_folds=1,
+       random_state=42,
+       output_dir="./cv_output",
+       filename_prefix="2025-06-01_",
+       priority_stratification_labels=["atrial_fibrillation"],
+       verbose=True,
+   )
+
+   # 20 unique combinations (5 choices for val × 4 remaining choices for test)
+   for combo in folds:
+       train_def = combo["train"]
+       val_def = combo["val"]
+       test_def = combo["test"]
+       print(f"Train folds: {combo['fold_indices']['train']}, "
+             f"Val folds: {combo['fold_indices']['val']}, "
+             f"Test folds: {combo['fold_indices']['test']}")
+
+Each combination is a dictionary with keys ``"train"``, ``"val"``, and ``"test"`` mapping to
+:class:`DatasetDefinition` objects, plus ``"fold_indices"`` indicating which fold numbers were assigned
+to each role.
+
+When ``output_dir`` is provided, YAML definition files are saved for every combination:
+
+.. code-block:: text
+
+   cv_output/
+     2025-06-01_dataset_def_train_fold_1.yaml
+     2025-06-01_dataset_def_val_fold_1.yaml
+     2025-06-01_dataset_def_test_fold_1.yaml
+     2025-06-01_dataset_def_train_fold_2.yaml
+     ...
+
+The ``n_val_folds`` and ``n_test_folds`` parameters control how many folds are assigned to each role.
+For example, with ``n_folds=5, n_val_folds=1, n_test_folds=1``, each combination uses 1 fold for
+validation, 1 for testing, and the remaining 3 for training.
+
+
 
 
 Exporting Datasets
