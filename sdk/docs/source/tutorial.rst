@@ -445,6 +445,124 @@ starting at epoch 0 and ending at epoch 1805555050000. This is because there are
 These methods allow you to survey the data in your dataset and obtain information about the measures, devices, and data availability.
 By understanding the data availability, you can make informed decisions about how to process, analyze, or visualize the data in your dataset.
 
+Working with the Intervals Class
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The :py:class:`~atriumdb.intervals.Intervals` class wraps the raw NumPy array returned by
+:py:meth:`~atriumdb.AtriumSDK.get_interval_array` and provides set-like operations for comparing, combining,
+and analysing time ranges.
+
+**Creating an Intervals object from get_interval_array**
+
+.. code-block:: python
+
+   from atriumdb.intervals import Intervals
+
+   # Retrieve the raw interval array for a measure / device pair
+   interval_arr = sdk.get_interval_array(measure_id=1, device_id=1)
+
+   # Wrap it in an Intervals object
+   ecg_intervals = Intervals(interval_arr)
+
+   print(ecg_intervals)
+   # Intervals([[0, 1805555050000]])
+
+   # Total duration covered (in nanoseconds)
+   print(ecg_intervals.duration())
+
+   # Number of continuous intervals
+   print(len(ecg_intervals))
+
+**Finding where two signals overlap**
+
+A common task is determining the time ranges where two different signals are simultaneously available.
+Use :py:meth:`~atriumdb.intervals.Intervals.intersection` (or the ``&`` operator) to compute this.
+
+.. code-block:: python
+
+   # Get availability for two different measures on the same device
+   ecg_arr = sdk.get_interval_array(measure_id=ecg_measure_id, device_id=device_id)
+   abp_arr = sdk.get_interval_array(measure_id=abp_measure_id, device_id=device_id)
+
+   ecg_intervals = Intervals(ecg_arr)
+   abp_intervals = Intervals(abp_arr)
+
+   # Compute the overlap
+   overlap = ecg_intervals & abp_intervals   # same as ecg_intervals.intersection(abp_intervals)
+
+   print(f"Both signals are available for {overlap.duration() / 1e9:.1f} seconds")
+   print(f"across {len(overlap)} continuous segment(s)")
+
+**Finding gaps in a signal**
+
+The :py:meth:`~atriumdb.intervals.Intervals.gaps` method returns the time ranges *between* consecutive
+intervals, making it straightforward to inspect where data is missing.
+
+.. code-block:: python
+
+   ecg_intervals = Intervals(sdk.get_interval_array(measure_id=1, device_id=1))
+
+   gap_intervals = ecg_intervals.gaps()
+   if gap_intervals.is_empty():
+       print("No gaps — the signal is fully continuous.")
+   else:
+       for start, end in gap_intervals:
+           gap_sec = (end - start) / 1e9
+           print(f"Gap from {start} to {end} ({gap_sec:.2f} s)")
+
+**Combining availability from multiple devices**
+
+If the same signal is recorded across several devices, you can merge all of the availability
+windows into a single set with :py:meth:`~atriumdb.intervals.Intervals.union` (or the ``|`` operator).
+
+.. code-block:: python
+
+   device_ids = list(sdk.get_all_devices().keys())
+
+   combined = Intervals([])
+   for did in device_ids:
+       arr = sdk.get_interval_array(measure_id=ecg_measure_id, device_id=did)
+       if arr is not None and len(arr) > 0:
+           combined = combined | Intervals(arr)
+
+   print(f"ECG available for {combined.duration() / 1e9:.1f} seconds across all devices")
+
+**Subtracting noisy regions**
+
+If you have already identified noisy time ranges (for example, from labels), you can subtract
+them from the available intervals with :py:meth:`~atriumdb.intervals.Intervals.difference`
+(or the ``-`` operator).
+
+.. code-block:: python
+
+   # Suppose noise_intervals was built from label data
+   noise_intervals = Intervals([[50_000_000_000, 70_000_000_000]])   # 50 s – 70 s
+
+   clean = ecg_intervals - noise_intervals
+   print(f"Clean signal covers {clean.duration() / 1e9:.1f} seconds")
+
+**Checking whether a timestamp falls within the available data**
+
+.. code-block:: python
+
+   query_time = 1_000_000_000  # 1 second in nanoseconds
+
+   if query_time in ecg_intervals:
+       print("Data is available at this time.")
+   else:
+       print("No data at this time.")
+
+**Iterating over intervals**
+
+The :py:class:`~atriumdb.intervals.Intervals` object is iterable, so you can loop directly
+over the ``(start, end)`` pairs.
+
+.. code-block:: python
+
+   for start, end in ecg_intervals:
+       duration_s = (end - start) / 1e9
+       print(f"Segment: {start} → {end}  ({duration_s:.2f} s)")
+
 Querying Data from the Dataset
 -------------------------------
 
