@@ -74,6 +74,17 @@ API Reference
    .. automethod:: get_iterator
    .. automethod:: get_interval_array
 
+.. autoclass:: atriumdb.intervals.Intervals
+
+   .. automethod:: __init__
+   .. automethod:: intersection
+   .. automethod:: difference
+   .. automethod:: union
+   .. automethod:: duration
+   .. automethod:: is_empty
+   .. automethod:: contains
+   .. automethod:: gaps
+
 .. autoclass:: atriumdb.DatasetDefinition
 
    .. automethod:: __init__
