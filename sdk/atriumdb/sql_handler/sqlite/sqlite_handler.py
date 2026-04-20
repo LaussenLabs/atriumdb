@@ -630,8 +630,6 @@ class SQLiteHandler(SQLHandler):
         return rows
 
     def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[str] = None):
-        assert (patient_id_list is None) != (mrn_list is None), \
-            "only one of patient_id_list and mrn_list can be specified."
         if patient_id_list is not None:
             placeholders = ', '.join(['?'] * len(patient_id_list))
             sqlite_select_patients_by_id_list = f"SELECT id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, weight, height FROM patient WHERE id IN ({placeholders})"

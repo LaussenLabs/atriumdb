@@ -3028,8 +3028,9 @@ class AtriumSDK:
         """
         Get a mapping of Medical Record Numbers (MRNs) to patient IDs.
 
-        This method queries the SQL database for all patients with MRNs in the given list
-        and returns a dictionary with MRNs as keys and patient IDs as values.
+        This method queries the metadata store for all patients with MRNs in the given list
+        and returns a dictionary with MRNs as keys and patient IDs as values. MRNs that
+        cannot be found are omitted from the result.
 
         :param mrn_list: A list of MRNs to filter the patients, or None to get all patients. Int values can be provided, but will be converted and stored as strings.
         :type mrn_list: List[str], optional
@@ -3037,14 +3038,34 @@ class AtriumSDK:
         :rtype: dict
         """
         if self.metadata_connection_type == "api":
+            if mrn_list is None:
+                # Fetch every patient from the API and build the map
+                all_patients = self._api_get_all_patients()
+                return {
+                    str(info['mrn']): int(patient_id)
+                    for patient_id, info in all_patients.items()
+                    if info.get('mrn') is not None
+                }
+
             if not mrn_list:
                 return {}
 
             result_dict = {}
             for mrn in mrn_list:
-                result_temp = self._request("GET", f"patients/mrn|{mrn}", params={'time': None})
-                result_dict[str(mrn)] = int(result_temp['id'])
+                try:
+                    result_temp = self._request("GET", f"patients/mrn|{mrn}", params={'time': None})
+                except ValueError:
+                    # MRN not found on the server; skip it to match SQL-branch behavior
+                    continue
+                if result_temp and result_temp.get('id') is not None:
+                    result_dict[str(mrn)] = int(result_temp['id'])
             return result_dict
+
+        # If mrn_list is None, get all patients
+        if mrn_list is None:
+            # refresh cache
+            self.get_all_patients()
+            return dict(self._mrn_to_patient_id)
 
         # Convert all mrns to strings for consistent lookup
         mrn_list_str = [str(mrn) for mrn in mrn_list]
@@ -3057,23 +3078,58 @@ class AtriumSDK:
         self.get_all_patients()
         return {m: self._mrn_to_patient_id[m] for m in mrn_list_str if m in self._mrn_to_patient_id}
 
-    def get_patient_id_to_mrn_map(self, patient_id_list=None):
+    def get_patient_id_to_mrn_map(self, patient_id_list: List[int] = None):
         """
         Get a mapping of patient IDs to Medical Record Numbers (MRNs).
 
-        This method queries the SQL database for all patients with IDs in the given list
-        and returns a dictionary with patient IDs as keys and MRNs as values.
+        This method queries the metadata store for all patients with IDs in the given list
+        and returns a dictionary with patient IDs as keys and MRNs as values. Patients whose
+        MRN is not set, or who cannot be found, are omitted from the result.
 
         :param patient_id_list: A list of patient IDs to filter the patients, or None to get all patients.
-        :type patient_id_list: list, optional
-        :return: A dictionary with patient IDs as keys and MRNs as values.
+        :type patient_id_list: List[int], optional
+        :return: A dictionary with patient IDs (as ints) as keys and MRNs (as strings) as values.
         :rtype: dict
         """
-        # Query the SQL database for all patients with IDs in the given list
-        patient_list = self.sql_handler.select_all_patients_in_list(patient_id_list=patient_id_list)
+        if self.metadata_connection_type == "api":
+            if patient_id_list is None:
+                all_patients = self._api_get_all_patients()
+                return {
+                    int(pid): str(info['mrn'])
+                    for pid, info in all_patients.items()
+                    if info.get('mrn') is not None
+                }
 
-        # Return a dictionary with patient IDs as keys and MRNs as values
-        return {row[0]: row[1] for row in patient_list}
+            if not patient_id_list:
+                return {}
+
+            result_dict = {}
+            for patient_id in patient_id_list:
+                try:
+                    result_temp = self._request("GET", f"patients/id|{patient_id}", params={'time': None})
+                except ValueError:
+                    # Patient not found on the server; skip it
+                    continue
+                if result_temp and result_temp.get('mrn') is not None:
+                    result_dict[int(patient_id)] = str(result_temp['mrn'])
+            return result_dict
+
+        # If patient_id_list is None, get all patients
+        if patient_id_list is None:
+            # refresh cache
+            self.get_all_patients()
+            return dict(self._patient_id_to_mrn)
+
+        # Coerce all ids to int for consistent lookup
+        patient_id_list_int = [int(pid) for pid in patient_id_list]
+
+        # If all ids are in the cache
+        if all(pid in self._patient_id_to_mrn for pid in patient_id_list_int):
+            return {pid: self._patient_id_to_mrn[pid] for pid in patient_id_list_int}
+
+        # Refresh the cache and return all available ids.
+        self.get_all_patients()
+        return {pid: self._patient_id_to_mrn[pid] for pid in patient_id_list_int if pid in self._patient_id_to_mrn}
 
     def insert_patient(self, patient_id: int = None, mrn: str = None, gender: str = None, dob: int = None,
                        first_name: str = None, middle_name: str = None, last_name: str = None, first_seen: int = None,
