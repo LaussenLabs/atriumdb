@@ -3400,76 +3400,50 @@ class AtriumSDK:
 
         # Check for API connection
         if self.metadata_connection_type == "api":
-            if timestamp_n is not None:
-                # Call the API method for encounters at a timestamp
-                raise NotImplementedError("API not yet for timestamp mode")
-            else:
-                # Call the API method for device-patient data
-                return self._api_get_device_patient_data(
-                    device_id_list=device_id_list,
-                    patient_id_list=patient_id_list,
-                    mrn_list=mrn_list,
-                    start_time=start_time_n,
-                    end_time=end_time_n,
-                )
-
-        # SQL handler
-        if timestamp_n is not None:
-            # Get mappings active at timestamp
+            results = self._api_get_device_patient_data(
+                device_id_list=device_id_list,
+                patient_id_list=patient_id_list,
+                start_time=start_time_n,
+                end_time=end_time_n,
+                timestamp=timestamp_n,
+            )
+        elif timestamp_n is not None:
             results = self.sql_handler.select_device_patient_encounters(
                 timestamp=timestamp_n,
                 device_id_list=device_id_list,
-                patient_id_list=patient_id_list
+                patient_id_list=patient_id_list,
             )
-
-            mappings = []
-            for device_id_result, patient_id_result, start_time_result, end_time_result in results:
-                if end_time_result is None:
-                    end_time_result = time.time_ns()
-
-                # Truncate if necessary
-                if truncate:
-                    start_time_result = max(start_time_result, timestamp_n)
-                    end_time_result = min(end_time_result, timestamp_n)
-
-                # Convert times to desired units
-                if time_units != "ns":
-                    start_time_result = start_time_result / time_unit_options[time_units]
-                    end_time_result = end_time_result / time_unit_options[time_units]
-
-                mappings.append((device_id_result, patient_id_result, start_time_result, end_time_result))
-
-            return mappings
-
         else:
-            # Get mappings within time range (or without time restrictions)
             results = self.sql_handler.select_device_patients(
                 device_id_list=device_id_list,
                 patient_id_list=patient_id_list,
                 start_time=start_time_n,
-                end_time=end_time_n
+                end_time=end_time_n,
             )
 
-            mappings = []
-            for device_id_result, patient_id_result, start_time_result, end_time_result in results:
-                if end_time_result is None:
-                    end_time_result = time.time_ns()
+        # Truncate if necessary
+        trunc_start = timestamp_n if timestamp_n is not None else start_time_n
+        trunc_end = timestamp_n if timestamp_n is not None else end_time_n
 
-                # Truncate if necessary
-                if truncate:
-                    if start_time_n is not None:
-                        start_time_result = max(start_time_result, start_time_n)
-                    if end_time_n is not None:
-                        end_time_result = min(end_time_result, end_time_n)
+        # Handle None end_time, truncate, convert time units
+        mappings = []
+        for device_id_result, patient_id_result, start_time_result, end_time_result in results:
+            if end_time_result is None:
+                end_time_result = time.time_ns()
 
-                # Convert times to desired units
-                if time_units != "ns":
-                    start_time_result = start_time_result / time_unit_options[time_units]
-                    end_time_result = end_time_result / time_unit_options[time_units]
+            if truncate:
+                if trunc_start is not None:
+                    start_time_result = max(start_time_result, trunc_start)
+                if trunc_end is not None:
+                    end_time_result = min(end_time_result, trunc_end)
 
-                mappings.append((device_id_result, patient_id_result, start_time_result, end_time_result))
+            if time_units != "ns":
+                start_time_result = start_time_result / time_unit_options[time_units]
+                end_time_result = end_time_result / time_unit_options[time_units]
 
-            return mappings
+            mappings.append((device_id_result, patient_id_result, start_time_result, end_time_result))
+
+        return mappings
 
     def get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
                                 mrn_list: List[str] = None, start_time: int = None, end_time: int = None,
@@ -3518,62 +3492,34 @@ class AtriumSDK:
         )
 
     def _api_get_device_patient_data(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
-                                     mrn_list: List[str] = None, start_time: int = None, end_time: int = None,
-                                     time_units: str = None):
+                                     start_time: int = None, end_time: int = None, timestamp: int = None):
+        """
+        Queries the /device-patient-mapping endpoint for raw device-patient
+        mappings. All time parameters are in nanoseconds.
 
-        time_units = "ns" if time_units is None else time_units
+        :param device_id_list: Device IDs to filter by.
+        :param patient_id_list: Patient IDs to filter by.
+        :param start_time: Range start in nanoseconds.
+        :param end_time: Range end in nanoseconds.
+        :param timestamp: Point-in-time query in nanoseconds (mutually exclusive with start/end).
+        :return: List of (device_id, patient_id, start_time, end_time) tuples with times in nanoseconds.
+        """
+        params = {}
 
-        if time_units not in time_unit_options.keys():
-            raise ValueError(f"Invalid time units. Expected one of: {', '.join(time_unit_options.keys())}")
-
-        # Convert start_time and end_time to nanoseconds
-        start_time_ns = int(start_time * time_unit_options[time_units]) if start_time is not None else 0
-        end_time_ns = int(end_time * time_unit_options[time_units]) if end_time is not None else time.time_ns()
-
-        # Determine the list of patient identifiers
-        patient_identifiers = []
+        if device_id_list is not None:
+            params['device_id'] = device_id_list
         if patient_id_list is not None:
-            patient_identifiers.extend([f'id|{pid}' for pid in patient_id_list])
-        if mrn_list is not None:
-            patient_identifiers.extend([f'mrn|{mrn}' for mrn in mrn_list])
-        if not patient_identifiers:
-            patient_identifiers = [f'id|{pid}' for pid in self.get_all_patients().keys()]
+            params['patient_id'] = patient_id_list
+        if timestamp is not None:
+            params['timestamp'] = timestamp
+        else:
+            if start_time is not None:
+                params['start_time'] = start_time
+            if end_time is not None:
+                params['end_time'] = end_time
 
-        result = []
-        # Query each patient identifier
-        for pid in patient_identifiers:
-            if pid.split('|')[0] == "id":
-                patient_id = int(pid.split('|')[1])
-            elif pid.split('|')[0] == "mrn":
-                mrn = pid.split('|')[1]
-                patient_id = self.get_patient_id(mrn)
-            else:
-                raise ValueError(f"got {pid.split('|')[0]}, expected mrn or id")
-            params = {'start_time': start_time_ns, 'end_time': end_time_ns}
-            devices_result = self._request("GET", f"patients/{pid}/devices", params=params)
-
-            if devices_result:
-                for device in devices_result:
-                    query_device_id = device['device_id']
-                    query_start_time = device['start_time']
-                    query_end_time = device['end_time']
-                    # Handle None end_time
-                    if query_end_time is None:
-                        query_end_time = time.time_ns()
-
-                    # Truncate time regions to fit requested start/end
-                    query_end_time = query_end_time if end_time_ns is None else min(query_end_time, end_time_ns)
-                    query_start_time = query_start_time if start_time_ns is None else max(query_start_time, start_time_ns)
-
-                    # Convert times to desired units
-                    query_start_time_converted = query_start_time / time_unit_options[time_units] if time_units != "ns" else query_start_time
-                    query_end_time_converted = query_end_time / time_unit_options[time_units] if time_units != "ns" else query_end_time
-
-                    # Filter based on device_id_list if it's provided
-                    if device_id_list is None or query_device_id in device_id_list:
-                        result.append((query_device_id, patient_id, query_start_time_converted, query_end_time_converted))
-
-        return result
+        result = self._request("GET", "device-patient-mapping", params=params)
+        return [tuple(row) for row in result]
 
     def get_device_patient_encounters(self, timestamp: int, device_id: int = None, device_tag: str = None,
                                       patient_id: int = None, mrn: str = None, time_units: str = None):
