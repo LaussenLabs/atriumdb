@@ -94,6 +94,7 @@ API Reference
    .. automethod:: add_measure
    .. automethod:: add_label
    .. automethod:: add_region
+   .. automethod:: combine
    .. automethod:: save
 
 .. autoclass:: atriumdb.DatasetIterator
@@ -103,6 +104,8 @@ API Reference
 
 
 .. autofunction:: partition_dataset
+.. autofunction:: combine_definitions
+.. autofunction:: cross_validate_dataset
 .. autofunction:: transfer_data
 
 
