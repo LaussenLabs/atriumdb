@@ -1327,29 +1327,39 @@ class AtriumSDK:
             self._active_buffer.push_segments(measure_id, device_id, write_segments)
 
     def _write_segments_to_dataset(self, measure_id, device_id, write_segments, interval_gap_tolerance_nano=0):
+        if not write_segments:
+            return
+
+        # Partition by the parameters the encoder needs to be uniform.
+        partitions = defaultdict(list)
+        for message in write_segments:
+            is_integer = bool(np.issubdtype(message['values'].dtype, np.integer))
+            partition_key = (
+                message['freq_nhz'], message['period_ns'],
+                message['scale_m'], message['scale_b'],
+                is_integer,
+            )
+            partitions[partition_key].append(message)
+
+        for partition in partitions.values():
+            self._write_homogeneous_segments_to_dataset(
+                measure_id, device_id, partition, interval_gap_tolerance_nano)
+
+    def _write_homogeneous_segments_to_dataset(self, measure_id, device_id, write_segments,
+                                               interval_gap_tolerance_nano=0):
         sorted_segments = sorted(write_segments, key=lambda x: x['start_time_nano'])
         message_start_epoch_array = []
         message_size_array = []
 
-        # Get parameters from first segment
+        # Pull parameters from the first segment; the rest match by construction.
         freq_nhz = sorted_segments[0]['freq_nhz']
         period_ns = sorted_segments[0]['period_ns']
         scale_m = sorted_segments[0]['scale_m']
         scale_b = sorted_segments[0]['scale_b']
-        message_dtype = sorted_segments[0]['values'].dtype
 
         for message in sorted_segments:
             message_start_epoch_array.append(message['start_time_nano'])
             message_size_array.append(message['values'].size)
-
-            # Check consistency
-            if message['freq_nhz'] != freq_nhz or message['period_ns'] != period_ns:
-                raise ValueError("Segments inserted do not all have the same frequency/period.")
-
-            if message['scale_m'] != scale_m or message['scale_b'] != scale_b:
-                raise ValueError("Segments inserted do not all have the same scale factors.")
-            if message['values'].dtype != message_dtype:
-                raise ValueError("Segments inserted do not all have the same dtype.")
 
         # Convert segments to gap_data
         gap_data = create_gap_arr_from_variable_messages(
@@ -1499,24 +1509,30 @@ class AtriumSDK:
             self._active_buffer.push_time_value_pairs(measure_id, device_id, data_dict)
 
     def _write_time_value_pairs_to_dataset(self, measure_id, device_id, data_dicts, interval_gap_tolerance_nano=0):
-        # Get parameters from first data dict
+        if not data_dicts:
+            return
+
+        # Partition by frequency/period, scale factors, and value dtype
+        partitions = defaultdict(list)
+        for data in data_dicts:
+            is_integer = bool(np.issubdtype(data['values'].dtype, np.integer))
+            partition_key = (
+                data['freq_nhz'], data['period_ns'],
+                data['scale_m'], data['scale_b'],
+                is_integer,
+            )
+            partitions[partition_key].append(data)
+
+        for partition in partitions.values():
+            self._write_homogeneous_time_value_pairs_to_dataset(
+                measure_id, device_id, partition, interval_gap_tolerance_nano)
+
+    def _write_homogeneous_time_value_pairs_to_dataset(self, measure_id, device_id, data_dicts,
+                                                       interval_gap_tolerance_nano=0):
         freq_nhz = data_dicts[0]['freq_nhz']
         period_ns = data_dicts[0]['period_ns']
         scale_m = data_dicts[0]['scale_m']
         scale_b = data_dicts[0]['scale_b']
-        data_dtype = data_dicts[0]['values'].dtype
-
-        # Ensure consistency across data_dicts (allow None == None for deferred detection)
-        for data in data_dicts:
-            if data['freq_nhz'] != freq_nhz or data['period_ns'] != period_ns:
-                # Both being None is consistent (deferred detection case from buffering)
-                if not (data['freq_nhz'] is None and freq_nhz is None
-                        and data['period_ns'] is None and period_ns is None):
-                    raise ValueError("Data dictionaries have inconsistent frequencies/periods.")
-            if data['scale_m'] != scale_m or data['scale_b'] != scale_b:
-                raise ValueError("Data dictionaries have inconsistent scale factors.")
-            if data['values'].dtype != data_dtype:
-                raise ValueError("Data dictionaries have inconsistent data types.")
 
         # Combine times and values
         all_times = np.concatenate([data['times'] for data in data_dicts])
