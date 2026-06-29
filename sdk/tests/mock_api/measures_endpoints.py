@@ -19,9 +19,16 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 
 from atriumdb import AtriumSDK
+from atriumdb.dashboard.measure_queries import query_measure_total_hours
 from tests.mock_api.sdk_dependency import get_sdk_instance
 
 measures_router = APIRouter()
+
+
+@measures_router.get("/hours")
+async def get_measure_total_hours(
+        atriumdb_sdk: AtriumSDK = Depends(get_sdk_instance)):
+    return query_measure_total_hours(atriumdb_sdk)
 
 
 @measures_router.get("/")

@@ -114,38 +114,30 @@ ORDER BY total_hours DESC;
 
 ---
 
-## Python Helper Function
+## Python Helper Functions
 
-The SDK has no built-in aggregation for this, so it needs a custom DB function following the same pattern used elsewhere in this codebase (see `atriumDB_sdk_design_step_1_v4_refined.md` — the `query_xxx(sdk, ...)` convention).
+Implemented in `sdk/atriumdb/dashboard/measure_queries.py`, following the same `query_xxx(sdk, ...)` convention used by `encounter_queries.py`.
+
+### Primary: `query_measure_total_hours`
+
+Reads `interval_index` (the SDK-maintained continuous-coverage table). This is the preferred path because `interval_index` already merges adjacent blocks into non-overlapping spans, so no deduplication is needed in Python.
 
 ```python
-def query_measure_total_hours(sdk) -> list[dict]:
-    """
-    Returns total wall-clock hours of coverage in interval_index per measure,
-    aggregated across all devices. One dict per measure_id.
-    """
-    sql = """
-        SELECT
-            m.id                                                         AS measure_id,
-            m.measure_tag,
-            m.measure_name,
-            m.freq_nhz,
-            m.units,
-            COUNT(DISTINCT ii.device_id)                                 AS num_devices,
-            COUNT(*)                                                     AS num_intervals,
-            SUM(ii.end_time_n - ii.start_time_n) / 3600000000000.0      AS total_hours
-        FROM interval_index ii
-        JOIN measures m ON m.id = ii.measure_id
-        GROUP BY ii.measure_id
-        ORDER BY total_hours DESC
-    """
-    with sdk.sql_handler.connection(begin=False) as (conn, cursor):
-        cursor.execute(sql)
-        rows = cursor.fetchall()
+from atriumdb.dashboard.measure_queries import query_measure_total_hours
 
-    keys = ["measure_id", "measure_tag", "measure_name", "freq_nhz", "units",
-            "num_devices", "num_intervals", "total_hours"]
-    return [dict(zip(keys, row)) for row in rows]
+results = query_measure_total_hours(sdk)
+for r in results:
+    print(f"{r['measure_tag']}: {r['total_hours']:.1f} h across {r['num_devices']} devices")
+```
+
+### Fallback: `query_measure_total_hours_from_blocks`
+
+Reads `block_index` instead. Use this when `interval_index` is disabled (`interval_index_mode="disable"` at ingest time) or known to be stale. Returns the same keys as the primary function plus `num_blocks` and `total_samples`.
+
+```python
+from atriumdb.dashboard.measure_queries import query_measure_total_hours_from_blocks
+
+results = query_measure_total_hours_from_blocks(sdk)
 ```
 
 ---
@@ -212,21 +204,17 @@ A per-measure variant (`/{measure_id}/hours`) is possible but unnecessary here: 
   {
     "measure_id": 1,
     "measure_tag": "HR",
-    "measure_name": "Heart Rate",
     "freq_nhz": 500000000000,
     "units": "BPM",
     "num_devices": 12,
-    "num_intervals": 340,
     "total_hours": 4821.6
   },
   {
     "measure_id": 2,
     "measure_tag": "SpO2",
-    "measure_name": "Oxygen Saturation",
     "freq_nhz": 125000000000,
     "units": "%",
     "num_devices": 10,
-    "num_intervals": 280,
     "total_hours": 3104.2
   }
 ]
