@@ -51,7 +51,8 @@ class Block:
 
     def encode_blocks(self, times, values, freq_nhz: int = None, start_ns: int = None,
                       raw_time_type=None, raw_value_type=None, encoded_time_type=None,
-                      encoded_value_type=None, scale_m: float = None, scale_b: float = None, period_ns: int = None):
+                      encoded_value_type=None, scale_m: float = None, scale_b: float = None, period_ns: int = None,
+                      t_compression: int = None, t_compression_level: int = None):
 
         # Validate that exactly one of freq_nhz or period_ns is specified
         if (freq_nhz is None) == (period_ns is None):
@@ -88,7 +89,8 @@ class Block:
             self._gen_metadata(times, values, start_ns, num_blocks,
                                raw_time_type, raw_value_type, encoded_time_type, encoded_value_type,
                                freq_nhz=freq_nhz, period_ns=period_ns,
-                               scale_m=scale_m, scale_b=scale_b, time_data=time_info_data)
+                               scale_m=scale_m, scale_b=scale_b, time_data=time_info_data,
+                               t_compression=t_compression, t_compression_level=t_compression_level)
 
         # Encode the blocks using the wrapped_dll's encode_blocks_sdk function
         encoded_bytes, byte_start_array = self.wrapped_dll.encode_blocks_sdk(
@@ -99,7 +101,8 @@ class Block:
 
     def prepare_encode_blocks_inputs(self, times, values, start_ns,
                                      raw_time_type, raw_value_type, encoded_time_type, encoded_value_type,
-                                     freq_nhz=None, period_ns=None, scale_m=None, scale_b=None):
+                                     freq_nhz=None, period_ns=None, scale_m=None, scale_b=None,
+                                     t_compression=None, t_compression_level=None):
 
         # Validate that exactly one of freq_nhz or period_ns is specified
         if (freq_nhz is None) == (period_ns is None):
@@ -136,7 +139,8 @@ class Block:
             self._gen_metadata(times, values, start_ns, num_blocks,
                                raw_time_type, raw_value_type, encoded_time_type, encoded_value_type,
                                freq_nhz=freq_nhz, period_ns=period_ns,
-                               scale_m=scale_m, scale_b=scale_b, time_data=time_info_data)
+                               scale_m=scale_m, scale_b=scale_b, time_data=time_info_data,
+                               t_compression=t_compression, t_compression_level=t_compression_level)
 
         # Return the prepared inputs
         return times, values, num_blocks, t_block_start, v_block_start, headers, options, time_info_data
@@ -171,6 +175,9 @@ class Block:
             period_ns = segment.get('period_ns', None)
             scale_m = segment.get('scale_m', None)
             scale_b = segment.get('scale_b', None)
+            # Per-segment time compression overrides (None falls back to the instance default).
+            t_compression = segment.get('t_compression', None)
+            t_compression_level = segment.get('t_compression_level', None)
 
             # Call helper method
             times_s, values_s, num_blocks_s, t_block_start_s, v_block_start_s, headers_s, options_s, time_info_data_s = \
@@ -178,7 +185,9 @@ class Block:
                                                   raw_time_type, raw_value_type,
                                                   encoded_time_type, encoded_value_type,
                                                   freq_nhz=freq_nhz, period_ns=period_ns,
-                                                  scale_m=scale_m, scale_b=scale_b)
+                                                  scale_m=scale_m, scale_b=scale_b,
+                                                  t_compression=t_compression,
+                                                  t_compression_level=t_compression_level)
 
             # Adjust t_block_start and v_block_start
             if raw_time_type in [TIME_TYPES['TIME_ARRAY_INT64_NS'], TIME_TYPES['GAP_ARRAY_INT64_INDEX_DURATION_NS']]:
@@ -624,7 +633,8 @@ class Block:
     def _gen_metadata(self, times, values, start_ns: int, num_blocks: int,
                       raw_time_type: int, raw_value_type: int, encoded_time_type: int, encoded_value_type: int,
                       freq_nhz: int = None, period_ns: int = None,
-                      scale_m: float = None, scale_b: float = None, time_data=None):
+                      scale_m: float = None, scale_b: float = None, time_data=None,
+                      t_compression: int = None, t_compression_level: int = None):
 
         # Validate that exactly one of freq_nhz or period_ns is specified
         if (freq_nhz is None) == (period_ns is None):
@@ -676,10 +686,13 @@ class Block:
             headers[i].v_raw_type = raw_value_type
             headers[i].v_encoded_type = encoded_value_type
 
-            # Set the compression settings for the current block
-            headers[i].t_compression = self.t_compression
+            # Set the compression settings for the current block. Time compression
+            # can be overridden per call (a caller may choose to zstd the time
+            # data); value compression keeps the instance defaults.
+            headers[i].t_compression = self.t_compression if t_compression is None else t_compression
             headers[i].v_compression = self.v_compression
-            headers[i].t_compression_level = self.t_compression_level
+            headers[i].t_compression_level = self.t_compression_level if t_compression_level is None \
+                else t_compression_level
             headers[i].v_compression_level = self.v_compression_level
 
             # Set the frequency or period for the current block

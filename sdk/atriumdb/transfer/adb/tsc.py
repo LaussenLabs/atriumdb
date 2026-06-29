@@ -25,7 +25,7 @@ def _ingest_data_tsc(to_sdk, measure_id, device_id, headers, times, values):
                               raw_time_type=headers[0].t_raw_type, raw_value_type=headers[0].v_raw_type,
                               encoded_time_type=headers[0].t_encoded_type, encoded_value_type=headers[0].v_encoded_type,
                               scale_m=headers[0].scale_m, scale_b=headers[0].scale_b, interval_index_mode="fast",
-                              merge_blocks=False)
+                              merge_blocks=False, gap_tolerance=0)
         else:
             val_index = 0
             for h in headers:
@@ -35,7 +35,7 @@ def _ingest_data_tsc(to_sdk, measure_id, device_id, headers, times, values):
                                       encoded_time_type=h.t_encoded_type,
                                       encoded_value_type=h.v_encoded_type,
                                       scale_m=h.scale_m, scale_b=h.scale_b,
-                                      interval_index_mode="fast", merge_blocks=False)
+                                      interval_index_mode="fast", merge_blocks=False, gap_tolerance=0)
                 except IndexError:
                     continue
                 val_index += h.num_vals

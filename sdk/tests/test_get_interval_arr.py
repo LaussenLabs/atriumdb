@@ -53,7 +53,11 @@ def _test_get_interval_arr(db_type, dataset_location, connection_params):
     start_time_nano = start_time_s * (10 ** 9)
     end_time_nano = end_time_s * (10 ** 9)
     interval = (end_time_nano - start_time_nano) // num_patients
-    gap_nano = 2 * (10 ** 9)  # 2-second gap
+    # 15-second gap. write_data_easy now applies a smart interval-index gap
+    # tolerance (max(10 * period, 200ms) = 10s at 1 Hz), so the gaps separating
+    # these segments must exceed that tolerance to remain distinct intervals.
+    gap_seconds = 15
+    gap_nano = gap_seconds * (10 ** 9)
 
     expected_intervals = {}
     combined_intervals = []
@@ -69,7 +73,7 @@ def _test_get_interval_arr(db_type, dataset_location, connection_params):
     # Generate time_data with gaps
     time_data = []
     for idx in range(num_patients):
-        start = start_time_s + (idx * (interval // (10 ** 9) + 2))
+        start = start_time_s + (idx * (interval // (10 ** 9) + gap_seconds))
         end = start + (interval // (10 ** 9))
         time_data.extend(np.arange(start, end))
 

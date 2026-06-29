@@ -27,7 +27,7 @@ import logging
 import bisect
 
 from atriumdb.helpers.block_calculations import calc_time_by_freq
-from atriumdb.helpers.block_constants import TIME_TYPES
+from atriumdb.helpers.block_constants import TIME_TYPES, COMPRESSION_TYPES
 from atriumdb.intervals.union import intervals_union_list
 
 ALLOWED_TIME_TYPES = [1, 2]
@@ -374,6 +374,163 @@ def detect_period(times: np.ndarray, threshold_ratio: float = 0.3):
         return int(mode_delta)
 
     return float(mode_delta)
+
+# Defaults for the smart interval-index gap tolerance (see choose_interval_gap_tolerance).
+# When no tolerance is given, it is the larger of (DEFAULT_GAP_TOLERANCE_PERIODS * period)
+# and DEFAULT_GAP_TOLERANCE_FLOOR_NS, so jitter and brief dropouts do not fragment the index.
+DEFAULT_GAP_TOLERANCE_PERIODS = 10
+DEFAULT_GAP_TOLERANCE_FLOOR_NS = 200_000_000  # 200 ms
+
+# Defaults for the smart time encoding (see choose_time_encoding).
+# At or below this many gaps, keep a raw, uncompressed gap array.
+ENCODE_RAW_GAP_FLOOR = 64
+# Fraction of samples that are gaps, above which a gap array may lose to a
+# compressed timestamp array; at or below it, a compressed gap array is used.
+ENCODE_DEVIATION_THRESHOLD = 0.50
+# Above the deviation threshold, the fraction of distinct gap durations above
+# which data is treated as truly aperiodic (a compressed timestamp array wins).
+# Only used as a fallback when encoded sizes cannot be measured directly.
+ENCODE_APERIODIC_DISTINCT_RATIO = 0.5
+# zstd level used when AtriumDB compresses the time data itself.
+DEFAULT_TIME_COMPRESSION_LEVEL = 3
+# Number of leading samples measured when comparing gap vs timestamp encoding sizes.
+ENCODE_SAMPLE_SIZE = 16384
+
+# Integer codes used in block headers, aliased for readability below.
+_T_GAP = TIME_TYPES['GAP_ARRAY_INT64_INDEX_DURATION_NS']
+_T_TIMESTAMP = TIME_TYPES['TIME_ARRAY_INT64_NS']
+_C_NONE = COMPRESSION_TYPES['NONE']
+_C_ZSTD = COMPRESSION_TYPES['ZSTD']
+
+
+def choose_interval_gap_tolerance(period_ns, *, continuous=False, total_span_ns=None,
+                                  gap_tolerance_periods=DEFAULT_GAP_TOLERANCE_PERIODS,
+                                  floor_ns=DEFAULT_GAP_TOLERANCE_FLOOR_NS):
+    """Pick a default interval-index gap tolerance (in nanoseconds) when the
+    caller did not specify one.
+
+    The interval index records *where data exists*. With a tolerance of 0, every
+    jittered or missed sample starts a new interval row, which makes the index
+    explode for essentially any real-world stream (e.g. float-time waveforms or
+    aperiodic metrics produce tens of thousands of rows per block). When the
+    caller does not care to capture that fine-grained variability (they left the
+    parameter unset) we pick a generous-but-bounded tolerance that absorbs
+    jitter and short dropouts while still recording genuine outages separately.
+
+    :param int period_ns: Detected/declared sampling period in nanoseconds.
+    :param bool continuous: If True, treat the whole write as a single interval.
+    :param int total_span_ns: Span (last - first sample) of the write. Used to
+        bound the tolerance when ``continuous`` so a single call collapses to a
+        single interval without bridging unrelated, distant existing data.
+    :param int gap_tolerance_periods: Multiplier applied to ``period_ns`` for the
+        default tolerance (defaults to DEFAULT_GAP_TOLERANCE_PERIODS).
+    :param int floor_ns: Minimum tolerance in nanoseconds; also used when
+        ``period_ns`` is unknown (defaults to DEFAULT_GAP_TOLERANCE_FLOOR_NS).
+    :rtype: int
+    """
+    if continuous:
+        # Merge every internal gap in this call, but no further than its own span.
+        if total_span_ns is not None and total_span_ns > 0:
+            return int(total_span_ns)
+        return 1 << 62
+    if period_ns is None or period_ns <= 0:
+        return int(floor_ns)
+    return int(max(int(gap_tolerance_periods) * int(period_ns), int(floor_ns)))
+
+
+def choose_time_encoding(period_ns, *, times_ns=None, num_gaps=None, gap_durations=None,
+                         num_values=None, allow_timestamp=True, measure=None,
+                         raw_gap_floor=ENCODE_RAW_GAP_FLOOR,
+                         deviation_threshold=ENCODE_DEVIATION_THRESHOLD,
+                         aperiodic_distinct_ratio=ENCODE_APERIODIC_DISTINCT_RATIO):
+    """Choose how to encode the *time* data, returning
+    ``(encoded_time_type, t_compression, t_compression_level)``.
+
+    The choice is made by how often the data deviates from a perfectly regular
+    sample period:
+
+    * **gap array, no compression** - regular signals with no or rare deviations
+      (the common waveform case). The gap array is empty or tiny.
+    * **gap array, zstd** - frequent but structured deviations (message jitter,
+      float-time rounding, integer-second metrics). The compact gap array still
+      wins and compresses extremely well.
+    * **timestamp array, zstd** - genuinely aperiodic data, where two ints per
+      gap is wasteful and a plain compressed timestamp array is smaller. Only
+      used when ``allow_timestamp`` is set (i.e. the raw data is a timestamp
+      array, so the conversion is valid).
+
+    Provide either ``times_ns`` (a timestamp array) or the precomputed
+    ``num_gaps`` / ``gap_durations`` / ``num_values`` (cheaper when the caller
+    already holds a gap array).
+
+    :param int period_ns: Sampling period in nanoseconds.
+    :param times_ns: Optional timestamp array; gap stats are computed from it.
+    :param int num_gaps: Number of gaps, if already known (alternative to ``times_ns``).
+    :param gap_durations: Gap durations, if already known.
+    :param int num_values: Total number of values in the write.
+    :param bool allow_timestamp: Whether converting to a timestamp array is permitted.
+    :param measure: Optional zero-argument callable returning a dict mapping each
+        time-type code to its compressed size for a sample. When supplied, the
+        aperiodic choice is made from real measured sizes instead of the
+        distinct-gap-ratio heuristic, which is more accurate because the better
+        encoding depends on the magnitude of the deviations, not just their rate.
+    :param int raw_gap_floor: At or below this many gaps, keep a raw, uncompressed
+        gap array (defaults to ENCODE_RAW_GAP_FLOOR).
+    :param float deviation_threshold: Fraction of samples that are gaps, above which
+        a gap array may lose to a compressed timestamp array (defaults to
+        ENCODE_DEVIATION_THRESHOLD).
+    :param float aperiodic_distinct_ratio: Fallback heuristic used only when ``measure``
+        is not supplied: above this fraction of distinct gap durations, data is treated
+        as aperiodic (defaults to ENCODE_APERIODIC_DISTINCT_RATIO).
+    :rtype: tuple
+    """
+    if times_ns is not None:
+        if num_values is None:
+            num_values = int(times_ns.size)
+        deltas = np.diff(times_ns) - int(period_ns)
+        nz = np.nonzero(deltas)[0]
+        num_gaps = int(nz.size)
+        gap_durations = deltas[nz]
+    else:
+        num_gaps = int(num_gaps) if num_gaps is not None else 0
+
+    # Regime 1: regular data / rare deviations -> raw gap array (no compression).
+    if num_gaps <= raw_gap_floor:
+        return _T_GAP, _C_NONE, 0
+
+    denom = max(1, (int(num_values) if num_values else num_gaps) - 1)
+    deviation_rate = num_gaps / denom
+
+    # Regime 2: frequent but moderate deviations -> compressed gap array.
+    if deviation_rate < deviation_threshold:
+        return _T_GAP, _C_ZSTD, DEFAULT_TIME_COMPRESSION_LEVEL
+
+    # Regime 3: very frequent deviations. Whether the gap array or a plain
+    # compressed timestamp array is smaller depends on the *magnitude/structure*
+    # of the deviations, not just their rate. Prefer an actual measurement on a
+    # sample (via `measure`, which uses the real codec); fall back to a structural
+    # heuristic (distinct-ratio of gap durations) only when no measurement is
+    # available (e.g. unit use without a codec).
+    if allow_timestamp:
+        if measure is not None:
+            sizes = measure() or {}
+            gap_sz, ts_sz = sizes.get(_T_GAP), sizes.get(_T_TIMESTAMP)
+            if gap_sz is not None and ts_sz is not None:
+                if ts_sz < gap_sz:
+                    return _T_TIMESTAMP, _C_ZSTD, DEFAULT_TIME_COMPRESSION_LEVEL
+                return _T_GAP, _C_ZSTD, DEFAULT_TIME_COMPRESSION_LEVEL
+        if gap_durations is not None and len(gap_durations) > 0:
+            distinct_ratio = np.unique(gap_durations).size / len(gap_durations)
+            if distinct_ratio > aperiodic_distinct_ratio:
+                return _T_TIMESTAMP, _C_ZSTD, DEFAULT_TIME_COMPRESSION_LEVEL
+    return _T_GAP, _C_ZSTD, DEFAULT_TIME_COMPRESSION_LEVEL
+
+
+def write_call_total_span_ns(write_intervals):
+    """Total nanosecond span covered by a list of [start, end] write intervals."""
+    if not len(write_intervals):
+        return 0
+    return int(write_intervals[-1][-1]) - int(write_intervals[0][0])
 
 
 def parse_metadata_uri(metadata_uri):
@@ -1337,7 +1494,14 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                         'scale_m': group_headers[0].scale_m,
                         'scale_b': group_headers[0].scale_b,
                         'freq_nhz': group_freq_nhz,
-                        'period_ns': group_period_ns
+                        'period_ns': group_period_ns,
+                        # Preserve the source block's time compression through the re-encode.
+                        # Like scale_m/scale_b above, this takes the representative (first)
+                        # header for the group. If a group ever mixed blocks with different
+                        # time compression, they are normalized to the first block's setting;
+                        # this is lossless (the header records the compression actually used).
+                        't_compression': group_headers[0].t_compression,
+                        't_compression_level': group_headers[0].t_compression_level
                     }
 
                     segments.append(segment)

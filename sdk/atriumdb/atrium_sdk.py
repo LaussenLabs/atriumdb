@@ -28,7 +28,9 @@ from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_i
     find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, reconstruct_messages, \
     ALLOWED_TIME_TYPES, collect_all_descendant_ids, get_best_measure_id, _calc_end_time_from_gap_data, \
     merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns, time_unit_options, \
-    create_gap_arr_from_variable_messages, sort_message_time_values, convert_from_nanoseconds, detect_period
+    create_gap_arr_from_variable_messages, sort_message_time_values, convert_from_nanoseconds, detect_period, \
+    choose_interval_gap_tolerance, choose_time_encoding, write_call_total_span_ns, \
+    DEFAULT_TIME_COMPRESSION_LEVEL, ENCODE_SAMPLE_SIZE
 from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
@@ -37,7 +39,7 @@ from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_li
     overwrite_default_setting
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME, \
     ALLOWABLE_PROTECTED_MODE_SETTINGS
-from atriumdb.helpers.block_constants import TIME_TYPES_STR, VALUE_TYPES_STR
+from atriumdb.helpers.block_constants import TIME_TYPES_STR, VALUE_TYPES_STR, COMPRESSION_TYPES
 from atriumdb.block_wrapper import BlockMetadata
 from atriumdb.intervals.intervals import Intervals
 import time
@@ -699,7 +701,8 @@ class AtriumSDK:
         return encoded_bytes
 
     def write_data_easy(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq: int,
-                        scale_m: float = None, scale_b: float = None, time_units: str = None, freq_units: str = None):
+                        scale_m: float = None, scale_b: float = None, time_units: str = None, freq_units: str = None,
+                        continuous: bool = False):
         """
         .. _write_data_easy_label:
 
@@ -740,6 +743,8 @@ class AtriumSDK:
         :param str freq_units: The unit used for the specified frequency. This value can be one of ["nHz", "uHz", "mHz",
             "Hz", "kHz", "MHz"]. If you use extremely large values for this, it will be converted to nanohertz
             in the backend, and you may overflow 64-bit integers.
+        :param bool continuous: If True, treat this entire call as a single continuous interval in the
+            interval index, regardless of internal gaps.
         """
 
         if self.metadata_connection_type == "api":
@@ -763,9 +768,6 @@ class AtriumSDK:
         else:
             raw_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
 
-        # Determine the encoded time type
-        encoded_t_t = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
-
         # Determine the raw and encoded value types based on the dtype of value_data
         if np.issubdtype(value_data.dtype, np.integer):
             raw_v_t = V_TYPE_INT64
@@ -774,17 +776,19 @@ class AtriumSDK:
             raw_v_t = V_TYPE_DOUBLE
             encoded_v_t = V_TYPE_DOUBLE
 
-        # Call the write_data method with the determined parameters
+        # Call write_data with the determined parameters. encoded_time_type is left
+        # unset so write_data auto-selects the time encoding and compression.
         self.write_data(measure_id, device_id, time_data, value_data, freq, int(time_data[0]), raw_time_type=raw_t_t,
-                        raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
-                        scale_m=scale_m, scale_b=scale_b)
+                        raw_value_type=raw_v_t, encoded_value_type=encoded_v_t,
+                        scale_m=scale_m, scale_b=scale_b, continuous=continuous)
 
     def write_data(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray,
                    freq_nhz: int = None, time_0: int = None, raw_time_type: int = None,
                    raw_value_type: int = None, encoded_time_type: int = None,
                    encoded_value_type: int = None, scale_m: float = None, scale_b: float = None,
-                   interval_index_mode: str = None, gap_tolerance: int = 0, merge_blocks: bool = True,
-                   period_ns: int = None):
+                   interval_index_mode: str = None, gap_tolerance: int = None, merge_blocks: bool = True,
+                   period_ns: int = None, continuous: bool = False,
+                   t_compression: int = None, t_compression_level: int = None):
         """
         .. _write_data_label:
 
@@ -818,12 +822,21 @@ class AtriumSDK:
             if the data inserted has lots of gaps, is aperiodic or isn't the newest data for that device-measure combination.
             For live data ingestion, "merge" is recommended.
         :param int gap_tolerance: The maximum number of nanoseconds that can occur between two consecutive values before
-            it is treated as a break in continuity or gap in the interval index.
+            it is treated as a break in continuity or gap in the interval index. If ``None`` (the default), AtriumDB
+            chooses a smart, generous default from the data (``max(10 * period, 200ms)``) so that jitter and short
+            dropouts do not flood the interval index; pass ``0`` to record every gap, or an explicit value to override.
         :param bool merge_blocks: If your writing data that is less than an optimal block size it will find an already
             existing block that is closest in time to the data your writing and merge your data with it. THIS IS NOT THREAD SAFE
             and can lead to race conditions if two processes (with two different sdk objects) try to ingest (and merge)
             data for the same measure and device at the same time.
         :param int period_ns: Sampling period in nanoseconds, mutually exclusive with freq_nhz.
+        :param bool continuous: If True, treat this entire call as a single continuous interval in the interval index,
+            regardless of internal gaps (overrides ``gap_tolerance`` for this call).
+        :param int encoded_time_type: If ``None``, the time encoding is auto-chosen from the data (gap array, optionally
+            zstd-compressed, or a compressed timestamp array for aperiodic data).
+        :param int t_compression: Compression for the time data. If ``None``, it is auto-chosen alongside
+            ``encoded_time_type``. ``encoded_value_type``/``raw_value_type`` are likewise auto-chosen from the value
+            dtype when omitted.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.
@@ -881,6 +894,37 @@ class AtriumSDK:
         # Ensure time data is of integer type
         assert np.issubdtype(time_data.dtype, np.integer), "Time information must be encoded as an integer."
 
+        # Auto-resolve value encoding from the value dtype when not provided.
+        if raw_value_type is None:
+            raw_value_type = V_TYPE_INT64 if np.issubdtype(value_data.dtype, np.integer) else V_TYPE_DOUBLE
+        if encoded_value_type is None:
+            encoded_value_type = V_TYPE_DELTA_INT64 if raw_value_type == V_TYPE_INT64 else V_TYPE_DOUBLE
+
+        # Auto-resolve the time encoding and time compression from the data when
+        # not explicitly provided: a raw gap array for regular data, a
+        # zstd-compressed gap array for structured deviations, and a
+        # zstd-compressed timestamp array for genuinely aperiodic data.
+        if encoded_time_type is None or t_compression is None:
+            _period_ns = period_ns if period_ns is not None else (10 ** 18) // freq_nhz_for_calc
+            if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+                # For very irregular data, measure the gap-array and timestamp-array
+                # sizes on a sample with the real codec and keep the smaller one.
+                _measure = lambda: self._measure_time_encoding_sizes(time_data, _period_ns)
+                _et, _tc, _tcl = choose_time_encoding(
+                    _period_ns, times_ns=time_data, num_values=int(value_data.size),
+                    allow_timestamp=True, measure=_measure)
+            elif raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
+                _gap = np.asarray(time_data)
+                _et, _tc, _tcl = choose_time_encoding(
+                    _period_ns, num_gaps=_gap.size // 2, gap_durations=_gap[1::2],
+                    num_values=int(value_data.size), allow_timestamp=False)
+            else:
+                _et, _tc, _tcl = encoded_time_type, t_compression, t_compression_level
+            if encoded_time_type is None and _et is not None:
+                encoded_time_type = _et
+            if t_compression is None:
+                t_compression, t_compression_level = _tc, _tcl
+
         # check that value types make sense
         if not ((raw_value_type == 1 and encoded_value_type == 3) or (raw_value_type == encoded_value_type)):
             raise ValueError(
@@ -934,6 +978,17 @@ class AtriumSDK:
         # Calculate new intervals
         write_intervals = find_intervals(freq_nhz=freq_nhz, period_ns=period_ns, raw_time_type=raw_time_type,
                                          time_data=time_data, data_start_time=time_0, num_values=int(value_data.size))
+
+        # Resolve the interval-index gap tolerance. An explicit value always wins;
+        # otherwise pick a smart, generous default from the period, or collapse the
+        # whole call to a single interval when continuous.
+        if continuous:
+            gap_tolerance = choose_interval_gap_tolerance(
+                period_ns_for_calc, continuous=True,
+                total_span_ns=write_call_total_span_ns(write_intervals))
+        elif gap_tolerance is None:
+            gap_tolerance = choose_interval_gap_tolerance(period_ns_for_calc)
+        gap_tolerance = int(gap_tolerance)
 
         # check overwrite setting
         if OVERWRITE_SETTING_NAME not in self.settings_dict:
@@ -1078,7 +1133,8 @@ class AtriumSDK:
             times=time_data, values=value_data, freq_nhz=freq_nhz, period_ns=period_ns, start_ns=time_0,
             raw_time_type=raw_time_type, raw_value_type=raw_value_type,
             encoded_time_type=encoded_time_type, encoded_value_type=encoded_value_type,
-            scale_m=scale_m, scale_b=scale_b)
+            scale_m=scale_m, scale_b=scale_b,
+            t_compression=t_compression, t_compression_level=t_compression_level)
 
         # Write the encoded bytes to disk
         filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
@@ -1122,8 +1178,8 @@ class AtriumSDK:
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
 
-    def write_buffer(self, max_values_per_measure_device=None, max_total_values_buffered=None, gap_tolerance=0,
-                     time_units=None):
+    def write_buffer(self, max_values_per_measure_device=None, max_total_values_buffered=None, gap_tolerance=None,
+                     time_units=None, continuous=False):
         """
         Create a buffer Context Object to batch incoming segments/signals until they hit some threshold,
         are manually flushed to the dataset, or are automatically flushed by exiting the context opened by this object.
@@ -1133,8 +1189,12 @@ class AtriumSDK:
         :param int max_total_values_buffered: (Optional) If the total number of buffered values across all measure-device pairs
             exceeds this number, the oldest buffer that has values in it will be automatically flushed. Defaults to 10,000 blocks.
         :param float gap_tolerance: (Optional) Merges sequential intervals from the AtriumSDK.get_interval_array method that have a duration between them
-            less than gap_tolerance, specified in `time_units` units (default "s").
+            less than gap_tolerance, specified in `time_units` units (default "s"). If ``None`` (the default), a smart
+            generous default is chosen from the data at flush time, identical to the non-buffered write path; pass ``0``
+            to record every gap.
         :param str time_units: (Optional) Unit for `gap_tolerance`, which can be one of ["s", "ms", "us", "ns"]. Must be specified if gap_tolerance is given.
+        :param bool continuous: (Optional) If True, every flushed batch is treated as a single continuous interval in the
+            interval index, regardless of internal gaps.
 
         Example:
 
@@ -1158,11 +1218,13 @@ class AtriumSDK:
             max_total_values_buffered=max_total_values_buffered,
             gap_tolerance=gap_tolerance,
             time_units=time_units,
+            continuous=continuous,
         )
 
     def write_segment(self, measure_id: int, device_id: int, segment_values: np.ndarray, start_time: float | int,
                       period: float = None, freq: float = None, time_units: str = None,
-                      freq_units: str = None, scale_m: float = None, scale_b: float = None):
+                      freq_units: str = None, scale_m: float = None, scale_b: float = None,
+                      continuous: bool = False):
         """
         Write a single segment consisting of contiguous values starting at a specific time.
 
@@ -1178,6 +1240,8 @@ class AtriumSDK:
         :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b).
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b).
+        :param bool continuous: (Optional) If True, treat this entire call as a single continuous interval in the
+            interval index, regardless of internal gaps.
 
         Example:
 
@@ -1213,13 +1277,15 @@ class AtriumSDK:
             time_units=time_units,
             freq_units=freq_units,
             scale_m=scale_m,
-            scale_b=scale_b
+            scale_b=scale_b,
+            continuous=continuous
         )
 
     def write_segments(self, measure_id: int, device_id: int, segments: List[np.ndarray],
                        start_times: List[float | int],
                        period: float = None, freq: float = None, time_units: str = None,
-                       freq_units: str = None, scale_m: float = None, scale_b: float = None):
+                       freq_units: str = None, scale_m: float = None, scale_b: float = None,
+                       continuous: bool = False):
         """
         Write multiple segments consisting of value arrays and corresponding start times.
 
@@ -1239,6 +1305,8 @@ class AtriumSDK:
             It may be a single number or a list with one number per segment
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b).
             It may be a single number or a list with one number per segment
+        :param bool continuous: (Optional) If True, treat all data written in this call as a single continuous
+            interval in the interval index, regardless of gaps between segments.
 
         Example:
 
@@ -1318,15 +1386,49 @@ class AtriumSDK:
             write_segments.append(message_dict)
 
         if self._active_buffer is None:
-            # Write immediately to disk
-            interval_gap_tolerance_nano = 0
-
-            self._write_segments_to_dataset(measure_id, device_id, write_segments, interval_gap_tolerance_nano)
+            # Write immediately to disk. interval_gap_tolerance_nano=None lets the
+            # _write helper pick the smart default from the data.
+            self._write_segments_to_dataset(measure_id, device_id, write_segments,
+                                            interval_gap_tolerance_nano=None, continuous=continuous)
         else:
             # Push new segments to the buffer
-            self._active_buffer.push_segments(measure_id, device_id, write_segments)
+            self._active_buffer.push_segments(measure_id, device_id, write_segments, continuous=continuous)
 
-    def _write_segments_to_dataset(self, measure_id, device_id, write_segments, interval_gap_tolerance_nano=0):
+    def _measure_time_encoding_sizes(self, times_ns, period_ns, sample_size=ENCODE_SAMPLE_SIZE):
+        """Encode a leading sample of a timestamp array both as a zstd gap array
+        and as a zstd timestamp array, returning ``{time_type: compressed_bytes}``.
+        This lets the time-encoding choice for very irregular data be made from
+        measured sizes rather than a heuristic."""
+        sample = times_ns[:sample_size]
+        if sample.size < 2:
+            return None
+        dummy_values = np.zeros(sample.size, dtype=np.int64)
+        sizes = {}
+        for ett in (T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO):
+            try:
+                _, headers, _ = self.block.encode_blocks(
+                    times=sample, values=dummy_values, period_ns=int(period_ns), start_ns=int(sample[0]),
+                    raw_time_type=1, raw_value_type=V_TYPE_INT64, encoded_time_type=ett,
+                    encoded_value_type=V_TYPE_DELTA_INT64, scale_m=1.0, scale_b=0.0,
+                    t_compression=COMPRESSION_TYPES['ZSTD'], t_compression_level=DEFAULT_TIME_COMPRESSION_LEVEL)
+                sizes[ett] = int(sum(h.t_num_bytes for h in headers))
+            except Exception:
+                sizes[ett] = None
+        return sizes
+
+    def _resolve_interval_gap_tolerance(self, gap_tolerance_nano, period_ns, continuous, write_intervals):
+        """Resolve the interval-index gap tolerance for a write: an explicit value
+        wins, ``continuous`` collapses the call to one interval, and ``None`` picks
+        the smart default from the period. Shared by the segment/time-value paths."""
+        if continuous:
+            return choose_interval_gap_tolerance(
+                period_ns, continuous=True, total_span_ns=write_call_total_span_ns(write_intervals))
+        if gap_tolerance_nano is None:
+            return choose_interval_gap_tolerance(period_ns)
+        return int(gap_tolerance_nano)
+
+    def _write_segments_to_dataset(self, measure_id, device_id, write_segments, interval_gap_tolerance_nano=None,
+                                   continuous=False):
         sorted_segments = sorted(write_segments, key=lambda x: x['start_time_nano'])
         message_start_epoch_array = []
         message_size_array = []
@@ -1370,10 +1472,23 @@ class AtriumSDK:
             raw_v_t = V_TYPE_DOUBLE
             encoded_v_t = V_TYPE_DOUBLE
 
+        # Choose the time encoding and compression from the gap structure. Segment
+        # data is naturally a gap array, so the choice is between a raw and a
+        # zstd-compressed gap array (allow_timestamp=False).
+        period_for_encoding = period_ns if period_ns is not None else (10 ** 18) // freq_nhz
+        encoded_t_t, t_compression, t_compression_level = choose_time_encoding(
+            period_for_encoding, num_gaps=gap_data.size // 2, gap_durations=gap_data[1::2],
+            num_values=int(value_data.size), allow_timestamp=False)
+
         encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
             times=gap_data, values=value_data, freq_nhz=freq_nhz, period_ns=period_ns, start_ns=time_0,
-            raw_time_type=2, raw_value_type=raw_v_t, encoded_time_type=2, encoded_value_type=encoded_v_t,
-            scale_m=scale_m, scale_b=scale_b)
+            raw_time_type=2, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
+            scale_m=scale_m, scale_b=scale_b,
+            t_compression=t_compression, t_compression_level=t_compression_level)
+
+        # Resolve the interval-index gap tolerance (smart default unless given).
+        interval_gap_tolerance_nano = self._resolve_interval_gap_tolerance(
+            interval_gap_tolerance_nano, period_for_encoding, continuous, write_intervals)
 
         # Write the encoded bytes to disk
         filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
@@ -1386,7 +1501,7 @@ class AtriumSDK:
 
     def write_time_value_pairs(self, measure_id: int, device_id: int, times: np.ndarray, values: np.ndarray,
                                period: float = None, freq: float = None, time_units: str = None, freq_units: str = None,
-                               scale_m: float = None, scale_b: float = None):
+                               scale_m: float = None, scale_b: float = None, continuous: bool = False):
         """
         Write time-value pairs where each value corresponds to a specific timestamp.
 
@@ -1402,6 +1517,8 @@ class AtriumSDK:
         :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b). Default is 1.0.
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b). Default is 0.0.
+        :param bool continuous: (Optional) If True, treat this entire call as a single continuous interval in the
+            interval index, regardless of internal gaps.
 
         Example:
 
@@ -1491,14 +1608,16 @@ class AtriumSDK:
         }
 
         if self._active_buffer is None:
-            # Ingest Immediately
-            interval_gap_tolerance_nano = 0
-            self._write_time_value_pairs_to_dataset(measure_id, device_id, [data_dict], interval_gap_tolerance_nano)
+            # Ingest Immediately. interval_gap_tolerance_nano=None lets write_data
+            # pick the smart default from the (detected) period.
+            self._write_time_value_pairs_to_dataset(measure_id, device_id, [data_dict],
+                                                    interval_gap_tolerance_nano=None, continuous=continuous)
         else:
             # Push data to buffer
-            self._active_buffer.push_time_value_pairs(measure_id, device_id, data_dict)
+            self._active_buffer.push_time_value_pairs(measure_id, device_id, data_dict, continuous=continuous)
 
-    def _write_time_value_pairs_to_dataset(self, measure_id, device_id, data_dicts, interval_gap_tolerance_nano=0):
+    def _write_time_value_pairs_to_dataset(self, measure_id, device_id, data_dicts, interval_gap_tolerance_nano=None,
+                                           continuous=False):
         # Get parameters from first data dict
         freq_nhz = data_dicts[0]['freq_nhz']
         period_ns = data_dicts[0]['period_ns']
@@ -1541,10 +1660,13 @@ class AtriumSDK:
             raw_v_t = V_TYPE_DOUBLE
             encoded_v_t = V_TYPE_DOUBLE
 
+        # Leave encoded_time_type unset so write_data chooses the time encoding and
+        # compression (gap/timestamp) from the data; forward the gap tolerance
+        # (None => smart default) and the continuous flag.
         self.write_data(measure_id, device_id, times, values, freq_nhz=freq_nhz, period_ns=period_ns, time_0=time_0,
-                        raw_time_type=1, raw_value_type=raw_v_t, encoded_time_type=2, encoded_value_type=encoded_v_t,
+                        raw_time_type=1, raw_value_type=raw_v_t, encoded_value_type=encoded_v_t,
                         scale_m=scale_m, scale_b=scale_b, interval_index_mode="fast",
-                        gap_tolerance=interval_gap_tolerance_nano, merge_blocks=False)
+                        gap_tolerance=interval_gap_tolerance_nano, merge_blocks=False, continuous=continuous)
 
     def load_device(self, device_id: int, measure_id: int|List[int] = None):
         """
