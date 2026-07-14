@@ -402,11 +402,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                                 'encoded_value_type': encoded_value_type,
                                 'scale_m': scale_m,
                                 'scale_b': scale_b,
-                                # Preserve the source block's time compression through the re-encode.
-                                # Like scale_m/scale_b above, this uses the representative (first)
-                                # block's header for the group. If a group ever mixed blocks with
-                                # different time compression, they are normalized to that setting.
-                                # Consider a more compression efficient block merging algorithm for future work.
+                                # Preserve the source time compression; a group mixing settings
+                                # is normalized (losslessly) to its first block's.
                                 't_compression': header.t_compression,
                                 't_compression_level': header.t_compression_level
                             }

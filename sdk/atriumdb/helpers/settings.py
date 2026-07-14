@@ -18,5 +18,10 @@
 OVERWRITE_SETTING_NAME = 'overwrite'
 PROTECTED_MODE_SETTING_NAME = 'protected_mode'
 
-ALLOWABLE_OVERWRITE_SETTINGS = ['error', 'ignore', 'overwrite']
+# The 'overwrite' setting is the dataset's merge conflict policy: how block
+# merging resolves duplicate timestamps between a new write and existing data.
+# 'overwrite' and the legacy default 'ignore' keep the new write's values,
+# 'protect' keeps the existing values, and 'error' refuses to merge writes that
+# conflict with existing data. See AtriumSDK._merge_conflict_policy.
+ALLOWABLE_OVERWRITE_SETTINGS = ['error', 'ignore', 'overwrite', 'protect']
 ALLOWABLE_PROTECTED_MODE_SETTINGS = ['True', 'False']

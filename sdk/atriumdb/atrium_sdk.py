@@ -29,19 +29,20 @@ from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_i
     ALLOWED_TIME_TYPES, collect_all_descendant_ids, get_best_measure_id, _calc_end_time_from_gap_data, \
     merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns, time_unit_options, \
     create_gap_arr_from_variable_messages, sort_message_time_values, convert_from_nanoseconds, detect_period, \
-    choose_interval_gap_tolerance, choose_time_encoding, write_call_total_span_ns, \
-    DEFAULT_TIME_COMPRESSION_LEVEL, ENCODE_SAMPLE_SIZE
+    choose_interval_gap_tolerance, choose_time_encoding, collapse_continuous_write_intervals, \
+    observed_median_delta_ns, observed_median_delta_from_gap_array, widen_gap_tolerance_for_observed_spacing, \
+    APERIODIC_MIN_PERIOD_NS, DEFAULT_TIME_COMPRESSION_LEVEL, ENCODE_SAMPLE_SIZE, \
+    INTERVAL_DENSITY_WARNING_RATIO, INTERVAL_DENSITY_WARNING_MIN_ROWS
 from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
 from atriumdb.file_api import AtriumFileHandler
-from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_linux, protected_mode_default_setting, \
+from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_macos, shared_lib_filename_linux, protected_mode_default_setting, \
     overwrite_default_setting
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME, \
     ALLOWABLE_PROTECTED_MODE_SETTINGS
 from atriumdb.helpers.block_constants import TIME_TYPES_STR, VALUE_TYPES_STR, COMPRESSION_TYPES
 from atriumdb.block_wrapper import BlockMetadata
-from atriumdb.intervals.intervals import Intervals
 import time
 import atexit
 from pathlib import Path, PurePath
@@ -64,7 +65,7 @@ from atriumdb.write_buffer import WriteBuffer
 try:
     import requests
     from requests import Session
-    from dotenv import load_dotenv, set_key
+    from dotenv import dotenv_values, set_key
     from websockets.sync.client import connect
     from atriumdb.adb_remote import _validate_bearer_token
     import jwt
@@ -167,16 +168,23 @@ class AtriumSDK:
         self.metadata_connection_type = metadata_connection_type
 
         # Set the C DLL path based on the platform if not provided
-        if platform.system() == "Darwin":
-            raise OSError("AtriumSDK is not currently supported on macOS.")
         if atriumdb_lib_path is None:
             if sys.platform == "win32":
                 shared_lib_filename = shared_lib_filename_windows
+            elif platform.system() == "Darwin":
+                # macOS support is experimental: the dylib is not shipped with the
+                # package and must be built locally (see tsc-lib/build_mac.sh).
+                shared_lib_filename = shared_lib_filename_macos
             else:
                 shared_lib_filename = shared_lib_filename_linux
 
             this_file_path = Path(__file__)
             atriumdb_lib_path = this_file_path.parent.parent / shared_lib_filename
+
+            if platform.system() == "Darwin" and not Path(atriumdb_lib_path).exists():
+                raise OSError("AtriumSDK on macOS requires a locally built codec library: "
+                              f"{atriumdb_lib_path} not found. Build it with tsc-lib/build_mac.sh "
+                              "(requires cmake, libomp, lz4 and zstd from Homebrew).")
 
         # Initialize the block object with the C DLL path and number of threads
         self.block = Block(atriumdb_lib_path, num_threads)
@@ -223,6 +231,7 @@ class AtriumSDK:
                     )
             self.settings_dict = self._get_all_settings()
 
+
         # Handle MySQL or MariaDB connections
         elif metadata_connection_type == 'mysql' or metadata_connection_type == 'mariadb':
             # Ensure at least one of the required parameters is provided
@@ -261,6 +270,7 @@ class AtriumSDK:
                     )
             self.settings_dict = self._get_all_settings()
 
+
         # Handle API connections
         elif metadata_connection_type == 'api':
             # Check if the necessary modules are installed for API connections
@@ -280,20 +290,19 @@ class AtriumSDK:
             # need this variable so when we refresh the token we know if a .env file was supplied and we should set the token key
             self.dot_env_loaded = False
 
-            # Load API and refresh token from environment variables if not provided
-            if token is None:
-                load_dotenv(dotenv_path="./.env", override=True)
-                try:
-                    token = os.environ['ATRIUMDB_API_TOKEN']
-                    self.dot_env_loaded = True
-                except KeyError:
-                    token = None
-            if refresh_token is None:
-                load_dotenv(dotenv_path="./.env", override=True)
-                try:
-                    refresh_token = os.environ['ATRIUMDB_API_REFRESH_TOKEN']
-                except KeyError:
-                    refresh_token = None
+            # Load API and refresh token from ./.env or the environment if not
+            # provided. The .env values are read directly (a value in the file
+            # wins over the inherited environment) rather than loaded into
+            # os.environ, so constructing an SDK never mutates the process
+            # environment.
+            if token is None or refresh_token is None:
+                dot_env_values = dotenv_values(dotenv_path="./.env")
+                if token is None:
+                    token = dot_env_values.get('ATRIUMDB_API_TOKEN') or os.environ.get('ATRIUMDB_API_TOKEN')
+                    self.dot_env_loaded = token is not None
+                if refresh_token is None:
+                    refresh_token = dot_env_values.get('ATRIUMDB_API_REFRESH_TOKEN') \
+                        or os.environ.get('ATRIUMDB_API_REFRESH_TOKEN')
 
             self.token, self.refresh_token = token, refresh_token
 
@@ -372,7 +381,13 @@ class AtriumSDK:
         :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
         :param str database_type: Specifies the type of metadata database to use. Options are "sqlite", "mysql", or "mariadb".
         :param str protected_mode: Specifies the protection mode of the metadata database. Allowed values are "True" or "False". If "True", data deletion will not be allowed. If "False", data deletion will be allowed. The default behavior can be changed in the `sdk/atriumdb/helpers/config.toml` file.
-        :param str overwrite: Specifies the behavior to take when new data being inserted overlaps in time with existing data. Allowed values are "error", "ignore", or "overwrite". Upon triggered overwrite: if "error", an error will be raised. If "ignore", the new data will not be inserted. If "overwrite", the old data will be overwritten with the new data. The default behavior can be changed in the `sdk/atriumdb/helpers/config.toml` file.
+        :param str overwrite: The dataset's merge conflict policy: how block merging resolves duplicate timestamps
+            between a new write and existing data. "overwrite" and the legacy default "ignore" keep the new write's
+            values; "protect" keeps the existing values; "error" raises when a write would conflict with existing
+            data. The policy is enforced where deduplication happens - writes smaller than one block that merge with
+            an existing block, and duplicate pushes within one buffer flush. Overlapping writes of a full block or
+            more never merge, so both copies are stored regardless of this setting (reads resolve them with
+            ``allow_duplicates=False``).
         :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" database type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
         :param bool no_pool: If true disables Mariadb connection pooling, instead using a new connection for each query.
         :param bool auto_upgrade: If True, automatically upgrade the database schema if needed (e.g., adding new columns). This allows the SDK to initialize successfully even if the database schema is outdated. Default is False.
@@ -805,11 +820,13 @@ class AtriumSDK:
         :param int raw_time_type: Identifier representing the time format being written, corresponding to the options
             written in the block header.
         :param int raw_value_type: Identifier representing the value format being written, corresponding to the
-            options written in the block header.
+            options written in the block header. If ``None``, chosen from the value dtype (int64 or double).
         :param int encoded_time_type: Identifier representing how the time information is encoded, corresponding
-            to the options written in the block header.
+            to the options written in the block header. If ``None``, auto-chosen from the data (gap array, optionally
+            zstd-compressed, or a compressed timestamp array for aperiodic data).
         :param int encoded_value_type: Identifier representing how the value information is encoded, corresponding
-            to the options written in the block header.
+            to the options written in the block header. If ``None``, chosen from ``raw_value_type`` (ints are delta
+            encoded, floats stored as doubles).
         :param float scale_m: Constant factor to scale digital data to transform it to analog (None if raw data
             is already analog). The slope (m) in y = mx + b
         :param float scale_b: Constant factor to offset digital data to transform it to analog (None if raw data
@@ -823,20 +840,26 @@ class AtriumSDK:
             For live data ingestion, "merge" is recommended.
         :param int gap_tolerance: The maximum number of nanoseconds that can occur between two consecutive values before
             it is treated as a break in continuity or gap in the interval index. If ``None`` (the default), AtriumDB
-            chooses a smart, generous default from the data (``max(10 * period, 200ms)``) so that jitter and short
-            dropouts do not flood the interval index; pass ``0`` to record every gap, or an explicit value to override.
-        :param bool merge_blocks: If your writing data that is less than an optimal block size it will find an already
-            existing block that is closest in time to the data your writing and merge your data with it. THIS IS NOT THREAD SAFE
-            and can lead to race conditions if two processes (with two different sdk objects) try to ingest (and merge)
-            data for the same measure and device at the same time.
+            chooses a default from the data so that jitter, short dropouts and aperiodic arrival gaps do not flood the
+            interval index (see ``choose_interval_gap_tolerance`` and ``widen_gap_tolerance_for_observed_spacing`` for
+            the rule). Pass ``0`` to record every gap, or an explicit value to override - an explicit tolerance is
+            always honored exactly.
+        :param bool merge_blocks: If you're writing data that is less than an optimal block size it will find an already
+            existing block that is closest in time to the data you're writing and merge your data with it. Duplicate
+            timestamps are resolved by the dataset's ``overwrite`` setting: the new write's values win by default,
+            ``'protect'`` keeps the existing values, and ``'error'`` raises instead of merging conflicting data. The
+            old block must hold the same kind of data (same raw value type
+            and scale factors; if you explicitly requested encoded types, the old block must already use them).
+            When the time encoding is being auto-chosen, it is chosen after the merge so it reflects the merged data.
+            THIS IS NOT THREAD SAFE and can lead to race conditions if two processes (with two different sdk objects)
+            try to ingest (and merge) data for the same measure and device at the same time.
         :param int period_ns: Sampling period in nanoseconds, mutually exclusive with freq_nhz.
-        :param bool continuous: If True, treat this entire call as a single continuous interval in the interval index,
-            regardless of internal gaps (overrides ``gap_tolerance`` for this call).
-        :param int encoded_time_type: If ``None``, the time encoding is auto-chosen from the data (gap array, optionally
-            zstd-compressed, or a compressed timestamp array for aperiodic data).
+        :param bool continuous: If True, record this call's data as a single continuous interval in the interval index,
+            regardless of internal gaps. Only the caller's own time span is collapsed; merging with neighboring
+            existing data still follows ``gap_tolerance``.
         :param int t_compression: Compression for the time data. If ``None``, it is auto-chosen alongside
-            ``encoded_time_type``. ``encoded_value_type``/``raw_value_type`` are likewise auto-chosen from the value
-            dtype when omitted.
+            ``encoded_time_type``.
+        :param int t_compression_level: Compression level for the time data, used with ``t_compression``.
 
         :rtype: Tuple[numpy.ndarray, List[BlockMetadata], numpy.ndarray, str]
         :returns: A numpy byte array of the compressed blocks.
@@ -867,268 +890,81 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for writing data.")
 
-        # Handle mutually exclusive freq_nhz and period_ns
-        if freq_nhz is not None and period_ns is not None:
-            raise ValueError("freq_nhz and period_ns are mutually exclusive. Specify only one.")
-
-        if freq_nhz is None and period_ns is None:
-            # Detect period if time-value array.
-            if raw_time_type == 1:
-                # detect_period always returns a best-effort value (with warnings if uncertain)
-                period_ns = detect_period(time_data)
-            else:
-                raise ValueError("Either freq_nhz or period_ns must be specified.")
-
-        if freq_nhz is not None:
-            period_ns = None
-
-        # Convert period to freq only for legacy calculations that still require it
-        if period_ns is not None:
-            freq_nhz_for_calc = 10 ** 18 // period_ns
-        else:
-            freq_nhz_for_calc = freq_nhz
-
-        # Ensure there is data to be written
         assert value_data.size > 0, "There are no values in the value array to write. Cannot write no data."
-
-        # Ensure time data is of integer type
         assert np.issubdtype(time_data.dtype, np.integer), "Time information must be encoded as an integer."
 
-        # Auto-resolve value encoding from the value dtype when not provided.
-        if raw_value_type is None:
-            raw_value_type = V_TYPE_INT64 if np.issubdtype(value_data.dtype, np.integer) else V_TYPE_DOUBLE
-        if encoded_value_type is None:
-            encoded_value_type = V_TYPE_DELTA_INT64 if raw_value_type == V_TYPE_INT64 else V_TYPE_DOUBLE
+        freq_nhz, period_ns, _, period_ns_for_calc = self._resolve_write_frequency(
+            freq_nhz, period_ns, raw_time_type, time_data)
 
-        # Auto-resolve the time encoding and time compression from the data when
-        # not explicitly provided: a raw gap array for regular data, a
-        # zstd-compressed gap array for structured deviations, and a
-        # zstd-compressed timestamp array for genuinely aperiodic data.
-        if encoded_time_type is None or t_compression is None:
-            _period_ns = period_ns if period_ns is not None else (10 ** 18) // freq_nhz_for_calc
-            if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
-                # For very irregular data, measure the gap-array and timestamp-array
-                # sizes on a sample with the real codec and keep the smaller one.
-                _measure = lambda: self._measure_time_encoding_sizes(time_data, _period_ns)
-                _et, _tc, _tcl = choose_time_encoding(
-                    _period_ns, times_ns=time_data, num_values=int(value_data.size),
-                    allow_timestamp=True, measure=_measure)
-            elif raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
-                _gap = np.asarray(time_data)
-                _et, _tc, _tcl = choose_time_encoding(
-                    _period_ns, num_gaps=_gap.size // 2, gap_durations=_gap[1::2],
-                    num_values=int(value_data.size), allow_timestamp=False)
-            else:
-                _et, _tc, _tcl = encoded_time_type, t_compression, t_compression_level
-            if encoded_time_type is None and _et is not None:
-                encoded_time_type = _et
-            if t_compression is None:
-                t_compression, t_compression_level = _tc, _tcl
+        # Explicitly requested encodings are honored exactly; omitted ones are
+        # auto-chosen from the data after any block merge.
+        requested_encoded_time_type = encoded_time_type
+        requested_encoded_value_type = encoded_value_type
+        raw_value_type, encoded_value_type = self._resolve_value_types(value_data, raw_value_type, encoded_value_type)
 
-        # check that value types make sense
-        if not ((raw_value_type == 1 and encoded_value_type == 3) or (raw_value_type == encoded_value_type)):
-            raise ValueError(
-                f"Cannot encode raw value type {VALUE_TYPES_STR[raw_value_type]} to encoded value type {VALUE_TYPES_STR[encoded_value_type]}")
-
-        # check that time types make sense
-        if not ((raw_time_type == 1 and encoded_time_type == 2) or (raw_time_type == encoded_time_type)):
+        if encoded_time_type is not None and \
+                not ((raw_time_type == 1 and encoded_time_type == 2) or (raw_time_type == encoded_time_type)):
             raise ValueError(
                 f"Cannot encode raw time type {TIME_TYPES_STR[raw_time_type]} to encoded time type {TIME_TYPES_STR[encoded_time_type]}")
 
-        # Set default interval index and ensure valid type.
+        # None means "no scaling", stored as m=1.0 / b=0.0 in block headers.
+        scale_m = 1.0 if scale_m is None else float(scale_m)
+        scale_b = 0.0 if scale_b is None else float(scale_b)
+
         interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
         assert interval_index_mode in allowed_interval_index_modes, \
             f"interval_index must be one of {allowed_interval_index_modes}"
 
-        # Force Python Integers
-        freq_nhz_for_calc = int(freq_nhz_for_calc)
-        time_0 = int(time_0)
-        measure_id = int(measure_id)
-        device_id = int(device_id)
+        time_0, measure_id, device_id = int(time_0), int(measure_id), int(device_id)
 
-        period_ns_for_calc = (10 ** 18) // freq_nhz if period_ns is None else period_ns
+        time_data, value_data, time_0 = self._sort_write_data(
+            raw_time_type, time_data, value_data, time_0, freq_nhz, period_ns, period_ns_for_calc)
 
-        # Presort the time data
-        if raw_time_type == 1:
-            if time_data.size != value_data.size:
-                raise ValueError("Time array must be of equal size as the Value array in time type 1.")
-            if not np.all(np.diff(time_data) >= 0):
-                # Sort the time_array and value_array based on the sorted indices of time_array
-                sorted_indices = np.argsort(time_data)
-                time_data = time_data[sorted_indices]
-                value_data = value_data[sorted_indices]
-
-        elif raw_time_type == 2:
-            if not np.all(time_data[1::2] >= -period_ns_for_calc):
-                # Convert gap_data into messages
-                message_starts_1, message_sizes_1 = reconstruct_messages(
-                    time_0, time_data, freq_nhz=freq_nhz, period_ns=period_ns, num_values=int(value_data.size))
-
-                # Sort both message lists + values, and copy values to not mess with the originals
-                value_data = value_data.copy()
-                sort_message_time_values(message_starts_1, message_sizes_1, value_data)
-                time_0 = message_starts_1[0]
-
-                # Convert back into gap data
-                time_data = create_gap_arr_from_variable_messages(message_starts_1, message_sizes_1,
-                                                                  freq_nhz=freq_nhz, period_ns=period_ns)
-        else:
-            raise ValueError("raw_time_type must be either 1 or 2")
-
-        # Calculate new intervals
         write_intervals = find_intervals(freq_nhz=freq_nhz, period_ns=period_ns, raw_time_type=raw_time_type,
                                          time_data=time_data, data_start_time=time_0, num_values=int(value_data.size))
+        # A `continuous` write collapses to a single interval bounded by the
+        # caller's own data, captured before any block merge so continuity is
+        # never asserted over time the caller's data does not cover.
+        continuous_bounds = (int(write_intervals[0][0]), int(write_intervals[-1][-1])) if continuous else None
 
-        # Resolve the interval-index gap tolerance. An explicit value always wins;
-        # otherwise pick a smart, generous default from the period, or collapse the
-        # whole call to a single interval when continuous.
-        if continuous:
-            gap_tolerance = choose_interval_gap_tolerance(
-                period_ns_for_calc, continuous=True,
-                total_span_ns=write_call_total_span_ns(write_intervals))
-        elif gap_tolerance is None:
-            gap_tolerance = choose_interval_gap_tolerance(period_ns_for_calc)
-        gap_tolerance = int(gap_tolerance)
-
-        # check overwrite setting
-        if OVERWRITE_SETTING_NAME not in self.settings_dict:
-            raise ValueError("Overwrite behavior not set. Please set it in the sql settings table")
-        overwrite_setting = self.settings_dict[OVERWRITE_SETTING_NAME]
-
-        # Initialize variables for handling overwriting
-        overwrite_file_dict, old_block_ids, old_file_list = None, None, None
-
-        # if overwrite is ignore there is no reason to calculate this stuff
-        if overwrite_setting != 'ignore':
-            write_intervals_o = Intervals(write_intervals)
-
-            # Get current intervals
-            current_intervals = self.get_interval_array(
-                measure_id, device_id=device_id, gap_tolerance_nano=0,
-                start=int(write_intervals[0][0]), end=int(write_intervals[-1][-1]))
-
-            current_intervals_o = Intervals(current_intervals)
-
-            # Check if there is an overlap between current and new intervals
-            if current_intervals_o.intersection(write_intervals_o).duration() > 0:
-                _LOGGER.debug(f"Overlap measure_id {measure_id}, device_id {device_id}, "
-                              f"existing intervals {current_intervals}, new intervals {write_intervals}")
-
-                # Handle overwriting based on the overwrite_setting
-                if overwrite_setting == 'overwrite':
-                    _LOGGER.debug(
-                        f"({measure_id}, {device_id}): value_data: {value_data} \n time_data: {time_data} \n write_intervals: {write_intervals} \n current_intervals: {current_intervals}")
-                    overwrite_file_dict, old_block_ids, old_file_list = self._overwrite_delete_data(
-                        measure_id, device_id, time_data, time_0, raw_time_type, value_data.size,
-                        freq_nhz=freq_nhz, period_ns=period_ns)
-                elif overwrite_setting == 'error':
-                    raise ValueError("Data to be written overlaps already ingested data.")
-                else:
-                    raise ValueError(f"Overwrite setting {overwrite_setting} not recognized.")
-
-        # default for block merging code (needed to check if we need to delete old stuff at the end)
+        # Merge writes smaller than one optimal block into the closest existing
+        # block, then recompute the intervals so they describe the merged whole.
         old_block = None
-        num_full_blocks = value_data.size // self.block.block_size
+        if merge_blocks and value_data.size < self.block.block_size:
+            old_block, time_data, value_data, time_0, raw_time_type = self._merge_small_write_with_closest_block(
+                measure_id, device_id, time_data, value_data, time_0, raw_time_type, raw_value_type,
+                freq_nhz=freq_nhz, period_ns=period_ns, scale_m=scale_m, scale_b=scale_b,
+                requested_encoded_time_type=requested_encoded_time_type,
+                requested_encoded_value_type=requested_encoded_value_type)
+            if old_block is not None:
+                write_intervals = find_intervals(
+                    freq_nhz=freq_nhz, period_ns=period_ns, raw_time_type=raw_time_type,
+                    time_data=time_data, data_start_time=time_0, num_values=int(value_data.size))
 
-        # only attempt to merge the data with another block if there isn't a full block worth of data
-        if num_full_blocks == 0 and merge_blocks:
-            # if the times are a gap array find the end time of the array so we can find the closest block
-            if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
-                # need to subtract one period since the function gives end_time+1 period
-                end_time = _calc_end_time_from_gap_data(values_size=value_data.size, gap_array=time_data,
-                                                        start_time=time_0, freq_nhz=freq_nhz, period_ns=period_ns)
-                if freq_nhz is not None:
-                    end_time -= freq_nhz_to_period_ns(freq_nhz)
-                else:
-                    end_time -= period_ns
-            elif raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
-                end_time = time_data[-1]
-            else:
-                raise NotImplementedError(
-                    f"Merging small blocks with other blocks is not supported for time type {raw_time_type}")
+        if continuous_bounds is not None:
+            write_intervals = collapse_continuous_write_intervals(write_intervals, *continuous_bounds)
 
-            # find the closest block to the data we are trying to insert
-            old_block, end_block = self.sql_handler.select_closest_block(measure_id, device_id, time_0, end_time)
+        # The observed typical sample spacing of the (possibly merged) data
+        # classifies waveform vs aperiodic for the tolerance and encoding choices.
+        # It is derived for gap arrays too, so the same aperiodic data gets the
+        # same interval gap tolerance whether written as segments or timestamps.
+        if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+            median_delta_ns = observed_median_delta_ns(time_data)
+        else:
+            median_delta_ns = observed_median_delta_from_gap_array(
+                time_data, value_data.size, period_ns_for_calc)
 
-            # if the new block goes on the end and the current end block is full then skip this and don't merge blocks
-            if old_block is not None and not (end_block and (old_block[8] > self.block.block_size)):
-                # get the file info for the block we are going to merge these values into
-                file_info = self.sql_handler.select_file(file_id=old_block[3])
-                # Read the encoded data from the files
-                encoded_bytes_old = self.file_api.read_file_list([old_block[1:6]],
-                                                                 filename_dict={file_info[0]: file_info[1]})
+        # The density warning only applies when the tolerance was auto-chosen;
+        # an explicit tolerance (e.g. 0 to record every gap) is the caller's call.
+        gap_tolerance_was_auto = gap_tolerance is None
+        gap_tolerance = self._resolve_gap_tolerance(gap_tolerance, period_ns_for_calc, median_delta_ns)
 
-                # decode the headers before they are edited by decode blocks so we know the original time type
-                header = self.block.decode_headers(encoded_bytes_old, np.array([0], dtype=np.uint64))
+        allow_timestamp = requested_encoded_time_type is None and median_delta_ns is not None \
+            and median_delta_ns > APERIODIC_MIN_PERIOD_NS
+        encoded_time_type, t_compression, t_compression_level = self._resolve_time_encoding(
+            encoded_time_type, t_compression, t_compression_level,
+            time_data, value_data, raw_time_type, period_ns_for_calc, allow_timestamp)
 
-                # make sure the time and value types of the block your merging with match
-                same_type = True
-                if header[0].t_encoded_type != encoded_time_type:
-                    same_type = False
-                    _LOGGER.warning(
-                        f"The time type ({TIME_TYPES_STR[encoded_time_type]}) you are trying to encode the times as "
-                        f"doesn't match the encoded time type ({TIME_TYPES_STR[header[0].t_encoded_type]}) of the block "
-                        f"you are trying to merge with.")
-                elif header[0].v_encoded_type != encoded_value_type:
-                    same_type = False
-                    _LOGGER.warning(
-                        f"The value type ({VALUE_TYPES_STR[encoded_value_type]}) you are trying to encode the values as "
-                        f"doesn't match the encoded value type ({VALUE_TYPES_STR[header[0].v_encoded_type]}) of the block "
-                        f"you are trying to merge with.")
-                elif header[0].v_raw_type != raw_value_type:
-                    same_type = False
-                    _LOGGER.warning(
-                        f"The raw value type ({VALUE_TYPES_STR[raw_value_type]}) doesn't match the raw value type "
-                        f"({VALUE_TYPES_STR[header[0].v_raw_type]}) of the block you are trying to merge with.")
-
-                # make sure the scale factors match. If they don't then don't merge the blocks
-                if same_type and header[0].scale_m == scale_m and header[0].scale_b == scale_b:
-                    # if the original time type of the old block is not the same as the time type of the data we are
-                    # trying to save, we need to make them the same
-                    if header[0].t_raw_type != raw_time_type:
-                        # if the new time data is a gap array make it into a timestamp array to match the old times
-                        if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
-                            try:
-                                time_data = create_timestamps_from_gap_data(values_size=value_data.size,
-                                                                            gap_array=time_data,
-                                                                            start_time=time_0, freq_nhz=freq_nhz,
-                                                                            period_ns=period_ns)
-                                raw_time_type = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
-                            except ValueError:
-                                freq_desc = f"{freq_nhz}" if freq_nhz is not None else f"period of {period_ns} ns"
-                                raise ValueError(f"You are trying to merge a gap array into a block that has the data "
-                                                 f"saved as a timestamp array and integer timestamps cannot be created "
-                                                 f"for your gap data with a frequency of {freq_desc}. Either set "
-                                                 f"merge_blocks to false or pass in the times as a timestamp array.")
-                        # if the new time data is a gap array convert it to a time array to match the old times
-                        elif raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
-                            time_data = create_gap_arr(time_data, 1, freq_nhz_for_calc)
-                            raw_time_type = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
-
-                    # Decode the data and get the values and the times we are going to merge this data with
-                    r_time, r_value, _ = self.block.decode_blocks(encoded_bytes_old, num_bytes_list=[old_block[5]],
-                                                                  analog=False, time_type=header[0].t_raw_type)
-
-                    # if raw value type is int and it's not int64 then cast it to int64 so it doesn't fail during merge
-                    if raw_value_type == 1 and value_data.dtype != np.int64:
-                        value_data = value_data.astype(np.int64)
-
-                    # merge the blocks
-                    if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
-                        time_data, value_data = merge_timestamp_data(r_value, r_time, value_data, time_data)
-                        time_0 = time_data[0]
-                    else:
-                        value_data, time_data, time_0 = merge_gap_data(r_value, r_time, header[0].start_n,
-                                                                       value_data, time_data, time_0,
-                                                                       freq_nhz=freq_nhz, period_ns=period_ns)
-                else:
-                    # if the scale factors are not the same don't merge and set old block to none, so we don't delete it
-                    old_block = None
-            else:
-                # if this is an end block and the closest block is full don't merge and set old block to none, so we don't delete it
-                old_block = None
-
-        # Encode the block(s)
         encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
             times=time_data, values=value_data, freq_nhz=freq_nhz, period_ns=period_ns, start_ns=time_0,
             raw_time_type=raw_time_type, raw_value_type=raw_value_type,
@@ -1136,50 +972,318 @@ class AtriumSDK:
             scale_m=scale_m, scale_b=scale_b,
             t_compression=t_compression, t_compression_level=t_compression_level)
 
-        # Write the encoded bytes to disk
         filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
 
-        # Use the header data to create rows to be inserted into the block_index and interval_index SQL tables
         block_data, interval_data = get_block_and_interval_data(
             measure_id, device_id, encoded_headers, byte_start_array, write_intervals,
             interval_gap_tolerance=gap_tolerance)
 
-        # if your new data was merged with an older block add the new info to mariadb and delete the old block
+        if gap_tolerance_was_auto and len(interval_data) > max(
+                INTERVAL_DENSITY_WARNING_MIN_ROWS, int(INTERVAL_DENSITY_WARNING_RATIO * value_data.size)):
+            _LOGGER.warning(
+                f"Write for measure {measure_id}, device {device_id} produced {len(interval_data)} interval rows "
+                f"for {value_data.size} values. The interval index is meant to give a coarse sense of where data "
+                f"exists; consider a larger gap_tolerance (or continuous=True) if this data is not truly gapped.")
+
         if old_block is not None:
             old_tsc_file_name = self.sql_handler.insert_merged_block_data(filename, block_data, old_block,
                                                                           interval_data, interval_index_mode,
                                                                           gap_tolerance)
-
-            # remove the tsc file from disk if it is no longer needed
+            # remove the old tsc file from disk if it no longer holds any blocks
             if old_tsc_file_name is not None:
                 self.file_api.remove(
                     self.file_api.to_abs_path(filename=old_tsc_file_name, measure_id=measure_id, device_id=device_id))
-
-        # If data was overwritten
-        elif overwrite_file_dict is not None:
-            # Add new data to SQL insertion data
-            overwrite_file_dict[filename] = (block_data, interval_data)
-
-            # Update SQL
-            old_file_ids = [file_id for file_id, filename in old_file_list]
-            _LOGGER.debug(
-                f"{measure_id}, {device_id}): overwrite_file_dict: {overwrite_file_dict}\n "
-                f"old_block_ids: {old_block_ids}\n old_file_ids: {old_file_ids}\n")
-            self.sql_handler.update_tsc_file_data(overwrite_file_dict, old_block_ids, old_file_ids, gap_tolerance)
-
-            # Delete old files
-            # for file_id, filename in old_file_list:
-            #     file_path = Path(self.file_api.to_abs_path(filename, measure_id, device_id))
-            #     file_path.unlink(missing_ok=True)
         else:
-            # Insert SQL rows
             self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, interval_index_mode,
                                                   gap_tolerance)
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
 
+    def _resolve_write_frequency(self, freq_nhz, period_ns, raw_time_type, time_data):
+        """Resolve the mutually exclusive freq_nhz/period_ns pair for a write,
+        detecting the period from timestamp data when neither is given. Returns
+        ``(freq_nhz, period_ns, freq_nhz_for_calc, period_ns_for_calc)`` where
+        exactly one of the first two is set (preserving which representation the
+        caller used) and the *_for_calc values are both always available."""
+        if freq_nhz is not None and period_ns is not None:
+            raise ValueError("freq_nhz and period_ns are mutually exclusive. Specify only one.")
+        if freq_nhz is None and period_ns is None:
+            if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+                # detect_period always returns a best-effort value (with warnings if uncertain)
+                period_ns = detect_period(time_data)
+            else:
+                raise ValueError("Either freq_nhz or period_ns must be specified.")
+
+        if period_ns is not None:
+            return None, period_ns, int((10 ** 18) // period_ns), period_ns
+        return freq_nhz, None, int(freq_nhz), (10 ** 18) // int(freq_nhz)
+
+    @staticmethod
+    def _resolve_value_types(value_data, raw_value_type, encoded_value_type):
+        """Fill in unspecified value types from the value dtype (ints are delta
+        encoded, floats stored as doubles) and validate the combination."""
+        if raw_value_type is None:
+            raw_value_type = V_TYPE_INT64 if np.issubdtype(value_data.dtype, np.integer) else V_TYPE_DOUBLE
+        if encoded_value_type is None:
+            encoded_value_type = V_TYPE_DELTA_INT64 if raw_value_type == V_TYPE_INT64 else V_TYPE_DOUBLE
+        if not ((raw_value_type == V_TYPE_INT64 and encoded_value_type == V_TYPE_DELTA_INT64)
+                or (raw_value_type == encoded_value_type)):
+            raise ValueError(
+                f"Cannot encode raw value type {VALUE_TYPES_STR[raw_value_type]} to encoded value type "
+                f"{VALUE_TYPES_STR[encoded_value_type]}")
+        return raw_value_type, encoded_value_type
+
+    @staticmethod
+    def _sort_write_data(raw_time_type, time_data, value_data, time_0, freq_nhz, period_ns, period_ns_for_calc):
+        """Ensure a write's data is in time order. Timestamp arrays are argsorted
+        together with their values; gap arrays with backwards jumps are expanded
+        into messages, sorted, and rebuilt (the originals are not modified).
+        Returns ``(time_data, value_data, time_0)``."""
+        if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+            if time_data.size != value_data.size:
+                raise ValueError("Time array must be of equal size as the Value array in time type 1.")
+            if not np.all(np.diff(time_data) >= 0):
+                sorted_indices = np.argsort(time_data)
+                time_data = time_data[sorted_indices]
+                value_data = value_data[sorted_indices]
+        elif raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
+            # a gap more negative than one period means a message starts before its predecessor
+            if not np.all(time_data[1::2] >= -period_ns_for_calc):
+                message_starts, message_sizes = reconstruct_messages(
+                    time_0, time_data, freq_nhz=freq_nhz, period_ns=period_ns, num_values=int(value_data.size))
+                value_data = value_data.copy()
+                sort_message_time_values(message_starts, message_sizes, value_data)
+                time_0 = int(message_starts[0])
+                time_data = create_gap_arr_from_variable_messages(message_starts, message_sizes,
+                                                                  freq_nhz=freq_nhz, period_ns=period_ns)
+        else:
+            raise ValueError("raw_time_type must be either 1 or 2")
+        return time_data, value_data, time_0
+
+    @staticmethod
+    def _resolve_gap_tolerance(gap_tolerance, period_ns, median_delta_ns):
+        """Resolve the interval-index gap tolerance for a write. An explicit value
+        always wins; otherwise the default from choose_interval_gap_tolerance is
+        widened for aperiodic signals so only gaps far outside the cluster of
+        observed arrival spacings split the index (see
+        widen_gap_tolerance_for_observed_spacing). Note ``continuous`` does not
+        touch the tolerance: it collapses the write's own intervals directly (see
+        collapse_continuous_write_intervals), and merging with *existing* data
+        still follows this tolerance."""
+        if gap_tolerance is None:
+            base = choose_interval_gap_tolerance(period_ns)
+            return int(widen_gap_tolerance_for_observed_spacing(base, median_delta_ns))
+        return int(gap_tolerance)
+
+    def _resolve_time_encoding(self, encoded_time_type, t_compression, t_compression_level,
+                               time_data, value_data, raw_time_type, period_ns, allow_timestamp):
+        """Fill in an unspecified time encoding and/or time compression from the
+        data (see choose_time_encoding): a raw gap array for regular data, a
+        zstd gap array for structured deviations, and a zstd timestamp array for
+        genuinely aperiodic data. ``allow_timestamp`` gates the last option: it
+        is only legal for timestamp-array input and only sensible for signals
+        slower than APERIODIC_MIN_PERIOD_NS, and gating it also skips the
+        sample-encode size measurement on the fast waveform path."""
+        if encoded_time_type is not None and t_compression is not None:
+            return encoded_time_type, t_compression, t_compression_level
+
+        if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+            # for slow, very irregular data, measure both encodings on a sample
+            # with the real codec and keep the smaller one
+            measure = (lambda: self._measure_time_encoding_sizes(time_data, period_ns)) if allow_timestamp else None
+            chosen_type, chosen_compression, chosen_level = choose_time_encoding(
+                period_ns, times_ns=time_data, num_values=int(value_data.size),
+                allow_timestamp=allow_timestamp, measure=measure)
+        else:
+            chosen_type, chosen_compression, chosen_level = choose_time_encoding(
+                period_ns, num_gaps=time_data.size // 2, gap_durations=time_data[1::2],
+                num_values=int(value_data.size), allow_timestamp=False)
+
+        if encoded_time_type is None:
+            encoded_time_type = chosen_type
+        if t_compression is None:
+            t_compression, t_compression_level = chosen_compression, chosen_level
+        return encoded_time_type, t_compression, t_compression_level
+
+    def _merge_small_write_with_closest_block(self, measure_id, device_id, time_data, value_data, time_0,
+                                              raw_time_type, raw_value_type, freq_nhz=None, period_ns=None,
+                                              scale_m=None, scale_b=None, requested_encoded_time_type=None,
+                                              requested_encoded_value_type=None):
+        """Try to merge a small write (less than one optimal block worth of values)
+        with the closest existing block for this measure/device.
+
+        Returns ``(old_block, time_data, value_data, time_0, raw_time_type)``.
+        When a merge happened, ``old_block`` is the block-index row whose data is
+        now contained in the returned arrays (the caller must delete it once the
+        merged block is written) and the returned arrays/raw time type describe
+        the combined data. When no merge happened, ``old_block`` is None and the
+        data is returned unchanged.
+
+        A merge requires the old block to hold the same kind of data: the same raw
+        value type (int/float) and the same scale factors. When the caller
+        explicitly requested encoded types, the old block must already use exactly
+        those encodings (legacy strict behavior); when the encodings are being
+        auto-chosen, they are re-chosen from the merged data after this returns,
+        so the old block's encodings don't restrict merging.
+
+        Duplicate timestamps are resolved by the dataset's merge conflict policy
+        (see _merge_conflict_policy): the new write's values win by default,
+        'protect' keeps the old block's values, and 'error' raises instead of
+        merging conflicting data.
+
+        THIS IS NOT THREAD SAFE: two processes merging into the same block at the
+        same time can lose one of the writes.
+        """
+        # Find the end time of the new data so we can find the closest block.
+        if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
+            # _calc_end_time_from_gap_data returns end_time + one period.
+            end_time = _calc_end_time_from_gap_data(values_size=value_data.size, gap_array=time_data,
+                                                    start_time=time_0, freq_nhz=freq_nhz, period_ns=period_ns)
+            end_time -= freq_nhz_to_period_ns(freq_nhz) if freq_nhz is not None else period_ns
+        else:
+            end_time = int(time_data[-1])
+
+        # find the closest block to the data we are trying to insert
+        old_block, end_block = self.sql_handler.select_closest_block(measure_id, device_id, time_0, end_time)
+        if old_block is None:
+            return None, time_data, value_data, time_0, raw_time_type
+
+        # If the new data goes on the end and the current end block is already full,
+        # start a fresh block instead of re-encoding a full one even bigger.
+        if end_block and old_block[8] >= self.block.block_size:
+            return None, time_data, value_data, time_0, raw_time_type
+
+        # get the file info for the block we are going to merge these values into
+        file_info = self.sql_handler.select_file(file_id=old_block[3])
+        # Read the encoded data from the files
+        encoded_bytes_old = self.file_api.read_file_list([old_block[1:6]],
+                                                         filename_dict={file_info[0]: file_info[1]})
+
+        # decode the headers before they are edited by decode blocks so we know the original time type
+        header = self.block.decode_headers(encoded_bytes_old, np.array([0], dtype=np.uint64))
+
+        # When the caller explicitly requested encoded types, only merge with a block
+        # that already uses them; re-encoding an old block into a different encoding
+        # than it was deliberately written with should not happen implicitly.
+        if requested_encoded_time_type is not None and header[0].t_encoded_type != requested_encoded_time_type:
+            _LOGGER.warning(
+                f"The time type ({TIME_TYPES_STR[requested_encoded_time_type]}) you are trying to encode the times as "
+                f"doesn't match the encoded time type ({TIME_TYPES_STR[header[0].t_encoded_type]}) of the block "
+                f"you are trying to merge with.")
+            return None, time_data, value_data, time_0, raw_time_type
+        if requested_encoded_value_type is not None and header[0].v_encoded_type != requested_encoded_value_type:
+            _LOGGER.warning(
+                f"The value type ({VALUE_TYPES_STR[requested_encoded_value_type]}) you are trying to encode the values "
+                f"as doesn't match the encoded value type ({VALUE_TYPES_STR[header[0].v_encoded_type]}) of the block "
+                f"you are trying to merge with.")
+            return None, time_data, value_data, time_0, raw_time_type
+
+        # The raw value type (int vs float) must match; a block can only hold one.
+        if header[0].v_raw_type != raw_value_type:
+            _LOGGER.warning(
+                f"The raw value type ({VALUE_TYPES_STR[raw_value_type]}) doesn't match the raw value type "
+                f"({VALUE_TYPES_STR[header[0].v_raw_type]}) of the block you are trying to merge with.")
+            return None, time_data, value_data, time_0, raw_time_type
+
+        # make sure the scale factors match. If they don't then don't merge the blocks
+        if not (header[0].scale_m == scale_m and header[0].scale_b == scale_b):
+            return None, time_data, value_data, time_0, raw_time_type
+
+        # if the original time type of the old block is not the same as the time type
+        # of the data we are trying to save, we need to make them the same
+        if header[0].t_raw_type != raw_time_type:
+            if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
+                # the old block is a timestamp array: expand the new gap array to timestamps
+                try:
+                    time_data = create_timestamps_from_gap_data(values_size=value_data.size, gap_array=time_data,
+                                                                start_time=time_0, freq_nhz=freq_nhz,
+                                                                period_ns=period_ns)
+                    raw_time_type = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
+                except ValueError:
+                    freq_desc = f"{freq_nhz}" if freq_nhz is not None else f"period of {period_ns} ns"
+                    raise ValueError(f"You are trying to merge a gap array into a block that has the data "
+                                     f"saved as a timestamp array and integer timestamps cannot be created "
+                                     f"for your gap data with a frequency of {freq_desc}. Either set "
+                                     f"merge_blocks to false or pass in the times as a timestamp array.")
+            else:
+                # the old block is a gap array: convert the new timestamp array to gaps
+                time_data = create_gap_arr(time_data, 1, freq_nhz=freq_nhz, period_ns=period_ns)
+                raw_time_type = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
+
+        # Decode the data and get the values and the times we are going to merge this data with
+        r_time, r_value, _ = self.block.decode_blocks(encoded_bytes_old, num_bytes_list=[old_block[5]],
+                                                      analog=False, time_type=header[0].t_raw_type)
+
+        # cast the new values to the dtype the old block decodes to (int64/float64)
+        # so the dtype check in merge_gap_data doesn't fail
+        if raw_value_type == V_TYPE_INT64 and value_data.dtype != np.int64:
+            value_data = value_data.astype(np.int64)
+        elif raw_value_type == V_TYPE_DOUBLE and value_data.dtype != np.float64:
+            value_data = value_data.astype(np.float64)
+
+        policy = self._merge_conflict_policy()
+        if policy == 'error':
+            self._raise_if_merge_conflicts(measure_id, device_id, r_time, r_value.size, int(header[0].start_n),
+                                           time_data, value_data.size, time_0, raw_time_type,
+                                           freq_nhz=freq_nhz, period_ns=period_ns)
+
+        # Merge the blocks. Both merge functions resolve duplicate timestamps in
+        # favor of the data set passed second, so the conflict policy is applied
+        # by argument order: new write second (wins) by default, old block second
+        # under 'protect'.
+        if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+            if policy == 'protect':
+                time_data, value_data = merge_timestamp_data(value_data, time_data, r_value, r_time)
+            else:
+                time_data, value_data = merge_timestamp_data(r_value, r_time, value_data, time_data)
+            time_0 = int(time_data[0])
+        else:
+            if policy == 'protect':
+                value_data, time_data, time_0 = merge_gap_data(value_data, time_data, time_0,
+                                                               r_value, r_time, header[0].start_n,
+                                                               freq_nhz=freq_nhz, period_ns=period_ns)
+            else:
+                value_data, time_data, time_0 = merge_gap_data(r_value, r_time, header[0].start_n,
+                                                               value_data, time_data, time_0,
+                                                               freq_nhz=freq_nhz, period_ns=period_ns)
+
+        return old_block, time_data, value_data, time_0, raw_time_type
+
+    @staticmethod
+    def _raise_if_merge_conflicts(measure_id, device_id, old_times, old_size, old_start, new_times, new_size,
+                                  new_start, raw_time_type, freq_nhz=None, period_ns=None):
+        """Enforce the 'error' merge conflict policy: raise if the new write
+        shares any timestamp with the block it is about to merge into. For gap
+        arrays the exact check needs integer timestamps; when those cannot be
+        constructed (imperfect frequency), overlapping time spans are treated as
+        a conflict conservatively."""
+        if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+            conflict = np.intersect1d(old_times, new_times).size > 0
+        else:
+            old_end = _calc_end_time_from_gap_data(old_size, old_times, old_start,
+                                                   freq_nhz=freq_nhz, period_ns=period_ns)
+            new_end = _calc_end_time_from_gap_data(new_size, new_times, new_start,
+                                                   freq_nhz=freq_nhz, period_ns=period_ns)
+            if new_start >= old_end or old_start >= new_end:
+                conflict = False
+            else:
+                try:
+                    old_ts = create_timestamps_from_gap_data(old_size, old_times, old_start,
+                                                             freq_nhz=freq_nhz, period_ns=period_ns)
+                    new_ts = create_timestamps_from_gap_data(new_size, new_times, new_start,
+                                                             freq_nhz=freq_nhz, period_ns=period_ns)
+                    conflict = np.intersect1d(old_ts, new_ts).size > 0
+                except ValueError:
+                    conflict = True
+        if conflict:
+            raise ValueError(
+                f"Data to be written for measure {measure_id}, device {device_id} shares timestamps with already "
+                f"ingested data and this dataset's overwrite setting is 'error'. Set the dataset's overwrite "
+                f"setting to 'overwrite' (new values win) or 'protect' (existing values win), or write "
+                f"non-overlapping data.")
+
     def write_buffer(self, max_values_per_measure_device=None, max_total_values_buffered=None, gap_tolerance=None,
-                     time_units=None, continuous=False):
+                     time_units=None, continuous=False, merge_blocks=True):
         """
         Create a buffer Context Object to batch incoming segments/signals until they hit some threshold,
         are manually flushed to the dataset, or are automatically flushed by exiting the context opened by this object.
@@ -1195,6 +1299,8 @@ class AtriumSDK:
         :param str time_units: (Optional) Unit for `gap_tolerance`, which can be one of ["s", "ms", "us", "ns"]. Must be specified if gap_tolerance is given.
         :param bool continuous: (Optional) If True, every flushed batch is treated as a single continuous interval in the
             interval index, regardless of internal gaps.
+        :param bool merge_blocks: (Optional, default True) If a flush is smaller than one optimal block, merge it with
+            the closest existing block. Pass False to always create new blocks (see write_data).
 
         Example:
 
@@ -1219,12 +1325,13 @@ class AtriumSDK:
             gap_tolerance=gap_tolerance,
             time_units=time_units,
             continuous=continuous,
+            merge_blocks=merge_blocks,
         )
 
     def write_segment(self, measure_id: int, device_id: int, segment_values: np.ndarray, start_time: float | int,
                       period: float = None, freq: float = None, time_units: str = None,
                       freq_units: str = None, scale_m: float = None, scale_b: float = None,
-                      continuous: bool = False):
+                      continuous: bool = False, merge_blocks: bool = True):
         """
         Write a single segment consisting of contiguous values starting at a specific time.
 
@@ -1242,6 +1349,8 @@ class AtriumSDK:
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b).
         :param bool continuous: (Optional) If True, treat this entire call as a single continuous interval in the
             interval index, regardless of internal gaps.
+        :param bool merge_blocks: (Optional, default True) If the write is smaller than one optimal block, merge it
+            with the closest existing block. Pass False to always create new blocks (see write_data).
 
         Example:
 
@@ -1278,14 +1387,15 @@ class AtriumSDK:
             freq_units=freq_units,
             scale_m=scale_m,
             scale_b=scale_b,
-            continuous=continuous
+            continuous=continuous,
+            merge_blocks=merge_blocks
         )
 
     def write_segments(self, measure_id: int, device_id: int, segments: List[np.ndarray],
                        start_times: List[float | int],
                        period: float = None, freq: float = None, time_units: str = None,
                        freq_units: str = None, scale_m: float = None, scale_b: float = None,
-                       continuous: bool = False):
+                       continuous: bool = False, merge_blocks: bool = True):
         """
         Write multiple segments consisting of value arrays and corresponding start times.
 
@@ -1307,6 +1417,8 @@ class AtriumSDK:
             It may be a single number or a list with one number per segment
         :param bool continuous: (Optional) If True, treat all data written in this call as a single continuous
             interval in the interval index, regardless of gaps between segments.
+        :param bool merge_blocks: (Optional, default True) If the write is smaller than one optimal block, merge it
+            with the closest existing block. Pass False to always create new blocks (see write_data).
 
         Example:
 
@@ -1386,13 +1498,14 @@ class AtriumSDK:
             write_segments.append(message_dict)
 
         if self._active_buffer is None:
-            # Write immediately to disk. interval_gap_tolerance_nano=None lets the
-            # _write helper pick the smart default from the data.
+            # Write immediately to disk
             self._write_segments_to_dataset(measure_id, device_id, write_segments,
-                                            interval_gap_tolerance_nano=None, continuous=continuous)
+                                            interval_gap_tolerance_nano=None, continuous=continuous,
+                                            merge_blocks=merge_blocks)
         else:
             # Push new segments to the buffer
-            self._active_buffer.push_segments(measure_id, device_id, write_segments, continuous=continuous)
+            self._active_buffer.push_segments(measure_id, device_id, write_segments, continuous=continuous,
+                                              merge_blocks=merge_blocks)
 
     def _measure_time_encoding_sizes(self, times_ns, period_ns, sample_size=ENCODE_SAMPLE_SIZE):
         """Encode a leading sample of a timestamp array both as a zstd gap array
@@ -1416,19 +1529,8 @@ class AtriumSDK:
                 sizes[ett] = None
         return sizes
 
-    def _resolve_interval_gap_tolerance(self, gap_tolerance_nano, period_ns, continuous, write_intervals):
-        """Resolve the interval-index gap tolerance for a write: an explicit value
-        wins, ``continuous`` collapses the call to one interval, and ``None`` picks
-        the smart default from the period. Shared by the segment/time-value paths."""
-        if continuous:
-            return choose_interval_gap_tolerance(
-                period_ns, continuous=True, total_span_ns=write_call_total_span_ns(write_intervals))
-        if gap_tolerance_nano is None:
-            return choose_interval_gap_tolerance(period_ns)
-        return int(gap_tolerance_nano)
-
     def _write_segments_to_dataset(self, measure_id, device_id, write_segments, interval_gap_tolerance_nano=None,
-                                   continuous=False):
+                                   continuous=False, merge_blocks=True):
         sorted_segments = sorted(write_segments, key=lambda x: x['start_time_nano'])
         message_start_epoch_array = []
         message_size_array = []
@@ -1460,48 +1562,15 @@ class AtriumSDK:
         value_data = np.concatenate([message['values'] for message in sorted_segments])
         time_0 = int(sorted_segments[0]['start_time_nano'])
 
-        # Calculate intervals
-        write_intervals = find_intervals(freq_nhz=freq_nhz, period_ns=period_ns, raw_time_type=2,
-                                         time_data=gap_data, data_start_time=time_0, num_values=int(value_data.size))
-
-        # Encode the block(s)
-        if np.issubdtype(value_data.dtype, np.integer):
-            raw_v_t = V_TYPE_INT64
-            encoded_v_t = V_TYPE_DELTA_INT64
-        else:
-            raw_v_t = V_TYPE_DOUBLE
-            encoded_v_t = V_TYPE_DOUBLE
-
-        # Choose the time encoding and compression from the gap structure. Segment
-        # data is naturally a gap array, so the choice is between a raw and a
-        # zstd-compressed gap array (allow_timestamp=False).
-        period_for_encoding = period_ns if period_ns is not None else (10 ** 18) // freq_nhz
-        encoded_t_t, t_compression, t_compression_level = choose_time_encoding(
-            period_for_encoding, num_gaps=gap_data.size // 2, gap_durations=gap_data[1::2],
-            num_values=int(value_data.size), allow_timestamp=False)
-
-        encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
-            times=gap_data, values=value_data, freq_nhz=freq_nhz, period_ns=period_ns, start_ns=time_0,
-            raw_time_type=2, raw_value_type=raw_v_t, encoded_time_type=encoded_t_t, encoded_value_type=encoded_v_t,
-            scale_m=scale_m, scale_b=scale_b,
-            t_compression=t_compression, t_compression_level=t_compression_level)
-
-        # Resolve the interval-index gap tolerance (smart default unless given).
-        interval_gap_tolerance_nano = self._resolve_interval_gap_tolerance(
-            interval_gap_tolerance_nano, period_for_encoding, continuous, write_intervals)
-
-        # Write the encoded bytes to disk
-        filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
-        # Use the header data to create rows to be inserted into the block_index and interval_index SQL tables
-        block_data, interval_data = get_block_and_interval_data(
-            measure_id, device_id, encoded_headers, byte_start_array, write_intervals,
-            interval_gap_tolerance=interval_gap_tolerance_nano)
-        # Insert new data into the SQL tables
-        self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, "fast", interval_gap_tolerance_nano)
+        self.write_data(measure_id, device_id, gap_data, value_data, freq_nhz=freq_nhz, period_ns=period_ns,
+                        time_0=time_0, raw_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
+                        scale_m=scale_m, scale_b=scale_b, interval_index_mode="merge",
+                        gap_tolerance=interval_gap_tolerance_nano, merge_blocks=merge_blocks, continuous=continuous)
 
     def write_time_value_pairs(self, measure_id: int, device_id: int, times: np.ndarray, values: np.ndarray,
                                period: float = None, freq: float = None, time_units: str = None, freq_units: str = None,
-                               scale_m: float = None, scale_b: float = None, continuous: bool = False):
+                               scale_m: float = None, scale_b: float = None, continuous: bool = False,
+                               merge_blocks: bool = True):
         """
         Write time-value pairs where each value corresponds to a specific timestamp.
 
@@ -1519,6 +1588,8 @@ class AtriumSDK:
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b). Default is 0.0.
         :param bool continuous: (Optional) If True, treat this entire call as a single continuous interval in the
             interval index, regardless of internal gaps.
+        :param bool merge_blocks: (Optional, default True) If the write is smaller than one optimal block, merge it
+            with the closest existing block. Pass False to always create new blocks (see write_data).
 
         Example:
 
@@ -1608,16 +1679,17 @@ class AtriumSDK:
         }
 
         if self._active_buffer is None:
-            # Ingest Immediately. interval_gap_tolerance_nano=None lets write_data
-            # pick the smart default from the (detected) period.
+            # Ingest Immediately
             self._write_time_value_pairs_to_dataset(measure_id, device_id, [data_dict],
-                                                    interval_gap_tolerance_nano=None, continuous=continuous)
+                                                    interval_gap_tolerance_nano=None, continuous=continuous,
+                                                    merge_blocks=merge_blocks)
         else:
             # Push data to buffer
-            self._active_buffer.push_time_value_pairs(measure_id, device_id, data_dict, continuous=continuous)
+            self._active_buffer.push_time_value_pairs(measure_id, device_id, data_dict, continuous=continuous,
+                                                      merge_blocks=merge_blocks)
 
     def _write_time_value_pairs_to_dataset(self, measure_id, device_id, data_dicts, interval_gap_tolerance_nano=None,
-                                           continuous=False):
+                                           continuous=False, merge_blocks=True):
         # Get parameters from first data dict
         freq_nhz = data_dicts[0]['freq_nhz']
         period_ns = data_dicts[0]['period_ns']
@@ -1637,9 +1709,13 @@ class AtriumSDK:
             if data['values'].dtype != data_dtype:
                 raise ValueError("Data dictionaries have inconsistent data types.")
 
-        # Combine times and values
-        all_times = np.concatenate([data['times'] for data in data_dicts])
-        all_values = np.concatenate([data['values'] for data in data_dicts])
+        # Combine times and values. np.unique keeps the first occurrence of each
+        # duplicate timestamp, so push order decides who wins, following the
+        # dataset's merge conflict policy: newest push first (newest wins) by
+        # default, oldest push first under 'protect'.
+        ordered_dicts = data_dicts if self._merge_conflict_policy() == 'protect' else list(reversed(data_dicts))
+        all_times = np.concatenate([data['times'] for data in ordered_dicts])
+        all_values = np.concatenate([data['values'] for data in ordered_dicts])
 
         # Sort times and values, remove duplicates
         times, sorted_time_indices = np.unique(all_times, return_index=True)
@@ -1660,13 +1736,11 @@ class AtriumSDK:
             raw_v_t = V_TYPE_DOUBLE
             encoded_v_t = V_TYPE_DOUBLE
 
-        # Leave encoded_time_type unset so write_data chooses the time encoding and
-        # compression (gap/timestamp) from the data; forward the gap tolerance
-        # (None => smart default) and the continuous flag.
+        # encoded_time_type is left unset so write_data auto-chooses the time encoding.
         self.write_data(measure_id, device_id, times, values, freq_nhz=freq_nhz, period_ns=period_ns, time_0=time_0,
                         raw_time_type=1, raw_value_type=raw_v_t, encoded_value_type=encoded_v_t,
-                        scale_m=scale_m, scale_b=scale_b, interval_index_mode="fast",
-                        gap_tolerance=interval_gap_tolerance_nano, merge_blocks=False, continuous=continuous)
+                        scale_m=scale_m, scale_b=scale_b, interval_index_mode="merge",
+                        gap_tolerance=interval_gap_tolerance_nano, merge_blocks=merge_blocks, continuous=continuous)
 
     def load_device(self, device_id: int, measure_id: int|List[int] = None):
         """
@@ -5497,12 +5571,10 @@ of DatasetIterator objects depending on the value of num_iterators.
         decoded_token = _validate_bearer_token(self.token, self.auth_config)
         self.token_expiry = decoded_token['exp']
 
-        # if the user is using a .env file to store the token
+        # if the user is using a .env file to store the token, persist the new
+        # one there for future processes (self.token is authoritative in this one)
         if self.dot_env_loaded:
-            # change the api token in the .env file
             set_key("./.env", "ATRIUMDB_API_TOKEN", token_data['access_token'])
-            # load the new environment variables into the OS
-            load_dotenv(dotenv_path="./.env", override=True)
 
         _LOGGER.debug("Expired token refreshed")
 
@@ -5537,124 +5609,24 @@ of DatasetIterator objects depending on the value of num_iterators.
         settings = self.sql_handler.select_all_settings()
         return {setting[0]: setting[1] for setting in settings}
 
-    def _overwrite_delete_data(self, measure_id, device_id, new_time_data, time_0, raw_time_type, values_size,
-                               freq_nhz=None, period_ns=None):
-        # Make assumption for analog
-        analog = False
+    def _merge_conflict_policy(self):
+        """How block merging resolves duplicate timestamps between a new write
+        and existing data, from the dataset's 'overwrite' setting:
 
-        # Handle mutually exclusive freq_nhz and period_ns
-        if freq_nhz is not None and period_ns is not None:
-            raise ValueError("freq_nhz and period_ns are mutually exclusive. Specify only one.")
-        if freq_nhz is None and period_ns is None:
-            raise ValueError("Either freq_nhz or period_ns must be specified.")
+        * ``'overwrite'`` (and the legacy default ``'ignore'``, which historically
+          meant "skip overlap handling entirely") - the new write's values win.
+        * ``'protect'`` - the existing data's values win.
+        * ``'error'`` - refuse (raise) a merge whose write shares timestamps with
+          the block it would merge into.
 
-        # Calculate the period in nanoseconds
-        if period_ns is not None:
-            period_ns_calc = period_ns
-        else:
-            period_ns_calc = int((10 ** 18) // freq_nhz)
-
-        # Check if the input data is already a timestamp array
-        if raw_time_type == 1:
-            end_time_ns = int(new_time_data[-1])
-        # Check if the input data is a gap array, and convert it to a timestamp array
-        elif raw_time_type == 2:
-            end_time_ns = time_0 + (values_size * period_ns_calc) + np.sum(new_time_data[1::2])
-            new_time_data = np.arange(time_0, end_time_ns, period_ns_calc, dtype=np.int64)
-        else:
-            raise ValueError("Overwrite only supported for gap arrays and timestamp arrays.")
-
-        # Initialize dictionary to store overwritten files
-        overwrite_file_dict = {}
-        # Initialize list to store all old file blocks (The blocks before this lates command)
-        all_old_file_blocks = []
-
-        # Get the list of old blocks
-        old_block_list = self.sql_handler.select_blocks(measure_id, int(time_0), end_time_ns, device_id)
-
-        # Get the dictionary of old file IDs and their corresponding filenames
-        old_file_id_dict = self.get_filename_dict(list(set([row[3] for row in old_block_list])))
-
-        # Iterate through the old files
-        for file_id, filename in old_file_id_dict.items():
-            # Get the list of blocks for the current file
-            file_block_list = self.sql_handler.select_blocks_from_file(file_id)
-            # Extend the list of all old file blocks with the current file's blocks
-            all_old_file_blocks.extend(file_block_list)
-
-            # Condense the byte read list
-            read_list = condense_byte_read_list(file_block_list)
-
-            # Read the data from the old files
-            encoded_bytes = self.file_api.read_file_list(read_list, old_file_id_dict)
-
-            # Get the number of bytes for each block
-            num_bytes_list = [row[5] for row in file_block_list]
-
-            # Get the start and end times for the current file
-            start_time_n = file_block_list[0][6]
-            end_time_n = file_block_list[-1][7] * 2  # Just don't truncate output
-
-            # Decode the data from the old files
-            old_times, old_values, old_headers = self.block.decode_blocks(encoded_bytes, num_bytes_list, analog=analog,
-                                                                          time_type=1)
-            old_times, old_values = sort_data(old_times, old_values, old_headers, start_time_n, end_time_n,
-                                              allow_duplicates=False)
-            # Convert old times to int64
-            old_times = old_times.astype(np.int64)
-
-            # Get the mask for the difference between old and new times
-            diff_mask = np.in1d(old_times, new_time_data, assume_unique=False, invert=True)
-
-            # If there is any difference, process it
-            if np.any(diff_mask):
-                diff_times, diff_values = old_times[diff_mask], old_values[diff_mask]
-
-                # Get the scale factors and data types from the headers
-                header_freq_nhz = old_headers[0].freq_nhz
-                scale_m = old_headers[0].scale_m
-                scale_b = old_headers[0].scale_b
-                raw_value_type = old_headers[0].v_raw_type
-                encoded_value_type = old_headers[0].v_encoded_type
-
-                # Set the raw and encoded time types
-                raw_time_type = T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
-                encoded_time_type = T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO
-
-                # Encode the difference data - pass appropriate parameter
-                if freq_nhz is not None:
-                    encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(
-                        times=diff_times, values=diff_values, freq_nhz=header_freq_nhz, start_ns=diff_times[0],
-                        raw_time_type=raw_time_type,
-                        raw_value_type=raw_value_type,
-                        encoded_time_type=encoded_time_type,
-                        encoded_value_type=encoded_value_type,
-                        scale_m=scale_m,
-                        scale_b=scale_b)
-                else:
-                    # Calculate period from header freq for consistency
-                    header_period_ns = int((10 ** 18) // header_freq_nhz)
-                    encoded_bytes, encode_headers, byte_start_array = self.block.encode_blocks(
-                        times=diff_times, values=diff_values, period_ns=header_period_ns, start_ns=diff_times[0],
-                        raw_time_type=raw_time_type,
-                        raw_value_type=raw_value_type,
-                        encoded_time_type=encoded_time_type,
-                        encoded_value_type=encoded_value_type,
-                        scale_m=scale_m,
-                        scale_b=scale_b)
-
-                # Write the encoded difference data to a new file
-                diff_filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
-
-                # Get the block and interval data for the encoded difference data
-                block_data, interval_data = get_block_and_interval_data(
-                    measure_id, device_id, encode_headers, byte_start_array, [])
-
-                # Update the overwrite_file_dict with the new file and its associated data
-                overwrite_file_dict[diff_filename] = (block_data, interval_data)
-
-            # Return the dictionary of overwritten files, the list of old block IDs, and the list of old file ID pairs
-        return overwrite_file_dict, [row[0] for row in old_block_list], list(old_file_id_dict.items())
+        The policy is enforced where deduplication happens: writes smaller than
+        one block that merge with an existing block, and duplicate pushes within
+        one buffer flush. Overlapping writes of a full block or more never merge,
+        so both copies are stored regardless of the policy."""
+        setting = getattr(self, 'settings_dict', None) and self.settings_dict.get(OVERWRITE_SETTING_NAME)
+        if setting in ('protect', 'error'):
+            return setting
+        return 'overwrite'
 
     def get_data_from_tsc_file(self, file_path, analog=True, time_type=1, sort=True, allow_duplicates=True):
         if self.metadata_connection_type == "api":

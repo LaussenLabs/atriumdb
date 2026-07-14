@@ -392,10 +392,13 @@ def _test_comprehensive(db_type, dataset_location, connection_params):
     total_values = sum(block[8] for block in blocks)
     assert total_values == 173, f"Expected 173 values after write_buffer, found {total_values}"
 
-    # Verify that all blocks are at most target_block_size
+    # Verify that no block is oversized. The encoder splits a write into
+    # size // block_size blocks, so the last block of a write (including a
+    # small write merged into an existing block, which buffered segment writes
+    # now do by default) can legitimately hold up to 2 * block_size - 1 values.
     actual_num_values = [block[8] for block in blocks]
-    assert all(nv <= target_block_size for nv in actual_num_values), \
-        f"All blocks should be <= {target_block_size} values, got {actual_num_values}"
+    assert all(nv <= 2 * target_block_size - 1 for nv in actual_num_values), \
+        f"All blocks should be < {2 * target_block_size} values, got {actual_num_values}"
 
     # Verify full data integrity: all 173 values present
     all_start_times_ns = [block[6] for block in blocks]

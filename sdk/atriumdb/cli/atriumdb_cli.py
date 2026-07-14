@@ -35,7 +35,6 @@ from atriumdb.transfer.adb.dataset import transfer_data
 _LOGGER = logging.getLogger(__name__)
 
 dotenv_path = "./.env"
-load_dotenv(dotenv_path=dotenv_path, override=True)
 
 cli_help_text = """
 The atriumdb command is a command line interface for the Atrium database, 
@@ -429,6 +428,15 @@ cli.add_command(atriumdb_device)
 cli.add_command(login)
 cli.add_command(refresh_token)
 cli.add_command(config)
+
+
+def main():
+    """Console-script entry point. The .env load lives here rather than at
+    module import so that merely importing this module does not overwrite the
+    caller's environment; values from ./.env take precedence over the inherited
+    environment, matching the CLI's historical behavior."""
+    load_dotenv(dotenv_path=dotenv_path, override=True)
+    cli()
 
 
 def set_env_var_in_dotenv(name, value):

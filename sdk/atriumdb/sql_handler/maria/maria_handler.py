@@ -40,7 +40,8 @@ from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query
     maria_encounter_create_query, mariadb_device_create_query, maria_insert_adb_source, \
     mariadb_log_hl7_adt_create_query, mariadb_current_census_view, mariadb_device_patient_table, \
     maria_encounter_insert_trigger, maria_encounter_update_trigger, maria_encounter_delete_trigger, \
-    maria_insert_interval_stored_procedure, maria_patient_history_create_query, mariadb_label_set_create_query, \
+    maria_insert_interval_stored_procedure, maria_insert_interval_union_stored_procedure, \
+    maria_patient_history_create_query, mariadb_label_set_create_query, \
     mariadb_label_create_query, mariadb_label_source_create_query
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
 from atriumdb.sql_handler.sql_handler import SQLHandler
@@ -124,6 +125,33 @@ class MariaDBHandler(SQLHandler):
         self.no_pool = no_pool
         self.connection_manager = None if no_pool else SingleConnectionManager(
             validation_interval=validation_interval, **self.connection_params)
+
+        # Whether the dataset has the insert_interval_union stored procedure
+        # (created by create_schema since the smart-write-defaults work). Datasets
+        # created before it fall back to the legacy insert_interval procedure the
+        # first time the union procedure is found missing.
+        self._interval_union_proc_available = True
+
+    def _call_insert_interval(self, cursor, interval: Dict, gap_tolerance: int):
+        """Insert one interval row in "merge" mode. Prefers insert_interval_union
+        (unions ALL rows bridged within gap_tolerance - same semantics as the
+        SQLite handler, with the identical append fast path); falls back to the
+        legacy insert_interval (merges with at most one row) on datasets that
+        predate the union procedure. A missing-procedure error is a statement
+        level error in MariaDB, so retrying within the same transaction is safe."""
+        params = (interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                  interval["end_time_n"], gap_tolerance)
+        if self._interval_union_proc_available:
+            try:
+                cursor.callproc("insert_interval_union", params)
+                return
+            except (ProgrammingError, mariadb.OperationalError) as e:
+                # 1305 = PROCEDURE does not exist (the connector surfaces it as
+                # OperationalError); anything else is a real failure.
+                if getattr(e, "errno", None) != 1305:
+                    raise
+                self._interval_union_proc_available = False
+        cursor.callproc("insert_interval", params)
 
     def maria_connect(self):
         return mariadb.connect(**self.connection_params)
@@ -225,6 +253,7 @@ class MariaDBHandler(SQLHandler):
 
         # Stored Procedures
         cursor.execute(maria_insert_interval_stored_procedure)
+        cursor.execute(maria_insert_interval_union_stored_procedure)
 
         conn.commit()
         cursor.close()
@@ -397,8 +426,8 @@ class MariaDBHandler(SQLHandler):
                 cursor.executemany(maria_insert_interval_index_query, interval_tuples)
 
             elif interval_index_mode == "merge":
-                [cursor.callproc("insert_interval", (interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"], gap_tolerance)) for interval in interval_data]
+                for interval in interval_data:
+                    self._call_insert_interval(cursor, interval, gap_tolerance)
             elif interval_index_mode == "disable":
                 # Do Nothing
                 pass
@@ -422,10 +451,8 @@ class MariaDBHandler(SQLHandler):
                 cursor.executemany(maria_insert_block_query, block_tuples)
 
                 # insert into interval_index
-                if len(interval_data) > 0:
-                    [cursor.callproc("insert_interval",
-                                     (interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                      interval["end_time_n"], gap_tolerance)) for interval in interval_data]
+                for interval in interval_data:
+                    self._call_insert_interval(cursor, interval, gap_tolerance)
 
             # delete old block data
             cursor.executemany(maria_delete_block_query, [(block_id,) for block_id in block_ids_to_delete])
@@ -456,8 +483,8 @@ class MariaDBHandler(SQLHandler):
                 cursor.executemany(maria_insert_interval_index_query, interval_tuples)
 
             elif interval_index_mode == "merge":
-                [cursor.callproc("insert_interval", (interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"], gap_tolerance)) for interval in interval_data]
+                for interval in interval_data:
+                    self._call_insert_interval(cursor, interval, gap_tolerance)
             elif interval_index_mode == "disable":
                 # Do Nothing
                 pass

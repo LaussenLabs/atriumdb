@@ -319,6 +319,70 @@ BEGIN
 END;
 """
 
+maria_insert_interval_union_stored_procedure = """
+CREATE PROCEDURE IF NOT EXISTS insert_interval_union(
+    IN p_measure_id INT UNSIGNED,
+    IN p_device_id INT UNSIGNED,
+    IN p_start_time_n BIGINT,
+    IN p_end_time_n BIGINT,
+    IN p_tolerance BIGINT
+)
+BEGIN
+    -- Like insert_interval, but with full union semantics: a new interval that
+    -- bridges SEVERAL existing rows within the tolerance collapses them into a
+    -- single row (insert_interval only merged with one row per call, so
+    -- backfills could leave overlapping rows behind).
+    --
+    -- The append fast path is identical to insert_interval: the vast majority
+    -- of writes carry the latest-timed data, which is a single O(1) MAX() index
+    -- seek on (measure_id, device_id, end_time_n DESC) followed by a plain
+    -- INSERT.
+    DECLARE max_end_time_n BIGINT;
+    DECLARE overlap_count INT;
+    DECLARE keep_id INT;
+    DECLARE union_start_n BIGINT;
+    DECLARE union_end_n BIGINT;
+
+    SELECT MAX(end_time_n) INTO max_end_time_n FROM interval_index WHERE device_id = p_device_id AND measure_id = p_measure_id;
+
+    -- If new start time is greater than the max end time there will be no overlapping interval match so don't check
+    IF max_end_time_n IS NULL OR p_start_time_n > (max_end_time_n + p_tolerance) THEN
+        -- Insert the new row into the table
+        INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n)
+        VALUES (p_measure_id, p_device_id, p_start_time_n, p_end_time_n);
+    ELSE
+        -- Find the union of ALL existing rows within tolerance of the new interval
+        SELECT COUNT(*), MIN(id), MIN(start_time_n), MAX(end_time_n)
+        INTO overlap_count, keep_id, union_start_n, union_end_n
+        FROM interval_index
+        WHERE device_id = p_device_id AND measure_id = p_measure_id
+        AND p_start_time_n <= (end_time_n + p_tolerance) AND p_end_time_n >= (start_time_n - p_tolerance);
+
+        IF overlap_count = 0 THEN
+            -- Insert the new row into the table
+            INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n)
+            VALUES (p_measure_id, p_device_id, p_start_time_n, p_end_time_n);
+        ELSE
+            -- Remove all bridged rows except the one we keep
+            IF overlap_count > 1 THEN
+                DELETE FROM interval_index
+                WHERE device_id = p_device_id AND measure_id = p_measure_id
+                AND p_start_time_n <= (end_time_n + p_tolerance) AND p_end_time_n >= (start_time_n - p_tolerance)
+                AND id != keep_id;
+            END IF;
+
+            -- Widen the kept row to the union (skip the write when nothing changes)
+            IF overlap_count > 1 OR p_start_time_n < union_start_n OR p_end_time_n > union_end_n THEN
+                UPDATE interval_index
+                SET start_time_n = LEAST(union_start_n, p_start_time_n),
+                    end_time_n = GREATEST(union_end_n, p_end_time_n)
+                WHERE id = keep_id;
+            END IF;
+        END IF;
+    END IF;
+END;
+"""
+
 mariadb_label_set_create_query = """
 CREATE TABLE IF NOT EXISTS label_set (
 id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

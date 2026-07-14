@@ -5,7 +5,7 @@ from atriumdb.adb_functions import time_unit_options
 
 class WriteBuffer:
     def __init__(self, sdk, max_values_per_measure_device=None, max_total_values_buffered=None, gap_tolerance=None,
-                 time_units=None, continuous=False):
+                 time_units=None, continuous=False, merge_blocks=True):
         self.sdk = sdk
         self.max_values_per_measure_device = max_values_per_measure_device \
             if max_values_per_measure_device is not None else sdk.block.block_size * 100
@@ -27,6 +27,11 @@ class WriteBuffer:
         # When True, every flushed batch is treated as a single continuous interval.
         self.continuous = continuous
 
+        # When True (the default), small flushes are merged with the closest
+        # existing block. A single push with merge_blocks=False disables merging
+        # for that sub-buffer's flush.
+        self.merge_blocks = merge_blocks
+
         self.sub_buffers = {}  # Key: (measure_id, device_id), Value: sub-buffer dict
         self.total_values_buffered = 0
 
@@ -46,14 +51,16 @@ class WriteBuffer:
                 'total_values_buffered': 0,
                 'last_pushed_time': time.time(),
                 'continuous': self.continuous,
+                'merge_blocks': self.merge_blocks,
             }
         return self.sub_buffers[key]
 
-    def push_segments(self, measure_id, device_id, message_list, continuous=False):
+    def push_segments(self, measure_id, device_id, message_list, continuous=False, merge_blocks=True):
         key = (measure_id, device_id)
         sub_buffer = self._get_sub_buffer(key)
         sub_buffer['buffered_messages'].extend(message_list)
         sub_buffer['continuous'] = sub_buffer['continuous'] or continuous
+        sub_buffer['merge_blocks'] = sub_buffer['merge_blocks'] and merge_blocks
         num_values = sum(m['values'].size for m in message_list)
         sub_buffer['total_values_buffered'] += num_values
         self.total_values_buffered += num_values
@@ -69,11 +76,12 @@ class WriteBuffer:
             # Flush oldest sub-buffer that has values
             self.flush_oldest_sub_buffer()
 
-    def push_time_value_pairs(self, measure_id, device_id, data_dict, continuous=False):
+    def push_time_value_pairs(self, measure_id, device_id, data_dict, continuous=False, merge_blocks=True):
         key = (measure_id, device_id)
         sub_buffer = self._get_sub_buffer(key)
         sub_buffer['buffered_time_value_pairs'].append(data_dict)
         sub_buffer['continuous'] = sub_buffer['continuous'] or continuous
+        sub_buffer['merge_blocks'] = sub_buffer['merge_blocks'] and merge_blocks
         num_values = data_dict['values'].size
         sub_buffer['total_values_buffered'] += num_values
         self.total_values_buffered += num_values
@@ -96,15 +104,18 @@ class WriteBuffer:
 
         measure_id, device_id = key
         continuous = sub_buffer['continuous']
+        merge_blocks = sub_buffer['merge_blocks']
         if sub_buffer['buffered_messages']:
             self.sdk._write_segments_to_dataset(
                 measure_id, device_id, sub_buffer['buffered_messages'],
-                interval_gap_tolerance_nano=self.gap_tolerance_nano, continuous=continuous)
+                interval_gap_tolerance_nano=self.gap_tolerance_nano, continuous=continuous,
+                merge_blocks=merge_blocks)
 
         if sub_buffer['buffered_time_value_pairs']:
             self.sdk._write_time_value_pairs_to_dataset(
                 measure_id, device_id, sub_buffer['buffered_time_value_pairs'],
-                interval_gap_tolerance_nano=self.gap_tolerance_nano, continuous=continuous)
+                interval_gap_tolerance_nano=self.gap_tolerance_nano, continuous=continuous,
+                merge_blocks=merge_blocks)
 
 
         self.total_values_buffered -= sub_buffer['total_values_buffered']

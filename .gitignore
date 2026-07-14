@@ -183,3 +183,5 @@ cython_debug/
 /sandbox.py
 /sdk/tests/test_datasets/
 /sdk/tests/wfdb_data/
+
+tsc-lib/cmake-build-*/

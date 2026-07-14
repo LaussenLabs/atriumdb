@@ -99,14 +99,11 @@ def find_intervals(freq_nhz=None, raw_time_type=None, time_data=None, data_start
         current_period_ns = period_ns
 
     if raw_time_type == TIME_TYPES['TIME_ARRAY_INT64_NS']:
-        intervals = [[time_data[0], 0]]
-        time_deltas = time_data[1:] - time_data[:-1]
-        for time_arr_i in range(time_data.size - 1):
-            if time_deltas[time_arr_i] > current_period_ns:
-                intervals[-1][-1] = time_data[time_arr_i] + current_period_ns
-                intervals.append([time_data[time_arr_i + 1], 0])
-
-        intervals[-1][-1] = time_data[-1] + current_period_ns
+        time_data = np.asarray(time_data)
+        gap_indices = np.nonzero(np.diff(time_data) > current_period_ns)[0]
+        starts = np.concatenate(([time_data[0]], time_data[gap_indices + 1]))
+        ends = np.concatenate((time_data[gap_indices], [time_data[-1]])) + current_period_ns
+        intervals = np.column_stack((starts, ends)).tolist()
 
     elif raw_time_type == TIME_TYPES['START_TIME_NUM_SAMPLES']:
         intervals = [[time_data[0], time_data[0] + ((time_data[1] - 1) * current_period_ns)]]
@@ -380,6 +377,27 @@ def detect_period(times: np.ndarray, threshold_ratio: float = 0.3):
 # and DEFAULT_GAP_TOLERANCE_FLOOR_NS, so jitter and brief dropouts do not fragment the index.
 DEFAULT_GAP_TOLERANCE_PERIODS = 10
 DEFAULT_GAP_TOLERANCE_FLOOR_NS = 200_000_000  # 200 ms
+# Ceiling for the auto-chosen tolerance (1 year). No real signal needs more, and
+# a bogus declared period (e.g. a frequency accidentally given in the wrong
+# unit) must not produce a tolerance that overflows the SQL layer's signed
+# 64-bit tolerance parameter.
+DEFAULT_GAP_TOLERANCE_CEILING_NS = 366 * 24 * 3600 * 1_000_000_000
+# A write producing more than this many interval rows per value logs a warning:
+# the interval index is meant to give a coarse sense of where data exists, and a
+# high rows-per-value ratio means the chosen gap tolerance doesn't fit the data.
+# The absolute floor keeps small writes with a few genuine gaps from warning.
+INTERVAL_DENSITY_WARNING_RATIO = 0.1
+INTERVAL_DENSITY_WARNING_MIN_ROWS = 16
+# Observed-spacing cutoff (5 Hz) separating waveforms from aperiodic-capable
+# signals. When the *median* spacing between consecutive samples is faster than
+# this, the signal is a waveform: frequent deviations are message jitter or
+# floating-point noise from earlier in the pipeline, so timestamp encoding is
+# never chosen (a compressed gap array is smaller and safer) and the interval
+# tolerance stays period-based. Slower signals may be genuinely aperiodic. The
+# observed median is used rather than the declared freq/period because for
+# aperiodic data the declared period is often meaningless (e.g. a detected
+# modal delta), while the median reflects the real arrival rate.
+APERIODIC_MIN_PERIOD_NS = 200_000_000  # 200 ms
 
 # Defaults for the smart time encoding (see choose_time_encoding).
 # At or below this many gaps, keep a raw, uncompressed gap array.
@@ -403,9 +421,9 @@ _C_NONE = COMPRESSION_TYPES['NONE']
 _C_ZSTD = COMPRESSION_TYPES['ZSTD']
 
 
-def choose_interval_gap_tolerance(period_ns, *, continuous=False, total_span_ns=None,
-                                  gap_tolerance_periods=DEFAULT_GAP_TOLERANCE_PERIODS,
-                                  floor_ns=DEFAULT_GAP_TOLERANCE_FLOOR_NS):
+def choose_interval_gap_tolerance(period_ns, *, gap_tolerance_periods=DEFAULT_GAP_TOLERANCE_PERIODS,
+                                  floor_ns=DEFAULT_GAP_TOLERANCE_FLOOR_NS,
+                                  ceiling_ns=DEFAULT_GAP_TOLERANCE_CEILING_NS):
     """Pick a default interval-index gap tolerance (in nanoseconds) when the
     caller did not specify one.
 
@@ -418,24 +436,18 @@ def choose_interval_gap_tolerance(period_ns, *, continuous=False, total_span_ns=
     jitter and short dropouts while still recording genuine outages separately.
 
     :param int period_ns: Detected/declared sampling period in nanoseconds.
-    :param bool continuous: If True, treat the whole write as a single interval.
-    :param int total_span_ns: Span (last - first sample) of the write. Used to
-        bound the tolerance when ``continuous`` so a single call collapses to a
-        single interval without bridging unrelated, distant existing data.
     :param int gap_tolerance_periods: Multiplier applied to ``period_ns`` for the
         default tolerance (defaults to DEFAULT_GAP_TOLERANCE_PERIODS).
     :param int floor_ns: Minimum tolerance in nanoseconds; also used when
         ``period_ns`` is unknown (defaults to DEFAULT_GAP_TOLERANCE_FLOOR_NS).
+    :param int ceiling_ns: Maximum tolerance in nanoseconds, so a misdeclared
+        period cannot overflow the SQL layer's signed 64-bit tolerance
+        (defaults to DEFAULT_GAP_TOLERANCE_CEILING_NS).
     :rtype: int
     """
-    if continuous:
-        # Merge every internal gap in this call, but no further than its own span.
-        if total_span_ns is not None and total_span_ns > 0:
-            return int(total_span_ns)
-        return 1 << 62
     if period_ns is None or period_ns <= 0:
         return int(floor_ns)
-    return int(max(int(gap_tolerance_periods) * int(period_ns), int(floor_ns)))
+    return int(min(max(int(gap_tolerance_periods) * int(period_ns), int(floor_ns)), int(ceiling_ns)))
 
 
 def choose_time_encoding(period_ns, *, times_ns=None, num_gaps=None, gap_durations=None,
@@ -526,11 +538,92 @@ def choose_time_encoding(period_ns, *, times_ns=None, num_gaps=None, gap_duratio
     return _T_GAP, _C_ZSTD, DEFAULT_TIME_COMPRESSION_LEVEL
 
 
-def write_call_total_span_ns(write_intervals):
-    """Total nanosecond span covered by a list of [start, end] write intervals."""
-    if not len(write_intervals):
-        return 0
-    return int(write_intervals[-1][-1]) - int(write_intervals[0][0])
+def collapse_continuous_write_intervals(write_intervals, bounds_start_ns, bounds_end_ns):
+    """Collapse a ``continuous`` write's intervals into a single interval.
+
+    ``bounds_*`` are the first/last timestamps of the *caller's own* data,
+    captured before any block merge. Every interval touching those bounds is
+    unioned into one row; intervals wholly outside them (data from a merged-in
+    old block that lies before or after the caller's data) keep their own rows,
+    so ``continuous`` never asserts continuity over time the caller's data does
+    not cover.
+
+    :param write_intervals: Sorted, non-overlapping [start, end] interval list.
+    :param int bounds_start_ns: First timestamp of the caller's own data.
+    :param int bounds_end_ns: End of the caller's own data (last time + period).
+    :rtype: list
+    """
+    inside = [iv for iv in write_intervals
+              if int(iv[1]) >= bounds_start_ns and int(iv[0]) <= bounds_end_ns]
+    outside = [iv for iv in write_intervals
+               if int(iv[1]) < bounds_start_ns or int(iv[0]) > bounds_end_ns]
+    if inside:
+        collapsed = [min(int(inside[0][0]), bounds_start_ns), max(int(inside[-1][1]), bounds_end_ns)]
+    else:
+        collapsed = [bounds_start_ns, bounds_end_ns]
+    return sorted(outside + [collapsed])
+
+
+def observed_median_delta_ns(times_ns):
+    """Median spacing between consecutive samples of a timestamp array - the
+    signal's *observed* typical arrival spacing - or None with fewer than 2
+    samples. For a regular or jittery waveform this equals the true period; for
+    aperiodic data it reflects the real arrival rate even when the declared
+    period does not."""
+    if times_ns is None or len(times_ns) < 2:
+        return None
+    return float(np.median(np.diff(times_ns)))
+
+
+def observed_median_delta_from_gap_array(gap_array, num_values, period_ns):
+    """Median spacing between consecutive samples described by a gap array, or
+    None with fewer than 2 samples. Equivalent to observed_median_delta_ns on
+    the expanded timestamps: every consecutive-sample delta is ``period_ns``,
+    plus the gap duration wherever the gap array records one."""
+    num_values = int(num_values)
+    if num_values < 2:
+        return None
+    deltas = np.full(num_values - 1, int(period_ns), dtype=np.float64)
+    gap_array = np.asarray(gap_array)
+    gap_indices = gap_array[0::2].astype(np.int64)
+    durations = gap_array[1::2].astype(np.float64)
+    valid = (gap_indices >= 1) & (gap_indices < num_values)
+    deltas[gap_indices[valid] - 1] += durations[valid]
+    return float(np.median(deltas))
+
+
+def widen_gap_tolerance_for_observed_spacing(gap_tolerance, median_delta_ns,
+                                             gap_tolerance_periods=DEFAULT_GAP_TOLERANCE_PERIODS):
+    """Widen an auto-chosen interval gap tolerance for aperiodic signals using
+    the observed typical spacing between samples.
+
+    The period-based default (``10 x period``) assumes the declared period is
+    the typical spacing, which is false for aperiodic data - every arrival gap
+    exceeds it and the index splits at each one. Instead, treat only gaps far
+    outside the cluster of typical spacings as true gaps:
+    ``max(gap_tolerance, 10 x median observed delta)``.
+
+    This one rule covers the whole life of an aperiodic signal with no stored
+    state: a small scattered write has a large median spacing, so the entire
+    call collapses to one interval ("not much data yet - treat as continuous");
+    as small writes merge into bigger blocks, the median is re-derived from the
+    merged data each time, so the interval index slowly evolves toward
+    cluster-based gaps as more information about the signal comes to light.
+
+    Waveform-rate signals (median spacing at or below APERIODIC_MIN_PERIOD_NS)
+    are returned unchanged - their deviations are jitter, not arrival spacing.
+
+    :param int gap_tolerance: The tolerance chosen so far, in nanoseconds.
+    :param median_delta_ns: Observed median consecutive-sample spacing
+        (see observed_median_delta_ns), or None when unknown.
+    :param int gap_tolerance_periods: Multiplier applied to the median spacing
+        (defaults to DEFAULT_GAP_TOLERANCE_PERIODS).
+    :rtype: int
+    """
+    if median_delta_ns is None or median_delta_ns <= APERIODIC_MIN_PERIOD_NS:
+        return int(gap_tolerance)
+    return int(min(max(gap_tolerance, gap_tolerance_periods * median_delta_ns),
+                   max(gap_tolerance, DEFAULT_GAP_TOLERANCE_CEILING_NS)))
 
 
 def parse_metadata_uri(metadata_uri):
@@ -1194,9 +1287,11 @@ def calc_time_by_period(period_ns, num_samples):
 
 
 def merge_timestamp_data(values_1, times_1, values_2, times_2):
-    # concatenate the time and value arrays
-    concatenated_times = np.concatenate((times_1, times_2))
-    concatenated_values = np.concatenate((values_1, values_2))
+    # Concatenate with the second (new) arrays first: np.unique keeps the first
+    # occurrence of each duplicate timestamp, so like merge_gap_data, data set 2
+    # overwrites data set 1 wherever they share a timestamp.
+    concatenated_times = np.concatenate((times_2, times_1))
+    concatenated_values = np.concatenate((values_2, values_1))
 
     # remove duplicate times and get indices to sort values in time order
     time_data, index_unique = np.unique(concatenated_times, return_index=True)
@@ -1495,11 +1590,8 @@ def reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interva
                         'scale_b': group_headers[0].scale_b,
                         'freq_nhz': group_freq_nhz,
                         'period_ns': group_period_ns,
-                        # Preserve the source block's time compression through the re-encode.
-                        # Like scale_m/scale_b above, this takes the representative (first)
-                        # header for the group. If a group ever mixed blocks with different
-                        # time compression, they are normalized to the first block's setting;
-                        # this is lossless (the header records the compression actually used).
+                        # Preserve the source time compression; a group mixing settings
+                        # is normalized (losslessly) to its first block's.
                         't_compression': group_headers[0].t_compression,
                         't_compression_level': group_headers[0].t_compression_level
                     }

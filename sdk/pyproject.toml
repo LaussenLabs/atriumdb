@@ -111,4 +111,4 @@ Documentation = "https://docs.atriumdb.io/"
 
 [project.scripts]
 hello = "atriumdb.cli.hello:hello"
-atriumdb = "atriumdb.cli.atriumdb_cli:cli"
+atriumdb = "atriumdb.cli.atriumdb_cli:main"

@@ -326,6 +326,44 @@ class SQLiteHandler(SQLHandler):
             row = cursor.fetchone()
         return row
 
+    def _insert_intervals(self, cursor, interval_data: List[Dict], interval_index_mode, gap_tolerance: int = 0):
+        """Insert interval rows using the given interval_index_mode. "fast" appends
+        raw rows; "merge" unions each new interval with every existing row within
+        gap_tolerance so the index stays sparse; "disable" does nothing."""
+        if interval_index_mode == "disable":
+            return
+
+        if interval_index_mode == "merge":
+            for interval in interval_data:
+                measure_id, device_id = interval["measure_id"], interval["device_id"]
+                start, end = int(interval["start_time_n"]), int(interval["end_time_n"])
+
+                # Find every existing interval within gap_tolerance of the new one.
+                cursor.execute(
+                    "SELECT id, start_time_n, end_time_n FROM interval_index "
+                    "WHERE measure_id = ? AND device_id = ? AND start_time_n <= ? AND end_time_n >= ?",
+                    (measure_id, device_id, end + gap_tolerance, start - gap_tolerance))
+                rows = cursor.fetchall()
+
+                if rows:
+                    # Union them all (the new interval may bridge several rows) into
+                    # a single row, reusing the first and deleting the rest.
+                    start = min(start, min(row[1] for row in rows))
+                    end = max(end, max(row[2] for row in rows))
+                    if len(rows) > 1:
+                        cursor.executemany("DELETE FROM interval_index WHERE id = ?",
+                                           [(row[0],) for row in rows[1:]])
+                    cursor.execute("UPDATE interval_index SET start_time_n = ?, end_time_n = ? WHERE id = ?",
+                                   (start, end, rows[0][0]))
+                else:
+                    cursor.execute(sqlite_insert_interval_index_query, (measure_id, device_id, start, end))
+            return
+
+        # "fast" (and legacy None): append raw rows.
+        interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
+                            interval["end_time_n"]) for interval in interval_data]
+        cursor.executemany(sqlite_insert_interval_index_query, interval_tuples)
+
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
                              interval_index_mode, gap_tolerance: int = 0):
         # default to fast
@@ -342,10 +380,7 @@ class SQLiteHandler(SQLHandler):
             cursor.executemany(sqlite_insert_block_query, block_tuples)
 
             # insert into interval_index
-            if interval_index_mode != "disable":
-                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"]) for interval in interval_data]
-                cursor.executemany(sqlite_insert_interval_index_query, interval_tuples)
+            self._insert_intervals(cursor, interval_data, interval_index_mode, gap_tolerance)
 
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
                              file_ids_to_delete: List[int], gap_tolerance: int = 0):
@@ -389,11 +424,7 @@ class SQLiteHandler(SQLHandler):
             cursor.executemany(sqlite_insert_block_query, block_tuples)
 
             # insert into interval_index
-            if interval_index_mode != "disable":
-                # insert into interval_index
-                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"]) for interval in interval_data]
-                cursor.executemany(sqlite_insert_interval_index_query, interval_tuples)
+            self._insert_intervals(cursor, interval_data, interval_index_mode, gap_tolerance)
 
             # delete the old block data
             cursor.execute("DELETE FROM block_index WHERE id = ?", (old_block[0],))
