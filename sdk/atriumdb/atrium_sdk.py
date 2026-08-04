@@ -37,6 +37,7 @@ from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
 from atriumdb.file_api import AtriumFileHandler
+from atriumdb.string_dictionary import MeasureStringDictionary
 from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_macos, shared_lib_filename_linux, protected_mode_default_setting, \
     overwrite_default_setting
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME, \
@@ -459,6 +460,20 @@ class AtriumSDK:
 
         return sdk_object
 
+    @property
+    def _meta_dir(self) -> Path:
+        """The dataset's ``meta/`` directory, derived from ``dataset_location``.
+
+        ``meta/`` already holds the SQLite index and transfer's ``definition.yaml``;
+        Phase 1 string dictionaries live under ``meta/string_dict/``. Requires a
+        ``dataset_location`` (always present in local/sqlite/mariadb modes; string
+        storage is not supported in pure API mode)."""
+        if self.dataset_location is None:
+            raise ValueError(
+                "String value support requires a dataset_location (the meta/ directory); "
+                "it is unavailable in this SDK mode.")
+        return Path(self.dataset_location) / "meta"
+
     def get_data(self, measure_id: int = None, start_time_n: int = None, end_time_n: int = None,
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
@@ -536,6 +551,26 @@ class AtriumSDK:
 
         measure_id = int(measure_id) if measure_id is not None else measure_id
         device_id = int(device_id) if device_id is not None else device_id
+
+        # String-measure guard rails. Reads of a string measure must go through
+        # get_string_data, which calls this method with analog=False and no
+        # nan-fill. The numeric core here (analog scaling, the float nan-fill
+        # `out` buffer) cannot represent decoded strings, so reject those combos
+        # with a clear pointer. Detection is the single MeasureStringDictionary
+        # .exists call site (swapped for a signal_kind column in Phase 2). String
+        # storage needs the meta/ dir, so skip the check when there is no
+        # dataset_location (a numeric-only mode) to avoid touching that path.
+        if measure_id is not None and self.dataset_location is not None \
+                and MeasureStringDictionary.exists(self._meta_dir, measure_id):
+            if isinstance(return_nan_filled, np.ndarray) or return_nan_filled:
+                raise ValueError(
+                    f"Measure {measure_id} is a string measure; its values cannot be NaN-filled. "
+                    f"Use AtriumSDK.get_string_data(...) to read string data.")
+            if analog:
+                raise ValueError(
+                    f"Measure {measure_id} is a string measure; its values cannot be analog-scaled. "
+                    f"Use AtriumSDK.get_string_data(...) to read string data.")
+
         # Determine if we can use the cache
         use_cache = False
         if device_id is not None and measure_id is not None:
@@ -599,6 +634,66 @@ class AtriumSDK:
             r_times = r_times / time_unit_options[time_units]
 
         return headers, r_times, r_values
+
+    def get_string_data(self, measure_id: int = None, start_time_n: int = None, end_time_n: int = None,
+                        device_id: int = None, patient_id=None, time_type=1, block_info=None,
+                        time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
+                        freq: Union[int, float] = None, units: str = None, freq_units: str = None,
+                        device_tag: str = None, mrn: str = None):
+        """
+        Read string values from a string-typed measure (Phase 1 string storage).
+
+        This is the dedicated reader for string measures. Internally it reads the
+        int64 dictionary codes via :meth:`get_data` (``analog=False``, no NaN-fill,
+        which the numeric core can represent) and decodes them back to strings via
+        the measure's :class:`MeasureStringDictionary`. Reads are kept on this
+        dedicated getter in Phase 1 (folding strings into ``get_data`` is the
+        rasterization problem, deferred to Phase 3); the accepted selectors mirror
+        :meth:`get_data`.
+
+        :param int measure_id: The measure identifier. If None, measure_tag must be provided.
+        :param int start_time_n: Start epoch (inclusive) in units of ``time_units``.
+        :param int end_time_n: End epoch (exclusive) in units of ``time_units``.
+        :param int device_id: Device identifier (or use device_tag).
+        :param int patient_id: Patient identifier (or use mrn).
+        :param time_type: Time representation to return, as in :meth:`get_data`.
+        :param block_info: Optional pre-fetched block info, as in :meth:`get_data`.
+        :param str time_units: Unit for the returned time array. One of ["s","ms","us","ns"].
+        :param bool sort: Whether to sort the returned data by time.
+        :param bool allow_duplicates: Allow duplicate timestamps in the result.
+        :param str measure_tag: Signal tag; required if measure_id is None.
+        :param freq: Sample frequency, helpful with measure_tag.
+        :param str units: Measure units, helpful with measure_tag.
+        :param str freq_units: Frequency units for ``freq``.
+        :param str device_tag: Device tag (exclusive with device_id).
+        :param str mrn: Medical record number (exclusive with patient_id).
+
+        :rtype: Tuple[numpy.ndarray, numpy.ndarray]
+        :returns: ``(times, values)`` where ``times`` is the 1D time array and
+            ``values`` is a 1D object ndarray of ``str``.
+        """
+        # analog=False so the numeric read path returns the raw int64 codes; the
+        # guard rails in get_data therefore pass for this call.
+        headers, times, codes = self.get_data(
+            measure_id=measure_id, start_time_n=start_time_n, end_time_n=end_time_n,
+            device_id=device_id, patient_id=patient_id, time_type=time_type, analog=False,
+            block_info=block_info, time_units=time_units, sort=sort, allow_duplicates=allow_duplicates,
+            measure_tag=measure_tag, freq=freq, units=units, freq_units=freq_units,
+            device_tag=device_tag, mrn=mrn, return_nan_filled=False)
+
+        # Resolve the measure_id the same way get_data did, so we load the matching
+        # dictionary (get_data accepts either measure_id or measure_tag+freq+units).
+        resolved_measure_id = measure_id
+        if resolved_measure_id is None:
+            resolved_measure_id = get_best_measure_id(self, measure_tag, freq, units, freq_units)
+        resolved_measure_id = int(resolved_measure_id)
+
+        if codes.size == 0:
+            return times, np.array([], dtype=object)
+
+        string_dict = MeasureStringDictionary.load(self._meta_dir, resolved_measure_id)
+        values = string_dict.decode(np.asarray(codes).astype(np.int64))
+        return times, values
 
     def get_data_from_blocks(self, block_list, filename_dict, start_time_n, end_time_n, analog=True,
                              time_type=1, sort=True, allow_duplicates=True, return_nan_gap=False):
@@ -890,8 +985,31 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for writing data.")
 
+        # Accept python lists (e.g. list[str]) by normalizing to ndarrays, matching
+        # how callers pass values to write_time_value_pairs.
+        if not isinstance(value_data, np.ndarray):
+            value_data = np.asarray(value_data)
+
         assert value_data.size > 0, "There are no values in the value array to write. Cannot write no data."
         assert np.issubdtype(time_data.dtype, np.integer), "Time information must be encoded as an integer."
+
+        # String storage (Phase 1): a string/object value array is transparently
+        # converted to int64 dictionary codes *before* _resolve_value_types (which
+        # would otherwise send it to V_TYPE_DOUBLE). From here on it is an ordinary
+        # int64 write -- merge, interval index and time encoding are unchanged
+        # because the codes are plain int64 with stable, append-only meaning.
+        if value_data.dtype.kind in ('U', 'S', 'O'):
+            if raw_value_type is not None and raw_value_type != V_TYPE_INT64:
+                raise ValueError(
+                    "String/object value arrays are stored as int64 dictionary codes; a numeric "
+                    f"raw_value_type ({VALUE_TYPES_STR.get(raw_value_type, raw_value_type)}) cannot "
+                    "be combined with string data. Omit raw_value_type for string writes.")
+            string_dict = MeasureStringDictionary.load(self._meta_dir, int(measure_id))
+            value_data = string_dict.encode(value_data)
+            raw_value_type = V_TYPE_INT64
+            # Codes are exact identifiers, never scaled: force identity scaling.
+            scale_m = 1.0
+            scale_b = 0.0
 
         freq_nhz, period_ns, _, period_ns_for_calc = self._resolve_write_frequency(
             freq_nhz, period_ns, raw_time_type, time_data)
@@ -1612,6 +1730,14 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for writing data.")
 
+        # Normalize list inputs to ndarrays so callers can pass e.g. a list[str] of
+        # values or a list of timestamps, matching write_data. String/object value
+        # arrays flow through unchanged and are dictionary-encoded in write_data.
+        if not isinstance(values, np.ndarray):
+            values = np.asarray(values)
+        if not isinstance(times, np.ndarray):
+            times = np.asarray(times)
+
         if values.size == 0:
             return
 
@@ -1728,8 +1854,13 @@ class AtriumSDK:
 
         time_0 = int(times[0])
 
-        # Encode the block(s)
-        if np.issubdtype(values.dtype, np.integer):
+        # Encode the block(s). String/object value arrays are left unforced so
+        # write_data detects them and converts to int64 dictionary codes; forcing
+        # a numeric raw_value_type here would trip write_data's string guard.
+        if values.dtype.kind in ('U', 'S', 'O'):
+            raw_v_t = None
+            encoded_v_t = None
+        elif np.issubdtype(values.dtype, np.integer):
             raw_v_t = V_TYPE_INT64
             encoded_v_t = V_TYPE_DELTA_INT64
         else:
