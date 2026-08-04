@@ -33,6 +33,7 @@ API Reference
 
    .. automethod:: get_measure_id
    .. automethod:: get_measure_info
+   .. automethod:: get_measure_kind
    .. automethod:: search_measures
    .. automethod:: get_all_measures
    .. automethod:: insert_measure

@@ -27,6 +27,8 @@ unit TEXT NOT NULL,
 unit_label TEXT NULL,
 unit_code TEXT NULL,
 source_id INTEGER DEFAULT 1 NULL,
+signal_kind TEXT NULL,
+value_type TEXT NULL,
 FOREIGN KEY (source_id) REFERENCES source (id),
 UNIQUE (tag, freq_nhz, unit)
 );

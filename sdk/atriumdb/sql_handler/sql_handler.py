@@ -35,8 +35,19 @@ class SQLHandler(ABC):
 
     @abstractmethod
     def update_measure_schema(self):
-        """Add period_ns column to measure table if it doesn't exist."""
+        """Add the additive nullable measure columns (period_ns, signal_kind,
+        value_type) if they do not exist. Idempotent."""
         pass
+
+    def measure_has_blocks(self, measure_id: int) -> bool:
+        """True if any block exists for this measure. Backends override; the base
+        implementation raises if not supported."""
+        raise NotImplementedError
+
+    def update_measure_metadata(self, measure_id: int, signal_kind: str = None, value_type: str = None):
+        """Set the Phase 2 signal_kind/value_type columns for a measure (only the
+        provided fields). Backends override."""
+        raise NotImplementedError
 
     @abstractmethod
     def upgrade_mrn_schema(self):
@@ -98,7 +109,8 @@ class SQLHandler(ABC):
     @abstractmethod
     def insert_measure(self, measure_tag: str, freq_nhz: int, units: Optional[str] = None, measure_name: Optional[str] = None,
                        measure_id: Optional[int] = None, code: Optional[str] = None, unit_label: Optional[str] = None, unit_code: Optional[str] = None,
-                       source_id: Optional[int] = None):
+                       source_id: Optional[int] = None, period_ns: Optional[int] = None, signal_kind: Optional[str] = None,
+                       value_type: Optional[str] = None):
         pass
 
     @abstractmethod

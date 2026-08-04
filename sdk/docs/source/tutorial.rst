@@ -297,6 +297,60 @@ selectors (``measure_id`` or ``measure_tag``/``freq``/``units``, plus device/pat
     ``get_string_data``. In this release, string reads are served only by ``get_string_data``; they are not
     yet folded into ``get_data`` or the windowing iterator.
 
+.. _measure_metadata:
+
+Measure Metadata: signal_kind and value_type
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Every measure carries two independent pieces of metadata describing the signal it holds:
+
+- **``signal_kind``** — the *temporal shape* of the signal, one of ``waveform``, ``sample``,
+  ``event`` or ``state``. ``waveform`` describes a regularly sampled continuous signal; ``sample``,
+  ``event`` and ``state`` describe aperiodic signals.
+- **``value_type``** — the *value encoding*, either ``numeric`` or ``string``.
+
+These two axes are independent: a string signal can be an ``event``, a ``state`` or a ``sample``, and a
+numeric signal can be any shape too.
+
+Both are **optional** on
+`AtriumSDK.insert_measure <contents.html#atriumdb.AtriumSDK.insert_measure>`_. When you omit them,
+read-time defaults apply: a measure with no stored ``signal_kind`` reads back as ``waveform``, and a
+measure with no stored ``value_type`` defaults to ``numeric`` — unless string data is written to it, in
+which case it resolves to ``string``. In other words ``value_type`` is inferred from the first write
+(passing ``list[str]`` / string data establishes a ``string`` measure), while ``signal_kind`` is only
+ever ``waveform`` unless you set it explicitly. Automatic shape inference beyond waveform is not
+performed, so pass ``signal_kind`` yourself for aperiodic measures; ``sample`` is the safe default for
+aperiodic numeric data.
+
+You can read the metadata back either as part of the full measure record via
+`AtriumSDK.get_measure_info <contents.html#atriumdb.AtriumSDK.get_measure_info>`_, or as just the two
+axes via `AtriumSDK.get_measure_kind <contents.html#atriumdb.AtriumSDK.get_measure_kind>`_.
+
+.. code-block:: python
+
+    # Create a measure with explicit Phase 2 metadata.
+    measure_id = sdk.insert_measure(
+        measure_tag="alarm_text", freq=1.0, freq_units="Hz",
+        signal_kind="event", value_type="string")
+
+    # Read the full record back; it now includes signal_kind and value_type.
+    info = sdk.get_measure_info(measure_id)
+    print(info['signal_kind'], info['value_type'])   # event string
+
+    # Or fetch just the two axes as a tuple.
+    signal_kind, value_type = sdk.get_measure_kind(measure_id)
+    print(signal_kind, value_type)                   # event string
+
+    # A measure created without the new fields defaults to waveform / numeric.
+    numeric_id = sdk.insert_measure(measure_tag="heart_rate", freq=1.0, freq_units="Hz")
+    print(sdk.get_measure_kind(numeric_id))          # ('waveform', 'numeric')
+
+.. note::
+
+    A measure is **either numeric or string** — never both. Once a measure's ``value_type`` is
+    established (explicitly at ``insert_measure`` time, or by its first write), writing the other kind of
+    value to it raises a ``ValueError``. Write the conflicting data to a separate measure instead.
+
 .. _buffered_inserts:
 
 Buffered Inserts
@@ -356,6 +410,8 @@ The information includes:
 - `unit_label`: A human-readable label for the unit (can be None if not defined).
 - `unit_code`: A code (usually CF_CODE10) representing the unit (can be None if not defined).
 - `source_id`: The identifier of the data source (e.g., device or patient) associated with the measure.
+- `signal_kind`: The temporal shape of the signal, one of ``waveform``, ``sample``, ``event`` or ``state`` (defaults to ``waveform``). See :ref:`Measure Metadata <measure_metadata>`.
+- `value_type`: The value encoding of the signal, either ``numeric`` or ``string`` (defaults to ``numeric``). See :ref:`Measure Metadata <measure_metadata>`.
 
 Here's an example of how to use the :ref:`get_all_measures <get_all_measures_label>` method:
 
@@ -495,6 +551,18 @@ Example output:
 
 In this example, the output shows that there is a single continuous interval of available data for the specified measure and device,
 starting at epoch 0 and ending at epoch 1805555050000. This is because there are no gaps in the source mit-bih data.
+
+.. note::
+
+    **Coarse presence for aperiodic measures.** For ``waveform`` measures the interval array is a tight,
+    near-exact map of where continuous data exists. For aperiodic ``signal_kind`` values (``sample``,
+    ``event`` or ``state`` — see :ref:`Measure Metadata <measure_metadata>`), the interval index is a
+    deliberately *coarse presence* map: it answers "are there readings roughly in this window", because
+    the underlying writes use a widened gap tolerance so that irregular arrivals do not flood the index.
+    For precise per-sample or per-event timing on those kinds, read the actual stored timestamps with
+    :ref:`get_data <get_data_label>` / `get_string_data <contents.html#atriumdb.AtriumSDK.get_string_data>`_
+    rather than relying on ``get_interval_array``. Pass ``gap_tolerance_nano`` to control how aggressively
+    adjacent intervals are merged.
 
 These methods allow you to survey the data in your dataset and obtain information about the measures, devices, and data availability.
 By understanding the data availability, you can make informed decisions about how to process, analyze, or visualize the data in your dataset.

@@ -762,8 +762,30 @@ works for string measures with no P1 change.
 
 ## 19. Phase 2 implementation spec — measure metadata + coarse-presence index
 
-> **Status: DRAFT for review — no code yet.** First phase with a schema change, so the
-> migration and the metadata model below are the parts to scrutinize before implementing.
+> **Status: ✅ implemented & verified (UNCOMMITTED, pending review, on
+> `feature/aperiodic-and-text-support`).** Two nullable `measure` columns (`signal_kind`,
+> `value_type`) on both backends via an additive idempotent migration mirroring `period_ns`;
+> read-time defaults (`NULL`→`waveform`/`numeric`, with a P1 dict-file fallback→`string`);
+> idempotent backfill; `insert_measure`/`get_measure_info`/new `get_measure_kind` plumbed;
+> `get_data` detection swapped to `value_type` (fallback to `MeasureStringDictionary.exists`);
+> and the **P1 mix bug fixed** — `_enforce_value_type_invariant` establishes+persists a
+> measure's type on first write and rejects a conflicting kind, so the two audit `xfail`s
+> now pass. Tests: dedicated `test_measure_metadata_p2.py` 13/13; string+audit+numeric
+> regressions all pass on SQLite; 12 MariaDB write-path tests pass on the new schema
+> (all re-run independently). Transfer of the columns/dicts remains a P6 obligation (§19.6).
+>
+> **Audited** (independent agent, `sdk/tests/test_measure_metadata_p2_audit.py` — 26 tests).
+> Confirmed correct: mix-rejection on ALL write entry points, read-time defaults, backfill,
+> caching invalidation, concurrency, do-no-harm to transfer, and the **Maria `ALTER` on a
+> pre-existing column-less dataset** (closes the earlier residual gap — the auditor dropped
+> the columns from a live Maria table and reconnected). One real bug found **and fixed**: a
+> write that established+persisted `value_type` on first write *before* downstream validation
+> raised could poison a measure (e.g. a rejected `write_data_easy` string call). Fix: split
+> into `_check_value_type_invariant` (early, raises on conflict, never persists) and
+> `_establish_value_type` (persists only *after* the write commits); the two audit regression
+> tests now pass. Also fixed a misleading "period_ns column is missing" message that fired
+> for any missing measure column (both backends). Verified: 87 SQLite tests + the Maria
+> migration test pass; 84-test numeric regression unaffected.
 
 **Goal:** promote the two independent axes of §4 from *inferred-per-write* to *durable
 measure metadata*, so every downstream layer (reads, interval index, later rasterization

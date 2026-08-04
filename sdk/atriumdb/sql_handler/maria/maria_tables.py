@@ -27,6 +27,8 @@ unit VARCHAR(64) NOT NULL,
 unit_label VARCHAR(255) NULL,
 unit_code VARCHAR(64) NULL,
 source_id INT UNSIGNED DEFAULT 1 NULL,
+signal_kind VARCHAR(16) NULL,
+value_type VARCHAR(16) NULL,
 CONSTRAINT FOREIGN KEY (source_id) REFERENCES source (id),
 CONSTRAINT tag_frequency_unit UNIQUE (tag, freq_nhz, unit)
 );

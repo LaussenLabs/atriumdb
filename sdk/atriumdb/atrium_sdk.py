@@ -38,6 +38,14 @@ from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
 from atriumdb.file_api import AtriumFileHandler
 from atriumdb.string_dictionary import MeasureStringDictionary
+
+# Phase 2 measure-metadata axes (see design §4/§19). These are stored as two
+# independent nullable columns on the measure table; a NULL is read-time
+# defaulted below so every existing dataset stays correct with no backfill.
+SIGNAL_KIND_VALUES = ("waveform", "sample", "event", "state")
+VALUE_TYPE_VALUES = ("numeric", "string")
+DEFAULT_SIGNAL_KIND = "waveform"
+DEFAULT_VALUE_TYPE = "numeric"
 from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_macos, shared_lib_filename_linux, protected_mode_default_setting, \
     overwrite_default_setting
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME, \
@@ -224,6 +232,9 @@ class AtriumSDK:
             if auto_upgrade:
                 self.sql_handler.update_measure_schema()
                 self.sql_handler.upgrade_mrn_schema()
+                # Phase 2: mark P1 string measures (those with a dictionary file)
+                # as value_type='string' now that the column exists. Idempotent.
+                self._backfill_string_value_types()
             else:
                 if not self.sql_handler.check_mrn_column_is_text():
                     raise ValueError(
@@ -263,6 +274,9 @@ class AtriumSDK:
             if auto_upgrade:
                 self.sql_handler.update_measure_schema()
                 self.sql_handler.upgrade_mrn_schema()
+                # Phase 2: mark P1 string measures (those with a dictionary file)
+                # as value_type='string' now that the column exists. Idempotent.
+                self._backfill_string_value_types()
             else:
                 if not self.sql_handler.check_mrn_column_is_text():
                     raise ValueError(
@@ -474,12 +488,105 @@ class AtriumSDK:
                 "it is unavailable in this SDK mode.")
         return Path(self.dataset_location) / "meta"
 
+    def _backfill_string_value_types(self):
+        """Opportunistic, idempotent Phase 2 backfill (design §19.2): any measure
+        that already has a P1 string-dictionary file is marked
+        ``value_type='string'`` in the measure table. Read-time defaults make this
+        unnecessary for correctness (a NULL value_type with a dict file still reads
+        as string), but persisting it lets later phases avoid the file check. Safe
+        to re-run; never overwrites an already-set value_type."""
+        if self.dataset_location is None:
+            return
+        for row in self.sql_handler.select_all_measures():
+            measure_id, stored_value_type = row[0], row[11]
+            if stored_value_type is None and MeasureStringDictionary.exists(self._meta_dir, measure_id):
+                self.sql_handler.update_measure_metadata(measure_id, value_type="string")
+
+    def _resolve_measure_kind(self, measure_id, stored_signal_kind, stored_value_type):
+        """Apply the Phase 2 read-time defaults to the raw measure columns.
+
+        ``NULL signal_kind`` -> ``waveform``. ``NULL value_type`` -> ``string``
+        when a P1 string-dictionary file exists for the measure (so un-migrated /
+        un-backfilled datasets still read correctly), otherwise ``numeric``. The
+        column, when set, always wins. This is the single source of truth used by
+        ``get_measure_info`` / ``get_all_measures`` and the ``get_data`` guard."""
+        signal_kind = stored_signal_kind if stored_signal_kind is not None else DEFAULT_SIGNAL_KIND
+        if stored_value_type is not None:
+            value_type = stored_value_type
+        elif measure_id is not None and self.dataset_location is not None \
+                and MeasureStringDictionary.exists(self._meta_dir, measure_id):
+            value_type = "string"
+        else:
+            value_type = DEFAULT_VALUE_TYPE
+        return signal_kind, value_type
+
+    def _established_value_type(self, measure_id):
+        """Return the measure's already-established value_type ('string'/'numeric')
+        or None if the measure has no data yet (first write may establish it).
+
+        Distinct from :meth:`_resolve_measure_kind`, which read-time-defaults a
+        brand-new measure to ``numeric``; here an un-written measure returns
+        ``None`` so a first string write is not wrongly rejected. Resolution order:
+        the raw ``value_type`` column, then a P1 dictionary file (-> string), then
+        the presence of any block (-> numeric)."""
+        row = self.sql_handler.select_measure(measure_id=measure_id)
+        if row is None:
+            return None
+        stored_value_type = row[11]
+        if stored_value_type is not None:
+            return stored_value_type
+        if self.dataset_location is not None and MeasureStringDictionary.exists(self._meta_dir, measure_id):
+            return "string"
+        if self.sql_handler.measure_has_blocks(measure_id):
+            return "numeric"
+        return None
+
+    def _check_value_type_invariant(self, measure_id, incoming_is_string):
+        """Raise if this write's value-kind conflicts with the measure's already
+        established value_type. Does NOT persist anything -- establishment happens
+        only *after* the write passes its own validation and commits (see
+        :meth:`_establish_value_type`), so a write that raises downstream can never
+        leave a poisoning value_type behind (Phase 2 audit fix). Returns the
+        established value_type, or None if the measure has no data yet."""
+        incoming = "string" if incoming_is_string else "numeric"
+        established = self._established_value_type(measure_id)
+        if established is not None and established != incoming:
+            raise ValueError(
+                f"Measure {measure_id} is a '{established}' measure; cannot write "
+                f"'{incoming}' values to it. A measure is either numeric or string -- "
+                f"mixing the two on one measure corrupts readability. Write "
+                f"'{incoming}' data to a separate measure.")
+        return established
+
+    def _establish_value_type(self, measure_id, incoming_is_string):
+        """Persist the measure's value_type after a successful write, iff the
+        column is not already set. Called only once the write has committed, so a
+        write that raises can never establish (and thus poison) a value_type. The
+        prior :meth:`_check_value_type_invariant` already guaranteed no conflict."""
+        row = self.sql_handler.select_measure(measure_id=measure_id)
+        if row is None or row[11] is not None:
+            return
+        self.sql_handler.update_measure_metadata(
+            measure_id, value_type=("string" if incoming_is_string else "numeric"))
+        self._measures.pop(measure_id, None)
+
+    def get_measure_kind(self, measure_id: int):
+        """Convenience: return ``(signal_kind, value_type)`` for a measure with the
+        Phase 2 read-time defaults applied (see :meth:`_resolve_measure_kind`).
+        Returns ``None`` if the measure does not exist."""
+        info = self.get_measure_info(measure_id)
+        if info is None:
+            return None
+        return info.get('signal_kind'), info.get('value_type')
+
     def get_data(self, measure_id: int = None, start_time_n: int = None, end_time_n: int = None,
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
                  freq: Union[int, float] = None, units: str = None, freq_units: str = None,
                  device_tag: str = None, mrn: str = None, return_nan_filled: bool | np.ndarray = False):
         """
+        .. _get_data_label:
+
         The method for querying data from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
         time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
 
@@ -556,12 +663,17 @@ class AtriumSDK:
         # get_string_data, which calls this method with analog=False and no
         # nan-fill. The numeric core here (analog scaling, the float nan-fill
         # `out` buffer) cannot represent decoded strings, so reject those combos
-        # with a clear pointer. Detection is the single MeasureStringDictionary
-        # .exists call site (swapped for a signal_kind column in Phase 2). String
+        # with a clear pointer. Detection is the single Phase 2 call site: it
+        # reads the measure's value_type (which itself falls back to the P1
+        # MeasureStringDictionary.exists check when the column is NULL, so
+        # un-migrated datasets still work -- see _resolve_measure_kind). String
         # storage needs the meta/ dir, so skip the check when there is no
         # dataset_location (a numeric-only mode) to avoid touching that path.
-        if measure_id is not None and self.dataset_location is not None \
-                and MeasureStringDictionary.exists(self._meta_dir, measure_id):
+        is_string_measure = False
+        if measure_id is not None and self.dataset_location is not None:
+            _minfo = self.get_measure_info(measure_id)
+            is_string_measure = _minfo is not None and _minfo.get('value_type') == 'string'
+        if is_string_measure:
             if isinstance(return_nan_filled, np.ndarray) or return_nan_filled:
                 raise ValueError(
                     f"Measure {measure_id} is a string measure; its values cannot be NaN-filled. "
@@ -641,6 +753,8 @@ class AtriumSDK:
                         freq: Union[int, float] = None, units: str = None, freq_units: str = None,
                         device_tag: str = None, mrn: str = None):
         """
+        .. _get_string_data_label:
+
         Read string values from a string-typed measure (Phase 1 string storage).
 
         This is the dedicated reader for string measures. Internally it reads the
@@ -843,6 +957,12 @@ class AtriumSDK:
         This method makes it easy to write new data to the dataset by taking care of unit conversions and data type
         handling internally. It supports various time units and frequency units for user convenience.
 
+        .. note::
+
+            ``write_data_easy`` is a legacy, **numeric-only** convenience wrapper. It does not accept string
+            values; to store string data use :meth:`write_time_value_pairs` or :meth:`write_data` with a
+            ``list[str]`` / string array (see :ref:`String Values <string_values>`).
+
         Example usage:
 
             >>> import numpy as np
@@ -1019,12 +1139,25 @@ class AtriumSDK:
         assert value_data.size > 0, "There are no values in the value array to write. Cannot write no data."
         assert np.issubdtype(time_data.dtype, np.integer), "Time information must be encoded as an integer."
 
+        # Determine the incoming value-kind from the (pre-conversion) dtype, and
+        # enforce the numeric/string invariant (Phase 2, design §19.3 / §13). A
+        # measure is either string-typed or numeric; a conflicting write is
+        # rejected instead of being silently accepted and corrupting readability
+        # (the P1 audit bug). The first write to an as-yet-empty measure ESTABLISHES
+        # its value_type.
+        incoming_is_string = value_data.dtype.kind in ('U', 'S', 'O')
+        if self.dataset_location is not None:
+            # Only CHECK for a conflict here (may raise); the value_type is
+            # ESTABLISHED after the write commits (see below), so a write that
+            # raises downstream cannot poison the measure's value_type.
+            self._check_value_type_invariant(int(measure_id), incoming_is_string)
+
         # String storage (Phase 1): a string/object value array is transparently
         # converted to int64 dictionary codes *before* _resolve_value_types (which
         # would otherwise send it to V_TYPE_DOUBLE). From here on it is an ordinary
         # int64 write -- merge, interval index and time encoding are unchanged
         # because the codes are plain int64 with stable, append-only meaning.
-        if value_data.dtype.kind in ('U', 'S', 'O'):
+        if incoming_is_string:
             if raw_value_type is not None and raw_value_type != V_TYPE_INT64:
                 raise ValueError(
                     "String/object value arrays are stored as int64 dictionary codes; a numeric "
@@ -1140,6 +1273,13 @@ class AtriumSDK:
         else:
             self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, interval_index_mode,
                                                   gap_tolerance)
+
+        # The write has committed: now (and only now) establish/persist the
+        # measure's value_type on its first write. Doing this post-commit means a
+        # write that raised anywhere above never leaves a poisoning value_type
+        # (Phase 2 audit fix).
+        if self.dataset_location is not None:
+            self._establish_value_type(int(measure_id), incoming_is_string)
 
         return encoded_bytes, encoded_headers, byte_start_array, filename
 
@@ -2382,7 +2522,12 @@ class AtriumSDK:
         :param int measure_id: The identifier of the measure to retrieve information for.
 
         :return: A dictionary containing information about the measure, including its id, tag, name, sample frequency
-            (in nanohertz), period (in nanoseconds), code, unit, unit label, unit code, and source_id.
+            (in nanohertz), period (in nanoseconds), code, unit, unit label, unit code, source_id, and the Phase 2
+            metadata fields ``signal_kind`` and ``value_type``. ``signal_kind`` is the temporal shape of the signal
+            (one of ``waveform | sample | event | state``) and ``value_type`` is the value encoding
+            (``numeric | string``). Both are resolved with read-time defaults: a measure stored without them reads
+            back as ``waveform`` / ``numeric`` (a ``value_type`` that was never set but has string data written to it
+            resolves to ``string``).
         :rtype: dict
 
         >>> # Connect to example_dataset
@@ -2402,8 +2547,14 @@ class AtriumSDK:
             'unit': 'BPM',
             'unit_label': 'beats per minute',
             'unit_code': 264864,
-            'source_id': 1
+            'source_id': 1,
+            'signal_kind': 'waveform',
+            'value_type': 'numeric'
         }
+
+        >>> # signal_kind / value_type can also be read on their own:
+        >>> sdk.get_measure_kind(measure_id)
+        ('waveform', 'numeric')
         """
         # Check if metadata connection type is API
         if self.metadata_connection_type == "api":
@@ -2425,15 +2576,19 @@ class AtriumSDK:
         if row is None:
             return None
 
-        # Unpack the row tuple into variables (now includes period_ns)
+        # Unpack the row tuple into variables (now includes period_ns and the
+        # Phase 2 signal_kind / value_type columns).
         measure_id, measure_tag, measure_name, measure_freq_nhz, stored_period_ns, measure_code, measure_unit, \
-            measure_unit_label, measure_unit_code, measure_source_id = row
+            measure_unit_label, measure_unit_code, measure_source_id, stored_signal_kind, stored_value_type = row
 
         # Use stored period_ns if available, otherwise calculate from freq_nhz
         if stored_period_ns is not None:
             measure_period_ns = stored_period_ns
         else:
             measure_period_ns = 10 ** 18 // measure_freq_nhz
+
+        signal_kind, value_type = self._resolve_measure_kind(
+            measure_id, stored_signal_kind, stored_value_type)
 
         # Create a dictionary containing the measure information
         measure_info = {
@@ -2446,7 +2601,9 @@ class AtriumSDK:
             'unit': measure_unit,
             'unit_label': measure_unit_label,
             'unit_code': measure_unit_code,
-            'source_id': measure_source_id
+            'source_id': measure_source_id,
+            'signal_kind': signal_kind,
+            'value_type': value_type
         }
 
         # Cache the measure information in the _measures dictionary
@@ -2592,13 +2749,17 @@ class AtriumSDK:
         # Iterate through the list of measures and construct a dictionary for each measure
         for measure_info in measure_tuple_list:
             measure_id, measure_tag, measure_name, measure_freq_nhz, stored_period_ns, measure_code, \
-                measure_unit, measure_unit_label, measure_unit_code, measure_source_id = measure_info
+                measure_unit, measure_unit_label, measure_unit_code, measure_source_id, \
+                stored_signal_kind, stored_value_type = measure_info
 
             # Use stored period_ns if available, otherwise calculate from freq_nhz
             if stored_period_ns is not None:
                 measure_period_ns = stored_period_ns
             else:
                 measure_period_ns = 10 ** 18 // measure_freq_nhz
+
+            signal_kind, value_type = self._resolve_measure_kind(
+                measure_id, stored_signal_kind, stored_value_type)
 
             # Add the measure information to the dictionary
             measure_dict[measure_id] = {
@@ -2611,7 +2772,9 @@ class AtriumSDK:
                 'unit': measure_unit,
                 'unit_label': measure_unit_label,
                 'unit_code': measure_unit_code,
-                'source_id': measure_source_id
+                'source_id': measure_source_id,
+                'signal_kind': signal_kind,
+                'value_type': value_type
             }
 
         return measure_dict
@@ -2674,7 +2837,8 @@ class AtriumSDK:
     def insert_measure(self, measure_tag: str, freq: Union[int, float] = None, units: str = None, freq_units: str = None,
                        period: Union[int, float] = None, time_units: str = None, measure_name: str = None,
                        measure_id: int = None, code: str = None, unit_label: str = None,
-                       unit_code: str = None, source_id: int = None, source_name: str = None):
+                       unit_code: str = None, source_id: int = None, source_name: str = None,
+                       signal_kind: str = None, value_type: str = None):
         """
         .. _insert_measure_label:
 
@@ -2720,6 +2884,14 @@ class AtriumSDK:
         :param int source_id: An identifier for the data source (optional).
         :param str source_name: The name of the data source associated with the measure, used if source_id is not
             provided (optional).
+        :param str signal_kind: Optional temporal shape of the signal, one of
+            ``waveform | sample | event | state`` (Phase 2 metadata). When omitted the
+            measure defaults to ``waveform`` at read time; ``sample`` is the safe default
+            for aperiodic numeric data. Automatic shape inference beyond waveform is out of
+            scope -- pass this hint explicitly for sample/event/state measures.
+        :param str value_type: Optional value encoding, one of ``numeric | string``
+            (Phase 2 metadata). When omitted it is inferred at first write from the value
+            dtype (string/object -> ``string``, else ``numeric``); an explicit value wins.
 
         :return: The measure_id of the inserted or existing measure.
         :rtype: int
@@ -2728,6 +2900,14 @@ class AtriumSDK:
 
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
+
+        # Validate the Phase 2 metadata enums when explicitly provided.
+        if signal_kind is not None and signal_kind not in SIGNAL_KIND_VALUES:
+            raise ValueError(
+                f"signal_kind must be one of {SIGNAL_KIND_VALUES} or None; got {signal_kind!r}.")
+        if value_type is not None and value_type not in VALUE_TYPE_VALUES:
+            raise ValueError(
+                f"value_type must be one of {VALUE_TYPE_VALUES} or None; got {value_type!r}.")
 
         # Check for mutually exclusive parameters
         if freq is not None and period is not None:
@@ -2791,7 +2971,8 @@ class AtriumSDK:
         # Insert the new measure into the database
         inserted_measure_id = self.sql_handler.insert_measure(
             measure_tag, freq_nhz, units, measure_name, measure_id=measure_id, code=code, unit_label=unit_label,
-            unit_code=unit_code, source_id=source_id, period_ns=period_ns)
+            unit_code=unit_code, source_id=source_id, period_ns=period_ns, signal_kind=signal_kind,
+            value_type=value_type)
 
         if inserted_measure_id is None:
             return inserted_measure_id
@@ -2800,7 +2981,11 @@ class AtriumSDK:
         if period_ns is None:
             period_ns = 10 ** 18 // freq_nhz
 
-        # Add new measure_id into cache
+        # Add new measure_id into cache. Apply the same read-time defaulting as
+        # get_measure_info so the cached view matches a fresh DB read (a NULL
+        # value_type with no dictionary file yet reads as 'numeric').
+        cached_signal_kind, cached_value_type = self._resolve_measure_kind(
+            inserted_measure_id, signal_kind, value_type)
         measure_info = {
             'id': inserted_measure_id,
             'tag': measure_tag,
@@ -2811,7 +2996,9 @@ class AtriumSDK:
             'unit': units,
             'unit_label': unit_label,
             'unit_code': unit_code,
-            'source_id': source_id
+            'source_id': source_id,
+            'signal_kind': cached_signal_kind,
+            'value_type': cached_value_type
         }
         self._measure_ids[(measure_tag, freq_nhz, units)] = inserted_measure_id
         self._measures[inserted_measure_id] = measure_info
@@ -5532,6 +5719,15 @@ of DatasetIterator objects depending on the value of num_iterators.
         (device id or patient id). Each row of the 2D array output represents a continuous interval of available
         data while the first and second columns represent the start epoch and end epoch of that interval
         respectively.
+
+        **Coarse presence for aperiodic kinds.** For ``waveform`` measures the interval array is a tight,
+        near-exact map of where continuous data exists. For aperiodic ``signal_kind`` values
+        (``sample``, ``event``, ``state``) the interval index is a deliberately *coarse presence* map --
+        it answers "are there readings/events roughly in this window" (the underlying writes use a widened
+        gap tolerance so irregular arrivals do not flood the index). For precise per-sample or per-event
+        timing on those kinds, read the actual stored timestamps via
+        :ref:`get_data <get_data_label>` / :ref:`get_string_data <get_string_data_label>` instead of relying
+        on this method. Pass ``gap_tolerance_nano`` to control how aggressively adjacent intervals are merged.
 
         >>> measure_id = 21
         >>> device_id = 25

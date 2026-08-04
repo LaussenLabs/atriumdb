@@ -159,16 +159,28 @@ class SQLiteHandler(SQLHandler):
         return column_name in columns
 
     def update_measure_schema(self):
-        """Add period_ns column to measure table if it doesn't exist."""
+        """Add the additive nullable measure columns if they do not exist.
+
+        Idempotent, additive migration (safe on write-once production history):
+        ``period_ns`` (Phase 0/1) plus the Phase 2 metadata columns ``signal_kind``
+        and ``value_type``. A ``NULL`` in any of these is interpreted with a
+        read-time default by the SDK (``signal_kind`` -> ``waveform``,
+        ``value_type`` -> ``numeric``), so existing rows need no backfill for
+        correctness. Returns True if any column was added."""
+        changed = False
         with self.connection() as (conn, cursor):
             if not self._column_exists(cursor, 'measure', 'period_ns'):
-                cursor.execute("""
-                    ALTER TABLE measure 
-                    ADD COLUMN period_ns INTEGER NULL
-                """)
+                cursor.execute("ALTER TABLE measure ADD COLUMN period_ns INTEGER NULL")
+                changed = True
+            if not self._column_exists(cursor, 'measure', 'signal_kind'):
+                cursor.execute("ALTER TABLE measure ADD COLUMN signal_kind TEXT NULL")
+                changed = True
+            if not self._column_exists(cursor, 'measure', 'value_type'):
+                cursor.execute("ALTER TABLE measure ADD COLUMN value_type TEXT NULL")
+                changed = True
+            if changed:
                 conn.commit()
-                return True
-            return False
+        return changed
 
     def check_mrn_column_is_text(self) -> bool:
         """Check if the mrn column in the patient table is TEXT. Returns True if it is TEXT."""
@@ -245,13 +257,14 @@ class SQLiteHandler(SQLHandler):
     def select_all_measures(self):
         try:
             with self.sqlite_db_connection() as (conn, cursor):
-                cursor.execute("SELECT id, tag, name, freq_nhz, period_ns, code, unit, unit_label, unit_code, source_id FROM measure")
+                cursor.execute("SELECT id, tag, name, freq_nhz, period_ns, code, unit, unit_label, unit_code, source_id, signal_kind, value_type FROM measure")
                 rows = cursor.fetchall()
             return rows
         except sqlite3.Error as e:
             if "period_ns" in str(e).lower() or "no such column" in str(e).lower():
                 raise ValueError(
-                    "The 'period_ns' column is missing from the measure table. "
+                    "A required column is missing from the measure table (e.g. "
+                    "'period_ns', 'signal_kind' or 'value_type'). "
                     "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
                 ) from e
             raise
@@ -264,22 +277,24 @@ class SQLiteHandler(SQLHandler):
 
     def insert_measure(self, measure_tag: str, freq_nhz: int, units: str = None, measure_name: str = None,
                        measure_id=None, code: str = None, unit_label: str = None, unit_code: str = None,
-                       source_id: int = None, period_ns: int = None):
+                       source_id: int = None, period_ns: int = None, signal_kind: str = None,
+                       value_type: str = None):
         units = "" if units is None else units
 
         try:
             with self.connection() as (conn, cursor):
                 cursor.execute(
-                    "INSERT OR IGNORE INTO measure (id, tag, freq_nhz, period_ns, unit, name, code, unit_label, unit_code, source_id) VALUES "
-                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+                    "INSERT OR IGNORE INTO measure (id, tag, freq_nhz, period_ns, unit, name, code, unit_label, unit_code, source_id, signal_kind, value_type) VALUES "
+                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
                     (measure_id, measure_tag, freq_nhz, period_ns, units, measure_name, code, unit_label, unit_code,
-                     source_id))
+                     source_id, signal_kind, value_type))
                 conn.commit()
                 return cursor.lastrowid
         except sqlite3.Error as e:
             if "period_ns" in str(e).lower() or "no such column" in str(e).lower():
                 raise ValueError(
-                    "The 'period_ns' column is missing from the measure table. "
+                    "A required column is missing from the measure table (e.g. "
+                    "'period_ns', 'signal_kind' or 'value_type'). "
                     "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
                 ) from e
             raise
@@ -299,10 +314,36 @@ class SQLiteHandler(SQLHandler):
         except sqlite3.Error as e:
             if "period_ns" in str(e).lower() or "no such column" in str(e).lower():
                 raise ValueError(
-                    "The 'period_ns' column is missing from the measure table. "
+                    "A required column is missing from the measure table (e.g. "
+                    "'period_ns', 'signal_kind' or 'value_type'). "
                     "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
                 ) from e
             raise
+
+    def measure_has_blocks(self, measure_id: int) -> bool:
+        """True if any block exists for this measure (used to detect an
+        already-established numeric measure when the value_type column is NULL)."""
+        with self.sqlite_db_connection() as (conn, cursor):
+            cursor.execute("SELECT 1 FROM block_index WHERE measure_id = ? LIMIT 1", (int(measure_id),))
+            return cursor.fetchone() is not None
+
+    def update_measure_metadata(self, measure_id: int, signal_kind: str = None, value_type: str = None):
+        """Set the Phase 2 metadata columns for a measure. Only the provided
+        (non-None) fields are written; used to persist first-write value_type
+        inference and the opportunistic string backfill. Idempotent."""
+        sets, params = [], []
+        if signal_kind is not None:
+            sets.append("signal_kind = ?")
+            params.append(signal_kind)
+        if value_type is not None:
+            sets.append("value_type = ?")
+            params.append(value_type)
+        if not sets:
+            return
+        params.append(int(measure_id))
+        with self.connection() as (conn, cursor):
+            cursor.execute(f"UPDATE measure SET {', '.join(sets)} WHERE id = ?", params)
+            conn.commit()
 
     def insert_device(self, device_tag: str, device_name: str = None, device_id=None, manufacturer: str = None,
                       model: str = None, device_type: str = None, bed_id: int = None, source_id: int = None):
