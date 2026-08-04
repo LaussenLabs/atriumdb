@@ -478,6 +478,14 @@ These refine/override the earlier sections where they conflict.
   embedded newlines are safe).
 - **`log_hl7_adt` is never transferred.** Not even in identified transfers for now; a
   future opt-in flag may allow including it. Until then it is excluded unconditionally.
+- **`write_data_easy` is being deprecated → legacy behavior only.** It intentionally does
+  NOT accept string values (it derives a numeric value type from dtype). String writes go
+  through `write_time_value_pairs` / `write_data`. Do not add string support to
+  `write_data_easy` in any phase — this is a decision, not an omission.
+- **Numeric/string on one measure must be rejected (found by the P1 audit).** A measure is
+  either numeric or string; the P1 code silently accepts a mixed write and corrupts
+  readability. Enforcement is a **P2 deliverable** via the `value_type` column (§19.3) —
+  reject a write whose value-kind conflicts with the measure's established `value_type`.
 
 ## 14. Audit: is a 0/1 state row the best way to represent event-pair membership?
 
@@ -591,13 +599,23 @@ times all shifted.
 
 ## 17. Phase 1 implementation spec — string storage (the low road)
 
-> **Status: ✅ implemented & verified (uncommitted, on `feature/aperiodic-and-text-support`).**
+> **Status: ✅ implemented, verified & audited (committed `0cd3b4a` on
+> `feature/aperiodic-and-text-support`).**
 > `sdk/atriumdb/string_dictionary.py` (`MeasureStringDictionary`), string write unified
 > into `write_data`/`write_time_value_pairs`, dedicated `get_string_data`, `get_data`
 > guard rails behind the single `MeasureStringDictionary.exists` call site. Tests:
 > `sdk/tests/test_string_storage.py` 17/17 pass; numeric `time_value` regressions 21/21
 > pass (both re-run independently in Docker/SQLite). Read-unification into `get_data`
 > left for P3 per §17.8.
+>
+> **Audited** (independent agent, `sdk/tests/test_string_storage_audit.py` — 30 pass,
+> 2 xfail). Core encode/decode/merge/read/concurrency/guard-rails robust. One real defect:
+> **mixing numeric + string values on a single measure is silently accepted and corrupts
+> readability** — routed to P2, enforced via the `value_type` column (the 2 xfails flip to
+> passing when fixed). Non-blocking notes: within a single `write_time_value_pairs` call,
+> duplicate timestamps keep the FIRST element (pre-existing numeric behavior, not
+> string-specific — document only); `write_data_easy` does not accept strings **by design**
+> (§13 — being deprecated, legacy behavior only).
 
 **Goal:** store and retrieve dynamically-sized string values at scale, with **no C
 changes and no block-format changes**, by encoding strings as int64 dictionary codes and
@@ -742,7 +760,120 @@ works for string measures with no P1 change.
   (`MeasureStringDictionary.exists`) so P2 can swap it for the `signal_kind` column
   without touching call sites.
 
-## 18. Why this fits AtriumDB rather than fighting it
+## 19. Phase 2 implementation spec — measure metadata + coarse-presence index
+
+> **Status: DRAFT for review — no code yet.** First phase with a schema change, so the
+> migration and the metadata model below are the parts to scrutinize before implementing.
+
+**Goal:** promote the two independent axes of §4 from *inferred-per-write* to *durable
+measure metadata*, so every downstream layer (reads, interval index, later rasterization
+and event queries) stops re-guessing; make `get_interval_array` an explicit **coarse
+presence** map; and replace P1's file-existence string heuristic with a real column.
+
+**Non-goals:** rasterization / iterator (P3), event pairing & queries (P4),
+event-anchored definitions (P5), transfer of the new columns (P6 — but P2 must not make
+transfer *worse*; see §19.6).
+
+### 19.1 The key design point to confirm: TWO axes, not one
+
+P1 detected "string measure" by the presence of a dictionary file. §17.8 loosely called
+the P2 replacement a "`signal_kind` column" — that was imprecise. **Shape and value type
+are independent** (§4):
+
+- **`signal_kind`** — *temporal shape*: `waveform | sample | event | state`.
+- **`value_type`** — *value encoding*: `numeric | string`. (Numeric stays int64/double as
+  today; `string` means "stored as int64 dictionary codes, decode via
+  `MeasureStringDictionary`.")
+
+A string measure can be any shape (an `event` of strings, a `state` of strings, a `sample`
+of strings); a numeric measure likewise. So P2 adds **both** columns. String detection
+(P1's `MeasureStringDictionary.exists`) becomes `value_type == 'string'`; `signal_kind`
+drives presence/rasterization defaults. **✅ CONFIRMED:** two separate columns
+(`signal_kind`, `value_type`), not one overloaded column.
+
+### 19.2 Schema change (both backends) + migration
+
+Follow the existing additive pattern — `_column_exists` + `ALTER TABLE measure ADD COLUMN`
+guarded at init, exactly as `period_ns` was added
+([sqlite_handler.py:161 `update_measure_schema`](../../sdk/atriumdb/sql_handler/sqlite/sqlite_handler.py),
+mirrored in `maria_handler.py`):
+
+- `measure.signal_kind TEXT NULL` (sqlite) / `VARCHAR` (maria), values in the enum above.
+- `measure.value_type TEXT NULL` / `VARCHAR`, `numeric | string`.
+- Add to the `CREATE TABLE measure` in `sqlite_tables.py` / `maria_tables.py` for fresh
+  datasets, **and** an idempotent `update_measure_schema`-style migration for existing
+  ones.
+
+**Backfill for existing datasets (must be safe on production data, write-once history):**
+- `NULL` is treated as the legacy default `signal_kind='waveform'`, `value_type='numeric'`
+  everywhere it is read (never rely on the backfill having run — read-time default is the
+  source of truth). This keeps every existing dataset correct with zero migration risk.
+- One-time opportunistic backfill: any measure that already has a P1 dictionary file
+  (`MeasureStringDictionary.exists`) is set `value_type='string'`; `signal_kind` is left
+  `NULL`/`waveform` unless inferable. Idempotent, re-runnable.
+
+### 19.3 API plumbing
+
+- `insert_measure` ([atrium_sdk.py:2639](../../sdk/atriumdb/atrium_sdk.py)) +
+  `sql_handler.insert_measure`: add optional `signal_kind=None`, `value_type=None`.
+  Explicit values win; when omitted, `value_type` is inferred at first write from the
+  value dtype (string/object → `string`, else `numeric`) and `signal_kind` defaults to
+  `waveform` unless the write classified the data as aperiodic (reuse the
+  smart-write-defaults median-spacing classification: `sample`/`event`/`state` require an
+  explicit hint in P2 — automatic *shape* inference beyond waveform-vs-aperiodic is out of
+  scope; document that `sample` is the safe default aperiodic-numeric kind).
+- `get_measure_info` ([atrium_sdk.py:2341](../../sdk/atriumdb/atrium_sdk.py)) returns both
+  new fields.
+- **Swap the P1 detection site:** `get_data`'s guard now reads `value_type` (falling back
+  to `MeasureStringDictionary.exists` when the column is `NULL`, so un-migrated datasets
+  still work). This is the single call site P1 kept isolated.
+- **Enforce the numeric/string invariant (fixes the P1 audit bug).** On write, once a
+  measure's `value_type` is established (explicitly, by the column, or by the P1
+  fallback: dictionary file present → string, existing blocks → numeric), reject a write
+  whose value-kind conflicts — a numeric write to a string measure, or a string write to a
+  numeric measure — with a clear error, instead of silently corrupting readability. Verify
+  the two `xfail` tests in `sdk/tests/test_string_storage_audit.py`
+  (`test_numeric_then_string_should_be_rejected`, `test_string_then_numeric_should_be_rejected`)
+  now pass (remove the `xfail` markers).
+
+### 19.4 Interval index = documented coarse presence
+
+- No structural change to `interval_index` (the smart-write branch already widens the gap
+  tolerance for aperiodic writes). P2 makes the *contract* explicit: `get_interval_array`
+  returns **coarse presence**, and its docstring says so for `sample/event/state` kinds.
+- Optional, low-risk: when the caller does not pass `gap_tolerance_nano`, pick a
+  `signal_kind`-aware default on read (waveform → tight, aperiodic → generous) instead of
+  `0`, so the returned intervals are sensible per kind. Keep behind the existing param so
+  callers can always override.
+
+### 19.5 Direct event/sample time read
+
+Confirm (and document) that `get_string_data` / `get_data` already return the **actual
+stored timestamps** for aperiodic kinds — that is the "precise" read that should be used
+instead of `get_interval_array` for event/sample logic. Add a thin
+`get_measure_kind(measure_id) -> (signal_kind, value_type)` convenience if useful. No new
+storage.
+
+### 19.6 Transfer note (do no harm)
+
+P2 does not implement column transfer (that is P6), but `transfer_measures` must not choke
+on the new columns and should carry them through when trivially available. If carrying
+them through is not trivial, P2 leaves them to default on the destination (correct via the
+read-time default) and P6 wires them properly. **✅ CONFIRMED:** defer column transfer to
+P6. **P6 obligation (must not be dropped):** `transfer_measures` must carry `signal_kind`
+and `value_type`, and the string `meta/string_dict/measure_<id>.jsonl` dictionaries must be
+transferred alongside the codes (else string reads on the destination decode to garbage).
+This is a hard requirement recorded here so the deferment does not become an omission.
+
+### 19.7 Tests
+
+Fresh-dataset create has the columns; migration adds them to a column-less dataset and is
+idempotent; `NULL` reads as `waveform`/`numeric`; a P1 string dataset backfills to
+`value_type='string'` and `get_data` still guards correctly via the column; `insert_measure`
+round-trips explicit values through `get_measure_info`; numeric and string P1 tests still
+pass unchanged.
+
+## 20. Why this fits AtriumDB rather than fighting it
 
 - Text becomes a **value encoding**, so it rides the existing block / index / iterator /
   transfer pipeline instead of a parallel subsystem.

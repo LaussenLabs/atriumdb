@@ -671,6 +671,28 @@ class AtriumSDK:
         :rtype: Tuple[numpy.ndarray, numpy.ndarray]
         :returns: ``(times, values)`` where ``times`` is the 1D time array and
             ``values`` is a 1D object ndarray of ``str``.
+
+        Example:
+
+            >>> import numpy as np
+            >>> sdk = AtriumSDK(dataset_location="./example_dataset")
+            >>> measure_id = sdk.insert_measure(measure_tag="alarm_text", freq=1.0, freq_units="Hz")
+            >>> device_id = sdk.insert_device(device_tag="test_device")
+            >>> # Strings are written with the ordinary write methods.
+            >>> sdk.write_time_value_pairs(
+            ...     measure_id, device_id, np.array([0.0, 1.0, 2.0]),
+            ...     ["ASYSTOLE", "V-TACH", "ASYSTOLE"], time_units="s")
+            >>> times, values = sdk.get_string_data(
+            ...     measure_id, start_time_n=0, end_time_n=10, device_id=device_id, time_units="s")
+            >>> values
+            array(['ASYSTOLE', 'V-TACH', 'ASYSTOLE'], dtype=object)
+
+        .. note::
+
+            String measures cannot be read through :meth:`get_data` with ``analog=True`` (the default) or
+            with ``return_nan_filled`` - those combinations raise a ``ValueError`` pointing here. In this
+            release, string reads are served only by this method; they are not yet folded into
+            :meth:`get_data` or the windowing iterator.
         """
         # analog=False so the numeric read path returns the raw int64 codes; the
         # guard rails in get_data therefore pass for this call.
@@ -909,7 +931,11 @@ class AtriumSDK:
         :param int measure_id: Measure identifier corresponding to the measures table in the linked relational database.
         :param int device_id: Device identifier corresponding to the devices table in the linked relational database.
         :param numpy.ndarray time_data: 1D numpy array representing the time information of the data to be written.
-        :param numpy.ndarray value_data: 1D numpy array representing the value information of the data to be written.
+        :param numpy.ndarray value_data: 1D numpy array (or list) representing the value information of the data to be
+            written. String values are also supported: pass a ``list[str]`` or a string/object numpy array
+            (dtype kind ``U``, ``S`` or ``O``) and each value is transparently encoded as an ``int64`` dictionary code
+            via the measure's append-only string dictionary (read them back with :meth:`get_string_data`). String
+            writes force identity scaling and reject a numeric ``raw_value_type``.
         :param int freq_nhz: Sample frequency, in nanohertz, of the data to be written.
         :param int time_0: Start time of the data to be written.
         :param int raw_time_type: Identifier representing the time format being written, corresponding to the options
@@ -1694,7 +1720,9 @@ class AtriumSDK:
 
         :param int measure_id: Identifier for the measure, corresponding to the measures table in the linked relational database.
         :param int device_id: Identifier for the device, corresponding to the devices table in the linked relational database.
-        :param ndarray values: Numpy array of values to write.
+        :param ndarray values: Numpy array (or list) of values to write. String values are supported: pass a
+            ``list[str]`` or a string/object numpy array and each value is dictionary-encoded as an ``int64`` code
+            (read them back with :meth:`get_string_data`). See the ``value_data`` note on :meth:`write_data`.
         :param ndarray times: Numpy array of corresponding timestamps for each value. The shape of `values` and `times` must match.
         :param float period: (Optional) Sampling period of the data. Only one of `period` or `freq` should be specified.
                              If specified, time deltas in `times` will be adjusted to match `period` within the `gap_tolerance`.
@@ -1720,6 +1748,13 @@ class AtriumSDK:
             >>> times = np.array([0.0, 2.0, 4.5])  # Time values in seconds
             >>> values = np.array([100, 200, 300])  # Corresponding values
             >>> sdk.write_time_value_pairs(measure_id, device_id, times, values)
+
+            >>> # String values work the same way (dictionary-encoded automatically)
+            >>> str_times = np.array([0.0, 2.0, 4.5])
+            >>> str_values = ["ASYSTOLE", "V-TACH", "ASYSTOLE"]
+            >>> sdk.write_time_value_pairs(measure_id, device_id, str_times, str_values, time_units="s")
+            >>> read_times, read_values = sdk.get_string_data(
+            ...     measure_id, start_time_n=0, end_time_n=10, device_id=device_id, time_units="s")
 
         **Notes:**
 

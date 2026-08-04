@@ -20,6 +20,7 @@ API Reference
    .. automethod:: create_dataset
 
    .. automethod:: get_data
+   .. automethod:: get_string_data
    .. automethod:: write_data_easy
    .. automethod:: write_data
    .. automethod:: write_buffer

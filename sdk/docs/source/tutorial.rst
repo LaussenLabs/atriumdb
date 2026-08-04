@@ -243,6 +243,60 @@ can be used for inserting time-value pairs, with arrays of values and correspond
     # Alternative: Inserting time-value pairs with expected period
     sdk.write_time_value_pairs(measure_id, device_id, times, values, period=2.0, time_units="s")
 
+.. _string_values:
+
+String Values
+^^^^^^^^^^^^^^
+
+AtriumDB can store dynamically-sized **string** values for a measure, alongside its numeric measures.
+This is useful for aperiodic textual signals such as alarm messages, device status strings, or annotations.
+
+You write strings with the **same methods used for numbers** -
+`AtriumSDK.write_time_value_pairs <contents.html#atriumdb.AtriumSDK.write_time_value_pairs>`_ or
+`AtriumSDK.write_data <contents.html#atriumdb.AtriumSDK.write_data>`_ -
+simply by passing a ``list[str]`` (or a string/object numpy array) as the values. Under the hood, each
+unique string is assigned an ``int64`` dictionary code and stored using the ordinary integer write path,
+so no special block format is involved. The per-measure dictionary is an append-only JSON Lines file at
+``<dataset_location>/meta/string_dict/measure_<measure_id>.jsonl``; existing codes are never rewritten, so
+historical blocks stay valid as new strings are appended.
+
+To read string values back, use the dedicated
+`AtriumSDK.get_string_data <contents.html#atriumdb.AtriumSDK.get_string_data>`_ method, which returns a
+``(times, values)`` tuple where ``values`` is a 1D object numpy array of ``str``. It accepts the same
+selectors (``measure_id`` or ``measure_tag``/``freq``/``units``, plus device/patient selectors) as
+`AtriumSDK.get_data <contents.html#atriumdb.AtriumSDK.get_data>`_.
+
+.. code-block:: python
+
+    sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+    measure_id = sdk.insert_measure(measure_tag="alarm_text", freq=1.0, freq_units="Hz")
+    device_id = sdk.insert_device(device_tag="test_device")
+
+    # Write strings with the ordinary write methods - just pass a list[str].
+    times = np.array([0.0, 1.0, 2.0])  # seconds
+    values = ["ASYSTOLE", "V-TACH", "ASYSTOLE"]  # dictionary-encoded automatically
+    sdk.write_time_value_pairs(measure_id, device_id, times, values, time_units="s")
+
+    # The advanced AtriumSDK.write_data method accepts string/object value arrays too
+    # (omit raw_value_type - the codes are stored as int64):
+    from atriumdb import T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
+    ts_ns = np.array([0, 1_000_000_000, 2_000_000_000], dtype=np.int64)  # nanosecond timestamps
+    sdk.write_data(measure_id, device_id, ts_ns, values, freq_nhz=1_000_000_000,
+                   time_0=int(ts_ns[0]), raw_time_type=T_TYPE_TIMESTAMP_ARRAY_INT64_NANO)
+
+    # Read them back with get_string_data -> (times, values), values is a str object array.
+    read_times, read_values = sdk.get_string_data(
+        measure_id, start_time_n=0, end_time_n=10, device_id=device_id, time_units="s")
+    print(read_values)  # array(['ASYSTOLE', 'V-TACH', 'ASYSTOLE'], dtype=object)
+
+.. note::
+
+    String measures cannot be analog-scaled or NaN-filled. Calling
+    `AtriumSDK.get_data <contents.html#atriumdb.AtriumSDK.get_data>`_ on a string measure with the default
+    ``analog=True``, or with ``return_nan_filled``, raises a ``ValueError`` pointing you to
+    ``get_string_data``. In this release, string reads are served only by ``get_string_data``; they are not
+    yet folded into ``get_data`` or the windowing iterator.
+
 .. _buffered_inserts:
 
 Buffered Inserts
