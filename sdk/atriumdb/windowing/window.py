@@ -59,3 +59,21 @@ class Window:
     label_time_series: np.ndarray
     label: np.ndarray
     patient_info: dict
+
+    def decode_string_signal(self, sdk, measure_key, unknown_value=None):
+        """Decode a string signal's int64 codes in this window to strings.
+
+        String measures rasterize their dictionary CODES into the window (design
+        section 21.2 #4), not decoded strings; this accessor decodes them on
+        demand via the measure's :class:`MeasureStringDictionary`. ``measure_key``
+        is the ``(tag, freq_hz, units)`` tuple keying :attr:`signals`. The
+        reserved unknown sentinel decodes to ``unknown_value`` (``"<unknown>"``
+        by default) instead of raising."""
+        # Imported lazily to avoid a module import cycle at load time.
+        from atriumdb.string_dictionary import MeasureStringDictionary, UNKNOWN_STRING_VALUE
+        if unknown_value is None:
+            unknown_value = UNKNOWN_STRING_VALUE
+        signal = self.signals[measure_key]
+        string_dict = MeasureStringDictionary.load(sdk._meta_dir, int(signal['measure_id']))
+        return string_dict.decode_with_unknown(
+            np.asarray(signal['values']).astype(np.int64), unknown_value=unknown_value)

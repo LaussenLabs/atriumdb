@@ -46,6 +46,19 @@ from typing import Sequence, Union
 
 import numpy as np
 
+# Reserved "unknown" sentinel code for string / int64 code channels (Phase 3,
+# design section 21.2 #2). Real dictionary codes are always >= 0 (line index in
+# the append-only file), so a negative sentinel can never collide with a genuine
+# string. NaN plays the same role for float channels. Chosen over "reserve code
+# 0" because existing committed dictionaries already assigned code 0 to a real
+# string -- a negative sentinel is safe to add without rewriting any data.
+UNKNOWN_STRING_CODE = -1
+
+# The value a reserved unknown code decodes to, by default. Kept distinct from
+# any genuine string (it is not in the vocabulary). A sentinel conflates
+# "unknown / censored" with a genuine missing reading -- see design 21.2 #2(a).
+UNKNOWN_STRING_VALUE = "<unknown>"
+
 # Prefer filelock (a robust cross-platform advisory lock). Fall back to a small
 # fcntl-based lock on POSIX so the dependency is optional. Both guard only the
 # append; reads never need the lock because the file is append-only.
@@ -222,6 +235,36 @@ class MeasureStringDictionary:
         out_flat = out.reshape(-1)
         for i, c in enumerate(flat):
             code = int(c)
+            if code < 0 or code >= n_vocab:
+                raise ValueError(
+                    f"String code {code} is out of range for a dictionary of size "
+                    f"{n_vocab} (measure dictionary '{self._path}'). This indicates "
+                    f"a dictionary/data mismatch.")
+            out_flat[i] = self._strings[code]
+        return out
+
+    def decode_with_unknown(self, codes: np.ndarray,
+                            unknown_code: int = UNKNOWN_STRING_CODE,
+                            unknown_value=UNKNOWN_STRING_VALUE) -> np.ndarray:
+        """Decode ``int64`` codes to strings, mapping the reserved unknown
+        sentinel code (default ``-1``) to ``unknown_value`` instead of raising.
+
+        This is the Phase 3 window decode accessor: a rasterized string window
+        carries genuine dictionary codes (>= 0) plus the reserved unknown
+        sentinel for gap / censored cells. Genuine codes decode normally; the
+        sentinel decodes to ``unknown_value`` (``"<unknown>"`` by default, or
+        pass ``None`` to get ``None`` for those cells). Any other out-of-range
+        code still raises, as it indicates a dictionary/data mismatch."""
+        codes_arr = np.asarray(codes)
+        n_vocab = len(self._strings)
+        out = np.empty(codes_arr.shape, dtype=object)
+        flat = codes_arr.reshape(-1)
+        out_flat = out.reshape(-1)
+        for i, c in enumerate(flat):
+            code = int(c)
+            if code == unknown_code:
+                out_flat[i] = unknown_value
+                continue
             if code < 0 or code >= n_vocab:
                 raise ValueError(
                     f"String code {code} is out of range for a dictionary of size "

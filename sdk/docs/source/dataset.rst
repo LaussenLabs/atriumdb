@@ -218,6 +218,153 @@ Example of the ``patient_info`` dictionary:
     }
 
 
+.. _aperiodic_windowing:
+
+Aperiodic and String Measure Windowing
+--------------------------------------
+
+Windowing was originally designed for regularly sampled ``waveform`` measures, where every window is a
+fixed-length grid of samples. Aperiodic measures (``sample``, ``event`` and ``state`` — see
+:ref:`Measure Metadata <measure_metadata>`) and string measures do not naturally fit a fixed grid: they
+have irregular timestamps and, for strings, non-numeric values. The iterator rasterizes these measures
+onto the window grid using a per-measure **fill rule**, so every measure still produces a fixed-length
+``values`` array you can stack into a tensor.
+
+Fill rules by signal_kind
+##########################
+
+Each measure's ``signal_kind`` determines its default fill rule:
+
+- ``waveform`` — unchanged. The existing NaN-filled sample grid is used; the fill configuration below does
+  not apply.
+- ``sample`` — **``carry_forward``** (default): each grid cell takes the most recent observed reading.
+  Alternatives: ``sparse`` (only cells at an actual reading are filled, the rest are unknown) and
+  ``aggregate:last|mean|min|max`` (reduce all readings falling in a cell). For string ``sample`` measures
+  only ``carry_forward``, ``sparse`` and ``aggregate:last`` are valid (the numeric reductions
+  ``mean|min|max`` are rejected).
+- ``state`` — **``carry_forward``** with **left-censoring**: cells before the first observed state
+  transition in the window are marked unknown (the true prior state is not known from within the window).
+- ``event`` — **``presence``** (default): each cell is ``1.0`` if any event occurred in it, else ``0.0``.
+  Alternative: ``count`` (the number of events in the cell). Event cells are always "known" — absence is a
+  meaningful ``0``, so there is no unknown sentinel for events.
+
+Nominal raster period (1 s default)
+####################################
+
+Aperiodic measures are rasterized at a **nominal period**. Because the frequency stored on an aperiodic
+measure does not describe a meaningful sampling grid, the period is resolved in this order:
+
+1. a per-measure ``period_overrides[measure_id]`` (in ``time_units``), if given;
+2. the measure's stored period, for ``waveform`` measures only;
+3. otherwise a **1 second default** for aperiodic kinds.
+
+The unknown-value sentinel (current limitation)
+###############################################
+
+"Unknown" cells — data gaps, ``sparse`` cells with no reading, and the left-censored region of a
+``state`` measure before its first observed transition — are marked **with a sentinel in the ``values``
+array**, not with a separate mask:
+
+- ``NaN`` for numeric (float) channels;
+- ``-1`` (``UNKNOWN_STRING_CODE``, which decodes to ``"<unknown>"``) for string / int64 code channels.
+
+.. warning::
+
+   A sentinel **conflates "unknown / censored" with a genuine missing reading** — a ``NaN`` in a window
+   could mean "no data here" or "the recorded value was itself NaN". There is no separate ``known`` mask
+   yet; a dedicated per-signal mask is a planned future enhancement. If your downstream logic must
+   distinguish the two, keep this in mind.
+
+Configuring fill on ``get_iterator``
+####################################
+
+Three `AtriumSDK.get_iterator <contents.html#atriumdb.AtriumSDK.get_iterator>`_ parameters control this
+behaviour:
+
+- ``aperiodic_fill`` — a **global default** fill rule applied to every aperiodic measure whose ``signal_kind``
+  accepts it. A global default that is incompatible with a given measure's kind silently falls back to that
+  kind's per-kind default (it never raises).
+- ``fill_overrides`` — a ``{measure_id: rule}`` mapping of **per-measure** fill rules. Unlike
+  ``aperiodic_fill``, an override that is incompatible with the measure's kind **raises** a ``ValueError``.
+- ``period_overrides`` — a ``{measure_id: period}`` mapping of per-measure nominal raster periods, expressed
+  in the iterator's ``time_units``.
+
+Reading string windows
+#######################
+
+String measures carry ``int64`` dictionary **codes** in ``window.signals[key]['values']``, not decoded
+strings — this keeps windows compact and tensor-friendly. Decode on demand with either accessor:
+
+- ``window.decode_string_signal(sdk, measure_key)`` — a method on the :ref:`Window <window_format>` object;
+- ``iterator.decode_window_strings(window, measure_key)`` — the equivalent accessor on the iterator.
+
+In both, ``measure_key`` is the ``(tag, freq_hz, units)`` tuple that keys ``window.signals``. The unknown
+sentinel (``-1``) decodes to ``"<unknown>"`` (override via the ``unknown_value`` argument).
+
+Example
+#######
+
+This end-to-end example creates a string ``sample`` measure and a numeric ``sample`` measure, writes a few
+aperiodic points, then iterates and decodes a string window (see :ref:`Measure Metadata
+<measure_metadata>` for more on ``signal_kind`` / ``value_type``).
+
+.. code-block:: python
+
+    import numpy as np
+    from atriumdb import AtriumSDK, DatasetDefinition
+
+    sdk = AtriumSDK(dataset_location=local_dataset_location)
+    device_id = sdk.insert_device(device_tag="monitor_1")
+
+    # A string 'sample' measure (device status text) and a numeric 'sample' measure (SpO2).
+    status_id = sdk.insert_measure(measure_tag="device_status", freq=1.0, freq_units="Hz",
+                                   units="status", signal_kind="sample", value_type="string")
+    spo2_id = sdk.insert_measure(measure_tag="spo2", freq=1.0, freq_units="Hz",
+                                 units="%", signal_kind="sample", value_type="numeric")
+
+    # Write a handful of aperiodic points (seconds).
+    sdk.write_time_value_pairs(status_id, device_id, np.array([2.0, 41.0]),
+                               ["OK", "SENSOR_OFF"], time_units="s")
+    sdk.write_time_value_pairs(spo2_id, device_id, np.array([0.0, 30.0, 55.0]),
+                               np.array([98.0, 95.0, 91.0]), time_units="s")
+
+    definition = DatasetDefinition(measures=["device_status", "spo2"], device_ids={device_id: "all"})
+
+    iterator = sdk.get_iterator(
+        definition,
+        window_duration=60,           # 1 minute
+        window_slide=60,
+        time_units="s",
+        aperiodic_fill="carry_forward",              # global default: carry the last value forward
+        fill_overrides={spo2_id: "sparse"},          # spo2: only fill cells with an actual reading
+        period_overrides={spo2_id: 5},               # rasterize spo2 every 5 s instead of the 1 s default
+    )
+
+    spo2_key = ("spo2", 1.0, "%")
+    status_key = ("device_status", 1.0, "status")
+    for window in iterator:
+        # Numeric sample measure ('sparse'): NaN in every cell without an actual reading.
+        spo2 = window.signals[spo2_key]['values']
+
+        # String sample measure (carried forward): values are int64 codes -> decode on demand.
+        status_codes = window.signals[status_key]['values']
+        status_strings = window.decode_string_signal(sdk, status_key)   # "<unknown>" for sentinel cells
+        # equivalently: iterator.decode_window_strings(window, status_key)
+        print(spo2, status_codes, status_strings)
+
+Current limitations
+###################
+
+- **Sentinel, not a mask** — as noted above, unknown/censored cells are only distinguishable by the
+  sentinel value in ``values``; there is no separate ``known`` mask yet.
+- **State right-censoring is not handled** — only *left*-censoring (before the first observed transition)
+  is applied. Correctly bounding a state on its right edge requires event pairing, which is a later phase.
+- **Event pairing / "in state A→B" queries are not implemented** — event *presence* / *count* work, but
+  pairing events into intervals is a later phase.
+- **The ``lightmapped`` iterator and the ``definition.filter`` path ignore the fill configuration** — they
+  use the numeric grid path only and do not apply ``aperiodic_fill`` / ``fill_overrides`` /
+  ``period_overrides``. Passing fill configuration to a ``lightmapped`` iterator emits a warning.
+
 Iterator Types
 ------------------------
 

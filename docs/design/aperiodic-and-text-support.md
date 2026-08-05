@@ -895,6 +895,214 @@ idempotent; `NULL` reads as `waveform`/`numeric`; a P1 string dataset backfills 
 round-trips explicit values through `get_measure_info`; numeric and string P1 tests still
 pass unchanged.
 
+## 21. Phase 3 implementation spec — rasterize into the Window contract
+
+> **Status: ✅ implemented, audited & bug-fixed (UNCOMMITTED, pending final numeric
+> regression, on `feature/aperiodic-and-text-support`).** Per-kind fill rules in
+> `windowing_functions.py` (`_rasterize_grid` with a *separable* known-boolean → sentinel,
+> per §21.2#2b), `dataset_iterator.py` (nominal-period resolution, `aperiodic_fill`/
+> `fill_overrides`/`period_overrides`, decode accessors), `window.py`
+> (`decode_string_signal`), `string_dictionary.py` (`UNKNOWN_STRING_CODE = -1` — a negative
+> sentinel, since committed dicts already use code 0), and `get_iterator`. Waveform-numeric
+> path kept byte-for-byte (two independent equivalence tests + the real MIT-BIH
+> `test_iterator.py` regression passed).
+>
+> **Audited** (independent agent, `sdk/tests/test_aperiodic_windowing_p3_audit.py`). Confirmed
+> correct: −1 sentinel never confusable with real codes, no batch-sizing distortion, waveform
+> path unchanged. One **HIGH** bug found **and fixed**: carry-forward/left-censoring output
+> depended on `num_windows_prefetch` (a RAM knob) because each batch only read its own time
+> span, so a reading before a window's batch was invisible and a known cell was emitted as the
+> unknown sentinel. Fix: propagate the definition's true range start through the batch tuples
+> and **seed each carry-forward batch** from the last reading in `[range_start, batch_start)`
+> (bounded lookback, batching intact); `sparse`/`aggregate`/`presence`/`count` unaffected. Also
+> replaced an opaque "slice step cannot be zero" error (period > window) with a clear message.
+> The 3 audit `xfail` regression tests now pass. Combined P3 suites: **40 pass, no xfail**.
+> Because the fix touched core batch construction, the full numeric `test_iterator.py` is being
+> re-run as the final gate before commit.
+>
+> **Known limitations (documented, by phase boundary):** unknown is a *sentinel in values*
+> (no separate `known` mask yet — structured to add one later); state **right-censoring** is a
+> no-op until P4 pairing; `lightmapped` / `DatasetDefinition.filter` keep the numeric-only path.
+
+**Goal:** make the windowing iterator produce sensible fixed-shape windows for aperiodic
+and string measures, using per-`signal_kind` fill rules, a **validity/known mask** for
+gaps and censoring, a **1 s default raster period** when a measure has none, and by
+**folding string reads into `get_data`** (the read-unification deferred from P1 §17.8).
+
+**Non-goals:** event *pairing* / "in state A→B" derivation (P4 — but P3 must build the
+state carry-forward + mask machinery P4 feeds); event-anchored definitions (P5); ragged
+(non-rasterized) window output (a possible later mode — P3 is rasterize-only).
+
+### 21.1 Today's iterator (what changes)
+
+`get_signal_dictionary` ([windowing/windowing_functions.py:49](../../sdk/atriumdb/windowing/windowing_functions.py))
+builds, per measure, a regular grid `arange(start, end, period_ns)`, NaN-fills a **float**
+value array, drops real samples in via `get_data(..., return_nan_filled=out)`, then
+`sliding_window_view`s it. `DatasetIterator` uses `lowest_period_ns = min(period_ns)` for
+batch sizing. Three things break for aperiodic/string: (a) an aperiodic measure has no
+natural grid period; (b) NaN-fill can't hold strings and mis-represents "no reading" vs
+"gap"; (c) `get_data` raises for string measures on the NaN-fill path (P1 guard).
+
+### 21.2 Decisions (✅ confirmed with requester)
+
+1. **✅ Grid period = per-measure nominal, default 1 s (reuse `period_ns`, NO new column).**
+   Keep the existing *per-measure* grid. The per-measure nominal raster period is the
+   existing `measure.period_ns`; when it is absent/unusable (aperiodic kinds) it defaults to
+   **1 s**, and is still overridable via `get_iterator`. Resolution order:
+   `get_iterator` override → `measure.period_ns` → 1 s. Do **not** add a schema column.
+   `lowest_period_ns` / batch sizing must use this resolved nominal period so an aperiodic
+   measure can't distort `row_size`.
+2. **✅ Unknown cells = sentinel in `values` (NOT a separate mask) — for now, with two
+   requirements.** Represent unknown (gap / left-right-censored state) as a sentinel *in
+   the value array*: `NaN` for float channels, and a **reserved "unknown" sentinel code**
+   for int/string(code) channels (e.g. reserve dictionary code 0 as `"<unknown>"`, or a
+   documented negative sentinel — pick one and apply it consistently). **(a)** This
+   limitation MUST be documented: a sentinel conflates "unknown/censored" with a genuine
+   missing/NaN reading, and every channel needs a reserved sentinel value. **(b)** Write
+   the fill code so the *unknown-ness* is computed as a separable internal step (a boolean
+   "is this cell known" is produced internally and then applied as a sentinel), so a future
+   switch to emitting a real per-signal `known` mask is an additive change, not a rewrite.
+3. **✅ Fill config = default-per-kind + per-measure overrides.** `get_iterator` takes an
+   `aperiodic_fill=` default plus `fill_overrides={measure_id: rule}`. Defaults:
+   `waveform`→existing NaN grid; `sample`→**carry-forward** with options `sparse` /
+   `aggregate:{last|mean|min|max}`; `state`→carry-forward **with left-censoring**;
+   `event`→**presence** (0/1) with option `count`.
+4. **✅ String values in windows = int64 codes + a dictionary accessor.** Windows carry
+   compact int64 dictionary codes (tensor-friendly, memory-efficient for batches); provide
+   a helper to decode a window's codes to strings on demand. The reserved unknown sentinel
+   from (2) lives in the same code space.
+
+### 21.3 Per-kind fill semantics
+
+Per §21.2(2), "unknown" is a sentinel in the value array (NaN for float; a reserved code
+for int/string), computed via a separable internal boolean so a real mask can be added
+later.
+
+- **waveform (numeric):** unchanged — NaN grid (NaN = no sample).
+- **sample (numeric):** default **carry-forward** (each cell = most recent prior reading;
+  cells before the first real sample in the window are the unknown sentinel — NaN). `sparse`
+  = value only in the nearest cell, NaN elsewhere. `aggregate:*` = reduce multiple readings
+  that fall in one cell.
+- **state (numeric or string):** **carry-forward** the value in effect at each cell.
+  **Left-censoring:** cells before the first observed transition in the window get the
+  **unknown sentinel** (NaN or the reserved code) — state is genuinely unknown (recording
+  may have begun mid-state), NOT the first observed value. Right-censoring symmetric if a
+  state never closes. This is the machinery P4's "in A→B" 0/1 rides.
+- **event (numeric or string):** **presence** — cell = 1 if an event occurred in the cell's
+  span, else 0 (exactly what `get_label_time_series` produces; §21.4). `count` = number of
+  events in the cell. No unknown sentinel here — absence (0) is meaningful.
+
+### 21.4 Reuse the label rasterizer
+
+`get_label_time_series` already rasterizes intervals to a 0/1 presence array over a
+timestamp grid ([atrium_sdk.py](../../sdk/atriumdb/atrium_sdk.py)) and the iterator already
+consumes it. **Route event-presence and state-membership rasterization through the same
+code** rather than a parallel implementation; generalize it to emit the `known` mask.
+P4's derived A→B intervals then feed this same path.
+
+### 21.5 `get_data` and the iterator's code path
+
+Because §21.2(4) puts **int64 codes** in the window, the iterator does **not** need
+`get_data` to return decoded strings — it reads raw codes via the existing
+`get_data(..., analog=False)` path (which already returns int64 codes for a string measure)
+and applies the P3 fill rules itself, instead of `return_nan_filled`. Consequences:
+
+- **The iterator restructures `get_signal_dictionary`** to branch by kind: `waveform` keeps
+  the existing NaN-fill path; `sample`/`state`/`event` (numeric or string) use the new fill
+  path over `get_data(analog=False)` output. The P1 guard that raised on `return_nan_filled`
+  for string measures is simply not hit on this path (the iterator no longer nan-fills them).
+- **Numeric `get_data` stays byte-for-byte unchanged** — highest regression risk; do not
+  touch its numeric behavior. Cover with the existing numeric iterator tests.
+- **DEFERRED (not P3 critical path):** folding *decoded string* returns into `get_data`'s
+  default (so direct users skip `get_string_data`) is a separable convenience with the
+  return-type-polymorphism risk flagged in §5.6/§17.4. It is **not required** for the
+  iterator and is deferred; `get_string_data` remains the string reader. Revisit later.
+
+### 21.6 Tests
+
+Per-kind rasterization (waveform/sample/state/event × numeric/string) into windows with the
+expected unknown-sentinel placement; carry-forward vs sparse vs aggregate for `sample`;
+left-censored `state` yields the unknown sentinel (NaN / reserved code) before the first
+transition, NOT a fabricated value; the reserved unknown code is never confused with a real
+string; 1 s default period when a measure has none; mixed-rate window (a waveform + an
+aperiodic measure in one definition) batches correctly; string windows carry int64 codes
+with a working decode accessor; `get_data` string round-trip via the unified path; and —
+critically — the existing numeric windowing/iterator tests pass unchanged (numeric `get_data`
+byte-for-byte identical).
+
+## 22. Phase 4 implementation spec — event query surface + pairing
+
+> **Status: DRAFT for review — no code yet.** Builds on P1 (string codes), P2
+> (`signal_kind`/`value_type`), and P3 (state rasterization + sentinel). The §22.2
+> decisions are the ones to settle before implementing.
+
+**Goal:** turn stored event/string series into queryable events — (a) enumerate the unique
+event types, (b) derive `from → to` intervals (pair an event with the next event), scoped
+by a `within` container — as standalone SDK methods that later feed P3's state rasterizer
+(0/1 "in A→B") and P5's event-anchored `DatasetDefinition`.
+
+**Non-goals:** event-anchored `DatasetDefinition` regions (P5); transfer (P6). P4 is
+standalone read/query methods + the pairing/within engine.
+
+### 22.1 What P4 delivers
+
+1. **Enumerate unique event types.**
+   - `get_measure_string_vocabulary(measure_id)` — ALL values ever written, read cheaply
+     from the per-measure dictionary file (no data scan). Bounded by vocabulary size.
+   - Range/source-scoped distinct values — reads the codes for a source over `[start,end]`
+     and uniques them (for "what events occurred for device X last week").
+2. **`from → to` interval derivation** —
+   `get_event_intervals(measure, source, from_value, to_value, within=..., start, end,
+   time_units=...)` → a list of `(start_ns, end_ns, start_censored, end_censored)`. Reads
+   the string sample series (int64 codes) for the source over the range, finds the code
+   positions of `from_value`/`to_value`, and pairs each `from` with the appropriate `to`
+   (§22.2#2), intersected with the `within` container (§22.2#3). Vectorized via
+   `searchsorted` on the code array — no per-event Python loop.
+3. **The `within` cascade** (confirmed earlier, §13): resolve containment intervals as
+   **`device_patient` (if populated) → `encounter` → whole-stream / the definition's own
+   range**. Intersect candidate `(from, to)` spans with the container; a pair that would
+   span a container boundary is rejected (or clipped + flagged). **Warn, do not silently
+   drop**, when the requested scoping data is missing; must run with an empty
+   `device_patient` table.
+4. **Censoring** (rides P3 semantics): a `from` with no following `to` in range/container →
+   right-censored (clip end to container/range end, `end_censored=True`); a `to` with no
+   preceding `from` → left-censored (`start_censored=True`). Never fabricate a boundary.
+
+### 22.2 Decisions (✅ confirmed with requester)
+
+1. **✅ Same-measure pairing first.** `from_value` and `to_value` are values within ONE event
+   measure (e.g. one "anesthesia_events" stream containing "START" and "STOP"). Cross-measure
+   pairing (from in measure A, to in measure B) is a later extension, not P4.
+2. **✅ Collapse (first-open → first-close), non-overlapping intervals.** A run of `from`s
+   until the next `to` is ONE interval; intervals do not overlap. Matches on/off state
+   semantics and is unambiguous. Stack/LIFO nesting can be added later if needed.
+3. **✅ `within` = `device_patient → encounter → whole-stream` cascade** (per §13), and a
+   caller may force a specific container: `within="device_patient" | "encounter" | "none"`
+   (whole-stream) or a named label window. Warn (never silently drop) when the requested
+   scoping data is missing; must run with an empty `device_patient` table.
+4. **✅ Type enumeration = per-measure dictionary file + range scan; no new SQL table.**
+   All-values from the dictionary file (cheap); range-scoped distinct reads the codes over
+   the window and uniques them. Defer the optional `string_value_dict` table until a real
+   query proves too slow.
+
+### 22.3 How pairing rides P3 (no duplicate rasterizer)
+
+The `(start, end)` intervals `get_event_intervals` returns are the SAME interval shape P3's
+`state` rasterizer already turns into a 0/1 membership row (with the unknown sentinel for
+censored edges). So "give me a 0/1 signal for whether we're inside Anesthesia START→STOP"
+= `get_event_intervals(...)` → feed the intervals to P3's state fill path (P5 wires this
+into a `DatasetDefinition`). P4 does not add a second rasterizer; it produces intervals.
+
+### 22.4 Tests
+
+Vocabulary enumeration (dict-file all-values + range-scoped distinct); `from→to` pairing
+with the confirmed rule (repeats, back-to-back, a `from` with no `to` → right-censored, a
+`to` with no `from` → left-censored); `within` cascade — `device_patient` used when
+populated, falls back to `encounter`, then whole-stream when `device_patient` is empty (with
+a warning), and a pair spanning a container boundary is rejected/clipped; numeric-measure
+inputs rejected with a clear error (events are string measures); vectorized path matches a
+brute-force reference on random event sequences.
+
 ## 20. Why this fits AtriumDB rather than fighting it
 
 - Text becomes a **value encoding**, so it rides the existing block / index / iterator /

@@ -41,11 +41,14 @@ class FilteredDatasetIterator(DatasetIterator):
     """
     def __init__(self, sdk, definition, window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
                  label_threshold=0.5, shuffle=False, max_cache_duration=None, window_filter_fn=None,
-                 patient_history_fields: list = None, label_exact_match=False):
+                 patient_history_fields: list = None, label_exact_match=False,
+                 aperiodic_fill=None, fill_overrides=None, period_overrides=None):
         super().__init__(sdk=sdk, definition=definition, window_duration_ns=window_duration_ns,
                          window_slide_ns=window_slide_ns, num_windows_prefetch=num_windows_prefetch,
                          label_threshold=label_threshold, shuffle=shuffle, max_cache_duration=max_cache_duration,
-                         patient_history_fields=patient_history_fields, label_exact_match=label_exact_match)
+                         patient_history_fields=patient_history_fields, label_exact_match=label_exact_match,
+                         aperiodic_fill=aperiodic_fill, fill_overrides=fill_overrides,
+                         period_overrides=period_overrides)
         self.window_filter_fn = window_filter_fn
 
     def _load_batch_matrix(self, idx: int):
@@ -58,14 +61,15 @@ class FilteredDatasetIterator(DatasetIterator):
         patient_info_cache = {}
         patient_history_cache = {}
 
-        for source_index, (source_type, source_identifier, source_batch_start_time, source_batch_end_time, range_start_time, range_end_time, range_num_windows) in enumerate(batch_data):
+        for source_index, (source_type, source_identifier, source_batch_start_time, source_batch_end_time, range_start_time, range_end_time, range_num_windows, definition_range_start_time) in enumerate(batch_data):
             device_id, patient_id, query_patient_id = self.unpack_source_info(source_identifier, source_type)
 
             _load_patient_cache(patient_id, patient_info_cache, patient_history_cache, self.sdk, self.patient_history_fields)
 
             source_batch_data_dictionary = get_signal_dictionary(
                 self.sdk, device_id, query_patient_id, self.window_duration_ns, self.window_slide_ns, self.measures,
-                source_batch_start_time, source_batch_end_time, batch_num_windows, range_start_time, range_end_time)
+                source_batch_start_time, source_batch_end_time, batch_num_windows, range_start_time, range_end_time,
+                render_config=self.render_config, definition_range_start_time=definition_range_start_time)
 
             sliced_labels, threshold_labels = get_label_dictionary(
                 self.sdk, device_id, query_patient_id, source_batch_start_time, source_batch_end_time, self.label_sets,

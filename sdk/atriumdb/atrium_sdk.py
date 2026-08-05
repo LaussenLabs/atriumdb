@@ -5476,7 +5476,8 @@ class AtriumSDK:
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
                      time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
                      shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
-                     end_time=None, num_iterators=1, label_exact_match=False) -> Union[
+                     end_time=None, num_iterators=1, label_exact_match=False,
+                     aperiodic_fill=None, fill_overrides=None, period_overrides=None) -> Union[
         DatasetIterator, List[DatasetIterator]]:
         """
         Constructs and returns a `DatasetIterator` object or a list of `DatasetIterator` objects that allow iteration
@@ -5524,6 +5525,26 @@ class AtriumSDK:
           Regardless of the above parameters if shuffle is True or an int, all windows in the cache will be randomly
           shuffled before being passed to the user.
 
+        - **Aperiodic and string measures (Phase 3)**: ``waveform`` measures use the usual NaN-filled
+          sample grid. Aperiodic measures (``sample``/``event``/``state``) are rasterized onto the window
+          grid using a per-``signal_kind`` fill rule: ``sample`` -> ``carry_forward`` (default; also
+          ``sparse``, ``aggregate:last|mean|min|max``), ``state`` -> ``carry_forward`` with left-censoring,
+          ``event`` -> ``presence`` (default; also ``count``). Aperiodic measures rasterize at a nominal
+          period (``period_overrides`` -> the measure's stored period for waveform -> a 1 second default
+          for aperiodic kinds). Configure fill via ``aperiodic_fill`` (global default),
+          ``fill_overrides`` (``{measure_id: rule}``) and ``period_overrides`` (``{measure_id: period}``).
+
+          Unknown / left-censored cells (data gaps, empty ``sparse`` cells, the region of a ``state`` before
+          its first observed transition) are marked **with a sentinel in the ``values`` array**: ``NaN`` for
+          numeric channels and ``-1`` (``UNKNOWN_STRING_CODE``, decodes to ``"<unknown>"``) for string/code
+          channels. **Limitation:** the sentinel conflates "unknown/censored" with a genuine missing reading
+          -- there is no separate ``known`` mask yet (a planned enhancement). String measures carry int64
+          dictionary codes in the window; decode on demand with ``Window.decode_string_signal(sdk,
+          measure_key)`` or ``iterator.decode_window_strings(window, measure_key)``. This fill configuration
+          is applied only by the default/mapped iterators; the ``lightmapped`` iterator and the
+          ``DatasetDefinition.filter`` path use the numeric grid only and ignore it. State right-censoring
+          and event pairing are later phases.
+
         :param definition: A DatasetDefinition object or string representation specifying the measures and
                            patients or devices over particular time intervals.
         :param int window_duration: Duration of each window in units time_units (default nanoseconds).
@@ -5551,6 +5572,20 @@ class AtriumSDK:
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
+        :param str aperiodic_fill: Default fill rule for aperiodic measures (Phase 3, design section
+            21.2 #3). One of ``"carry_forward"``, ``"sparse"``, ``"aggregate:last|mean|min|max"`` (for
+            ``sample`` kinds) or ``"presence"`` / ``"count"`` (for ``event`` kinds). When ``None`` each
+            measure uses its per-``signal_kind`` default (``sample``/``state`` -> carry-forward,
+            ``event`` -> presence). A global default incompatible with a given measure's kind silently
+            falls back to that kind's default. ``waveform`` numeric measures are unaffected (unchanged
+            NaN grid). Unknown / left-censored cells carry a sentinel: ``NaN`` for numeric channels, a
+            reserved unknown code for string channels (a sentinel conflates unknown/censored with a
+            genuine missing reading).
+        :param dict fill_overrides: ``{measure_id: rule}`` per-measure fill rule overrides. Unlike
+            ``aperiodic_fill``, an override incompatible with the measure's kind raises.
+        :param dict period_overrides: ``{measure_id: period}`` per-measure nominal raster period
+            overrides in ``time_units``. Highest precedence in period resolution
+            (override -> measure.period_ns for waveform -> 1 s default for aperiodic kinds).
 of DatasetIterator objects depending on the value of num_iterators.
         :rtype: Union[DatasetIterator, List[DatasetIterator]]
 
@@ -5604,6 +5639,11 @@ of DatasetIterator objects depending on the value of num_iterators.
         if end_time_n is not None:
             end_time_n = int(end_time_n * time_unit_options[time_units])
 
+        # Convert per-measure nominal period overrides from time_units to ns.
+        if period_overrides is not None:
+            period_overrides = {int(mid): int(period * time_unit_options[time_units])
+                                for mid, period in period_overrides.items()}
+
         max_cache_duration_per_source = None
         if cached_windows_per_source is not None:
             assert isinstance(cached_windows_per_source, int), "cached_windows_per_source must be of type int."
@@ -5630,7 +5670,8 @@ of DatasetIterator objects depending on the value of num_iterators.
                                              num_windows_prefetch, "ns", label_threshold, iterator_type,
                                              window_filter_fn, shuffle, cached_windows_per_source,
                                              patient_history_fields, start_time_n, end_time_n, num_iterators=1,
-                                             label_exact_match=label_exact_match)
+                                             label_exact_match=label_exact_match, aperiodic_fill=aperiodic_fill,
+                                             fill_overrides=fill_overrides, period_overrides=period_overrides)
                 iterators.append(iterator)
 
             return iterators
@@ -5681,8 +5722,12 @@ of DatasetIterator objects depending on the value of num_iterators.
                                       num_windows_prefetch=num_windows_prefetch, label_threshold=label_threshold,
                                       shuffle=shuffle, max_cache_duration=max_cache_duration_per_source,
                                       patient_history_fields=patient_history_fields,
-                                      label_exact_match=label_exact_match)
+                                      label_exact_match=label_exact_match, aperiodic_fill=aperiodic_fill,
+                                      fill_overrides=fill_overrides, period_overrides=period_overrides)
         elif iterator_type == 'lightmapped':
+            if aperiodic_fill is not None or fill_overrides or period_overrides:
+                warnings.warn("aperiodic_fill / fill_overrides / period_overrides are not applied by the "
+                              "'lightmapped' iterator; it uses the numeric grid path.")
             iterator = LightMappedIterator(
                 self, definition,
                 window_duration, window_slide,
@@ -5697,13 +5742,15 @@ of DatasetIterator objects depending on the value of num_iterators.
                                                max_cache_duration=max_cache_duration_per_source,
                                                window_filter_fn=window_filter_fn,
                                                patient_history_fields=patient_history_fields,
-                                               label_exact_match=label_exact_match)
+                                               label_exact_match=label_exact_match, aperiodic_fill=aperiodic_fill,
+                                               fill_overrides=fill_overrides, period_overrides=period_overrides)
         elif iterator_type == "iterator":
             iterator = DatasetIterator(self, definition, window_duration, window_slide,
                                        num_windows_prefetch=num_windows_prefetch, label_threshold=label_threshold,
                                        shuffle=shuffle, max_cache_duration=max_cache_duration_per_source,
                                        patient_history_fields=patient_history_fields,
-                                       label_exact_match=label_exact_match)
+                                       label_exact_match=label_exact_match, aperiodic_fill=aperiodic_fill,
+                                       fill_overrides=fill_overrides, period_overrides=period_overrides)
         else:
             raise ValueError("iterator_type must be either 'mapped', 'lightmapped','filtered' or 'iterator'")
 

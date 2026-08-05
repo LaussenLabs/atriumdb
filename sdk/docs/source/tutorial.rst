@@ -294,8 +294,10 @@ selectors (``measure_id`` or ``measure_tag``/``freq``/``units``, plus device/pat
     String measures cannot be analog-scaled or NaN-filled. Calling
     `AtriumSDK.get_data <contents.html#atriumdb.AtriumSDK.get_data>`_ on a string measure with the default
     ``analog=True``, or with ``return_nan_filled``, raises a ``ValueError`` pointing you to
-    ``get_string_data``. In this release, string reads are served only by ``get_string_data``; they are not
-    yet folded into ``get_data`` or the windowing iterator.
+    ``get_string_data``. Point reads of string measures are served only by ``get_string_data``; they are
+    not folded into ``get_data``. The windowing iterator *does* support string measures, but it carries the
+    raw ``int64`` dictionary codes in each window (not decoded strings); see
+    :ref:`aperiodic_windowing` for how to decode them.
 
 .. _measure_metadata:
 

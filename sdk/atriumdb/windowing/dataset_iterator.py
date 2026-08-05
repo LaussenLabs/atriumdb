@@ -28,7 +28,8 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 from atriumdb.windowing.window import Window
 from atriumdb.windowing.windowing_functions import get_signal_dictionary, find_closest_measurement, \
-    get_label_dictionary, _get_patient_info_from_cache, _load_patient_cache, get_window_list
+    get_label_dictionary, _get_patient_info_from_cache, _load_patient_cache, get_window_list, \
+    resolve_fill_rule, resolve_nominal_period_ns
 
 
 class DatasetIterator:
@@ -57,7 +58,7 @@ class DatasetIterator:
 
     def __init__(self, sdk, definition, window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
                  label_threshold=0.5, shuffle=False, max_cache_duration=None, patient_history_fields: list = None,
-                 label_exact_match=False):
+                 label_exact_match=False, aperiodic_fill=None, fill_overrides=None, period_overrides=None):
         if not definition.is_validated:
             definition.validate(sdk=sdk)
 
@@ -101,8 +102,21 @@ class DatasetIterator:
         # The sliding interval in nanoseconds by which the window advances in time.
         self.window_slide_ns = int(window_slide_ns)
 
-        # Determine the lowest period (highest frequency) among the measures, used to compute matrix row sizes and more.
-        self.lowest_period_ns = min([measure['period_ns'] for measure in self.measures])
+        # Phase 3 fill configuration (design section 21.2 #3): a default rule for
+        # aperiodic measures plus per-measure fill / period overrides.
+        self.aperiodic_fill = aperiodic_fill
+        self.fill_overrides = dict(fill_overrides) if fill_overrides else {}
+        self.period_overrides = dict(period_overrides) if period_overrides else {}
+
+        # Build the per-measure render config: resolved nominal raster period and
+        # fill rule per measure. For a plain waveform-numeric measure this is the
+        # untouched legacy path (fill_rule == 'grid', period == measure period).
+        self.render_config = self._build_render_config()
+
+        # Determine the lowest period (highest frequency) among the measures using the
+        # RESOLVED nominal periods, so an aperiodic measure gridded at 1 s cannot
+        # distort row_size / batch sizing (design section 21.2 #1).
+        self.lowest_period_ns = min(cfg['period_ns'] for cfg in self.render_config.values())
 
         # Compute the matrix's row size based on the lowest period and the window duration in nanoseconds.
         # Determines how many data points fit in a single window.
@@ -175,6 +189,73 @@ class DatasetIterator:
         self.matrix_cache = []
         self.cache_window_i = 0
 
+    def _build_render_config(self):
+        """Resolve, per measure, the nominal raster period and fill rule used by
+        ``get_signal_dictionary``. Keeps the waveform-numeric case on the legacy
+        ``grid`` path (byte-for-byte identical output)."""
+        config = {}
+        for measure in self.measures:
+            measure_id = measure['id']
+            signal_kind = measure.get('signal_kind') or 'waveform'
+            value_type = measure.get('value_type') or 'numeric'
+            period_ns = int(resolve_nominal_period_ns(
+                measure, period_override=self.period_overrides.get(measure_id)))
+            # Bug-3 fix: a resolved nominal period larger than the window duration
+            # (or slide) makes window_duration // period == 0, which downstream
+            # surfaces as an opaque "slice step cannot be zero" from
+            # sliding_window_view. The early get_iterator sample-count guard only
+            # checks freq_nhz, not this resolved nominal period, so validate it
+            # here with a clear, measure-named error.
+            if period_ns > self.window_duration_ns:
+                raise ValueError(
+                    f"Measure {measure_id}: resolved nominal raster period "
+                    f"{period_ns} ns is larger than the window duration "
+                    f"{self.window_duration_ns} ns, so a window would contain zero "
+                    f"grid cells. Increase window_duration or lower this measure's "
+                    f"period via period_overrides.")
+            if period_ns > self.window_slide_ns:
+                raise ValueError(
+                    f"Measure {measure_id}: resolved nominal raster period "
+                    f"{period_ns} ns is larger than the window slide "
+                    f"{self.window_slide_ns} ns, so the slide would advance zero "
+                    f"grid cells. Increase window_slide or lower this measure's "
+                    f"period via period_overrides.")
+            fill_rule = resolve_fill_rule(
+                signal_kind, value_type,
+                override=self.fill_overrides.get(measure_id),
+                global_default=self.aperiodic_fill)
+            config[measure_id] = {
+                'signal_kind': signal_kind,
+                'value_type': value_type,
+                'period_ns': int(period_ns),
+                'fill_rule': fill_rule,
+                'is_string': value_type == 'string',
+            }
+        return config
+
+    def decode_string_codes(self, measure_id, codes, unknown_value=None):
+        """Decode a string measure's window codes (int64) back to strings.
+
+        A rasterized string window carries int64 dictionary codes (design section
+        21.2 #4), memory-efficient and tensor-friendly for batches; this accessor
+        decodes them on demand via the measure's ``MeasureStringDictionary``. The
+        reserved unknown sentinel (``UNKNOWN_STRING_CODE``) maps to
+        ``unknown_value`` (``"<unknown>"`` by default; pass ``None`` explicitly
+        for Python ``None``) rather than raising."""
+        from atriumdb.string_dictionary import MeasureStringDictionary, UNKNOWN_STRING_VALUE
+        if unknown_value is None:
+            unknown_value = UNKNOWN_STRING_VALUE
+        string_dict = MeasureStringDictionary.load(self.sdk._meta_dir, int(measure_id))
+        return string_dict.decode_with_unknown(
+            np.asarray(codes).astype(np.int64), unknown_value=unknown_value)
+
+    def decode_window_strings(self, window, measure_key, unknown_value=None):
+        """Convenience: decode the string codes of one signal in a ``Window`` to
+        strings. ``measure_key`` is the ``(tag, freq_hz, units)`` tuple used to
+        key ``window.signals``."""
+        signal = window.signals[measure_key]
+        return self.decode_string_codes(signal['measure_id'], signal['values'], unknown_value=unknown_value)
+
     def _split_time_ranges(self, max_duration):
         for source_type, sources in self.sources.items():
             for source_id, time_ranges in sources.items():
@@ -234,6 +315,11 @@ class DatasetIterator:
                         time_range_info_start,
                         min(range_end_time, time_range_info_end),
                         num_time_range_windows,
+                        # The originating definition range start for this source's
+                        # time range (NOT the per-batch sub-range start). Carry it
+                        # so carry-forward seeding (Bug-1 fix) can look back across
+                        # batch boundaries but never before the definition range.
+                        range_start_time,
                     ]
                     current_batch.append(time_range_info)
 
@@ -263,6 +349,8 @@ class DatasetIterator:
                     time_range_info_start,
                     min(range_end_time, time_range_info_end),
                     num_time_range_windows,
+                    # See note above: originating definition range start.
+                    range_start_time,
                 ]
                 current_batch.append(time_range_info)
 
@@ -283,14 +371,15 @@ class DatasetIterator:
         patient_info_cache = {}
         patient_history_cache = {}
 
-        for source_index, (source_type, source_identifier, source_batch_start_time, source_batch_end_time, range_start_time, range_end_time, range_num_windows) in enumerate(batch_data):
+        for source_index, (source_type, source_identifier, source_batch_start_time, source_batch_end_time, range_start_time, range_end_time, range_num_windows, definition_range_start_time) in enumerate(batch_data):
             device_id, patient_id, query_patient_id = self.unpack_source_info(source_identifier, source_type)
 
             _load_patient_cache(patient_id, patient_info_cache, patient_history_cache, self.sdk, self.patient_history_fields)
 
             source_batch_data_dictionary = get_signal_dictionary(
                 self.sdk, device_id, query_patient_id, self.window_duration_ns, self.window_slide_ns, self.measures,
-                source_batch_start_time, source_batch_end_time, batch_num_windows, range_start_time, range_end_time)
+                source_batch_start_time, source_batch_end_time, batch_num_windows, range_start_time, range_end_time,
+                render_config=self.render_config, definition_range_start_time=definition_range_start_time)
 
             sliced_labels, threshold_labels = get_label_dictionary(
                 self.sdk, device_id, query_patient_id, source_batch_start_time, source_batch_end_time, self.label_sets,

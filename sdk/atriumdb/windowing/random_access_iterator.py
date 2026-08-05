@@ -27,11 +27,13 @@ class MappedIterator(DatasetIterator):
 
     def __init__(self, sdk, definition, window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
                  label_threshold=0.5, shuffle=False, max_cache_duration=None, patient_history_fields: list = None,
-                 label_exact_match=False):
+                 label_exact_match=False, aperiodic_fill=None, fill_overrides=None, period_overrides=None):
         super().__init__(sdk=sdk, definition=definition, window_duration_ns=window_duration_ns,
                          window_slide_ns=window_slide_ns, num_windows_prefetch=num_windows_prefetch,
                          label_threshold=label_threshold, shuffle=shuffle, max_cache_duration=max_cache_duration,
-                         patient_history_fields=patient_history_fields, label_exact_match=label_exact_match)
+                         patient_history_fields=patient_history_fields, label_exact_match=label_exact_match,
+                         aperiodic_fill=aperiodic_fill, fill_overrides=fill_overrides,
+                         period_overrides=period_overrides)
 
         pass
 

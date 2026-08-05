@@ -95,6 +95,11 @@ def _validate_measures(definition, sdk, measure_tag_match_rule="best"):
                 'freq_nhz': measure_info.get('freq_nhz'),
                 'units': measure_info.get('unit'),
                 'period_ns': measure_info.get('period_ns'),
+                # Phase 2 metadata carried through so the iterator can pick the
+                # Phase 3 nominal period + per-kind fill rule (read-time defaults
+                # already applied by get_measure_info: waveform / numeric).
+                'signal_kind': measure_info.get('signal_kind'),
+                'value_type': measure_info.get('value_type'),
             }
             validated_measure_list.append(validated_measure_info)
 
