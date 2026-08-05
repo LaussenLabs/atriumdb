@@ -55,6 +55,12 @@ def _transfer_measure(to_sdk, measure_info):
     units = measure_info['unit']
     measure_name = measure_info['name']
     from_measure_id = measure_info['id']
+    # Phase 6 (§24.1#1): carry the Phase 2 measure metadata across the transfer so the
+    # destination measure keeps its temporal shape / value encoding. get_all_measures /
+    # get_measure_info always resolve these (defaults: waveform / numeric), so they are
+    # present for every source measure.
+    signal_kind = measure_info.get('signal_kind')
+    value_type = measure_info.get('value_type')
 
     # Check if measure_id already exists
     check_measure_info = to_sdk.get_measure_info(from_measure_id)
@@ -69,5 +75,6 @@ def _transfer_measure(to_sdk, measure_info):
             from_measure_id = None
 
     to_measure_id = to_sdk.insert_measure(
-        measure_tag=measure_tag, freq=freq, units=units, measure_name=measure_name, measure_id=from_measure_id)
+        measure_tag=measure_tag, freq=freq, units=units, measure_name=measure_name, measure_id=from_measure_id,
+        signal_kind=signal_kind, value_type=value_type)
     return to_measure_id

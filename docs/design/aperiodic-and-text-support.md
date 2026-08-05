@@ -1220,6 +1220,106 @@ global bounds; `from/to` regions match `get_event_intervals` then honor `pre`/`p
 raises at validate(); an event region resolves through to the iterator producing the
 expected windows; and existing (non-event) definition tests are unchanged.
 
+## 24. Phase 6 implementation spec — transfer
+
+> **Status: ✅ implemented, audited & clean (UNCOMMITTED, pending commit, on
+> `feature/aperiodic-and-text-support`).** `transfer_measures` carries `signal_kind`/
+> `value_type`; string measures transfer dict-safely (read decoded strings → re-write at the
+> destination, so codes land in the DEST dict code space — correct for fresh *and* merge,
+> satisfying §24.2#1 union+remap without a manual code map); new
+> `transfer/adb/encounters.py` transfers the `encounter` family default-on with
+> `visit_number` scrambled to an int, location names pseudonymized, ids remapped, times
+> shifted; the `keep_identified: {table: [fields] | "all"}` config opts fields back to
+> identified; `log_hl7_adt` is never transferred. Numeric transfer path unchanged (MIT-BIH
+> `test_transfer.py::test_transfer` passes both backends).
+>
+> **Audited** (independent agent, `sdk/tests/test_transfer_phase6_audit.py`, 16 tests).
+> **No bug breaks any core obligation:** string-dict merge preserves both vocabularies
+> without code corruption (overlapping-vocab probe), `visit_number` scramble is consistent
+> + collision-free, no real identifier (name/visit_number/patient) leaks under de-id,
+> `log_hl7_adt` never transferred in either mode, no new-table time left un-shifted,
+> `keep_identified` behaves. Combined P6 + audit: **25 pass, no xfail**. Two latent,
+> out-of-scope observations noted (no fix): `resolve_source_id` reuses a dest source id
+> without a name check (only bites a merge into a dest with a differently-named source at
+> the same id; sources aren't a de-id surface per §15.3), and the `encounter_insert` DB
+> trigger would collide with explicit `device_encounter` inserts *if* device `bed_id`
+> transfer were ever added (currently unreachable — dest devices keep `bed_id=NULL`).
+
+**Goal:** `transfer_data` must carry the new measure metadata and string dictionaries, and
+start transferring the `encounter` family (needed for `within: encounter`), all under the
+existing de-identification / time-shift model — without ever emitting `log_hl7_adt`.
+
+**Non-goals:** new query/storage behavior (P1–P5 provide it). Event-anchored *definitions*
+need no special handling — they resolve to concrete `(start, end)` ranges at validation
+time (P5), so what transfers is the ranges, not the event regions.
+
+### 24.1 What P6 delivers
+
+1. **Measure columns.** `transfer_measures`
+   ([transfer/adb/measures.py](../../sdk/atriumdb/transfer/adb/measures.py)) carries
+   `signal_kind` and `value_type` to the destination `insert_measure` (P2 added the params).
+2. **String dictionaries (implemented as a unified re-write).** A string measure
+   (`value_type == 'string'`) is transferred by **reading its decoded strings from the source
+   (`get_string_data`) and re-writing them at the destination (`write_time_value_pairs`,
+   time-shifted)** — NOT by copying raw blocks (whose int64 codes live in the *source* code
+   space). Because the write goes through the ordinary string path, codes are assigned in the
+   *destination* dictionary's code space, which is correct for BOTH a fresh destination (new
+   dict) and a merge into a destination that already has a dict for that measure (§24.2#1
+   union+remap achieved for free — no manual code-remap or file copy). Numeric measures keep
+   the fast block-copy/re-encode path unchanged.
+3. **`encounter` family.** New transfer step for `encounter` (+ `device_encounter`, and
+   `bed`/`unit`/`institution` for referential integrity), with the field-level de-id/time-shift
+   from §15.3: remap `patient_id`/`device_id`, **`visit_number` scrambled to a random int**
+   (id-scramble machinery), shift `start_time`/`end_time`/`last_updated`, and pseudonymize
+   location names — all governed by the `keep_identified` per-table allowlist (§24.2#2).
+4. **`log_hl7_adt` never transferred** (§13) — excluded unconditionally, identified or not.
+5. **Time-shift completeness.** Every new time-bearing field wired into the existing
+   field-by-field shift (there is no global pass). Add a test asserting no un-shifted time
+   survives a `time_shift` transfer (precedent: `test_transfer_orphan_device_patient.py`).
+
+### 24.2 Decisions (✅ confirmed with requester)
+
+1. **✅ String-dictionary transfer: fresh-copy + full union/remap on merge.** Fresh
+   destination measure → dict copies verbatim (codes valid). Destination already has a
+   dictionary for the measure → **union the vocabularies and remap the transferred blocks'
+   codes** from source→dest code space (a naive copy would corrupt the existing dict). Full
+   remap, not error-on-conflict.
+2. **✅ Pseudonymize by default, with a painless per-table/per-field `keep` config.** Under
+   de-id, identifying fields on the new tables are pseudonymized/scrambled by default. A
+   single, easy config lets the caller opt fields back to identified per table:
+   `keep_identified={"encounter": ["bed_id"], "bed": "all", ...}` — a dict of
+   `table -> [field names] | "all"`. Default (`{}`) keeps nothing identified (everything
+   sensitive pseudonymized). Applies uniformly to `encounter`/`device_encounter`/`bed`/
+   `unit`/`institution`. `encounter` + `device_encounter` always transfer; `bed`/`unit`/
+   `institution` transfer for referential integrity with names pseudonymized unless kept.
+   **This must be documented in full** (every table, its identifying fields, and the default).
+   Make choosing what to keep as painless as possible (one dict, `"all"` shorthand).
+3. **✅ `visit_number` → scrambled int**, the same mechanism used to scramble patient ids
+   (a random new int via a consistent per-transfer map, optionally persisted to a CSV like
+   the patient de-id map) — not dropped, not a plaintext hash.
+4. **✅ Encounter-family transfer is default-on** (still fully subject to the de-id rules).
+
+### 24.4 De-id config shape (from §24.2#2/#3)
+
+- `keep_identified: dict[str, list[str] | "all"]` — per-table allowlist of fields to leave
+  identified; absent/`{}` → pseudonymize/scramble all sensitive fields. `"all"` keeps the
+  whole table identified.
+- Reuse the existing id-scramble machinery (patient/device id maps) for `visit_number` and
+  any pseudonymized id-like field, so scrambling is consistent within a transfer and
+  persistable alongside the existing de-id CSV.
+- The full field inventory (which fields are sensitive per table, and what each default does)
+  is documented from the §15.3 survey.
+
+### 24.3 Tests
+
+`transfer_measures` carries `signal_kind`/`value_type`; a string measure round-trips through
+transfer (dict reproduced at dest, `get_string_data` on the destination returns the original
+strings); the merge/remap (or the clear error) behaves; `encounter`/`device_encounter`
+transfer with `visit_number` dropped/hashed and all times shifted under `time_shift`;
+`log_hl7_adt` is never written to the destination even with `deidentify=False`; a
+`time_shift` transfer leaves no un-shifted time on any new table; and existing numeric
+transfer tests (`test_transfer*.py`) still pass.
+
 ## 20. Why this fits AtriumDB rather than fighting it
 
 - Text becomes a **value encoding**, so it rides the existing block / index / iterator /

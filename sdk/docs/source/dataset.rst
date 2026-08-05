@@ -1037,6 +1037,117 @@ These can be used independently, but are often combined for data privacy.
 
    The mapping file lets you reconcile anonymized patient IDs if needed in the future.
 
+Transferring Encounters and De-identification
+#############################################
+
+Beyond waveforms and patient information, ``transfer_data`` also carries the **encounter
+family** — the ``encounter`` and ``device_encounter`` records that tie a patient/device to
+an admission, along with the ``bed``, ``unit``, and ``institution`` rows they reference (the
+location hierarchy is copied for referential integrity). This is what makes admission-scoped
+features such as ``within: encounter`` work on the destination dataset.
+
+The encounter family transfers **by default**. Set ``include_encounters=False`` to skip it.
+
+.. note::
+
+   ``log_hl7_adt`` (the raw HL7 ADT message log) is **never** transferred, regardless of
+   ``include_encounters`` or the de-identification setting. There is currently no opt-in to
+   include it.
+
+**String / event measures transfer too.** String-valued measures (events, states, free-text)
+now transfer correctly: their per-measure dictionaries are reproduced in the destination and
+the ``value_type`` / ``signal_kind`` measure metadata is carried across, so ``get_string_data``
+works on the destination exactly as it did on the source. For a fresh destination the
+dictionary copies verbatim; when the destination already has a dictionary for that measure the
+vocabularies are unioned and the transferred codes are remapped into the destination's code
+space.
+
+What de-identification does to the encounter family
+***************************************************
+
+When ``deidentify`` is enabled, the sensitive fields of the encounter family are
+pseudonymized or scrambled **by default** — you do not have to configure anything to get a
+safe transfer. When ``deidentify=False`` every field is copied identified and the
+``keep_identified`` setting below is a no-op.
+
+The table below is the complete inventory of what de-identification touches. IDs are always
+remapped and times are always shifted (by ``time_shift``) for referential and temporal
+integrity — those are not configurable. The **Sensitive fields** column lists the values that
+are pseudonymized/scrambled by default and that ``keep_identified`` can opt back to
+identified.
+
+.. list-table:: Encounter-family de-identification (under ``deidentify=True``)
+   :header-rows: 1
+   :widths: 20 34 46
+
+   * - Table
+     - Sensitive fields (default treatment)
+     - Always applied (not configurable)
+   * - ``encounter``
+     - ``visit_number`` → **scrambled** to a random integer via a consistent per-transfer map
+     - ``patient_id`` / ``bed_id`` remapped; ``start_time`` / ``end_time`` / ``last_updated``
+       shifted
+   * - ``device_encounter``
+     - *(none)* — no free identifying field of its own
+     - ``device_id`` / ``encounter_id`` remapped; ``start_time`` / ``end_time`` shifted
+   * - ``bed``
+     - ``name`` → **pseudonymized** to a stable pseudonym
+     - ``bed_id`` / ``unit_id`` remapped
+   * - ``unit``
+     - ``name`` → **pseudonymized** to a stable pseudonym
+     - ``unit_id`` / ``institution_id`` remapped
+   * - ``institution``
+     - ``name`` → **pseudonymized** to a stable pseudonym
+     - ``institution_id`` remapped
+
+Pseudonyms are **stable within a transfer**: the same source location name always maps to the
+same pseudonym, and the same source ``visit_number`` always maps to the same scrambled
+integer, so relationships in the data are preserved while the original values are hidden.
+
+Keeping specific fields identified
+**********************************
+
+Use the ``keep_identified`` parameter to opt named fields (or whole tables) back to
+identified. It is a dictionary of ``{table: [field names]}``, with the shorthand
+``"all"`` to keep an entire table identified:
+
+.. code-block:: python
+
+   keep_identified = {
+       "institution": "all",        # keep every sensitive field of institution identified
+       "encounter": ["visit_number"],  # keep the real visit_number
+   }
+
+Only the tables and fields listed in the inventory above are valid keys — passing an unknown
+table or a field that is not a sensitive field of that table raises a ``ValueError``. Omitting
+``keep_identified`` (or passing ``{}``) pseudonymizes/scrambles every sensitive field, which is
+the safe default.
+
+.. code-block:: python
+
+   # De-identified export that keeps the real institution names but pseudonymizes
+   # everything else (bed/unit names scrambled, visit_number scrambled), with a 2-hour
+   # time shift applied to every timestamp including the encounter times.
+   two_hours_s = 2 * 60 * 60
+   transfer_data(
+       src_sdk=main_sdk,
+       dest_sdk=export_sdk,
+       definition=cohort_def,
+       deidentify=True,
+       keep_identified={"institution": "all"},
+       time_shift=two_hours_s,
+       time_units="s",
+   )
+
+   # ——> Encounters/device_encounters copied for the cohort; bed & unit names and
+   #     visit numbers scrambled; institution names preserved; all times shifted.
+
+.. note::
+
+   ``keep_identified`` only affects the encounter family. Patient-level de-identification is
+   still controlled by ``deidentify`` / ``patient_info_to_transfer`` /
+   ``deidentification_functions`` as described above.
+
 Export Formats & CSV Example
 ############################
 

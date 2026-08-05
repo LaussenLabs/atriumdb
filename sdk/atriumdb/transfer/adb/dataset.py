@@ -41,6 +41,7 @@ from atriumdb.adb_functions import convert_value_to_nanoseconds, condense_byte_r
     group_sorted_block_list, reconstruct_messages_multi, sort_message_time_values, truncate_messages, \
     create_gap_arr_from_variable_messages
 from atriumdb.transfer.adb.devices import transfer_devices
+from atriumdb.transfer.adb.encounters import transfer_encounters
 from atriumdb.transfer.adb.measures import transfer_measures
 from atriumdb.windowing.verify_definition import verify_definition
 
@@ -54,7 +55,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                   start_time=None, end_time=None, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
                   include_labels=True, measure_tag_match_rule=None, deidentification_functions=None, time_shift=None,
                   time_units=None, export_time_format=None, parquet_engine=None, timezone_str=None,
-                  reencode_waveforms=False, **kwargs):
+                  reencode_waveforms=False, include_encounters=True, keep_identified=None, **kwargs):
     """
     Transfers data from a source AtriumSDK instance to a destination AtriumSDK instance based on a specified dataset definition.
     This includes transferring measures, devices, patient information, and labels with options for data de-identification,
@@ -90,6 +91,18 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         (Default False) Setting to False will reuse existing blocks where possible and significantly speed up transfer.
         Setting to True allows you to change the block size and in general will reorder the blocks by time, which can
         speed up datasets that were originally ingested in small or unordered chunks.
+    :param bool include_encounters: Whether to transfer the ``encounter`` family (``encounter`` +
+        ``device_encounter``, plus ``bed`` / ``unit`` / ``institution`` for referential integrity) for the
+        transferred patients/devices. Default True. ``log_hl7_adt`` is never transferred, regardless of this flag
+        or the de-identification setting.
+    :param Optional[dict] keep_identified: Per-table allowlist controlling which sensitive fields of the
+        encounter family stay identified under de-identification. A dict of ``table -> [field names] | "all"``
+        (``"all"`` keeps the whole table identified). Absent / ``{}`` pseudonymizes/scrambles every sensitive
+        field. Sensitive fields per table: ``encounter``: ``visit_number`` (scrambled to a random int);
+        ``bed`` / ``unit`` / ``institution``: ``name`` (pseudonymized to a stable pseudonym). Ids
+        (``patient_id`` / ``device_id`` / ``bed_id``) are always remapped and all encounter/device_encounter
+        times always shifted, regardless of this setting. When ``deidentify=False`` everything is identified and
+        this is a no-op. Example: ``keep_identified={"institution": "all", "encounter": ["visit_number"]}``.
 
     Examples:
     ---------
@@ -113,6 +126,11 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     >>> time_shift = 2*60*60  # 2 hours in seconds
     >>> my_deid_funcs = {'height': lambda x: x + random.uniform(-1.5, 1.5)}
     >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,deidentify=True,deidentification_functions=my_deid_funcs,time_shift=time_shift,time_units='s')
+
+    De-identify the encounter family but keep the real institution names (bed/unit names and
+    visit numbers are still scrambled by default):
+
+    >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,deidentify=True,keep_identified={"institution": "all"})
 
     """
 
@@ -170,6 +188,22 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         patient_info_to_transfer=patient_info_to_transfer, start_time_nano=start_time_n, end_time_nano=end_time_n,
         deidentification_functions=deidentification_functions, time_shift_nano=time_shift)
 
+    # Look up the value_type of each source measure once so the per-measure transfer loop can
+    # branch string measures onto the dict-safe re-write path (§24.1#2). Numeric measures keep
+    # the fast block-copy / re-encode path unchanged.
+    src_measure_value_types = {}
+    for src_measure_id in measure_id_map.keys():
+        src_measure_info = src_sdk.get_measure_info(src_measure_id)
+        src_measure_value_types[src_measure_id] = (
+            src_measure_info.get('value_type') if src_measure_info is not None else None)
+
+    # Transfer the encounter family (§24.1#3) for the transferred patients/devices, default-on
+    # and fully subject to the de-identification / time-shift rules. log_hl7_adt is never touched.
+    if include_encounters:
+        transfer_encounters(
+            src_sdk, dest_sdk, patient_id_map=patient_id_map, device_id_map=device_id_map,
+            deidentify=deidentify, keep_identified=keep_identified, time_shift_nano=time_shift)
+
     if include_labels:
         label_set_id_map = transfer_label_sets(src_sdk, dest_sdk, label_set_id_list=validated_label_set_list)
     else:
@@ -186,6 +220,19 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
             if export_format == "tsc":
                 for src_measure_id, dest_measure_id in measure_id_map.items():
+                    # String measures (§24.1#2 / §24.2#1): the int64 codes stored in the source
+                    # blocks live in the SOURCE dictionary's code space, so copying raw blocks
+                    # would corrupt the destination dictionary. Instead read decoded strings and
+                    # re-write them, letting the destination dictionary assign codes in its own
+                    # code space. This is correct for BOTH a fresh destination (new dict) and a
+                    # merge into a destination that already has a dict for this measure (the
+                    # write path unions + remaps for free).
+                    if src_measure_value_types.get(src_measure_id) == 'string':
+                        _transfer_string_measure(
+                            src_sdk, dest_sdk, src_measure_id, dest_measure_id, src_device_id,
+                            dest_device_id, time_ranges, time_shift)
+                        continue
+
                     seen_block_ids = set()
                     blocks_to_transfer = []
                     time_range_index_to_transfer = []
@@ -487,6 +534,11 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                     # Insert Waveforms
                     if export_format == "tsc":
                         break
+                    elif src_measure_value_types.get(src_measure_id) == 'string':
+                        # String measures are handled on the tsc path only in Phase 6; the
+                        # numeric-oriented file exports (csv/npz/parquet/wfdb) cannot rasterize
+                        # string values, so skip them here rather than raise on the string guard.
+                        continue
                     else:
                         headers, times, values = src_sdk.get_data(
                             src_measure_id, start_time_nano, end_time_nano, device_id=src_device_id, time_type=1,
@@ -542,6 +594,31 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     definition_path = Path(dest_sdk.dataset_location) / "meta" / "definition.yaml"
     definition_path.parent.mkdir(parents=True, exist_ok=True)
     export_definition.save(definition_path, force=True)
+
+def _transfer_string_measure(src_sdk, dest_sdk, src_measure_id, dest_measure_id, src_device_id,
+                             dest_device_id, time_ranges, time_shift):
+    """Dict-safe transfer of a string measure (§24.1#2 / §24.2#1).
+
+    Reads decoded strings from the source over each requested time range and re-writes them to
+    the destination. Because the write goes through the ordinary string write path, codes are
+    assigned in the DESTINATION dictionary's code space -- so this is correct both for a fresh
+    destination (new dictionary) and for a merge into a destination that already has a
+    dictionary for this measure (the vocabularies union and codes remap for free). Times are
+    shifted by ``time_shift`` when requested, wired explicitly like every other time field.
+    """
+    for start_time_nano, end_time_nano in time_ranges:
+        times, values = src_sdk.get_string_data(
+            src_measure_id, int(start_time_nano), int(end_time_nano), device_id=src_device_id)
+
+        if times is None or len(times) == 0:
+            continue
+
+        times = np.asarray(times).astype(np.int64)
+        if time_shift is not None:
+            times = times + time_shift
+
+        dest_sdk.write_time_value_pairs(dest_measure_id, dest_device_id, times, values)
+
 
 def extract_device_ids(source_id, source_type, device_id_map):
     if source_type == "device_ids":
