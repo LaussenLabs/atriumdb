@@ -503,32 +503,26 @@ def test_get_interval_array_on_string_measure(sdk):
 # or numeric; the design says a measure must not mix the two. The implementation
 # does NOT enforce this on write, and the result is silently unreadable data.
 # --------------------------------------------------------------------------- #
-def test_numeric_then_string_corrupts_readability_actual_behavior(sdk):
-    """DOCUMENTS THE DEFECT'S EFFECT (this test PASSES, asserting the broken
-    reality): writing numeric data then string data to the SAME measure is
-    accepted, after which the earlier NUMERIC data can no longer be read by any
-    getter -- get_data trips the string guard, and get_string_data tries to decode
-    the numeric values as dictionary codes and raises 'out of range'."""
+def test_numeric_then_string_mixing_now_rejected_and_numeric_stays_readable(sdk):
+    """Phase 2 fix: the mixed write is now REJECTED on write (§19.3), so the
+    earlier numeric data is never corrupted and stays fully readable.
+
+    (Formerly ``test_numeric_then_string_corrupts_readability_actual_behavior``,
+    which documented the P1 defect where the mixed write was silently accepted.)"""
     m = sdk.insert_measure(measure_tag="mix_ns", freq=1.0, freq_units="Hz", units="x")
     d = sdk.insert_device(device_tag="dev_mix_ns")
     t1 = times_for(4)
     sdk.write_time_value_pairs(m, d, t1, (np.arange(4) * 3).astype(np.int64))  # values 0,3,6,9
     t2 = times_for(3, start=int(t1[-1]) + SEC)
-    # This SHOULD be rejected per the design; it is accepted instead.
-    sdk.write_time_value_pairs(m, d, t2, np.array(["a", "b", "c"], dtype=object))
+    # The conflicting string write is now rejected instead of accepted.
+    with pytest.raises(ValueError, match="numeric"):
+        sdk.write_time_value_pairs(m, d, t2, np.array(["a", "b", "c"], dtype=object))
 
-    # get_data now blocked for the whole measure (including the numeric span).
-    with pytest.raises(ValueError, match="string measure"):
-        sdk.get_data(m, int(t1[0]), int(t2[-1]) + SEC, device_id=d)
-    # get_string_data blows up decoding numeric value 9 as a code (dict size 3).
-    with pytest.raises(ValueError, match="out of range"):
-        sdk.get_string_data(m, int(t1[0]), int(t2[-1]) + SEC, device_id=d)
+    # The original numeric data is intact and still readable via get_data.
+    _, _, vals = sdk.get_data(m, int(t1[0]), int(t1[-1]) + SEC, device_id=d)
+    assert list(np.asarray(vals).astype(np.int64)) == [0, 3, 6, 9]
 
 
-@pytest.mark.xfail(reason="BUG: writing string data to a measure that already holds "
-                          "numeric data is silently accepted; the design requires a "
-                          "measure to be either string-typed or numeric, not both.",
-                   strict=False)
 def test_numeric_then_string_should_be_rejected(sdk):
     m = sdk.insert_measure(measure_tag="mix_ns2", freq=1.0, freq_units="Hz", units="x")
     d = sdk.insert_device(device_tag="dev_mix_ns2")
@@ -539,10 +533,6 @@ def test_numeric_then_string_should_be_rejected(sdk):
         sdk.write_time_value_pairs(m, d, t2, np.array(["a", "b", "c"], dtype=object))
 
 
-@pytest.mark.xfail(reason="BUG: writing numeric data to a measure that is already "
-                          "string-typed (has a dictionary file) is silently accepted; "
-                          "the numeric values become bogus dictionary codes.",
-                   strict=False)
 def test_string_then_numeric_should_be_rejected(sdk):
     m = sdk.insert_measure(measure_tag="mix_sn", freq=1.0, freq_units="Hz", units="string")
     d = sdk.insert_device(device_tag="dev_mix_sn")
