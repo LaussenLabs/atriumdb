@@ -22,7 +22,7 @@ import bisect
 
 import threading
 
-from atriumdb.intervals.intersection import intervals_intersect
+from atriumdb.intervals.intersection import intervals_intersect, list_intersection
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
     find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, reconstruct_messages, \
@@ -830,6 +830,408 @@ class AtriumSDK:
         string_dict = MeasureStringDictionary.load(self._meta_dir, resolved_measure_id)
         values = string_dict.decode(np.asarray(codes).astype(np.int64))
         return times, values
+
+    # ------------------------------------------------------------------ #
+    # Phase 4 -- event query surface + from->to pairing (design section 22)
+    # ------------------------------------------------------------------ #
+    def _require_string_measure(self, measure_id: int) -> "MeasureStringDictionary":
+        """Validate that ``measure_id`` is a string/event measure and return its
+        loaded :class:`MeasureStringDictionary`. Raises a clear ``ValueError`` for a
+        missing measure or a numeric (``value_type != 'string'``) measure -- events
+        are string measures (design section 22.2 #1)."""
+        kind = self.get_measure_kind(measure_id)
+        if kind is None:
+            raise ValueError(f"Measure {measure_id} does not exist.")
+        signal_kind, value_type = kind
+        if value_type != "string":
+            raise ValueError(
+                f"Measure {measure_id} has value_type {value_type!r}, not 'string'. "
+                f"Event / string queries (vocabulary, values-present, event intervals) "
+                f"operate on string measures only; a numeric measure has no event "
+                f"vocabulary to pair on.")
+        return MeasureStringDictionary.load(self._meta_dir, measure_id)
+
+    def _resolve_event_source(self, device_id, patient_id, device_tag, mrn):
+        """Resolve a (device_id, patient_id) source from any accepted selector.
+        Exactly one axis need be given; device_tag/mrn are resolved to ids. Raises
+        if nothing identifies a source or a tag/mrn is unknown."""
+        if device_id is None and device_tag is not None:
+            device_id = self.get_device_id(device_tag)
+            if device_id is None:
+                raise ValueError(f"device_tag {device_tag!r} not found in the dataset.")
+        if patient_id is None and mrn is not None:
+            patient_id = self.get_patient_id(mrn)
+            if patient_id is None:
+                raise ValueError(f"mrn {mrn!r} not found in the dataset.")
+        if device_id is None and patient_id is None:
+            raise ValueError(
+                "A data source is required: pass one of device_id, device_tag, "
+                "patient_id, or mrn.")
+        return device_id, patient_id
+
+    @staticmethod
+    def _union_windows(windows):
+        """Sort + merge overlapping/touching ``[start, end]`` windows (ns) so a
+        container is a set of disjoint spans. Returns a new list; input untouched."""
+        if not windows:
+            return []
+        ordered = sorted([int(s), int(e)] for s, e in windows)
+        merged = [ordered[0]]
+        for s, e in ordered[1:]:
+            if s <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], e)
+            else:
+                merged.append([s, e])
+        return merged
+
+    def _collect_device_patient_windows(self, device_id, patient_id, start_n, end_n):
+        """Device<->patient mapping spans for the source, clipped to [start,end].
+        Empty list when the ``device_patient`` table has no rows for this source
+        (the code must run with an empty table -- design section 22.2 #3)."""
+        rows = self.get_device_patient_data(
+            device_id_list=[device_id] if device_id is not None else None,
+            patient_id_list=[patient_id] if patient_id is not None else None,
+            start_time=start_n, end_time=end_n, time_units="ns")
+        windows = []
+        for row in rows:
+            s, e = row[2], row[3]
+            if s is None:
+                continue
+            s = max(int(s), start_n)
+            e = min(int(e), end_n) if e is not None else end_n
+            if s < e:
+                windows.append([s, e])
+        return self._union_windows(windows)
+
+    def _collect_encounter_windows(self, device_id, patient_id, start_n, end_n):
+        """Encounter (admission-level) spans for the source, clipped to [start,end].
+        For a patient source the patient is used directly; for a device source the
+        patient(s) are resolved through ``device_patient`` first (so a device source
+        yields no encounter windows when device_patient is empty)."""
+        patient_ids = set()
+        if patient_id is not None:
+            patient_ids.add(patient_id)
+        elif device_id is not None:
+            for row in self.get_device_patient_data(
+                    device_id_list=[device_id], start_time=start_n, end_time=end_n,
+                    time_units="ns"):
+                patient_ids.add(row[1])
+        windows = []
+        for pid in patient_ids:
+            for enc in self.get_encounters(patient_id=pid, start_time=start_n,
+                                           end_time=end_n, time_units="ns"):
+                s, e = enc[3], enc[4]
+                if s is None:
+                    continue
+                s = max(int(s), start_n)
+                e = min(int(e), end_n) if e is not None else end_n
+                if s < e:
+                    windows.append([s, e])
+        return self._union_windows(windows)
+
+    def _resolve_within_windows(self, within, device_id, patient_id, start_n, end_n):
+        """Resolve the ``within`` container to a list of disjoint [start,end] ns
+        windows plus a label, per the design section 22.2 #3 cascade
+        ``device_patient -> encounter -> whole-stream``.
+
+        A caller may force a level (``"device_patient" | "encounter" | "none"``);
+        ``None`` runs the graceful cascade. When requested/needed scoping data is
+        missing we ``warnings.warn`` and fall through rather than silently dropping
+        the query -- and the whole path runs with an empty device_patient table."""
+        whole = [[start_n, end_n]]
+
+        if within == "none":
+            return whole, "whole-stream"
+
+        if within == "device_patient":
+            dp = self._collect_device_patient_windows(device_id, patient_id, start_n, end_n)
+            if dp:
+                return dp, "device_patient"
+            warnings.warn(
+                "within='device_patient' was requested but no device_patient mapping "
+                "is populated for this source; falling back to the whole-stream range.")
+            return whole, "whole-stream"
+
+        if within == "encounter":
+            enc = self._collect_encounter_windows(device_id, patient_id, start_n, end_n)
+            if enc:
+                return enc, "encounter"
+            warnings.warn(
+                "within='encounter' was requested but no encounter data is available "
+                "for this source; falling back to the whole-stream range.")
+            return whole, "whole-stream"
+
+        if within is None:
+            dp = self._collect_device_patient_windows(device_id, patient_id, start_n, end_n)
+            if dp:
+                return dp, "device_patient"
+            enc = self._collect_encounter_windows(device_id, patient_id, start_n, end_n)
+            if enc:
+                warnings.warn(
+                    "device_patient scoping data is empty for this source; falling back "
+                    "to encounter scoping in the within cascade.")
+                return enc, "encounter"
+            warnings.warn(
+                "Neither device_patient nor encounter scoping data is available for this "
+                "source; falling back to whole-stream scoping (the query range).")
+            return whole, "whole-stream"
+
+        raise ValueError(
+            f"Unknown within option {within!r}; expected None (cascade), "
+            f"'device_patient', 'encounter', or 'none' (whole-stream).")
+
+    @staticmethod
+    def _pair_from_to(from_times, to_times, c0, c1):
+        """Vectorized COLLAPSE pairing (design section 22.2 #2) inside one container
+        span ``[c0, c1]``. ``from_times``/``to_times`` are sorted ns arrays already
+        restricted to the span. Returns a list of
+        ``(start, end, start_censored, end_censored)`` tuples, non-overlapping.
+
+        Rule: a run of ``from``s until the next ``to`` is ONE interval
+        (first-open -> first-close). A ``from`` with no following ``to`` in the span
+        is right-censored to ``c1``; a ``to`` before the first ``from`` (the span
+        opened already inside the state) is left-censored from ``c0``. No boundary is
+        fabricated -- censored ends are clipped to the container, never invented.
+
+        Implementation is fully vectorized: ``searchsorted`` maps each ``from`` to the
+        first ``to`` strictly after it, and ``np.unique`` on that (monotonic) index
+        collapses each run of ``from``s to its earliest member. No per-event loop.
+
+        Precondition: ``from_times`` and ``to_times`` hold DISTINCT timestamps (no
+        ``from`` coincident with a ``to``). The public path guarantees this -- storage
+        dedups values at one timestamp to a single code (newest wins) -- so a ``from``
+        and ``to`` can never share an exact ns. If this helper is called directly with
+        coincident timestamps, ``side="right"`` treats the coincident ``to`` as not
+        closing the ``from`` (a degenerate, non-reachable case)."""
+        out = []
+        n_from = from_times.shape[0]
+        n_to = to_times.shape[0]
+
+        # Leading left-censored interval: the span opened already inside the state
+        # (a `to` occurs before any `from`). Only the first such `to` closes the
+        # pre-existing open state; later stray `to`s while "out" are no-ops.
+        if n_to > 0 and (n_from == 0 or to_times[0] < from_times[0]):
+            out.append((int(c0), int(to_times[0]), True, False))
+
+        if n_from > 0:
+            # For each `from`, index of the first `to` strictly greater than it;
+            # == n_to when no `to` follows (right-censored). Monotonic because both
+            # arrays are sorted.
+            close_pos = np.searchsorted(to_times, from_times, side="right")
+            # Collapse: froms sharing a close index are one run; the first (min time,
+            # since from_times is sorted) opens the interval.
+            uniq_close, first_idx = np.unique(close_pos, return_index=True)
+            starts = from_times[first_idx]
+            for close_idx, start in zip(uniq_close.tolist(), starts.tolist()):
+                if close_idx == n_to:
+                    out.append((int(start), int(c1), False, True))
+                else:
+                    out.append((int(start), int(to_times[close_idx]), False, False))
+
+        out.sort(key=lambda r: r[0])
+        return out
+
+    @staticmethod
+    def _clip_intervals_to_containers(raw_intervals, windows):
+        """Intersect paired ``(start, end, sc, ec)`` intervals (already censored
+        relative to the whole query range) with the ``within`` container windows,
+        carrying censoring flags (design section 22.2 #3). This is the same
+        intersection math as ``intervals/intersection.list_intersection`` but done
+        per (interval, window) so the censoring flags survive the clip:
+
+          * an interval clipped at a container START becomes ``start_censored`` (the
+            state was open before the container -- the far side is flagged, never a
+            fabricated boundary);
+          * clipped at a container END becomes ``end_censored``.
+
+        A pair whose ``from`` lands in one window and ``to`` in the next is thereby
+        split into a right-censored piece in the first window and a left-censored
+        piece in the second, never crossing the gap between them."""
+        out = []
+        for (s, e, sc, ec) in raw_intervals:
+            for w0, w1 in windows:
+                cs = max(s, w0)
+                ce = min(e, w1)
+                if cs < ce:
+                    out.append((int(cs), int(ce),
+                                bool(sc or s < w0),
+                                bool(ec or e > w1)))
+        out.sort(key=lambda r: r[0])
+        return out
+
+    def _collapse_event_intervals(self, times, codes, from_code, to_code,
+                                  range_start, range_end, windows):
+        """Pair ``from``/``to`` on the FULL event stream over the query range (one
+        vectorized :meth:`_pair_from_to`, censored to ``[range_start, range_end]``),
+        then clip the result to the container windows via
+        :meth:`_clip_intervals_to_containers`. Pairing on the full stream (rather than
+        per-window slices) is what lets a container window that sits entirely inside
+        an open state -- with no events of its own -- still be recognised as fully
+        inside (both ends censored)."""
+        from_times = times[codes == from_code]
+        to_times = times[codes == to_code]
+        raw = self._pair_from_to(from_times, to_times, range_start, range_end)
+        return self._clip_intervals_to_containers(raw, windows)
+
+    def get_measure_string_vocabulary(self, measure_id: int) -> list:
+        """Return EVERY string value ever written to a string measure, in code order.
+
+        Reads the per-measure dictionary file via :class:`MeasureStringDictionary`
+        with **no data scan** (design section 22.1.1) -- cost is bounded by the
+        vocabulary size, not the number of samples. Raises a clear ``ValueError`` for
+        a numeric measure (events are string measures).
+
+        :param int measure_id: A string-typed measure.
+        :rtype: list[str]
+        :returns: All distinct strings ever written, ordered by their int64 code.
+        """
+        string_dict = self._require_string_measure(measure_id)
+        return string_dict.vocabulary()
+
+    def get_string_values_present(self, measure_id: int, start_time, end_time,
+                                  device_id: int = None, patient_id=None,
+                                  device_tag: str = None, mrn: str = None,
+                                  time_units: str = None) -> list:
+        """Return the sorted distinct string values actually present for a source over
+        ``[start_time, end_time)`` (design section 22.1.1, range/source-scoped).
+
+        Unlike :meth:`get_measure_string_vocabulary` (all values ever written), this
+        reads the codes for the source over the window (via :meth:`get_string_data`)
+        and uniques the values genuinely observed -- "what events occurred for device
+        X last week". Raises for a numeric measure.
+
+        :param int measure_id: A string-typed measure.
+        :param start_time: Range start (inclusive), in ``time_units``.
+        :param end_time: Range end (exclusive), in ``time_units``.
+        :param int device_id: Device source (or ``device_tag``).
+        :param patient_id: Patient source (or ``mrn``).
+        :param str device_tag: Device tag (exclusive with device_id).
+        :param str mrn: Medical record number (exclusive with patient_id).
+        :param str time_units: Unit of ``start_time``/``end_time`` ("s"/"ms"/"us"/"ns", default "ns").
+        :rtype: list[str]
+        :returns: Sorted distinct strings observed for the source in the window.
+        """
+        if start_time is None or end_time is None:
+            raise ValueError(
+                "start_time and end_time are required for get_string_values_present -- "
+                "they bound the window to scan.")
+        self._require_string_measure(measure_id)
+        device_id, patient_id = self._resolve_event_source(device_id, patient_id, device_tag, mrn)
+        _times, values = self.get_string_data(
+            measure_id=measure_id, start_time_n=start_time, end_time_n=end_time,
+            device_id=device_id, patient_id=patient_id, time_units=time_units)
+        if values.size == 0:
+            return []
+        return sorted({str(v) for v in values.tolist()})
+
+    def get_event_intervals(self, measure: int, from_value: str, to_value: str,
+                            device_id: int = None, patient_id=None,
+                            device_tag: str = None, mrn: str = None,
+                            start_time=None, end_time=None, within=None,
+                            time_units: str = None) -> list:
+        """Derive ``from_value -> to_value`` state intervals for a string/event measure
+        (design section 22.1.2 / 22.2). Both values are strings in the SAME measure's
+        vocabulary (same-measure pairing, section 22.2 #1).
+
+        Pairing uses the COLLAPSE rule (section 22.2 #2): a run of ``from`` events until
+        the next ``to`` event is ONE interval (first-open -> first-close), and the
+        returned intervals never overlap. Pairing is vectorized (searchsorted +
+        np.unique), no per-event Python loop -- see :meth:`_pair_from_to`.
+
+        Containment follows the ``within`` cascade (section 22.2 #3):
+        ``device_patient (if populated) -> encounter -> whole-stream``. Force a level
+        with ``within="device_patient" | "encounter" | "none"``; ``None`` runs the
+        cascade. Missing scoping data warns (never silently drops) and falls through,
+        and the whole path runs with an EMPTY device_patient table. A pair that would
+        span a container boundary is split at the boundary and the far side is flagged
+        censored (never crosses it).
+
+        Censoring (section 22.1.4): a ``from`` with no following ``to`` in its container
+        -> ``end_censored=True`` clipped to the container end; a ``to`` with no preceding
+        ``from`` -> ``start_censored=True`` clipped to the container start. A boundary is
+        never fabricated.
+
+        The returned intervals are the exact shape Phase 3's state rasterizer consumes
+        (section 22.3) -- this method does not rasterize.
+
+        Example usage:
+
+            >>> # A run of START markers closes at the next STOP (collapse pairing).
+            >>> sdk.get_event_intervals(
+            ...     measure=measure_id, from_value="START", to_value="STOP",
+            ...     device_id=device_id, start_time=0, end_time=120, time_units="s")
+            [{'start_time_n': 30000000000, 'end_time_n': 60000000000,
+              'start_censored': False, 'end_censored': False}]
+
+        :param int measure: The string measure id whose vocabulary ``from_value`` and
+            ``to_value`` belong to.
+        :param str from_value: The opening event string (must be in the vocabulary).
+        :param str to_value: The closing event string (must be in the vocabulary).
+        :param int device_id: Device source (or ``device_tag``).
+        :param patient_id: Patient source (or ``mrn``).
+        :param str device_tag: Device tag (exclusive with device_id).
+        :param str mrn: Medical record number (exclusive with patient_id).
+        :param start_time: Query range start (inclusive), in ``time_units``. Required.
+        :param end_time: Query range end (exclusive), in ``time_units``. Required.
+        :param within: Container scoping; ``None`` (cascade), ``"device_patient"``,
+            ``"encounter"``, or ``"none"`` (whole-stream).
+        :param str time_units: Unit of the INPUT ``start_time``/``end_time``
+            ("s"/"ms"/"us"/"ns", default "ns"). Returned ``*_time_n`` values are always
+            nanoseconds.
+        :rtype: list[dict]
+        :returns: List of ``{"start_time_n", "end_time_n", "start_censored",
+            "end_censored"}`` dicts, sorted by start time, all in nanoseconds.
+        """
+        time_units = "ns" if time_units is None else time_units
+        if time_units not in time_unit_options:
+            raise ValueError(f"Invalid time units. Expected one of: {list(time_unit_options.keys())}")
+        if start_time is None or end_time is None:
+            raise ValueError(
+                "start_time and end_time are required for get_event_intervals -- they "
+                "bound the whole-stream container and define where censoring clips.")
+        if from_value == to_value:
+            raise ValueError(
+                "from_value and to_value must differ; get_event_intervals pairs an "
+                "opening event with a distinct closing event.")
+        start_n = int(start_time * time_unit_options[time_units])
+        end_n = int(end_time * time_unit_options[time_units])
+
+        measure_id = int(measure)
+        string_dict = self._require_string_measure(measure_id)
+
+        from_code = string_dict.code_for(from_value)
+        if from_code is None:
+            raise ValueError(
+                f"from_value {from_value!r} is not in the string vocabulary of measure "
+                f"{measure_id}. Known values come from get_measure_string_vocabulary().")
+        to_code = string_dict.code_for(to_value)
+        if to_code is None:
+            raise ValueError(
+                f"to_value {to_value!r} is not in the string vocabulary of measure "
+                f"{measure_id}. Known values come from get_measure_string_vocabulary().")
+
+        device_id, patient_id = self._resolve_event_source(device_id, patient_id, device_tag, mrn)
+
+        # Read the source's int64 codes over the range (analog=False -> raw codes,
+        # the same path get_string_data reads before decoding to strings).
+        _headers, times, codes = self.get_data(
+            measure_id=measure_id, start_time_n=start_n, end_time_n=end_n,
+            device_id=device_id, patient_id=patient_id, analog=False,
+            time_units="ns", sort=True)
+        times = np.asarray(times, dtype=np.int64).reshape(-1)
+        codes = np.asarray(codes).astype(np.int64).reshape(-1)
+
+        windows, _container_label = self._resolve_within_windows(
+            within, device_id, patient_id, start_n, end_n)
+
+        intervals = self._collapse_event_intervals(
+            times, codes, int(from_code), int(to_code), start_n, end_n, windows)
+
+        return [
+            {"start_time_n": s, "end_time_n": e,
+             "start_censored": sc, "end_censored": ec}
+            for (s, e, sc, ec) in intervals
+        ]
 
     def get_data_from_blocks(self, block_list, filename_dict, start_time_n, end_time_n, analog=True,
                              time_type=1, sort=True, allow_duplicates=True, return_nan_gap=False):

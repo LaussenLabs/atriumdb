@@ -73,6 +73,10 @@ API Reference
    .. automethod:: get_label_source_info
    .. automethod:: insert_label_source
 
+   .. automethod:: get_measure_string_vocabulary
+   .. automethod:: get_string_values_present
+   .. automethod:: get_event_intervals
+
    .. automethod:: get_iterator
    .. automethod:: get_interval_array
 

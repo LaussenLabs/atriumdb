@@ -1032,9 +1032,25 @@ byte-for-byte identical).
 
 ## 22. Phase 4 implementation spec — event query surface + pairing
 
-> **Status: DRAFT for review — no code yet.** Builds on P1 (string codes), P2
-> (`signal_kind`/`value_type`), and P3 (state rasterization + sentinel). The §22.2
-> decisions are the ones to settle before implementing.
+> **Status: ✅ implemented, audited & bug-fixed (UNCOMMITTED, pending commit, on
+> `feature/aperiodic-and-text-support`).** Standalone SDK methods in `atrium_sdk.py`:
+> `get_measure_string_vocabulary` (all values, from the dict file),
+> `get_string_values_present` (range-scoped distinct), and `get_event_intervals`
+> (COLLAPSE pairing via `searchsorted`+`np.unique`, the `within` cascade
+> `device_patient → encounter → whole-stream` forceable + warn-not-drop + runs with an
+> empty `device_patient` table, and `start/end_censored` flags always clipped to a real
+> boundary). `MeasureStringDictionary` gained `vocabulary()` / `code_for()`. Returns the
+> exact interval shape P3's state rasterizer consumes (no second rasterizer).
+>
+> **Audited** (independent agent, `sdk/tests/test_event_intervals_p4_audit.py`, incl. an
+> independent brute-force cross-check over ~1000 randomized sequences). Core verdict:
+> collapse pairing, `within` cascade (incl. empty `device_patient` and boundary-spanning
+> splits), and censoring all correct. Two low-severity issues found **and fixed**:
+> (1) `get_string_values_present` now raises a clear error on a missing range (was a cryptic
+> `TypeError`); (2) `get_event_intervals` now rejects `from_value == to_value`. A latent
+> same-timestamp case in the `_pair_from_to` helper is documented as a precondition
+> (unreachable via the public API, since storage dedups coincident timestamps). Verified:
+> combined P4 + audit + string suites **82 pass, no xfail**.
 
 **Goal:** turn stored event/string series into queryable events — (a) enumerate the unique
 event types, (b) derive `from → to` intervals (pair an event with the next event), scoped

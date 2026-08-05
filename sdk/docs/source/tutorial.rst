@@ -749,6 +749,111 @@ And then by calling `AtriumSDK.get_labels` to retrieve the label information:
        # Read the record from the MIT-BIH Arrhythmia Database
        label_data = sdk.get_labels(name_list=label_names, device_list=[record_name])
 
+.. _event_queries:
+
+Event Queries
+-------------------------------
+
+A **string** (event) measure records aperiodic textual signals — alarm strings, device
+status, or start/stop markers for a clinical state. On top of the raw
+:ref:`string values <string_values>` you write, AtriumDB provides three standalone query
+methods for inspecting the event vocabulary and for turning ``from → to`` event pairs into
+state intervals. These are read-only query helpers; wiring event pairing into a
+`DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ (building datasets *between*
+events) is a later phase and is not available yet.
+
+Enumerating event values
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Two methods answer "what event strings exist?", at two different scopes:
+
+- `AtriumSDK.get_measure_string_vocabulary <contents.html#atriumdb.AtriumSDK.get_measure_string_vocabulary>`_
+  returns **every** string value ever written to a string measure, read cheaply from that
+  measure's dictionary file — no data scan, so its cost is bounded by the vocabulary size
+  rather than the number of samples.
+- `AtriumSDK.get_string_values_present <contents.html#atriumdb.AtriumSDK.get_string_values_present>`_
+  returns the sorted **distinct** string values actually present for a particular source
+  (device or patient) over a time window — "which of those events actually occurred for
+  device X last week".
+
+Both raise a ``ValueError`` if you pass a numeric measure (events are string measures).
+
+.. code-block:: python
+
+    # A string/event measure holding START / STOP markers for a clinical state.
+    measure_id = sdk.insert_measure(
+        measure_tag="anesthesia_events", freq=1.0, freq_units="Hz",
+        signal_kind="event", value_type="string")
+    device_id = sdk.insert_device(device_tag="OR-1")
+
+    # Every value ever written to the measure (cheap dictionary read, no data scan).
+    print(sdk.get_measure_string_vocabulary(measure_id))   # e.g. ['START', 'STOP']
+
+    # Only the distinct values a given source produced in a window.
+    print(sdk.get_string_values_present(
+        measure_id, start_time=0, end_time=120, device_id=device_id, time_units="s"))
+
+Deriving event intervals
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+`AtriumSDK.get_event_intervals <contents.html#atriumdb.AtriumSDK.get_event_intervals>`_
+pairs a ``from_value`` event with the next ``to_value`` event in the **same** string
+measure and returns the spans between them as a list of dicts::
+
+    {"start_time_n", "end_time_n", "start_censored", "end_censored"}
+
+The two time fields are **always in nanoseconds**, regardless of the ``time_units`` you use
+for the input ``start_time``/``end_time``. Results are sorted by start time.
+
+**Collapse pairing.** Pairing uses the *collapse* rule: a run of ``from`` events up to the
+next ``to`` event is folded into ONE interval (first-open → first-close), and the returned
+intervals never overlap. Repeated ``from`` events before a ``to`` do not create nested or
+overlapping spans.
+
+**The** ``within`` **cascade.** By default (``within=None``) each interval is scoped to a
+container, resolved through a graceful cascade:
+``device_patient`` (when a mapping is populated) → ``encounter`` → whole-stream (the query
+range). You can force a specific level with ``within="device_patient"``, ``"encounter"``, or
+``"none"`` (whole-stream). If the requested or needed scoping data is missing, the method
+**warns and falls through** to the next level rather than silently dropping the query — and
+the whole path runs even with an empty ``device_patient`` table. A pair that would span a
+container boundary is clipped at the boundary; it never crosses it.
+
+**Censoring.** The ``start_censored`` / ``end_censored`` flags mark intervals whose *true*
+boundary lies outside the observed data — the boundary is clipped to the container/range and
+**never fabricated**:
+
+- A ``to`` event with no preceding ``from`` (e.g. recording began while the state was
+  already on) → ``start_censored=True``, with ``start_time_n`` clipped to the container/range
+  start.
+- A ``from`` event with no following ``to`` (the state never closes within the data) →
+  ``end_censored=True``, with ``end_time_n`` clipped to the container/range end.
+
+.. code-block:: python
+
+    import numpy as np
+
+    # Write START/STOP events. The recording begins mid-state: the first event is a
+    # STOP at t=10 s with no preceding START, so the state was already "on".
+    times = np.array([10.0, 30.0, 60.0, 90.0])      # seconds
+    values = ["STOP", "START", "STOP", "START"]
+    sdk.write_time_value_pairs(measure_id, device_id, times, values, time_units="s")
+
+    intervals = sdk.get_event_intervals(
+        measure=measure_id, from_value="START", to_value="STOP",
+        device_id=device_id, start_time=0, end_time=120, time_units="s")
+
+    for iv in intervals:
+        print(iv)
+
+    # Resulting intervals (times always in nanoseconds):
+    #   {'start_time_n': 0,           'end_time_n': 10_000_000_000,
+    #    'start_censored': True,  'end_censored': False}   # STOP with no prior START
+    #   {'start_time_n': 30_000_000_000, 'end_time_n': 60_000_000_000,
+    #    'start_censored': False, 'end_censored': False}   # a clean START -> STOP pair
+    #   {'start_time_n': 90_000_000_000, 'end_time_n': 120_000_000_000,
+    #    'start_censored': False, 'end_censored': True}    # START with no following STOP
+
 Visualizing the Dataset
 -------------------------------
 

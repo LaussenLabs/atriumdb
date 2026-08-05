@@ -276,6 +276,21 @@ class MeasureStringDictionary:
     # ------------------------------------------------------------------ #
     # Introspection
     # ------------------------------------------------------------------ #
+    def vocabulary(self) -> list:
+        """Return the full list of strings in code order (code == index).
+
+        This is a read-only snapshot of every value ever written to the measure,
+        suitable for cheap event-type enumeration (design §22.1.1) with no data
+        scan. The list is a copy, so callers may not mutate the dictionary."""
+        return list(self._strings)
+
+    def code_for(self, value: str):
+        """Return the int64 code for ``value`` if it is already in the vocabulary,
+        else ``None``. Unlike :meth:`encode`, this NEVER appends -- it is a pure
+        lookup used by query paths (e.g. event pairing) that must reject values
+        which were never written rather than silently minting new codes."""
+        return self._code_of.get(self._coerce(value))
+
     def __len__(self) -> int:
         """Vocabulary size (number of distinct strings / next code to assign)."""
         return len(self._strings)
