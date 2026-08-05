@@ -57,7 +57,8 @@ class DatasetDefinition:
                      Example: [{"tag": "ECG", "freq_hz": 300, "units": "mV"}]
     :param patient_ids: (dict, optional) Dictionary containing patient identifiers with their associated
                         time specifications. The specifications can be interval-based, event-based,
-                        or the keyword 'all' to indicate all available time data for the given patient.
+                        event-anchored (see the time-spec key reference below), or the keyword 'all' to
+                        indicate all available time data for the given patient.
                         Example: {1234567: "all", 7654321: [{'start': 123456000 * 10**9, 'end': 123457000 * 10**9}]}
     :param mrns: (dict, optional) Dictionary containing medical record numbers. Each MRN can have associated
                  time specifications (interval-based, event-based) or 'all' indicating all available
@@ -74,6 +75,27 @@ class DatasetDefinition:
                    (such as patient conditions or device states). These labels can be used for classification,
                    segmentation, or other forms of analysis.
                    Example: ["Sinus rhythm", "Junctional ectopic tachycardia (JET)", "arrhythmia"]
+
+    **Time-spec keys**: each element of a source's time-spec list is a dict using one of these
+    key sets (or the source may be the string ``"all"``):
+
+    - **Interval**: ``start`` and/or ``end`` — nanosecond-epoch bounds.
+    - **Event (time0)**: ``time0`` with ``pre`` and ``post`` — a window ``[time0 - pre,
+      time0 + post]`` (``pre``/``post`` in nanoseconds).
+    - **Event-anchored (anchor)**: ``anchor`` (an event value) and ``measure`` (the event/string
+      measure tag or id), with optional ``pre``/``post`` (nanoseconds, default 0) and ``within``
+      — emits ``[t - pre, t + post]`` around every occurrence of ``anchor``.
+    - **Event-anchored (from/to)**: ``from`` and ``to`` (event values) and ``measure``, with
+      optional ``within``, ``pre``/``post`` (nanoseconds), ``max_duration`` (nanoseconds), and
+      ``on_censored`` (``"clip"`` default, ``"drop"``, or ``"keep"``) — a region for each
+      ``from`` → next ``to`` interval.
+
+    Event-anchored regions reference the event measure by TAG (or id) and must point at a string
+    (event) measure; they are anchor-only (they define time ranges only — add the event measure
+    to ``measures`` to also receive its channel). ``within`` scopes ranges through the
+    device_patient → encounter → whole-stream cascade. An unknown ``measure`` or an
+    ``anchor``/``from``/``to`` value not in the measure's vocabulary raises at ``validate()``
+    time. See :ref:`event_anchored_regions` for full details and examples.
 
     .. note:: For more details on the format expectations, see :ref:`definition_file_format`.
 
@@ -522,12 +544,23 @@ class DatasetDefinition:
         if not isinstance(times, list):
             raise ValueError(f"{source_type} {source_id}: times must be 'all' or a list of time dictionaries")
 
-        allowed_keys = ['start', 'end', 'time0', 'pre', 'post', 'files']
+        # 'anchor'/'from'/'to'/'measure'/'within'/'max_duration'/'on_censored' are the
+        # Phase 5 event-anchored region keys (design section 23); 'pre'/'post' are shared
+        # with both the classic time0 form and the event forms.
+        allowed_keys = ['start', 'end', 'time0', 'pre', 'post', 'files',
+                        'anchor', 'from', 'to', 'measure', 'within', 'max_duration',
+                        'on_censored']
+        # Keys whose values are nanosecond integers (the seconds-vs-ns heuristic and the
+        # non-negative check only make sense for these; 'anchor'/'from'/'to'/'measure'/
+        # 'within'/'on_censored' carry strings).
+        numeric_keys = ['start', 'end', 'time0', 'pre', 'post', 'max_duration']
 
         for time_dict in times:
             if 'start' in time_dict and 'end' in time_dict and time_dict['start'] >= time_dict['end']:
                 raise ValueError(f"{source_type} {source_id}: start time {time_dict['start']} must be less than "
                                  f"end time {time_dict['end']}")
+
+            is_event_region = ('anchor' in time_dict) or ('from' in time_dict) or ('to' in time_dict)
 
             for key, value in time_dict.items():
                 if key == 'files':
@@ -536,16 +569,36 @@ class DatasetDefinition:
                     raise ValueError(f"{source_type} {source_id}: Invalid time key: {key}. "
                                      f"Allowed keys are: {', '.join(allowed_keys)}")
 
-                if key in ['pre', 'post'] and value < 0:
+                if key in ['pre', 'post', 'max_duration'] and isinstance(value, (int, float)) and value < 0:
                     raise ValueError(f"{source_type} {source_id}: {key} cannot be negative")
 
-                if value < 1e9 or (value < 1e16 and key in ['start', 'end', 'time0']):
-                    # warnings.warn(f"{source_type} {source_id}: The epoch for {key}: {value} looks like it's "
-                    #               f"formatted in seconds. However {key} will be interpreted as nanosecond data.")
-                    pass
+                if key in numeric_keys and isinstance(value, (int, float)):
+                    if value < 1e9 or (value < 1e16 and key in ['start', 'end', 'time0']):
+                        # warnings.warn(f"{source_type} {source_id}: The epoch for {key}: {value} looks like it's "
+                        #               f"formatted in seconds. However {key} will be interpreted as nanosecond data.")
+                        pass
 
-            if ('pre' in time_dict or 'post' in time_dict) and 'time0' not in time_dict:
-                raise ValueError(f"{source_type} {source_id}: 'pre' and 'post' cannot be provided without 'time0'")
+            # 'pre'/'post' need an anchoring key: the classic 'time0', or (Phase 5) an
+            # event 'anchor'/'from' that they pad around.
+            if ('pre' in time_dict or 'post' in time_dict) and not (
+                    'time0' in time_dict or is_event_region):
+                raise ValueError(f"{source_type} {source_id}: 'pre' and 'post' cannot be provided without "
+                                 f"'time0', 'anchor', or 'from'")
+
+            # Event-anchored region shape checks (design section 23).
+            if is_event_region:
+                if 'anchor' in time_dict and ('from' in time_dict or 'to' in time_dict):
+                    raise ValueError(f"{source_type} {source_id}: a region cannot combine 'anchor' with "
+                                     f"'from'/'to'; use one event region form or the other")
+                if ('from' in time_dict) != ('to' in time_dict):
+                    raise ValueError(f"{source_type} {source_id}: an event interval region needs both 'from' "
+                                     f"and 'to'")
+                if 'measure' not in time_dict:
+                    raise ValueError(f"{source_type} {source_id}: an event-anchored region requires a "
+                                     f"'measure' (the event/string measure tag or id)")
+                if 'on_censored' in time_dict and time_dict['on_censored'] not in ('clip', 'drop', 'keep'):
+                    raise ValueError(f"{source_type} {source_id}: on_censored must be one of "
+                                     f"'clip', 'drop', 'keep'")
 
     def add_measure(self, measure_tag, freq=None, units=None):
         """
@@ -634,6 +687,13 @@ class DatasetDefinition:
         - **Event-based**: Provide all three of ``time0``, ``pre``, and ``post``.
         - **All data**: Omit all time parameters to request all available data for
           the source (equivalent to ``"all"`` in the YAML format).
+
+        .. note::
+
+           This helper covers the interval, ``time0`` event, and "all" forms. To add an
+           **event-anchored** region (``anchor`` or ``from``/``to`` around string events),
+           pass the region dict directly via the constructor's source arguments — see the
+           :class:`DatasetDefinition` time-spec key reference and :ref:`event_anchored_regions`.
 
         If the definition has been validated, adding a region invalidates the
         validation state, requiring re-validation before use with SDK operations.

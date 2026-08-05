@@ -758,9 +758,10 @@ A **string** (event) measure records aperiodic textual signals — alarm strings
 status, or start/stop markers for a clinical state. On top of the raw
 :ref:`string values <string_values>` you write, AtriumDB provides three standalone query
 methods for inspecting the event vocabulary and for turning ``from → to`` event pairs into
-state intervals. These are read-only query helpers; wiring event pairing into a
-`DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ (building datasets *between*
-events) is a later phase and is not available yet.
+state intervals. These are read-only query helpers; to build a
+`DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ *around* these events
+(cohorts anchored on an event value, or spanning ``from → to`` pairs), see
+:ref:`Event-Anchored Regions <event_anchored_regions>`.
 
 Enumerating event values
 ^^^^^^^^^^^^^^^^^^^^^^^^^^

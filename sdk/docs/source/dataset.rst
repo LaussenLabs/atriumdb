@@ -436,7 +436,7 @@ The YAML file defines various source types (``patient_ids``, ``mrns``, ``device_
 Time Entries
 #################
 
-For each source/entity, you can provide multiple time entries. Each time entry describes a relevant time period or event for that source. There are three types of time specifications:
+For each source/entity, you can provide multiple time entries. Each time entry describes a relevant time period or event for that source. There are four types of time specifications:
 
 1. **Interval-based**: This type specifies a continuous interval with a ``start`` and/or ``end`` time.
 
@@ -450,6 +450,11 @@ For each source/entity, you can provide multiple time entries. Each time entry d
    - ``post``: Duration after the event (in nanoseconds).
 
 3. **All** All available time data can be specified using the ``all`` keyword.
+
+4. **Event-anchored**: Instead of a fixed timestamp, build the region(s) *around string
+   (event) values* — every occurrence of an event value, or the span between an opening and
+   a closing event. See :ref:`event_anchored_regions` for the ``anchor`` and ``from``/``to``
+   forms.
 
 Measures
 #################
@@ -531,6 +536,139 @@ You can create a `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_
 
       patient_ids = {1234567: [{'start': start_time_nano_1, 'end': end_time_nano_1}], 7654321: "all"}
       dataset_definition = DatasetDefinition(measures=measures, patient_ids=patient_ids)
+
+
+.. _event_anchored_regions:
+
+Event-Anchored Regions
+######################################
+
+In addition to fixed ``start``/``end`` intervals and ``time0`` events, a source's time-spec
+list may contain **event-anchored regions**. These build time ranges *around string (event)
+values* — for example "5 minutes around every Anesthesia START", or "between each START and
+the next STOP" — resolved at :py:meth:`~DatasetDefinition.validate` time against the actual
+events recorded for that source. See :ref:`Event Queries <event_queries>` for the underlying
+event model (string measures, the ``from → to`` pairing, and the ``within`` cascade).
+
+There are two forms. Both require a ``measure`` naming the **event (string) measure** to look
+in, given as a measure tag (string) or a measure id (int). A numeric measure raises an error.
+
+**(a)** ``anchor`` **— a window around every occurrence.**
+For each occurrence of the ``anchor`` value in the event measure, a window
+``[t - pre, t + post]`` is emitted:
+
+- ``anchor``: the event value to anchor on (must be in the measure's vocabulary).
+- ``measure``: the event/string measure tag or id.
+- ``pre``: nanoseconds before each occurrence (optional, default ``0``).
+- ``post``: nanoseconds after each occurrence (optional, default ``0``).
+- ``within``: optional container scoping (see below).
+
+**(b)** ``from``/``to`` **— a region between an opening and a closing event.**
+Each interval between a ``from`` event and the next ``to`` event (using the same *collapse*
+pairing as `AtriumSDK.get_event_intervals <contents.html#atriumdb.AtriumSDK.get_event_intervals>`_)
+becomes a region:
+
+- ``from`` / ``to``: the opening and closing event values (both required; both must be in the
+  measure's vocabulary).
+- ``measure``: the event/string measure tag or id.
+- ``within``: optional container scoping (see below).
+- ``pre`` / ``post``: optional nanosecond padding applied to each derived interval
+  (default ``0``).
+- ``max_duration``: optional cap (nanoseconds) on each region's length.
+- ``on_censored``: how to handle intervals whose true boundary lies outside the observed data
+  (a ``from`` with no following ``to``, or a ``to`` with no preceding ``from``) — one of
+  ``"clip"`` (default: clip the censored end to the container/range boundary, keep the region,
+  and warn), ``"drop"`` (omit any censored interval), or ``"keep"`` (keep it unchanged).
+
+In both forms the emitted windows are clipped to the validation ``start_time``/``end_time``
+bounds and intersected with the source's data availability, exactly like the classic region
+types.
+
+.. note::
+
+   **Event-anchored regions are anchor-only** — they only define *time ranges*. The event
+   measure itself is **not** added to the returned data automatically. To also receive the
+   event channel in each window, add the event measure to the definition's ``measures``.
+
+**The** ``within`` **cascade.** When given, ``within`` scopes the emitted ranges to a
+container. It follows the same cascade as
+`AtriumSDK.get_event_intervals <contents.html#atriumdb.AtriumSDK.get_event_intervals>`_:
+``"device_patient"`` → ``"encounter"`` → ``"none"`` (whole-stream). Omit ``within`` to leave
+the ranges unscoped.
+
+**Validation.** Unknown values raise at :py:meth:`~DatasetDefinition.validate` time: an event
+``measure`` tag/id that does not exist, a ``measure`` that is not a string measure, or an
+``anchor``/``from``/``to`` value not in that measure's vocabulary. A source that simply has no
+matching events is not an error — it warns and contributes no ranges.
+
+**Example.** Two cohorts against the ``anesthesia_events`` string measure: one 5-minute window
+around every ``"Anesthesia START"``, and one covering each ``"Anesthesia START"`` → next
+``"Anesthesia STOP"`` span scoped to the encounter. The event measure is included in
+``measures`` so the event channel is returned alongside ``ECG``.
+
+.. code-block:: python
+
+    from atriumdb import AtriumSDK, DatasetDefinition
+
+    sdk = AtriumSDK(dataset_location=local_dataset_location)
+
+    five_min_ns = 5 * 60 * 1_000_000_000  # 5 minutes in nanoseconds
+
+    definition = DatasetDefinition(
+        # "anesthesia_events" is included so the event channel is returned in each window;
+        # without it, the regions below would still define the time ranges (anchor-only).
+        measures=["ECG", "anesthesia_events"],
+        device_ids={
+            25: [
+                # (a) 5 minutes around EVERY "Anesthesia START" occurrence.
+                {
+                    "anchor": "Anesthesia START",
+                    "measure": "anesthesia_events",
+                    "pre": five_min_ns,
+                    "post": five_min_ns,
+                },
+                # (b) between each "Anesthesia START" and the next "Anesthesia STOP",
+                #     scoped to the encounter, capping any single region at 6 hours.
+                {
+                    "from": "Anesthesia START",
+                    "to": "Anesthesia STOP",
+                    "measure": "anesthesia_events",
+                    "within": "encounter",
+                    "max_duration": 6 * 60 * 60 * 1_000_000_000,
+                    "on_censored": "clip",
+                },
+            ],
+        },
+    )
+
+    definition.validate(sdk=sdk)
+
+The same YAML form:
+
+.. code-block:: yaml
+
+   measures:
+        - ECG
+        - anesthesia_events
+
+   device_ids:
+        25:
+            - anchor: "Anesthesia START"
+              measure: "anesthesia_events"
+              pre: 300000000000    # 5 minutes in nanoseconds
+              post: 300000000000
+            - from: "Anesthesia START"
+              to: "Anesthesia STOP"
+              measure: "anesthesia_events"
+              within: encounter
+              max_duration: 21600000000000   # 6 hours in nanoseconds
+              on_censored: clip
+
+.. note::
+
+   ``pre``, ``post`` and ``max_duration`` are always **nanoseconds**. Event-anchored regions
+   can be mixed freely with the classic interval / ``time0`` / ``all`` specs in the same
+   source's time-spec list.
 
 
 Building Dataset Definitions from Intervals

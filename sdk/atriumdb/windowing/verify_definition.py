@@ -27,6 +27,7 @@ import json
 
 from atriumdb.adb_functions import get_measure_id_from_generic_measure
 from atriumdb.intervals.union import intervals_union_list
+from atriumdb.intervals.intersection import list_intersection
 from atriumdb.windowing.map_definition_sources import map_validated_sources
 
 
@@ -250,6 +251,19 @@ def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, 
 
     interval_list = []
     for region_data in time_specs:
+        # Phase 5 event-anchored regions (design section 23): 'anchor' (X pre / Y post
+        # around every occurrence of an event value) or 'from'/'to' (between an opening
+        # event and its next closing event, via P4's get_event_intervals). These resolve
+        # to a list of (start, end) windows -- already clipped to global bounds and
+        # intersected with the source's data union -- exactly the shape the classic
+        # branches below produce, so they flow through map_validated_sources/the iterator
+        # unchanged. Branch on the event keys so the classic branches are untouched.
+        if 'anchor' in region_data or 'from' in region_data:
+            interval_list.extend(
+                _resolve_event_region(region_data, sdk, device_id, patient_id,
+                                      start_time_n, end_time_n, union_intervals))
+            continue
+
         if 'time0' in region_data:
             start, end = region_data['time0'] - region_data['pre'], region_data['time0'] + region_data['post']
         elif 'start' in region_data and 'end' in region_data:
@@ -270,6 +284,185 @@ def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, 
             interval_list.append([start, end])
 
     return interval_list
+
+
+def _merge_windows(windows):
+    """Sort + merge overlapping/touching ``[start, end]`` windows into a disjoint,
+    ascending list (the shape ``list_intersection`` requires)."""
+    if not windows:
+        return []
+    ordered = sorted([int(s), int(e)] for s, e in windows)
+    merged = [ordered[0]]
+    for s, e in ordered[1:]:
+        if s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    return merged
+
+
+def _resolve_event_region(region_data, sdk, device_id, patient_id, start_time_n, end_time_n, union_intervals):
+    """Resolve a Phase 5 event-anchored region (design section 23) to a list of
+    ``[start, end]`` ns windows for one source.
+
+    Two forms:
+
+    * ``anchor``: for each occurrence of the ``anchor`` value in the event ``measure``
+      for THIS source over the global bounds, emit ``[t - pre, t + post]`` (section
+      23.1). The region's optional ``within`` scopes the emitted windows by
+      intersecting them with the resolved container (section 23.2 #4); unscoped when no
+      ``within`` is given.
+    * ``from``/``to``: call P4's :meth:`AtriumSDK.get_event_intervals` (which applies the
+      ``within`` cascade itself), then pad each interval by ``pre``/``post``, cap its
+      length at ``max_duration`` if given, and handle censoring per ``on_censored``
+      (default ``clip`` + warn; ``drop`` omits either-censored intervals; ``keep`` keeps
+      them unchanged) -- section 23.2 #3.
+
+    In both forms the windows are then clipped to the global bounds and intersected with
+    the source's data union (``union_intervals``), exactly like the classic region
+    branches. The event measure is NOT added to the definition's measures
+    (anchor-only, section 23.2 #2).
+
+    Validation (section 23.3), all raised at ``validate()`` time: an unknown event
+    ``measure`` tag/id, a non-string measure, or an ``anchor``/``from``/``to`` value not
+    in the measure's vocabulary. A source with no such events warns and contributes no
+    ranges.
+    """
+    # Global read bounds: explicit global bounds when given, otherwise the data-union
+    # extent (union_intervals is guaranteed non-empty by the caller).
+    global_start = int(start_time_n) if start_time_n is not None else int(union_intervals[0][0])
+    global_end = int(end_time_n) if end_time_n is not None else int(union_intervals[-1][1])
+
+    source_desc = (f"device_id {device_id}" if device_id is not None else f"patient_id {patient_id}")
+
+    if 'measure' not in region_data:
+        raise ValueError("An event-anchored region requires a 'measure' (the event/string measure tag or id).")
+    measure_ref = region_data['measure']
+
+    # Resolve the event measure tag/id against the dataset (section 23.2 #1). An unknown
+    # tag/id raises here (get_measure_id_from_generic_measure -> "No matching measures").
+    # For a TAG, prefer a STRING measure: the "best" rule ranks by block count and
+    # ignores value_type, so a numeric measure sharing the tag could otherwise shadow a
+    # valid string measure (P5 audit hazard). An int id / full spec is unambiguous.
+    if isinstance(measure_ref, str):
+        candidate_ids = [int(mid) for mid in
+                         get_measure_id_from_generic_measure(sdk, measure_ref, measure_tag_match_rule="all")
+                         if mid is not None]
+        string_ids = [mid for mid in candidate_ids if sdk.get_measure_kind(mid)[1] == "string"]
+        if string_ids:
+            best_id = int(get_measure_id_from_generic_measure(sdk, measure_ref, measure_tag_match_rule="best")[0])
+            event_measure_id = best_id if best_id in string_ids else string_ids[0]
+        elif candidate_ids:
+            event_measure_id = candidate_ids[0]
+        else:
+            raise ValueError(f"No matching event measure for tag {measure_ref!r}.")
+    else:
+        event_measure_id = int(get_measure_id_from_generic_measure(sdk, measure_ref, measure_tag_match_rule="best")[0])
+    # Reuse P4's guard: raises a clear error for a numeric (non-string) measure.
+    string_dict = sdk._require_string_measure(event_measure_id)
+
+    within = region_data.get('within', None)
+    # Validate `within` up front so a bogus value raises deterministically -- even when a
+    # source has zero occurrences (the anchor path used to return early before checking).
+    if within is not None and within not in ("device_patient", "encounter", "none"):
+        raise ValueError(
+            f"Unknown within option {within!r}; expected None (cascade), "
+            f"'device_patient', 'encounter', or 'none' (whole-stream).")
+    windows = []
+
+    if 'anchor' in region_data:
+        anchor_value = region_data['anchor']
+        # Vocabulary check (section 23.3): unknown anchor value -> raise at validate().
+        if string_dict.code_for(anchor_value) is None:
+            raise ValueError(
+                f"anchor value {anchor_value!r} is not in the vocabulary of event measure "
+                f"{measure_ref!r} (measure id {event_measure_id}). Known values come from "
+                f"AtriumSDK.get_measure_string_vocabulary().")
+        pre = int(region_data.get('pre', 0))
+        post = int(region_data.get('post', 0))
+
+        # Occurrence times for THIS source over the global bounds (reuse P4's read path).
+        times, values = sdk.get_string_data(
+            measure_id=event_measure_id, start_time_n=global_start, end_time_n=global_end,
+            device_id=device_id, patient_id=patient_id, time_units="ns")
+        occ_times = [int(t) for t, v in zip(times.tolist(), values.tolist()) if v == anchor_value]
+
+        if len(occ_times) == 0:
+            warnings.warn(
+                f"{source_desc}: no occurrences of anchor value {anchor_value!r} in event measure "
+                f"{measure_ref!r} over the requested bounds; this event region contributes no ranges.")
+            return []
+
+        windows = [[t - pre, t + post] for t in occ_times]
+
+        # Honor the region's within by intersecting the emitted windows with the
+        # resolved container (section 23.2 #4). from/to gets within via get_event_intervals.
+        if within is not None:
+            container_windows, _label = sdk._resolve_within_windows(
+                within, device_id, patient_id, global_start, global_end)
+            windows = list_intersection(_merge_windows(windows), _merge_windows(container_windows))
+
+    else:
+        from_value = region_data['from']
+        to_value = region_data['to']
+        pre = int(region_data.get('pre', 0))
+        post = int(region_data.get('post', 0))
+        max_duration = region_data.get('max_duration', None)
+        on_censored = region_data.get('on_censored', 'clip')
+        if on_censored not in ('clip', 'drop', 'keep'):
+            raise ValueError(f"on_censored must be one of 'clip', 'drop', 'keep'; got {on_censored!r}.")
+
+        # get_event_intervals validates the from/to vocabulary (raises on unknown values),
+        # applies the within cascade, and clips censored ends to the container boundary.
+        intervals = sdk.get_event_intervals(
+            event_measure_id, from_value, to_value, device_id=device_id, patient_id=patient_id,
+            start_time=global_start, end_time=global_end, within=within, time_units="ns")
+
+        if len(intervals) == 0:
+            warnings.warn(
+                f"{source_desc}: no {from_value!r} -> {to_value!r} intervals in event measure "
+                f"{measure_ref!r} over the requested bounds; this event region contributes no ranges.")
+            return []
+
+        any_censored = False
+        for iv in intervals:
+            s, e = int(iv['start_time_n']), int(iv['end_time_n'])
+            if iv['start_censored'] or iv['end_censored']:
+                any_censored = True
+                if on_censored == 'drop':
+                    continue
+            # 'clip' (default) keeps the already-clipped interval; 'keep' keeps it too.
+            s -= pre
+            e += post
+            if max_duration is not None and (e - s) > int(max_duration):
+                e = s + int(max_duration)
+            if s < e:
+                windows.append([s, e])
+
+        if on_censored == 'clip' and any_censored:
+            warnings.warn(
+                f"{source_desc}: one or more {from_value!r} -> {to_value!r} intervals were censored; "
+                f"their censored ends were clipped to the container/range boundary (on_censored='clip').")
+
+    if not windows:
+        return []
+
+    # Clip to global bounds, then intersect with the source's data union -- exactly the
+    # constraint the classic region branches apply.
+    clipped = []
+    for s, e in windows:
+        if start_time_n is not None:
+            s = max(int(s), int(start_time_n))
+        if end_time_n is not None:
+            e = min(int(e), int(end_time_n))
+        if s < e:
+            clipped.append([int(s), int(e)])
+    if not clipped:
+        return []
+
+    union_list = [[int(a), int(b)] for a, b in np.asarray(union_intervals).tolist()]
+    return list_intersection(_merge_windows(clipped), union_list)
+
 
 def compute_hash(data):
     """Compute a SHA256 hash of the given data."""

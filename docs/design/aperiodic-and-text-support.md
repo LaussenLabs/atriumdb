@@ -1119,6 +1119,107 @@ a warning), and a pair spanning a container boundary is rejected/clipped; numeri
 inputs rejected with a clear error (events are string measures); vectorized path matches a
 brute-force reference on random event sequences.
 
+## 23. Phase 5 implementation spec — event-anchored DatasetDefinition
+
+> **Status: ✅ implemented, audited & bug-fixed (UNCOMMITTED, pending commit, on
+> `feature/aperiodic-and-text-support`).** `DatasetDefinition` regions can now be `anchor`
+> ("X pre/post around every event occurrence") or `from`/`to` ("between an event and the
+> next closing event"), resolved in `verify_definition._resolve_event_region` via P4's
+> `get_event_intervals` into the SAME `(start, end)` ranges the existing
+> validator/iterator consume — the iterator never learns what an event is. Event measure
+> by tag or id (must be string); anchor-only; `within` honored; censoring `clip`+warn
+> default (`on_censored` = clip|drop|keep). **Note:** `pre`/`post`/`max_duration` are
+> nanosecond integers (consistent with the classic `time0`/`pre`/`post` region keys —
+> `time_units` scales only the global bounds); the `5m`/`6h`/`encounter` shorthand in the
+> §23.1 YAML above is illustrative, not a supported literal.
+>
+> **Audited** (independent agent, `sdk/tests/test_event_anchored_definition_p5_audit.py`,
+> 42 tests). No hard bugs; `_merge_windows`, `max_duration`, `on_censored`, and classic-
+> definition non-regression all verified. Two robustness issues found **and fixed**:
+> (1) a tag shared by a numeric + string measure could let the numeric one shadow the
+> string one (the value_type-blind "best" rule) — event resolution now **prefers the
+> string measure** on a tag; (2) a bogus `within` value silently escaped when a source had
+> zero occurrences — `within` is now **validated up front**. Verified: P5 + audit suites
+> **64 pass, no xfail**; definition regression **19 pass** on both backends after the
+> `verify_definition.py` change.
+
+**Goal:** extend the region-spec vocabulary in `verify_definition._get_validated_entries`
+([windowing/verify_definition.py:246](../../sdk/atriumdb/windowing/verify_definition.py))
+— today `all` / `{start,end}` / `{time0,pre,post}` — with **event anchors** resolved at
+validation time via P4 into concrete `(start, end)` ranges, then intersected with the
+source's data union and global bounds exactly like the existing region branches.
+
+**Non-goals:** new storage/query primitives (P4 already provides them); transfer of
+event-anchored definitions (P6); the deferred `get_data` string-return convenience.
+
+### 23.1 New region specs
+
+```yaml
+device_ids:
+  25:
+    # (a) X pre / Y post around EVERY occurrence of an event value
+    - anchor: "Anesthesia START"
+      measure: "anesthesia_events"      # the event (string) measure to look in
+      pre:  5m
+      post: 5m
+    # (b) between an event and the next closing event (P4 get_event_intervals)
+    - from: "Anesthesia START"
+      to:   "Anesthesia STOP"
+      measure: "anesthesia_events"
+      within: encounter                 # device_patient | encounter | none (P4 cascade default)
+      pre:  0
+      post: 0                           # optional padding around each derived interval
+      # optional: max_duration: 6h ; on_censored: clip|drop|keep
+```
+
+- **`anchor`** → for each occurrence of the event value in `[global bounds]`, emit
+  `[t - pre, t + post]`. (Occurrences come from reading the event measure's codes — reuse
+  P4's read path.)
+- **`from`/`to`** → call `get_event_intervals(measure, from, to, source, within=...)`; each
+  returned interval, optionally padded by `pre`/`post` and capped by `max_duration`,
+  becomes a region. Censoring flag handling per `on_censored` (§23.2#3).
+
+Both resolve to `(start, end)` lists that flow through the unchanged
+`verify_definition → map_validated_sources → DatasetIterator` path.
+
+### 23.2 Decisions (✅ confirmed with requester)
+
+1. **✅ Event measure referenced by tag string (measure id also accepted).**
+   `measure: "anesthesia_events"` resolved against the dataset (matches how definitions name
+   measures); an int measure id is also accepted.
+2. **✅ Anchor-only.** An event region only *defines time ranges*; what each window returns
+   comes from the definition's `measures` list. To also get the event channel, the user adds
+   the event measure to `measures`. "What to window" and "how to slice time" stay separate.
+3. **✅ Censored-anchor default = `clip` + warn**, overridable per region via `on_censored`
+   (`clip` | `drop` | `keep`). Clip the censored end to the container/range boundary, keep
+   the region, and warn.
+4. **✅ `anchor` occurrences honor the region's `within`** (same cascade as `from`/`to`);
+   unscoped only when no `within` is given.
+
+### 23.3 Interaction with the rest
+
+- **Validation errors:** an event `measure` tag not found, or a `from`/`to`/`anchor` value
+  not in that measure's vocabulary, raises at `validate()` time with a clear message
+  (reuse P4's vocabulary checks). An event region on a source with no such event → warns
+  and contributes no ranges (consistent with existing empty-source handling).
+- **`DatasetDefinition` plumbing:** extend `_check_times_and_warn`
+  ([windowing/definition.py](../../sdk/atriumdb/windowing/definition.py)) `allowed_keys`
+  with `anchor`/`from`/`to`/`measure`/`within`/`max_duration`/`on_censored`, and the
+  region-resolution branch in `_get_validated_entries`.
+- **Rasterizing "in A→B" as a 0/1 signal** is already available end-to-end: add the event
+  measure (kind `state`/`event`) to `measures`; P3 renders it. P5 is specifically about
+  *defining the dataset's time ranges* from events. (Deriving a persisted 0/1 label channel
+  from a `from/to` region is a possible later convenience, not P5.)
+
+### 23.4 Tests
+
+`anchor` emits `[t-pre, t+post]` per occurrence and merges/clips against the data union and
+global bounds; `from/to` regions match `get_event_intervals` then honor `pre`/`post`/
+`max_duration`; `within` on a region scopes correctly (incl. empty `device_patient`);
+`on_censored` clip/drop/keep behave; unknown event measure tag or out-of-vocabulary value
+raises at validate(); an event region resolves through to the iterator producing the
+expected windows; and existing (non-event) definition tests are unchanged.
+
 ## 20. Why this fits AtriumDB rather than fighting it
 
 - Text becomes a **value encoding**, so it rides the existing block / index / iterator /
