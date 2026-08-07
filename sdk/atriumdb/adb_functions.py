@@ -984,6 +984,10 @@ def _calc_end_time_from_gap_data(values_size, gap_array, start_time, freq_nhz=No
     _validate_freq_period_params(freq_nhz, period_ns)
 
     if freq_nhz is not None:
+        # values_size * 10**18 exceeds int64 for even modest writes, so freq_nhz must be a
+        # Python int: numpy would try to narrow the left operand to C long and raise
+        # OverflowError. Callers legitimately pass np.int64 frequencies.
+        freq_nhz = int(freq_nhz)
         if (int(values_size) * (10 ** 18)) % freq_nhz != 0:
             warnings.warn(f"Blocking starting on epoch {start_time} doesn't end on an integer number of nanoseconds, "
                           f"merge will be approximate.")
@@ -1076,6 +1080,7 @@ def reconstruct_messages(start_time_nano_epoch, gap_data_array, freq_nhz=None, n
     message_starts[0] = start_time_nano_epoch
 
     if freq_nhz is not None:
+        freq_nhz = int(freq_nhz)
         if any(((10 ** 18) * int(m_size)) % freq_nhz != 0 for m_size in message_sizes[:-1]):
             warnings.warn(
                 "Not all messages durations can be expressed as a perfect nanosecond integer, some rounding has occured")
@@ -1321,13 +1326,13 @@ def merge_sorted_messages(message_starts_1, message_sizes_1, values_1,
 
 
 def _message_size_freq_to_duration_ns(m_size, freq_nhz):
-    return ((10 ** 18) * int(m_size)) // freq_nhz
+    return ((10 ** 18) * int(m_size)) // int(freq_nhz)
 
 def _message_size_period_to_durations_ns(m_size, period_ns):
     return m_size * period_ns
 
 def _message_size_to_duration_ns(m_size, freq_nhz):
-    return ((10 ** 18) * int(m_size)) // freq_nhz
+    return ((10 ** 18) * int(m_size)) // int(freq_nhz)
 
 def calc_time_by_period(period_ns, num_samples):
     return int(num_samples) * period_ns
