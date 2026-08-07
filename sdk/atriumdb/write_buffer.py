@@ -147,7 +147,7 @@ class WriteBuffer:
         """Flush every sub-buffer, isolating failures per (measure, device).
 
         One rejected batch must not discard the other measures queued in the same
-        context (Wave-2 W2): every sub-buffer is attempted, and the first failure is
+        context: every sub-buffer is attempted, and the first failure is
         re-raised afterwards so the caller still sees the error.
         """
         first_error = None

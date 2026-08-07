@@ -15,7 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-Per-measure string value dictionary for AtriumDB (Phase 1 string storage).
+Per-measure string value dictionary for AtriumDB.
 
 String values are stored by encoding each unique string as an ``int64`` code and
 reusing the ordinary int64 block write/read path -- there are no C changes and no
@@ -37,6 +37,8 @@ code to different strings. This mirrors the single-writer-per-(measure, device)
 expectation already documented on ``AtriumSDK.write_data``'s block-merge path:
 the lock protects the dictionary specifically, but concurrent block writes for the
 same measure/device remain the caller's responsibility.
+
+Background: ``docs/design/aperiodic-and-text-support.md``.
 """
 from __future__ import annotations
 
@@ -46,8 +48,8 @@ from typing import Sequence, Union
 
 import numpy as np
 
-# Reserved "unknown" sentinel code for string / int64 code channels (Phase 3,
-# design section 21.2 #2). Real dictionary codes are always >= 0 (line index in
+# Reserved "unknown" sentinel code for string / int64 code channels. Real
+# dictionary codes are always >= 0 (line index in
 # the append-only file), so a negative sentinel can never collide with a genuine
 # string. NaN plays the same role for float channels. Chosen over "reserve code
 # 0" because existing committed dictionaries already assigned code 0 to a real
@@ -55,8 +57,8 @@ import numpy as np
 UNKNOWN_STRING_CODE = -1
 
 # The value a reserved unknown code decodes to, by default. Kept distinct from
-# any genuine string (it is not in the vocabulary). A sentinel conflates
-# "unknown / censored" with a genuine missing reading -- see design 21.2 #2(a).
+# any genuine string (it is not in the vocabulary). Note that a single sentinel
+# conflates "unknown / censored" with a genuine missing reading.
 UNKNOWN_STRING_VALUE = "<unknown>"
 
 # The append is guarded by a cross-process advisory lock. The implementation is shared
@@ -96,13 +98,14 @@ class MeasureStringDictionary:
     def exists(cls, meta_dir: Union[str, PurePath], measure_id: int) -> bool:
         """True if a NON-EMPTY string dictionary file exists for this measure.
 
-        Phase 1 uses the presence of this file as the single signal that a measure
-        is string-typed. Keep this the one detection call site so Phase 2 can swap
-        it for a ``signal_kind`` schema column without touching callers.
+        The presence of this file is the fallback signal that a measure is
+        string-typed, used for datasets written before the ``value_type`` column
+        existed and never backfilled. Keep this the one call site that tests for
+        the file, so the rule lives in a single place.
 
         A zero-byte file is deliberately NOT an establishment signal: it carries no
         vocabulary, so treating it as "this measure is string-typed" would let a
-        crashed or rolled-back write permanently lock a numeric measure (Wave-2 W1).
+        crashed or rolled-back write permanently lock a numeric measure.
         """
         path = cls.path_for(meta_dir, measure_id)
         try:
@@ -137,8 +140,8 @@ class MeasureStringDictionary:
                         strings.append(json.loads(line))
                     except json.JSONDecodeError as decode_error:
                         # A crash mid-append leaves a partial final line. The bare
-                        # JSONDecodeError named neither the measure, the file, nor a
-                        # remedy (Wave-2 W8), and every code from here on is unreadable.
+                        # JSONDecodeError names neither the measure, the file, nor a
+                        # remedy, and every code from here on is unreadable.
                         raise ValueError(
                             f"String dictionary '{self._path}' is corrupt at line {line_number} "
                             f"(code {len(strings)}): {decode_error}. The file is append-only JSON "
@@ -222,8 +225,8 @@ class MeasureStringDictionary:
         baked into the encoded block. If the write then fails, those appended
         strings describe data the dataset does not contain -- they retain free text
         (potentially PHI) from a rejected batch and, worse, make the mere existence
-        of the dictionary file establish the measure as string-typed forever
-        (Wave-2 W1). This makes the append transactional with the write.
+        of the dictionary file establish the measure as string-typed forever.
+        This makes the append transactional with the write.
 
         The truncation is done under the same lock as the append and only when the
         file still ends with exactly the lines this instance wrote -- if another
@@ -335,7 +338,7 @@ class MeasureStringDictionary:
         """Decode ``int64`` codes to strings, mapping the reserved unknown
         sentinel code (default ``-1``) to ``unknown_value`` instead of raising.
 
-        This is the Phase 3 window decode accessor: a rasterized string window
+        This is the window decode accessor: a rasterized string window
         carries genuine dictionary codes (>= 0) plus the reserved unknown
         sentinel for gap / censored cells. Genuine codes decode normally; the
         sentinel decodes to ``unknown_value`` (``"<unknown>"`` by default, or
@@ -351,8 +354,8 @@ class MeasureStringDictionary:
         """Return the full list of strings in code order (code == index).
 
         This is a read-only snapshot of every value ever written to the measure,
-        suitable for cheap event-type enumeration (design §22.1.1) with no data
-        scan. The list is a copy, so callers may not mutate the dictionary."""
+        suitable for cheap event-type enumeration with no data scan. The list is
+        a copy, so callers may not mutate the dictionary."""
         return list(self._strings)
 
     def code_for(self, value: str):

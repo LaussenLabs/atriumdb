@@ -162,7 +162,7 @@ class SQLiteHandler(SQLHandler):
         """Add the additive nullable measure columns if they do not exist.
 
         Idempotent, additive migration (safe on write-once production history):
-        ``period_ns`` (Phase 0/1) plus the Phase 2 metadata columns ``signal_kind``
+        ``period_ns`` plus the measure-kind columns ``signal_kind``
         and ``value_type``. A ``NULL`` in any of these is interpreted with a
         read-time default by the SDK (``signal_kind`` -> ``waveform``,
         ``value_type`` -> ``numeric``), so existing rows need no backfill for
@@ -342,7 +342,7 @@ class SQLiteHandler(SQLHandler):
                 (name, value))
 
     def update_measure_metadata(self, measure_id: int, signal_kind: str = None, value_type: str = None):
-        """Set the Phase 2 metadata columns for a measure. Only the provided
+        """Set the measure-kind columns for a measure. Only the provided
         (non-None) fields are written; used to persist first-write value_type
         inference and the opportunistic string backfill. Idempotent."""
         sets, params = [], []
@@ -497,12 +497,12 @@ class SQLiteHandler(SQLHandler):
                 # delete it from the file_index
                 cursor.execute("DELETE FROM file_index WHERE id = ?", (old_block[3],))
                 # A racing writer that merged into the same old block can have removed the
-                # file_index row already. That used to raise TypeError: 'NoneType' object
-                # is not subscriptable here, aborting this transaction and losing this
-                # write entirely (Wave-2 W5). The merge is now serialized by a per-(measure,
-                # device) lock so this should be unreachable, but the row genuinely being
-                # gone means only that someone else has already unlinked the file -- there
-                # is nothing left for the caller to remove, which is what None means.
+                # file_index row already. The merge is serialized by a per-(measure,
+                # device) lock so this should be unreachable, but indexing an absent row
+                # would abort this transaction and lose the write entirely. The row
+                # genuinely being gone means only that someone else has already unlinked
+                # the file -- there is nothing left for the caller to remove, which is
+                # what None means.
                 return file_name[0] if file_name is not None else None
 
             return None

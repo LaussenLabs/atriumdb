@@ -107,8 +107,8 @@ class DatasetIterator:
         # The sliding interval in nanoseconds by which the window advances in time.
         self.window_slide_ns = int(window_slide_ns)
 
-        # Phase 3 fill configuration (design section 21.2 #3): a default rule for
-        # aperiodic measures plus per-measure fill / period overrides.
+        # Fill configuration: a default rule for aperiodic measures plus
+        # per-measure fill / period overrides.
         self.aperiodic_fill = aperiodic_fill
         self.fill_overrides = dict(fill_overrides) if fill_overrides else {}
         self.period_overrides = dict(period_overrides) if period_overrides else {}
@@ -120,7 +120,7 @@ class DatasetIterator:
 
         # Determine the lowest period (highest frequency) among the measures using the
         # RESOLVED nominal periods, so an aperiodic measure gridded at 1 s cannot
-        # distort row_size / batch sizing (design section 21.2 #1).
+        # distort row_size / batch sizing.
         self.lowest_period_ns = min(cfg['period_ns'] for cfg in self.render_config.values())
 
         # Compute the matrix's row size based on the lowest period and the window duration in nanoseconds.
@@ -235,7 +235,7 @@ class DatasetIterator:
                     f"period_overrides.")
             period_ns = int(resolve_nominal_period_ns(
                 measure, period_override=period_override))
-            # Bug-3 fix: a resolved nominal period larger than the window duration
+            # A resolved nominal period larger than the window duration
             # (or slide) makes window_duration // period == 0, which downstream
             # surfaces as an opaque "slice step cannot be zero" from
             # sliding_window_view. The early get_iterator sample-count guard only
@@ -271,9 +271,9 @@ class DatasetIterator:
     def decode_string_codes(self, measure_id, codes, unknown_value=None):
         """Decode a string measure's window codes (int64) back to strings.
 
-        A rasterized string window carries int64 dictionary codes (design section
-        21.2 #4), memory-efficient and tensor-friendly for batches; this accessor
-        decodes them on demand via the measure's ``MeasureStringDictionary``. The
+        A rasterized string window carries int64 dictionary codes -- memory-
+        efficient and tensor-friendly for batches; this accessor decodes them on
+        demand via the measure's ``MeasureStringDictionary``. The
         reserved unknown sentinel (``UNKNOWN_STRING_CODE``) maps to
         ``unknown_value`` (``"<unknown>"`` by default; pass ``None`` explicitly
         for Python ``None``) rather than raising."""
@@ -299,8 +299,9 @@ class DatasetIterator:
         start -- which ``_extract_cache_info`` otherwise reads straight off the
         (now split) range and which is the carry-forward seed floor -- would
         become each piece's own start, re-introducing exactly the batch-boundary
-        corruption the Bug-1 fix removed (state left-censoring reappearing after
-        the first split). So record the originating range start per split piece in
+        corruption the carry-forward seed exists to prevent (state left-censoring
+        reappearing after the first split). So record the originating range start
+        per split piece in
         ``self.range_start_floors`` and let ``_extract_cache_info`` use that.
         """
         floors = {}
@@ -379,8 +380,8 @@ class DatasetIterator:
                         # The originating definition range start for this source's
                         # time range (NOT the per-batch sub-range start, and NOT a
                         # cached_windows_per_source split piece's start). Carry it
-                        # so carry-forward seeding (Bug-1 fix) can look back across
-                        # batch boundaries but never before the definition range.
+                        # so carry-forward seeding can look back across batch
+                        # boundaries but never before the definition range.
                         definition_range_start_time,
                     ]
                     current_batch.append(time_range_info)

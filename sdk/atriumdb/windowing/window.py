@@ -110,8 +110,8 @@ class Window:
     def decode_string_signal(self, sdk, measure_key, unknown_value=None):
         """Decode a string signal's int64 codes in this window to strings.
 
-        String measures rasterize their dictionary CODES into the window (design
-        section 21.2 #4), not decoded strings; this accessor decodes them on
+        String measures rasterize their dictionary CODES into the window, not
+        decoded strings; this accessor decodes them on
         demand via the measure's :class:`MeasureStringDictionary`. ``measure_key``
         is the ``(tag, freq_hz, units)`` tuple keying :attr:`signals`. The
         reserved unknown sentinel decodes to ``unknown_value`` (``"<unknown>"``

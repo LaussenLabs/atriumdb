@@ -14,7 +14,7 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""Interval algebra behind ``AtriumSDK.get_event_intervals`` (design section 22).
+"""Interval algebra behind ``AtriumSDK.get_event_intervals``.
 
 Turning an event stream into ``from -> to`` state intervals is three separable
 steps, and only the middle one needs the dataset:
@@ -27,11 +27,9 @@ steps, and only the middle one needs the dataset:
    flags across the cut (:func:`clip_intervals_to_containers`).
 
 Steps 1 and 3 plus the container-normalizing :func:`union_windows` are pure
-array/list math with no SDK state, so they live here: the trickiest logic in the
-feature becomes readable and directly testable on its own, instead of being
-three private methods buried in a 7000-line class. ``AtriumSDK`` keeps thin
-``_pair_from_to`` / ``_clip_intervals_to_containers`` / ``_union_windows``
-wrappers so existing callers are unaffected.
+array/list math with no SDK state, so they live here and are directly testable
+without a dataset. ``AtriumSDK`` reaches them through thin ``_pair_from_to`` /
+``_clip_intervals_to_containers`` / ``_union_windows`` wrappers.
 
 **Interval convention.** Every window and interval here is a half-open
 ``[start, end)`` pair of nanosecond integers, and every returned list is sorted
@@ -44,6 +42,8 @@ that boundary and the corresponding ``start_censored`` / ``end_censored`` flag i
 set. A caller that cannot tolerate a guessed boundary filters on the flags; the
 timestamps themselves are always real boundaries of the *container*, never
 invented event times.
+
+Background: ``docs/design/aperiodic-and-text-support.md``.
 """
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def union_windows(windows):
 
 
 def pair_from_to(from_times, to_times, container_start, container_end):
-    """Vectorized COLLAPSE pairing (design section 22.2 #2) inside one span.
+    """Vectorized COLLAPSE pairing inside one span.
 
     ``from_times``/``to_times`` are sorted ns arrays already restricted to
     ``[container_start, container_end]``. Returns a list of
@@ -126,7 +126,7 @@ def pair_from_to(from_times, to_times, container_start, container_end):
 def clip_intervals_to_containers(raw_intervals, windows):
     """Intersect paired ``(start, end, sc, ec)`` intervals (already censored
     relative to the whole query range) with the ``within`` container windows,
-    carrying censoring flags (design section 22.2 #3). This is the same
+    carrying censoring flags. This is the same
     intersection math as ``intervals/intersection.list_intersection`` but done
     per (interval, window) so the censoring flags survive the clip:
 

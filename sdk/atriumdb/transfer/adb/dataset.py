@@ -214,7 +214,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     gap_tolerance = DEFAULT_GAP_TOLERANCE if gap_tolerance is None else gap_tolerance
     measure_tag_match_rule = "all" if measure_tag_match_rule is None else measure_tag_match_rule
 
-    # Resolve the string-value policy before anything is written (Wave-2 W3).
+    # Resolve the string-value policy before anything is written.
     string_value_policy = _resolve_string_value_policy(string_value_policy, deidentify)
 
     # Validate the dataset definition if not already done
@@ -232,8 +232,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     src_device_id_list, src_patient_id_list = extract_src_device_and_patient_id_list(validated_sources)
 
     # Fail fast on a source/destination value_type collision, BEFORE any measure, device,
-    # patient or block reaches the destination (Wave-2 W4). Discovering it at the first
-    # string write left the destination half-populated with no rollback.
+    # patient or block reaches the destination. Discovering it at the first string
+    # write would leave the destination half-populated with no rollback.
     preflight_measure_value_types(src_sdk, dest_sdk, measure_id_list=src_measure_id_list,
                                   measure_tag_match_rule=measure_tag_match_rule)
 
@@ -247,7 +247,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         deidentification_functions=deidentification_functions, time_shift_nano=time_shift)
 
     # Look up the value_type of each source measure once so the per-measure transfer loop can
-    # branch string measures onto the dict-safe re-write path (§24.1#2). Numeric measures keep
+    # branch string measures onto the dict-safe re-write path. Numeric measures keep
     # the fast block-copy / re-encode path unchanged.
     src_measure_value_types = {}
     for src_measure_id in measure_id_map.keys():
@@ -255,7 +255,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         src_measure_value_types[src_measure_id] = (
             src_measure_info.get('value_type') if src_measure_info is not None else None)
 
-    # Transfer the encounter family (§24.1#3) for the transferred patients/devices, default-on
+    # Transfer the encounter family for the transferred patients/devices, default-on
     # and fully subject to the de-identification / time-shift rules. log_hl7_adt is never touched.
     if include_encounters:
         transfer_encounters(
@@ -284,7 +284,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
             if export_format == "tsc":
                 for src_measure_id, dest_measure_id in measure_id_map.items():
-                    # String measures (§24.1#2 / §24.2#1): the int64 codes stored in the source
+                    # String measures: the int64 codes stored in the source
                     # blocks live in the SOURCE dictionary's code space, so copying raw blocks
                     # would corrupt the destination dictionary. Instead read decoded strings and
                     # re-write them, letting the destination dictionary assign codes in its own
@@ -600,10 +600,10 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                     if export_format == "tsc":
                         break
                     elif is_string_value_type(src_measure_value_types.get(src_measure_id)):
-                        # String measures used to be silently dropped by every file export:
-                        # no warning, no error, and the exported meta/definition.yaml still
-                        # listed the measure -- so an extract that contained none of the
-                        # events looked complete. csv/npz/parquet all have a text-capable
+                        # String measures must not be silently dropped by a file export:
+                        # with no warning and no error, the exported meta/definition.yaml
+                        # would still list the measure, so an extract containing none of
+                        # its events would look complete. csv/npz/parquet have a text-capable
                         # value column, so export the DECODED strings there (raw dictionary
                         # codes are meaningless outside the dataset that assigned them).
                         # wfdb genuinely cannot hold them; that case warns below and is
@@ -705,13 +705,13 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 def _map_label_measure_id(label, measure_id_map):
     """Translate one label's ``measure_id`` from source ids to destination ids.
 
-    Two cases the raw ``measure_id_map[label['measure_id']]`` lookup got wrong (defect D5):
+    Two cases a raw ``measure_id_map[label['measure_id']]`` lookup gets wrong:
 
     * ``measure_id is None`` -- a label that annotates a span of a *source* rather than
       one signal. ``insert_labels`` documents ``measure_id`` as optional and the tutorial
-      teaches exactly this pattern, so real datasets are full of them. The dict lookup
-      died with a bare ``KeyError: None`` and took the whole transfer with it. ``None``
-      is meaningful and carries through unchanged.
+      teaches exactly this pattern, so real datasets are full of them. A bare dict
+      lookup would die with ``KeyError: None`` and take the whole transfer with it.
+      ``None`` is meaningful and carries through unchanged.
     * a measure the transfer does not include -- the definition selected some measures and
       this label points at a different one. There is no destination id to map it to, so it
       is rejected by name with an actionable message instead of a bare ``KeyError: 7``.
@@ -860,7 +860,7 @@ def _export_string_measure_file(src_sdk, dest_sdk, src_measure_id, dest_measure_
 
 def _transfer_string_measure(src_sdk, dest_sdk, src_measure_id, dest_measure_id, src_device_id,
                              dest_device_id, time_ranges, time_shift, string_value_policy="transfer"):
-    """Dict-safe transfer of a string measure (§24.1#2 / §24.2#1).
+    """Dict-safe transfer of a string measure.
 
     Reads decoded strings from the source over each requested time range and re-writes them to
     the destination. Because the write goes through the ordinary string write path, codes are

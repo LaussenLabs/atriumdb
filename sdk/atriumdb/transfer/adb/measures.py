@@ -53,14 +53,14 @@ def transfer_measures(from_sdk, to_sdk, measure_id_list=None, measure_tag_list=N
 def preflight_measure_value_types(from_sdk, to_sdk, measure_id_list=None, measure_tag_list=None,
                                   measure_tag_match_rule=None):
     """Check every measure this transfer would touch for a value-type collision, BEFORE
-    anything is written to the destination (Wave-2 W4).
+    anything is written to the destination.
 
     ``_transfer_measure`` hands back an existing destination measure whenever
-    (tag, freq, units) match, without looking at ``value_type``. A string source
-    measure landing on a numeric destination measure of the same identity used to be
-    discovered only when the first string write tripped the invariant -- by which
-    point destination measures, devices, patients, encounters and the *other*
-    measures' data were already committed, with no rollback and an error naming only
+    (tag, freq, units) match, without looking at ``value_type``. Without this
+    preflight, a string source measure landing on a numeric destination measure of the
+    same identity is discovered only when the first string write trips the invariant --
+    by which point destination measures, devices, patients, encounters and the *other*
+    measures' data are already committed, with no rollback and an error naming only
     the destination measure id. This resolves the same identity mapping read-only and
     raises up-front, naming the source measure, its tag and the destination measure.
 
@@ -131,8 +131,8 @@ def _transfer_measure(to_sdk, measure_info):
     units = measure_info['unit']
     measure_name = measure_info['name']
     from_measure_id = measure_info['id']
-    # Phase 6 (§24.1#1): carry the Phase 2 measure metadata across the transfer so the
-    # destination measure keeps its temporal shape / value encoding. get_all_measures /
+    # Carry the measure-kind metadata across the transfer so the destination measure
+    # keeps its temporal shape / value encoding. get_all_measures /
     # get_measure_info always resolve these (defaults: waveform / numeric), so they are
     # present for every source measure.
     signal_kind = measure_info.get('signal_kind')
@@ -145,10 +145,10 @@ def _transfer_measure(to_sdk, measure_info):
         if check_measure_info['tag'] == measure_tag and \
                 check_measure_info['freq_nhz'] == freq and \
                 check_measure_info['unit'] == units:
-            # Carry the Phase 2 metadata onto the EXISTING destination measure too
-            # (Wave-2 W7). Returning early used to silently keep the destination's
-            # default 'waveform', so an incremental / repeat transfer degraded
-            # state|event -> waveform and produced the un-iterable waveform+string.
+            # Carry the metadata onto the EXISTING destination measure too. Returning
+            # early without this would keep the destination's default 'waveform', so an
+            # incremental / repeat transfer would degrade state|event -> waveform and
+            # produce the un-iterable waveform+string combination.
             _carry_measure_kind(to_sdk, from_measure_id, signal_kind, value_type)
             return from_measure_id
         else:
@@ -162,7 +162,7 @@ def _transfer_measure(to_sdk, measure_info):
 
 
 def _carry_measure_kind(to_sdk, dest_measure_id, signal_kind, value_type):
-    """Apply the source measure's Phase 2 metadata to an existing destination measure.
+    """Apply the source measure's kind metadata to an existing destination measure.
 
     Only fields that actually differ are written. A value_type that conflicts with data
     already in the destination is left to the transfer preflight

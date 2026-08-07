@@ -43,7 +43,7 @@ from atriumdb.string_dictionary import MeasureStringDictionary
 from atriumdb.event_intervals import (
     union_windows, pair_from_to, clip_intervals_to_containers, collapse_event_intervals)
 
-# Phase 2 measure-metadata axes (see design §4/§19). These are stored as two
+# The measure-metadata axes (signal_kind / value_type). These are stored as two
 # independent nullable columns on the measure table; a NULL is read-time
 # defaulted below so every existing dataset stays correct with no backfill.
 # The vocabulary, the defaults and the predicates that go with them live in
@@ -120,7 +120,7 @@ _FIXED_WIDTH_STRING_DTYPE_KINDS = ('U', 'S')
 # explicit column list (see ``sqlite_select_measure_from_id_query`` and its Maria
 # twin), so the order is fixed -- but a bare ``row[11]`` at four call sites is a
 # silent breakage waiting for the next column to be added in the middle. Name the
-# two Phase 2 columns and read them through the accessors below.
+# two measure-kind columns and read them through the accessors below.
 MEASURE_ROW_ID = 0
 MEASURE_ROW_SIGNAL_KIND = 10
 MEASURE_ROW_VALUE_TYPE = 11
@@ -165,6 +165,42 @@ class AtriumSDK:
     The Core SDK Object that represents a single dataset and provides methods to interact with it. If you are using API
     mode then once you are finished with the object call the close method to clean up all connections.
 
+    **Where things are.** This class is large. Its methods are grouped into sections
+    marked by ``# ---- <name> ----`` banners, in this source order:
+
+    * *Construction and dataset creation* -- ``__init__``, :meth:`create_dataset`.
+    * *Measure value-type state machine* -- private; how a measure becomes numeric or
+      string-typed, and the guards that keep it that way.
+    * *Measure kind: public accessors* -- :meth:`set_measure_kind`, :meth:`get_measure_kind`.
+    * *Reading signal data* -- :meth:`get_data`, :meth:`get_string_data`.
+    * *Event query surface* -- :meth:`get_measure_string_vocabulary`,
+      :meth:`get_string_values_present`, :meth:`get_event_intervals`.
+    * *Block-level and remote read paths* -- :meth:`get_data_from_blocks` and the
+      API-mode read internals.
+    * *Writing signal data (core)* -- :meth:`write_data_easy`, :meth:`write_data`.
+    * *Writing signal data (entry points)* -- :meth:`write_buffer`, :meth:`write_segment`,
+      :meth:`write_segments`, :meth:`write_time_value_pairs`.
+    * *In-process caches* -- :meth:`load_device`, :meth:`load_definition`.
+    * *Measures* -- :meth:`get_measure_id`, :meth:`get_measure_info`,
+      :meth:`search_measures`, :meth:`insert_measure`.
+    * *Devices* -- :meth:`get_device_id`, :meth:`get_device_info`, :meth:`insert_device`.
+    * *Patients and patient history* -- :meth:`get_patient_id`, :meth:`get_patient_info`,
+      :meth:`insert_patient`, :meth:`get_patient_history`.
+    * *Device-patient mapping and encounters* -- :meth:`get_device_patient_mapping`,
+      :meth:`insert_device_patient_data`, :meth:`get_encounters`, :meth:`insert_encounter`.
+    * *Labels* -- :meth:`get_labels`, :meth:`insert_label`, :meth:`delete_labels`.
+    * *Label names, sources and time series* -- :meth:`get_label_name_id`,
+      :meth:`insert_label_name`, :meth:`get_label_time_series`.
+    * *Windowed iteration* -- :meth:`get_iterator`.
+    * *Interval / coverage queries* -- :meth:`get_interval_array`.
+    * *Beds and sources* -- :meth:`get_bed_id`, :meth:`get_source_id` and their
+      ``*_info`` siblings.
+    * *API mode: HTTP transport, token refresh and shutdown* -- private request/token
+      plumbing plus :meth:`close`.
+    * *Low-level block/TSC file access, settings and remaining internals* --
+      :meth:`get_data_from_tsc_file`, :meth:`get_blocks`,
+      :meth:`get_batched_data_generator`.
+
     :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
     :param str metadata_connection_type: Specifies the type of connection to use for metadata. Options are "sqlite", "mysql", "mariadb", or "api". Default "sqlite".
     :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" connection type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
@@ -207,6 +243,9 @@ class AtriumSDK:
     >>> sdk = AtriumSDK(metadata_connection_type=metadata_connection_type, api_url=api_url, token=token, refresh_token=refresh_token)
     """
 
+    # ------------------------------------------------------------------ #
+    # Construction and dataset creation
+    # ------------------------------------------------------------------ #
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
                  connection_params: dict = None, num_threads: int = 1, api_url: str = None, token: str = None,
                  refresh_token=None, validate_token=True, tsc_file_location: str = None, atriumdb_lib_path: str = None,
@@ -286,8 +325,8 @@ class AtriumSDK:
             if auto_upgrade:
                 self.sql_handler.update_measure_schema()
                 self.sql_handler.upgrade_mrn_schema()
-                # Phase 2: mark P1 string measures (those with a dictionary file)
-                # as value_type='string' now that the column exists. Idempotent.
+                # Mark legacy string measures (those with a dictionary file but no
+                # value_type column value) as value_type='string'. Idempotent.
                 self._backfill_string_value_types()
             else:
                 if not self.sql_handler.check_mrn_column_is_text():
@@ -328,8 +367,8 @@ class AtriumSDK:
             if auto_upgrade:
                 self.sql_handler.update_measure_schema()
                 self.sql_handler.upgrade_mrn_schema()
-                # Phase 2: mark P1 string measures (those with a dictionary file)
-                # as value_type='string' now that the column exists. Idempotent.
+                # Mark legacy string measures (those with a dictionary file but no
+                # value_type column value) as value_type='string'. Idempotent.
                 self._backfill_string_value_types()
             else:
                 if not self.sql_handler.check_mrn_column_is_text():
@@ -530,12 +569,15 @@ class AtriumSDK:
 
         return sdk_object
 
+    # ------------------------------------------------------------------ #
+    # Measure value-type state machine (internal): establish, resolve, guard
+    # ------------------------------------------------------------------ #
     @property
     def _meta_dir(self) -> Path:
         """The dataset's ``meta/`` directory, derived from ``dataset_location``.
 
         ``meta/`` already holds the SQLite index and transfer's ``definition.yaml``;
-        Phase 1 string dictionaries live under ``meta/string_dict/``. Requires a
+        per-measure string dictionaries live under ``meta/string_dict/``. Requires a
         ``dataset_location`` (always present in local/sqlite/mariadb modes; string
         storage is not supported in pure API mode)."""
         if self.dataset_location is None:
@@ -545,22 +587,22 @@ class AtriumSDK:
         return Path(self.dataset_location) / "meta"
 
     def _dictionary_establishes_string(self, measure_id):
-        """The single rule for "this measure's P1 dictionary file proves it is string-typed".
+        """The single rule for "this measure's dictionary file proves it is string-typed".
 
         A dictionary file alone is NOT proof. ``write_data`` appends to the dictionary
         *before* the block bytes and SQL rows are committed (the codes have to be baked
         into the encoded block), so a write killed in between -- SIGKILL, power loss, or a
         rollback that could not run because a concurrent appender owned the tail -- leaves
         a dictionary describing data the dataset does not contain. Treating that husk as an
-        establishment locks a numeric measure to 'string' with no public way back (Wave-2
-        W1). Requiring a committed block makes the husk inert and self-healing: the measure
+        establishment would lock a numeric measure to 'string' with no public way back.
+        Requiring a committed block makes the husk inert and self-healing: the measure
         stays unestablished, and whichever kind of data commits first establishes it.
 
         Every consumer of the dictionary-file signal (:meth:`_resolve_measure_kind`,
         :meth:`_established_value_type`, :meth:`_backfill_string_value_types`) must use
-        this one rule, or they disagree with each other -- which is the residual half of
-        W1: ``get_measure_kind`` served 'string' off the bare file while the write path
-        resolved 'None' off the same measure and happily accepted numeric data.
+        this one rule, or they disagree with each other -- e.g. ``get_measure_kind``
+        serving 'string' off a bare file while the write path resolves 'None' off the
+        same measure and happily accepts numeric data.
 
         The cheap filesystem check is deliberately evaluated first so the block query only
         runs for a measure that has a dictionary file AND a NULL value_type column -- after
@@ -573,17 +615,17 @@ class AtriumSDK:
         return bool(self.sql_handler.measure_has_blocks(measure_id))
 
     def _backfill_string_value_types(self):
-        """Opportunistic, idempotent Phase 2 backfill (design §19.2): any measure
-        that already has a P1 string-dictionary file *with committed blocks behind it* is
-        marked ``value_type='string'`` in the measure table. Read-time defaults make this
+        """Opportunistic, idempotent backfill: any measure that already has a
+        string-dictionary file *with committed blocks behind it* is marked
+        ``value_type='string'`` in the measure table. Read-time defaults make this
         unnecessary for correctness (a NULL value_type with a dict file still reads
-        as string), but persisting it lets later phases avoid the file check. Safe
+        as string); persisting it lets later reads skip the filesystem check. Safe
         to re-run; never overwrites an already-set value_type.
 
         The block requirement is load-bearing, not an optimization: without it this
-        backfill *persisted* the poisoning W1 was supposed to have closed. An orphan
-        dictionary left by a killed write made the very next ``AtriumSDK(auto_upgrade=True)``
-        write ``value_type='string'`` into the column, which then permanently rejected the
+        backfill *persists* a poisoning value_type. An orphan dictionary left by a killed
+        write would make the very next ``AtriumSDK(auto_upgrade=True)`` write
+        ``value_type='string'`` into the column, which then permanently rejects the
         numeric writes the measure actually exists for -- a self-inflicted brick on a
         routine schema upgrade."""
         if self.dataset_location is None:
@@ -594,10 +636,10 @@ class AtriumSDK:
                 self.sql_handler.update_measure_metadata(measure_id, value_type=VALUE_TYPE_STRING)
 
     def _resolve_measure_kind(self, measure_id, stored_signal_kind, stored_value_type):
-        """Apply the Phase 2 read-time defaults to the raw measure columns.
+        """Apply the read-time defaults to the raw measure columns.
 
         ``NULL signal_kind`` -> ``waveform``. ``NULL value_type`` -> ``string``
-        when a P1 string-dictionary file establishes it (see
+        when a string-dictionary file establishes it (see
         :meth:`_dictionary_establishes_string` -- a dictionary with committed blocks
         behind it, so un-migrated / un-backfilled datasets still read correctly),
         otherwise ``numeric``. The column, when set, always wins. This is the single
@@ -619,13 +661,13 @@ class AtriumSDK:
         Distinct from :meth:`_resolve_measure_kind`, which read-time-defaults a
         brand-new measure to ``numeric``; here an un-written measure returns
         ``None`` so a first string write is not wrongly rejected. Resolution order:
-        the raw ``value_type`` column, then a P1 dictionary file *with committed
+        the raw ``value_type`` column, then a dictionary file *with committed
         blocks* (-> string), then the presence of any block (-> numeric).
 
         The dictionary file only establishes ``string`` when the measure also has
         blocks: a dictionary with no data behind it is the fingerprint of a write
         that was rolled back or killed mid-flight, and honouring it would lock a
-        numeric measure to ``string`` forever with no public way back (Wave-2 W1)."""
+        numeric measure to ``string`` forever with no public way back."""
         row = self.sql_handler.select_measure(measure_id=measure_id)
         if row is None:
             return None
@@ -633,7 +675,7 @@ class AtriumSDK:
         if stored_value_type is not None:
             return stored_value_type
         # Same rule as _resolve_measure_kind / the backfill, so the three can never
-        # disagree about the same measure (the residual half of Wave-2 W1).
+        # disagree about the same measure.
         if self._dictionary_establishes_string(measure_id):
             return VALUE_TYPE_STRING
         if self.sql_handler.measure_has_blocks(measure_id):
@@ -645,8 +687,8 @@ class AtriumSDK:
         established value_type. Does NOT persist anything -- establishment happens
         only *after* the write passes its own validation and commits (see
         :meth:`_establish_value_type`), so a write that raises downstream can never
-        leave a poisoning value_type behind (Phase 2 audit fix). Returns the
-        established value_type, or None if the measure has no data yet."""
+        leave a poisoning value_type behind. Returns the established value_type, or
+        None if the measure has no data yet."""
         incoming = VALUE_TYPE_STRING if incoming_is_string else VALUE_TYPE_NUMERIC
         established = self._established_value_type(measure_id)
         if established is not None and established != incoming:
@@ -664,9 +706,9 @@ class AtriumSDK:
         prior :meth:`_check_value_type_invariant` already guaranteed no conflict.
 
         The in-process measure cache is dropped either way, so a cached view can
-        never disagree with the persisted row (the second half of Wave-2 W1: a
-        stale cache saying 'numeric' while the write path resolved 'string' left
-        the measure rejecting numeric writes AND string reads)."""
+        never disagree with the persisted row -- a stale cache saying 'numeric' while
+        the write path resolves 'string' leaves the measure rejecting numeric writes
+        AND string reads."""
         row = self.sql_handler.select_measure(measure_id=measure_id)
         if row is None:
             return
@@ -684,7 +726,7 @@ class AtriumSDK:
         # former string example took: insert_measure() with no signal_kind, then
         # write_time_value_pairs() with text. get_string_data() then works and
         # get_iterator() dies hours later. Repair the shape in the same statement that
-        # establishes the encoding, and say so loudly (defect D6).
+        # establishes the encoding, and say so loudly.
         repaired_signal_kind = None
         if incoming_is_string and is_invalid_kind_combination(
                 measure_row_signal_kind(row), VALUE_TYPE_STRING):
@@ -699,7 +741,7 @@ class AtriumSDK:
 
     def _block_merge_lock(self, measure_id, device_id):
         """Exclusive cross-process lock for the small-write block merge of one
-        (measure, device) stream (Wave-2 W5).
+        (measure, device) stream.
 
         ``write_data``'s merge path is a read-modify-write: select the closest block,
         decode its file, merge, write a new file, delete the old block row. Nothing
@@ -727,14 +769,14 @@ class AtriumSDK:
     def _check_string_dictionary_not_lost(self, measure_id, string_dict, established_value_type,
                                           watermark):
         """Refuse a string write whose dictionary has fewer entries than the codes
-        already committed to this measure's blocks (Wave-2 W8).
+        already committed to this measure's blocks.
 
         The dictionary is a file under ``meta/`` and the blocks that reference its codes
         are indexed in the metadata database; the two are restored independently, so a
-        DB + ``tsc/`` restore that omits ``meta/`` leaves the codes with no vocabulary. The
-        next write then started again at code 0 and every historical code silently began
-        decoding to a DIFFERENT string -- no error, no warning, permanently wrong clinical
-        values. This is the guard that makes that impossible.
+        DB + ``tsc/`` restore that omits ``meta/`` leaves the codes with no vocabulary.
+        The next write would then start again at code 0 and every historical code would
+        silently begin decoding to a DIFFERENT string -- no error, no warning, permanently
+        wrong clinical values. This is the guard that makes that impossible.
 
         Two O(1) checks, both indexed lookups -- no block is read and no data is decoded:
 
@@ -783,8 +825,8 @@ class AtriumSDK:
 
         Best-effort and non-fatal: the blocks are already durable at this point, so
         failing the caller's write because the watermark could not be recorded would turn
-        a successful write into a spurious error. A missed update only weakens the W8
-        guard back to its legacy behaviour for this measure."""
+        a successful write into a spurious error. A missed update only weakens the
+        dictionary-loss guard to total-loss detection for this measure."""
         try:
             self.sql_handler.set_string_dict_watermark(measure_id, vocabulary_size)
         except Exception as watermark_error:  # pragma: no cover - defensive
@@ -794,14 +836,14 @@ class AtriumSDK:
                 f"falls back to detecting total loss only: {watermark_error}")
 
     def _apply_kind_to_existing_measure(self, measure_id, signal_kind, value_type):
-        """Apply explicitly-requested Phase 2 metadata on ``insert_measure``'s
-        get-or-insert path instead of silently discarding it (Wave-2 W7).
+        """Apply explicitly-requested kind metadata on ``insert_measure``'s
+        get-or-insert path instead of silently discarding it.
 
         ``insert_measure`` returns the existing id when tag/freq/units already match.
-        Dropping ``signal_kind`` there meant an ingest pipeline that creates its
-        measures with get-or-insert could never classify them: the measure stayed
+        Dropping ``signal_kind`` there would mean an ingest pipeline that creates its
+        measures with get-or-insert could never classify them: the measure would stay
         ``waveform``, and ``waveform`` + ``string`` is the combination the windowing
-        layer cannot iterate, with no public way to repair it.
+        layer cannot iterate.
 
         Only stated fields are applied, and only when they actually differ (so the
         common repeat-insert stays a no-op). A ``value_type`` that conflicts with data
@@ -823,15 +865,19 @@ class AtriumSDK:
             f"Use set_measure_kind() to change this explicitly.")
         self.set_measure_kind(measure_id, signal_kind=new_signal_kind, value_type=new_value_type)
 
+    # ------------------------------------------------------------------ #
+    # Measure kind: public accessors
+    # ------------------------------------------------------------------ #
     def set_measure_kind(self, measure_id: int, signal_kind: str = None, value_type: str = None):
-        """Set (or correct) a measure's Phase 2 metadata after it was created.
+        """Set (or correct) a measure's ``signal_kind`` / ``value_type`` after it
+        was created.
 
         ``insert_measure`` is a get-or-insert, so a measure auto-created by an ingest
         pipeline (or by an earlier transfer) commonly ends up with the default
         ``waveform`` shape. ``value_type`` self-heals on the first write, but
         ``signal_kind`` never does, and ``waveform`` + ``string`` is precisely the
-        combination the windowing layer cannot iterate. Before this setter existed the
-        only fix was the private ``sql_handler.update_measure_metadata`` (Wave-2 W7).
+        combination the windowing layer cannot iterate. This setter is the public way
+        to correct both.
 
         :param int measure_id: The measure to update.
         :param str signal_kind: New temporal shape, one of ``waveform | sample | event |
@@ -872,8 +918,7 @@ class AtriumSDK:
         # The setter must not be able to *create* the un-iterable waveform+string
         # measure it exists to repair. The resulting combination -- the requested
         # fields laid over the stored ones -- is what matters: 'value_type=string'
-        # alone on a waveform measure produces it just as surely as stating both
-        # (defect D6).
+        # alone on a waveform measure produces it just as surely as stating both.
         current_kind = self.get_measure_kind(int(measure_id)) or (None, None)
         resulting_signal_kind = signal_kind if signal_kind is not None else current_kind[0]
         resulting_value_type = value_type if value_type is not None else current_kind[1]
@@ -891,13 +936,19 @@ class AtriumSDK:
 
     def get_measure_kind(self, measure_id: int):
         """Convenience: return ``(signal_kind, value_type)`` for a measure with the
-        Phase 2 read-time defaults applied (see :meth:`_resolve_measure_kind`).
+        read-time defaults applied (a ``NULL`` ``signal_kind`` reads as ``waveform``
+        and a ``NULL`` ``value_type`` as ``numeric``, unless the measure has a string
+        dictionary with committed blocks behind it).
+
         Returns ``None`` if the measure does not exist."""
         info = self.get_measure_info(measure_id)
         if info is None:
             return None
         return info.get('signal_kind'), info.get('value_type')
 
+    # ------------------------------------------------------------------ #
+    # Reading signal data: numeric and string
+    # ------------------------------------------------------------------ #
     def get_data(self, measure_id: int = None, start_time_n: int = None, end_time_n: int = None,
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
@@ -1014,10 +1065,10 @@ class AtriumSDK:
         # get_string_data, which calls this method with analog=False and no
         # nan-fill. The numeric core here (analog scaling, the float nan-fill
         # `out` buffer) cannot represent decoded strings, so reject those combos
-        # with a clear pointer. Detection is the single Phase 2 call site: it
-        # reads the measure's value_type (which itself falls back to the P1
-        # MeasureStringDictionary.exists check when the column is NULL, so
-        # un-migrated datasets still work -- see _resolve_measure_kind). String
+        # with a clear pointer. Detection reads the measure's value_type, which
+        # itself falls back to the MeasureStringDictionary.exists check when the
+        # column is NULL, so un-migrated datasets still work (see
+        # _resolve_measure_kind). String
         # storage needs the meta/ dir, so skip the check when there is no
         # dataset_location (a numeric-only mode) to avoid touching that path.
         is_string_measure = False
@@ -1107,15 +1158,15 @@ class AtriumSDK:
         """
         .. _get_string_data_label:
 
-        Read string values from a string-typed measure (Phase 1 string storage).
+        Read string values from a string-typed measure.
 
         This is the dedicated reader for string measures. Internally it reads the
         int64 dictionary codes via :meth:`get_data` (``analog=False``, no NaN-fill,
         which the numeric core can represent) and decodes them back to strings via
-        the measure's :class:`MeasureStringDictionary`. Reads are kept on this
-        dedicated getter in Phase 1 (folding strings into ``get_data`` is the
-        rasterization problem, deferred to Phase 3); the accepted selectors mirror
-        :meth:`get_data`.
+        the measure's :class:`MeasureStringDictionary`. String reads have their own
+        getter because :meth:`get_data`'s numeric core -- analog scaling and the
+        float NaN-fill buffer -- cannot represent text; the accepted selectors
+        mirror :meth:`get_data` exactly.
 
         :param int measure_id: The measure identifier. If None, measure_tag must be provided.
         :param int start_time_n: Start epoch (inclusive) in units of ``time_units``.
@@ -1164,9 +1215,10 @@ class AtriumSDK:
         .. note::
 
             String measures cannot be read through :meth:`get_data` with ``analog=True`` (the default) or
-            with ``return_nan_filled`` - those combinations raise a ``ValueError`` pointing here. In this
-            release, string reads are served only by this method; they are not yet folded into
-            :meth:`get_data` or the windowing iterator.
+            with ``return_nan_filled`` - those combinations raise a ``ValueError`` pointing here. This is
+            the only method that returns decoded strings directly. :meth:`get_iterator` also supports
+            string measures, but a window carries the raw int64 dictionary codes; decode them with
+            ``Window.decode_string_signal(...)``.
         """
         # analog=False so the numeric read path returns the raw int64 codes; the
         # guard rails in get_data therefore pass for this call.
@@ -1192,13 +1244,13 @@ class AtriumSDK:
         return times, values
 
     # ------------------------------------------------------------------ #
-    # Phase 4 -- event query surface + from->to pairing (design section 22)
+    # Event query surface + from->to interval pairing
     # ------------------------------------------------------------------ #
     def _require_string_measure(self, measure_id: int) -> "MeasureStringDictionary":
         """Validate that ``measure_id`` is a string/event measure and return its
         loaded :class:`MeasureStringDictionary`. Raises a clear ``ValueError`` for a
         missing measure or a numeric (``value_type != 'string'``) measure -- events
-        are string measures (design section 22.2 #1).
+        are always string measures.
 
         The error distinguishes the two ways a caller lands here, because the fix
         is completely different: a measure that genuinely holds numbers (nothing
@@ -1259,8 +1311,8 @@ class AtriumSDK:
 
     def _collect_device_patient_windows(self, device_id, patient_id, start_n, end_n):
         """Device<->patient mapping spans for the source, clipped to [start,end].
-        Empty list when the ``device_patient`` table has no rows for this source
-        (the code must run with an empty table -- design section 22.2 #3)."""
+        Empty list when the ``device_patient`` table has no rows for this source;
+        the whole event path must run against an empty ``device_patient`` table."""
         rows = self.get_device_patient_data(
             device_id_list=[device_id] if device_id is not None else None,
             patient_id_list=[patient_id] if patient_id is not None else None,
@@ -1304,7 +1356,7 @@ class AtriumSDK:
 
     def _resolve_within_windows(self, within, device_id, patient_id, start_n, end_n):
         """Resolve the ``within`` container to a list of disjoint [start,end] ns
-        windows plus a label, per the design section 22.2 #3 cascade
+        windows plus a label, per the cascade
         ``device_patient -> encounter -> whole-stream``.
 
         A caller may force a level (``"device_patient" | "encounter" | "none"``);
@@ -1370,9 +1422,9 @@ class AtriumSDK:
         """Return EVERY string value ever written to a string measure, in code order.
 
         Reads the per-measure dictionary file via :class:`MeasureStringDictionary`
-        with **no data scan** (design section 22.1.1) -- cost is bounded by the
-        vocabulary size, not the number of samples. Raises a clear ``ValueError`` for
-        a numeric measure (events are string measures).
+        with **no data scan** -- cost is bounded by the vocabulary size, not by the
+        number of samples stored. Raises a clear ``ValueError`` for a numeric
+        measure (events are always string measures).
 
         :param int measure_id: A string-typed measure.
         :rtype: list[str]
@@ -1386,7 +1438,7 @@ class AtriumSDK:
                                   device_tag: str = None, mrn: str = None,
                                   time_units: str = None) -> list:
         """Return the sorted distinct string values actually present for a source over
-        ``[start_time, end_time)`` (design section 22.1.1, range/source-scoped).
+        the half-open range ``[start_time, end_time)``.
 
         Unlike :meth:`get_measure_string_vocabulary` (all values ever written), this
         reads the codes for the source over the window (via :meth:`get_string_data`)
@@ -1422,30 +1474,39 @@ class AtriumSDK:
                             device_tag: str = None, mrn: str = None,
                             start_time=None, end_time=None, within=None,
                             time_units: str = None) -> list:
-        """Derive ``from_value -> to_value`` state intervals for a string/event measure
-        (design section 22.1.2 / 22.2). Both values are strings in the SAME measure's
-        vocabulary (same-measure pairing, section 22.2 #1).
+        """Derive ``from_value -> to_value`` state intervals for a string/event measure.
 
-        Pairing uses the COLLAPSE rule (section 22.2 #2): a run of ``from`` events until
-        the next ``to`` event is ONE interval (first-open -> first-close), and the
-        returned intervals never overlap. Pairing is vectorized (searchsorted +
-        np.unique), no per-event Python loop -- see :meth:`_pair_from_to`.
+        Both values are strings drawn from the SAME measure's vocabulary: an opening
+        event and a closing event are two values of one event stream, not two measures.
 
-        Containment follows the ``within`` cascade (section 22.2 #3):
-        ``device_patient (if populated) -> encounter -> whole-stream``. Force a level
+        **Collapse pairing.** A run of consecutive ``from`` events, with no intervening
+        ``to``, produces ONE interval: it opens at the FIRST ``from`` of the run and
+        closes at the first ``to`` that follows. Repeated ``from`` events therefore do
+        not restart or nest the interval, and the returned intervals never overlap.
+        (Example: ``START, START, START, STOP`` yields a single interval from the first
+        ``START`` to the ``STOP``.) Pairing is vectorized -- ``searchsorted`` plus
+        ``np.unique`` -- with no per-event Python loop.
+
+        **Containment.** Intervals are scoped to a container, chosen by a cascade:
+        ``device_patient`` mappings when that table is populated for the source,
+        otherwise ``encounter`` spans, otherwise the whole queried stream. Force a level
         with ``within="device_patient" | "encounter" | "none"``; ``None`` runs the
-        cascade. Missing scoping data warns (never silently drops) and falls through,
-        and the whole path runs with an EMPTY device_patient table. A pair that would
-        span a container boundary is split at the boundary and the far side is flagged
-        censored (never crosses it).
+        cascade. When requested scoping data is missing the method warns and falls
+        through to the next level rather than silently returning nothing, and the whole
+        path is valid against an entirely empty ``device_patient`` table. A pair whose
+        ``from`` and ``to`` land in different containers is SPLIT at the container
+        boundary -- it never spans the gap between them -- and each resulting piece is
+        flagged censored on the side that was cut.
 
-        Censoring (section 22.1.4): a ``from`` with no following ``to`` in its container
-        -> ``end_censored=True`` clipped to the container end; a ``to`` with no preceding
-        ``from`` -> ``start_censored=True`` clipped to the container start. A boundary is
-        never fabricated.
+        **Censoring.** A boundary is never fabricated. A ``from`` with no following
+        ``to`` inside its container yields ``end_censored=True`` with ``end_time_n``
+        clipped to the container's end; a ``to`` with no preceding ``from`` (the
+        container opened while the state was already active) yields
+        ``start_censored=True`` with ``start_time_n`` clipped to the container's start.
+        The timestamps are always real container boundaries, so a caller that cannot
+        tolerate an inferred boundary filters on the two flags.
 
-        The returned intervals are the exact shape Phase 3's state rasterizer consumes
-        (section 22.3) -- this method does not rasterize.
+        This method returns intervals only; it does not rasterize them onto a grid.
 
         Example usage:
 
@@ -1526,6 +1587,9 @@ class AtriumSDK:
             for (s, e, sc, ec) in intervals
         ]
 
+    # ------------------------------------------------------------------ #
+    # Block-level and remote (API mode) read paths
+    # ------------------------------------------------------------------ #
     def get_data_from_blocks(self, block_list, filename_dict, start_time_n, end_time_n, analog=True,
                              time_type=1, sort=True, allow_duplicates=True, return_nan_gap=False,
                              duplicate_keep=None):
@@ -1668,6 +1732,9 @@ class AtriumSDK:
 
         return encoded_bytes
 
+    # ------------------------------------------------------------------ #
+    # Writing signal data: the core write path and its helpers
+    # ------------------------------------------------------------------ #
     def write_data_easy(self, measure_id: int, device_id: int, time_data: np.ndarray, value_data: np.ndarray, freq: int,
                         scale_m: float = None, scale_b: float = None, time_units: str = None, freq_units: str = None,
                         continuous: bool = False):
@@ -1725,8 +1792,8 @@ class AtriumSDK:
             raise NotImplementedError("API mode is not supported for writing data.")
 
         # write_data_easy always chooses a numeric raw_value_type, so string values
-        # reached write_data's string guard and produced advice the caller could not
-        # act on ("Omit raw_value_type" -- they never passed one) (Wave-2 W12).
+        # would reach write_data's string guard and get advice the caller cannot act
+        # on ("Omit raw_value_type" -- they never passed one). Reject them here.
         if isinstance(value_data, np.ndarray) and value_data.dtype.kind in _STRING_DTYPE_KINDS:
             raise ValueError(
                 "write_data_easy does not support string values: it is a fixed-frequency "
@@ -1872,11 +1939,10 @@ class AtriumSDK:
         assert np.issubdtype(time_data.dtype, np.integer), "Time information must be encoded as an integer."
 
         # Determine the incoming value-kind from the (pre-conversion) dtype, and
-        # enforce the numeric/string invariant (Phase 2, design §19.3 / §13). A
-        # measure is either string-typed or numeric; a conflicting write is
-        # rejected instead of being silently accepted and corrupting readability
-        # (the P1 audit bug). The first write to an as-yet-empty measure ESTABLISHES
-        # its value_type.
+        # enforce the numeric/string invariant. A measure is either string-typed
+        # or numeric; a conflicting write is rejected instead of being silently
+        # accepted and corrupting readability. The first write to an as-yet-empty
+        # measure ESTABLISHES its value_type.
         incoming_is_string = value_data.dtype.kind in _STRING_DTYPE_KINDS
         established_value_type = None
         if self.dataset_location is not None:
@@ -1885,7 +1951,7 @@ class AtriumSDK:
             # raises downstream cannot poison the measure's value_type.
             established_value_type = self._check_value_type_invariant(int(measure_id), incoming_is_string)
 
-        # String storage (Phase 1): a string/object value array is transparently
+        # String storage: a string/object value array is transparently
         # converted to int64 dictionary codes *before* _resolve_value_types (which
         # would otherwise send it to V_TYPE_DOUBLE). From here on it is an ordinary
         # int64 write -- merge, interval index and time encoding are unchanged
@@ -1905,7 +1971,7 @@ class AtriumSDK:
             # perfectly healthy dictionary as truncated.
             dictionary_watermark = self.sql_handler.get_string_dict_watermark(int(measure_id))
             string_dict = MeasureStringDictionary.load(self._meta_dir, int(measure_id))
-            # Refuse to hand out codes that history already uses (Wave-2 W8). Must run
+            # Refuse to hand out codes that history already uses. Must run
             # BEFORE encode(), which is what would silently re-issue code 0.
             self._check_string_dictionary_not_lost(
                 int(measure_id), string_dict, established_value_type, dictionary_watermark)
@@ -1918,10 +1984,10 @@ class AtriumSDK:
         # Everything from here on can still fail (encode, file write, SQL). Any
         # failure must also undo the dictionary append made just above, otherwise a
         # rejected batch's free text is retained on disk forever and the measure is
-        # permanently established as string-typed by a write that never committed
-        # (Wave-2 W1). The append is therefore transactional with the write.
+        # permanently established as string-typed by a write that never committed.
+        # The append is therefore transactional with the write.
         # ---------------------------------------------------------------- #
-        # Serialize the block-merge read-modify-write (Wave-2 W5).
+        # Serialize the block-merge read-modify-write.
         #
         # A write smaller than one optimal block does not simply insert: it SELECTs the
         # closest existing block, reads and decodes that block's file, merges the new
@@ -1932,8 +1998,9 @@ class AtriumSDK:
         # TypeError: 'NoneType' object is not subscriptable out of
         # insert_merged_block_data. Aperiodic/event measures make this the normal case
         # rather than an edge case: every event batch is far below block_size, so events
-        # ALWAYS take the merge path. Measured before this lock: 65-77 of 100 events
-        # readable across four trials, with 17-32 raises per trial.
+        # ALWAYS take the merge path. Without this lock, only 65-77 of 100 concurrently
+        # written events were readable across four measured trials, with 17-32 raises
+        # per trial.
         #
         # The lock is taken only when the merge path is reachable, so ordinary
         # block-sized bulk writes are completely unaffected, and it is keyed per
@@ -1986,7 +2053,7 @@ class AtriumSDK:
                 # Deduplication is a side effect of the merge below, so track whether it
                 # could have happened at all; when it could not, the write is checked for
                 # overlap with existing data and reported instead of silently duplicating
-                # it (defect D4).
+                # it.
                 overlap_reason = None
                 if merge_blocks and value_data.size < self.block.block_size:
                     old_block, time_data, value_data, time_0, raw_time_type, merge_declined = \
@@ -2079,15 +2146,14 @@ class AtriumSDK:
                 # stay: from here on the append is no longer rolled back. Record the
                 # vocabulary size those durable blocks may reference, in the metadata
                 # database, so a later loss of meta/string_dict/ is detected instead of
-                # silently re-issuing the codes they use (Wave-2 W8).
+                # silently re-issuing the codes they use.
                 if string_dict is not None:
                     self._record_string_dictionary_size(int(measure_id), len(string_dict))
                 string_dict = None
 
                 # The write has committed: now (and only now) establish/persist the
                 # measure's value_type on its first write. Doing this post-commit means a
-                # write that raised anywhere above never leaves a poisoning value_type
-                # (Phase 2 audit fix).
+                # write that raised anywhere above never leaves a poisoning value_type.
                 if self.dataset_location is not None:
                     self._establish_value_type(int(measure_id), incoming_is_string)
 
@@ -2237,7 +2303,7 @@ class AtriumSDK:
         rejected -- wrong raw value type, wrong scale factors, an explicitly requested
         encoding the old block does not use, or a full end block. In that second case
         deduplication silently does not happen, so the caller runs the overlap check
-        (see :meth:`_report_undeduplicated_overlap`, defect D4).
+        (see :meth:`_report_undeduplicated_overlap`).
 
         A merge requires the old block to hold the same kind of data: the same raw
         value type (int/float) and the same scale factors. When the caller
@@ -2479,6 +2545,9 @@ class AtriumSDK:
                 f"setting to 'overwrite' (new values win) or 'protect' (existing values win), or write "
                 f"non-overlapping data.")
 
+    # ------------------------------------------------------------------ #
+    # Writing signal data: buffered, segment and time-value-pair entry points
+    # ------------------------------------------------------------------ #
     def write_buffer(self, max_values_per_measure_device=None, max_total_values_buffered=None, gap_tolerance=None,
                      time_units=None, continuous=False, merge_blocks=True):
         """
@@ -2829,7 +2898,7 @@ class AtriumSDK:
         # Collapse fixed-width unicode/bytes value arrays to dtype=object. numpy
         # sizes '<U2' for ["OK"] and '<U8' for ["ASYSTOLE"], so two ordinary alarm
         # strings would otherwise look like two different data types to the buffered
-        # flush's dtype-consistency check and abort the whole flush (Wave-2 W2).
+        # flush's dtype-consistency check and abort the whole flush.
         # Every real event stream has variable-length text; object is the dtype the
         # string write path uses anyway.
         if values.dtype.kind in _FIXED_WIDTH_STRING_DTYPE_KINDS:
@@ -2932,7 +3001,7 @@ class AtriumSDK:
             # Compare the dtype KIND, not the exact dtype: all string-like arrays
             # ('U'/'S'/'O') are one data type as far as the write path is concerned
             # (they all become dictionary codes), and numpy's per-array width for
-            # unicode arrays is an artifact of the batch, not of the data (Wave-2 W2).
+            # unicode arrays is an artifact of the batch, not of the data.
             if not _same_write_value_kind(data['values'].dtype, data_dtype):
                 raise ValueError(
                     f"Data dictionaries have inconsistent data types "
@@ -2977,6 +3046,9 @@ class AtriumSDK:
                         scale_m=scale_m, scale_b=scale_b, interval_index_mode="merge",
                         gap_tolerance=interval_gap_tolerance_nano, merge_blocks=merge_blocks, continuous=continuous)
 
+    # ------------------------------------------------------------------ #
+    # In-process caches: preloading block, interval and label metadata
+    # ------------------------------------------------------------------ #
     def load_device(self, device_id: int, measure_id: int|List[int] = None):
         """
         Load block metadata into RAM for a given device.
@@ -3353,6 +3425,9 @@ class AtriumSDK:
         valid_mask = candidate_ends > start_time
         return candidate_blocks[valid_mask]
 
+    # ------------------------------------------------------------------ #
+    # Measures
+    # ------------------------------------------------------------------ #
     def get_measure_id(self, measure_tag: str, freq: Union[int, float] = None, units: str = None, freq_units: str = None,
                        period: Union[int, float] = None, time_units: str = None):
         """
@@ -3451,8 +3526,8 @@ class AtriumSDK:
         :param int measure_id: The identifier of the measure to retrieve information for.
 
         :return: A dictionary containing information about the measure, including its id, tag, name, sample frequency
-            (in nanohertz), period (in nanoseconds), code, unit, unit label, unit code, source_id, and the Phase 2
-            metadata fields ``signal_kind`` and ``value_type``. ``signal_kind`` is the temporal shape of the signal
+            (in nanohertz), period (in nanoseconds), code, unit, unit label, unit code, source_id, and the measure-kind
+            fields ``signal_kind`` and ``value_type``. ``signal_kind`` is the temporal shape of the signal
             (one of ``waveform | sample | event | state``) and ``value_type`` is the value encoding
             (``numeric | string``). Both are resolved with read-time defaults: a measure stored without them reads
             back as ``waveform`` / ``numeric`` (a ``value_type`` that was never set but has string data written to it
@@ -3505,8 +3580,8 @@ class AtriumSDK:
         if row is None:
             return None
 
-        # Unpack the row tuple into variables (now includes period_ns and the
-        # Phase 2 signal_kind / value_type columns).
+        # Unpack the row tuple into variables (includes period_ns and the
+        # signal_kind / value_type columns).
         measure_id, measure_tag, measure_name, measure_freq_nhz, stored_period_ns, measure_code, measure_unit, \
             measure_unit_label, measure_unit_code, measure_source_id, stored_signal_kind, stored_value_type = row
 
@@ -3814,13 +3889,13 @@ class AtriumSDK:
         :param str source_name: The name of the data source associated with the measure, used if source_id is not
             provided (optional).
         :param str signal_kind: Optional temporal shape of the signal, one of
-            ``waveform | sample | event | state`` (Phase 2 metadata). When omitted the
-            measure defaults to ``waveform`` at read time; ``sample`` is the safe default
-            for aperiodic numeric data. Automatic shape inference beyond waveform is out of
-            scope -- pass this hint explicitly for sample/event/state measures.
-        :param str value_type: Optional value encoding, one of ``numeric | string``
-            (Phase 2 metadata). When omitted it is inferred at first write from the value
-            dtype (string/object -> ``string``, else ``numeric``); an explicit value wins.
+            ``waveform | sample | event | state``. When omitted the measure defaults to
+            ``waveform`` at read time; ``sample`` is the safe default for aperiodic
+            numeric data. The shape is never inferred beyond ``waveform`` -- pass this
+            hint explicitly for sample/event/state measures.
+        :param str value_type: Optional value encoding, one of ``numeric | string``.
+            When omitted it is inferred at first write from the value dtype
+            (string/object -> ``string``, else ``numeric``); an explicit value wins.
 
         :return: The measure_id of the inserted or existing measure.
         :rtype: int
@@ -3830,7 +3905,7 @@ class AtriumSDK:
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
 
-        # Validate the Phase 2 metadata enums when explicitly provided.
+        # Validate the measure-kind enums when explicitly provided.
         if signal_kind is not None and signal_kind not in SIGNAL_KIND_VALUES:
             raise ValueError(
                 f"signal_kind must be one of {SIGNAL_KIND_VALUES} or None; got {signal_kind!r}.")
@@ -3844,7 +3919,7 @@ class AtriumSDK:
         # the caller is told how to choose 'state'/'sample' instead. Auto-correction
         # rather than a raise, because this is also the shape a legacy dataset carries
         # into transfer_measures -> insert_measure, and a transfer of an already-broken
-        # source measure must repair it, not abort (defect D6).
+        # source measure must repair it, not abort.
         if is_invalid_kind_combination(signal_kind, value_type):
             _LOGGER.warning(invalid_kind_combination_message(
                 f"'{measure_tag}'", STRING_SIGNAL_KIND_FALLBACK, measure_exists=False))
@@ -3857,12 +3932,12 @@ class AtriumSDK:
         if freq is None and period is None:
             raise ValueError("Either freq or period must be specified.")
 
-        # Validate freq / period BEFORE any row is written. freq=0 used to insert the
-        # measure row and only THEN compute ``10 ** 18 // freq_nhz``: the row was
-        # committed with freq_nhz=0 and every later ``AtriumSDK(...)`` on that dataset
-        # died in get_all_measures on the same expression -- the dataset could never be
-        # opened again (Wave-2 W6 / Wave-1 #1). freq=0 is exactly what an aperiodic
-        # ingest reaches for, so the message points at the supported route.
+        # Validate freq / period BEFORE any row is written. Inserting the measure row
+        # first and only THEN computing ``10 ** 18 // freq_nhz`` would commit a row with
+        # freq_nhz=0, after which every later ``AtriumSDK(...)`` on that dataset dies in
+        # get_all_measures on the same expression -- the dataset could never be opened
+        # again. freq=0 is exactly what an aperiodic ingest reaches for, so the message
+        # points at the supported route.
         if freq is not None and freq <= 0:
             raise ValueError(
                 f"freq must be greater than 0; got {freq!r}. The frequency is used as a divisor "
@@ -3919,7 +3994,7 @@ class AtriumSDK:
 
         # A frequency that rounds down to zero would commit the same unopenable
         # freq_nhz=0 row as freq=0 itself, so it is rejected here too, still before
-        # any insert (Wave-2 W6).
+        # any insert.
         if freq_nhz <= 0:
             raise ValueError(
                 f"freq {freq!r} {freq_units} converts to {freq_nhz} nHz, which is not a usable "
@@ -3982,6 +4057,9 @@ class AtriumSDK:
 
         return inserted_measure_id
 
+    # ------------------------------------------------------------------ #
+    # Devices
+    # ------------------------------------------------------------------ #
     def get_device_id(self, device_tag: str) -> int:
         """
         .. _get_device_id_label:
@@ -4281,6 +4359,9 @@ class AtriumSDK:
         return self.sql_handler.insert_device(device_tag, device_name, device_id, manufacturer, model, device_type,
                                               bed_id, source_id)
 
+    # ------------------------------------------------------------------ #
+    # Patients and patient history
+    # ------------------------------------------------------------------ #
     def get_patient_id(self, mrn: str):
         """
         Retrieve the patient ID associated with a given medical record number (MRN).
@@ -4849,6 +4930,9 @@ class AtriumSDK:
 
         return self.sql_handler.select_unique_history_fields()
 
+    # ------------------------------------------------------------------ #
+    # Device-patient mapping and encounters
+    # ------------------------------------------------------------------ #
     def get_device_patient_mapping(self, device_id_list: List[int] = None, device_tag_list: List[str] = None,
                                    patient_id_list: List[int] = None, mrn_list: List[str] = None,
                                    timestamp: int = None, start_time: int = None, end_time: int = None,
@@ -5401,6 +5485,9 @@ class AtriumSDK:
 
         return matching_patients[0] if matching_patients else None
 
+    # ------------------------------------------------------------------ #
+    # Labels
+    # ------------------------------------------------------------------ #
     def get_labels(self, label_name_id_list: List[int] = None, name_list: List[str] = None, device_list: List[Union[int, str]] = None,
                    start_time: int = None, end_time: int = None, time_units: str = None, patient_id_list: List[int] = None,
                    label_source_list: List[Union[str, int]] = None, include_descendants=True, limit: int = None, offset: int = 0,
@@ -5958,6 +6045,9 @@ class AtriumSDK:
         filtered_label_ids = [label_info['label_entry_id'] for label_info in filtered_labels]
         return self.sql_handler.delete_labels(filtered_label_ids)
 
+    # ------------------------------------------------------------------ #
+    # Label names, label sources and label time series
+    # ------------------------------------------------------------------ #
     def get_label_name_id(self, name: str):
         """
         Retrieve the identifier of a label type based on its name.
@@ -6450,6 +6540,9 @@ class AtriumSDK:
 
         return result_array
 
+    # ------------------------------------------------------------------ #
+    # Windowed iteration (get_iterator)
+    # ------------------------------------------------------------------ #
     def _preflight_window_sizing(self, definition, window_duration, window_slide,
                                  period_overrides, time_units):
         """Validate the window geometry against every measure and size the batch.
@@ -6469,29 +6562,25 @@ class AtriumSDK:
         resolved nominal raster period instead, because ``freq_nhz`` is not a
         raster rate for them.
 
-        Extracted from ``get_iterator`` verbatim: it is 50 lines of dense
-        reasoning that had nothing to do with the surrounding argument handling.
-
         :returns: values per window slide for the fastest measure (at least 1).
         """
         # Pre-flight sample-count guard.
         #
-        # This used to derive the per-window sample count purely from
-        # measure_info['freq_nhz'], which is meaningless for an aperiodic measure:
-        # a genuinely 1/300 Hz NIBP declared honestly was rejected outright, and
-        # period_overrides could not rescue it because this runs before the
-        # iterator exists. Aperiodic kinds are rasterized onto a nominal grid
-        # period instead (period_overrides -> 1 s default), so use that resolved
-        # period for them. Waveform measures keep the exact original arithmetic,
-        # so the numeric windowing path is untouched.
+        # ``measure_info['freq_nhz']`` is not a raster rate for an aperiodic
+        # measure, so deriving the per-window sample count from it alone would
+        # reject a genuinely 1/300 Hz NIBP outright -- and ``period_overrides``
+        # could not rescue it, because this runs before the iterator exists.
+        # Aperiodic kinds are rasterized onto a nominal grid period
+        # (period_overrides -> 1 s default), so use that resolved period for them.
+        # Waveform measures use the exact frequency arithmetic below.
         _period_overrides = period_overrides or {}
         _effective_freqs_nhz = []
         for measure_info in definition.validated_data_dict['measures']:
             signal_kind = measure_info.get('signal_kind') or DEFAULT_SIGNAL_KIND
             if signal_kind == SIGNAL_KIND_WAVEFORM:
-                # Unchanged legacy behaviour and legacy error text. (A period
-                # override on a waveform is rejected with a measure-named error
-                # when the iterator is built.)
+                # Legacy waveform arithmetic and error text. (A period override on
+                # a waveform is rejected with a measure-named error when the
+                # iterator is built.)
                 freq_nhz = int(measure_info['freq_nhz'])
                 if (int(window_duration) * freq_nhz) // (10 ** 18) == 0:
                     raise ValueError(
@@ -6527,20 +6616,15 @@ class AtriumSDK:
         # freq-from-period round trip can still floor a legitimate aperiodic
         # period (e.g. 3 s) to 0 values.
         #
-        # NOTE (fix, PRE-EXISTING defect -- reproduces identically on main with two
-        # plain waveform measures): this used to divide by the SLOWEST measure's
-        # values-per-slide (`min(_effective_freqs_nhz)`), but the batch's memory
-        # footprint is driven by the FASTEST measure. The iterator allocates
-        # `max_batch_size * row_size` float64s, and `row_size` is derived from the
-        # LOWEST period in the definition (dataset_iterator.py: `row_size =
-        # window_duration_ns // lowest_period_ns`). So the default batch was
-        # inflated by the definition's rate ratio: adding one 1 Hz measure to a
-        # 250 Hz, 10 s-window definition took the default batch from ~10 MB to
-        # ~2621 MB (shuffling: ~104 MB to ~26 GB). Dividing by the FASTEST
-        # measure restores the intended "about N blocks of the data actually being
-        # read" sizing, is unchanged for single-rate definitions (min == max, so
-        # the numeric single-measure path is byte-identical), and can only ever
-        # LOWER the default, never raise it.
+        # Divide by the FASTEST measure's values-per-slide, not the slowest. The
+        # batch's memory footprint is driven by the fastest measure: the iterator
+        # allocates `max_batch_size * row_size` float64s, and `row_size` is derived
+        # from the LOWEST period in the definition (dataset_iterator.py: `row_size =
+        # window_duration_ns // lowest_period_ns`). Dividing by the slowest measure
+        # instead would inflate the default batch by the definition's rate ratio --
+        # adding one 1 Hz measure to a 250 Hz, 10 s-window definition would take the
+        # default batch from ~10 MB to ~2621 MB (shuffling: ~104 MB to ~26 GB).
+        # For a single-rate definition min == max, so this is a no-op there.
         max_freq_nhz = max(_effective_freqs_nhz)
         number_of_values_per_window_slide = max(
             1, (int(window_slide) * int(max_freq_nhz)) // (10 ** 18))
@@ -6599,7 +6683,7 @@ class AtriumSDK:
           Regardless of the above parameters if shuffle is True or an int, all windows in the cache will be randomly
           shuffled before being passed to the user.
 
-        - **Aperiodic and string measures (Phase 3)**: ``waveform`` measures use the usual NaN-filled
+        - **Aperiodic and string measures**: ``waveform`` measures use the usual NaN-filled
           sample grid. Aperiodic measures (``sample``/``event``/``state``) are rasterized onto the window
           grid using a per-``signal_kind`` fill rule: ``sample`` -> ``carry_forward`` (default; also
           ``sparse``, ``aggregate:last|mean|min|max``), ``state`` -> ``carry_forward`` with left-censoring,
@@ -6627,8 +6711,9 @@ class AtriumSDK:
           This fill configuration is applied only by the default/mapped iterators; the
           ``DatasetDefinition.filter`` path uses the numeric grid only and ignores it, and the
           ``lightmapped`` iterator -- numeric grid only -- **rejects** a definition containing a string or
-          aperiodic measure with a measure-named error pointing at ``iterator_type='mapped'``. State
-          right-censoring and event pairing are later phases.
+          aperiodic measure with a measure-named error pointing at ``iterator_type='mapped'``. The
+          rasterizer does not right-censor a ``state`` after its last observation, and does not pair
+          ``from``/``to`` events into intervals -- use :meth:`get_event_intervals` for the latter.
 
         :param definition: A DatasetDefinition object or string representation specifying the measures and
                            patients or devices over particular time intervals.
@@ -6657,8 +6742,8 @@ class AtriumSDK:
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
-        :param str aperiodic_fill: Default fill rule for aperiodic measures (Phase 3, design section
-            21.2 #3). One of ``"carry_forward"``, ``"sparse"``, ``"aggregate:last|mean|min|max"`` (for
+        :param str aperiodic_fill: Default fill rule for aperiodic measures.
+            One of ``"carry_forward"``, ``"sparse"``, ``"aggregate:last|mean|min|max"`` (for
             ``sample`` kinds) or ``"presence"`` / ``"count"`` (for ``event`` kinds). When ``None`` each
             measure uses its per-``signal_kind`` default (``sample``/``state`` -> carry-forward,
             ``event`` -> presence). A rule name that is not a supported fill rule at all (e.g. the
@@ -6871,6 +6956,9 @@ class AtriumSDK:
 
         return iterator
 
+    # ------------------------------------------------------------------ #
+    # Interval / coverage queries
+    # ------------------------------------------------------------------ #
     def get_interval_array(self, measure_id=None, device_id=None, patient_id=None,
                            gap_tolerance_nano: int = 0, start=None, end=None, measure_tag=None,
                            freq=None, units=None, freq_units=None, device_tag=None, mrn: str=None):
@@ -6977,6 +7065,9 @@ class AtriumSDK:
         # Convert the final intervals list to a numpy array with int64 data type
         return np.array(arr, dtype=np.int64)
 
+    # ------------------------------------------------------------------ #
+    # Beds and sources
+    # ------------------------------------------------------------------ #
     def get_bed_id(self, bed_name: str) -> int | None:
         """
         Get the ID for a given bed name.
@@ -7029,6 +7120,9 @@ class AtriumSDK:
             return {"id": source_data[0], "name": source_data[1], "description": source_data[2]}
         return None
 
+    # ------------------------------------------------------------------ #
+    # API mode: HTTP transport, token refresh and shutdown
+    # ------------------------------------------------------------------ #
     def _request(self, method: str, endpoint: str, **kwargs):
 
         # Construct the full URL by combining the base API URL and the endpoint.
@@ -7116,6 +7210,9 @@ class AtriumSDK:
         elif (self.metadata_connection_type == "mariadb" or self.metadata_connection_type == "mysql") and self.sql_handler.connection_manager is not None:
             self.sql_handler.connection_manager.close_connection()
 
+    # ------------------------------------------------------------------ #
+    # Low-level block/TSC file access, settings and remaining internals
+    # ------------------------------------------------------------------ #
     def get_filename_dict(self, file_id_list):
         if self.metadata_connection_type == "api":
             raise ValueError("This function is only meant to work in local mode.")

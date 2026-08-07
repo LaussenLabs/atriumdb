@@ -14,7 +14,7 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""The two orthogonal axes that describe a measure (design section 4).
+"""The two orthogonal axes that describe a measure.
 
 Every measure is classified on two INDEPENDENT axes, stored as two nullable
 columns on the ``measure`` table:
@@ -54,6 +54,8 @@ vocabulary, the defaults and the small predicates that go with them, so the
 several consumers -- the SDK write/read guards, the windowing render config, the
 definition validator and the transfer layer -- can agree by construction instead
 of by repeating bare string literals.
+
+Background: ``docs/design/aperiodic-and-text-support.md``.
 """
 from __future__ import annotations
 
@@ -67,7 +69,7 @@ SIGNAL_KIND_VALUES = (SIGNAL_KIND_WAVEFORM, SIGNAL_KIND_SAMPLE,
                       SIGNAL_KIND_EVENT, SIGNAL_KIND_STATE)
 
 #: Kinds whose timestamps are irregular, i.e. everything except ``waveform``.
-#: These are the kinds the Phase 3 rasterizer renders onto a nominal grid.
+#: These are the kinds the windowing rasterizer renders onto a nominal grid.
 APERIODIC_SIGNAL_KINDS = (SIGNAL_KIND_SAMPLE, SIGNAL_KIND_EVENT, SIGNAL_KIND_STATE)
 
 # --- value_type ----------------------------------------------------------- #
@@ -121,8 +123,8 @@ STRING_SIGNAL_KIND_FALLBACK = SIGNAL_KIND_EVENT
 def is_invalid_kind_combination(signal_kind, value_type) -> bool:
     """True for the one combination the design forbids: ``waveform`` + ``string``.
 
-    Design §4/§21.3: a string measure's timestamps cannot mean "the measure's own
-    sample grid", because there is no NaN grid for text. Such a measure passes
+    A string measure's timestamps cannot mean "the measure's own sample grid",
+    because there is no NaN grid for text. Such a measure passes
     ``insert_measure``, passes ``get_string_data`` and then dies deep inside the
     windowing fill path (``get_iterator`` -> ``get_signal_dictionary`` ->
     ``get_data``: "its values cannot be NaN-filled"), hours after the mistake.

@@ -15,7 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Phase 6 (§24.1#3) — transfer of the ``encounter`` family.
+"""Transfer of the ``encounter`` family.
 
 Transfers ``encounter`` + ``device_encounter`` (and the ``bed`` / ``unit`` /
 ``institution`` rows they reference, for referential integrity) for the patients and
@@ -29,28 +29,29 @@ time-shifting:
 * ``start_time`` / ``end_time`` / ``last_updated`` shifted by ``time_shift_nano`` — every
   time-bearing column is wired explicitly (there is no global shift pass).
 
-SCOPE (corrected): location NAMES — ``bed.name`` / ``unit.name`` / ``institution.name`` —
-transfer **verbatim**, in every mode. "PICU", "Bed-12" and "General Hospital" describe
-where a signal was recorded, not who it belongs to; the project owner's direction is that
-they need no pseudonymization, superseding the earlier design decision (§15.3/§24.2) that
-scrambled them. ``visit_number`` is the one encounter-family field de-identification still
-alters, because it is a direct visit identifier that joins straight back to the source
-record system.
+De-identification scope: location NAMES — ``bed.name`` / ``unit.name`` /
+``institution.name`` — transfer **verbatim**, in every mode. "PICU", "Bed-12" and
+"General Hospital" describe where a signal was recorded, not who it belongs to, so they
+are not treated as a PHI surface. ``visit_number`` is the one encounter-family field
+de-identification alters, because it is a direct visit identifier that joins straight
+back to the source record system.
 
-The ``keep_identified`` per-table allowlist stays wired and validated: a
-``dict[str, list[str] | "all"]`` opting fields back to identified. For the location-name
-fields it is now a no-op (they are already identified at the default); for
-``encounter.visit_number`` it still works. When ``deidentify`` is False every field is
-identified and ``keep_identified`` is a no-op for everything.
+The ``keep_identified`` per-table allowlist is a ``dict[str, list[str] | "all"]`` opting
+fields back to identified. For the location-name fields it is a no-op (they are already
+identified by default); for ``encounter.visit_number`` it takes effect. When
+``deidentify`` is False every field is identified and ``keep_identified`` is a no-op for
+everything.
 
-``log_hl7_adt`` is **never** transferred (§24.1#4) — this module simply never touches it.
+``log_hl7_adt`` is **never** transferred — this module simply never touches it.
+
+Background: ``docs/design/aperiodic-and-text-support.md``.
 """
 
 import random
 
 # The per-table vocabulary ``keep_identified`` accepts: the fields a caller may name.
-# Unchanged so existing calls such as ``keep_identified={"institution": "all"}`` keep
-# validating rather than turning into a hard error.
+# Deliberately broader than the set de-identification actually alters, so that a call such
+# as ``keep_identified={"institution": "all"}`` validates rather than raising.
 SENSITIVE_FIELDS = {
     "encounter": ["visit_number"],
     "device_encounter": [],
@@ -64,9 +65,8 @@ SENSITIVE_FIELDS = {
 # encounter-family field on it is the direct visit identifier.
 #
 # Location names are deliberately absent: bed / unit / institution names describe where a
-# recording happened, not whose it is, and the project owner's direction is that they need
-# no pseudonymization. Their entries survive in SENSITIVE_FIELDS above so
-# ``keep_identified`` keeps accepting them; naming them is simply a no-op now.
+# recording happened, not whose it is, so they transfer verbatim. Their entries remain in
+# SENSITIVE_FIELDS above so ``keep_identified`` still accepts them; naming them is a no-op.
 DEIDENTIFIED_BY_DEFAULT = {
     "encounter": ["visit_number"],
     "device_encounter": [],
@@ -190,7 +190,7 @@ def transfer_encounters(src_sdk, dest_sdk, patient_id_map, device_id_map, deiden
 
     def resolve_source_id(src_source_id):
         """Ensure ``src_source_id`` exists at the destination; return the dest source id.
-        Sources are not a de-id surface (§15.3); they transfer for referential integrity."""
+        Sources are not a de-id surface; they transfer for referential integrity."""
         if src_source_id is None:
             return None
         if src_source_id in source_id_map:
@@ -272,7 +272,7 @@ def transfer_encounters(src_sdk, dest_sdk, patient_id_map, device_id_map, deiden
         else:
             dest_visit_number = visit_number
 
-        # Shift every time-bearing column explicitly (§24.1#5).
+        # Shift every time-bearing column explicitly.
         dest_start_time = start_time
         dest_end_time = end_time
         dest_last_updated = last_updated

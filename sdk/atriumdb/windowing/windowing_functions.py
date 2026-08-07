@@ -25,7 +25,7 @@ from atriumdb.measure_kinds import (
     DEFAULT_SIGNAL_KIND, is_string_value_type)
 
 # 1 second nominal raster period, used when an aperiodic measure has no usable
-# grid period (design section 21.2 #1).
+# grid period.
 ONE_SECOND_NS = 1_000_000_000
 
 # --- fill rule names ------------------------------------------------------- #
@@ -54,7 +54,7 @@ OCCUPANCY_FILL_RULES = (FILL_PRESENCE, FILL_COUNT)
 # meaningless for dictionary codes ("the mean of ASYSTOLE and V-TACH").
 NUMERIC_AGGREGATE_FILL_RULES = (FILL_AGGREGATE_MEAN, FILL_AGGREGATE_MIN, FILL_AGGREGATE_MAX)
 
-# Per-signal_kind default fill rules (design section 21.3).
+# Per-signal_kind default fill rules.
 _DEFAULT_FILL_FOR_KIND = {
     SIGNAL_KIND_WAVEFORM: FILL_GRID,      # existing NaN grid -- numeric path, untouched
     SIGNAL_KIND_SAMPLE: FILL_CARRY_FORWARD,
@@ -96,14 +96,14 @@ def validate_fill_rule_name(rule, param_name="aperiodic_fill"):
 
 
 def default_fill_for_kind(signal_kind):
-    """The default fill rule for a signal_kind (design section 21.3)."""
+    """The default fill rule for a signal_kind."""
     return _DEFAULT_FILL_FOR_KIND.get(signal_kind, FILL_CARRY_FORWARD)
 
 
 def resolve_fill_rule(signal_kind, value_type, override=None, global_default=None):
     """Resolve the effective fill rule for one measure.
 
-    Precedence (design section 21.2 #3): a per-measure ``override``
+    Precedence: a per-measure ``override``
     (``fill_overrides[measure_id]``) wins and is validated strictly (an
     incompatible rule for the kind raises). Otherwise a ``global_default``
     (``get_iterator(aperiodic_fill=...)``) is applied when it is *compatible*
@@ -158,7 +158,7 @@ def resolve_fill_rule(signal_kind, value_type, override=None, global_default=Non
 
 
 def resolve_nominal_period_ns(measure, period_override=None):
-    """Resolve a measure's nominal raster period (design section 21.2 #1).
+    """Resolve a measure's nominal raster period.
 
     Order: ``get_iterator`` override -> ``measure['period_ns']`` for waveform ->
     1 s default for aperiodic kinds. The freq-derived ``period_ns`` carried on an
@@ -177,9 +177,9 @@ def _rasterize_grid(grid_times, period_ns, sample_times, sample_values, rule, is
     """Rasterize sparse readings onto a regular grid per one fill ``rule``.
 
     Returns ``(values, known)`` where ``known`` is a *separable* internal boolean
-    array -- "is this cell a genuine, observed value" -- exactly the seam design
-    section 21.2 #2(b) requires so a real per-signal ``known`` mask can later be
-    emitted additively. The caller applies the sentinel; here we already fold the
+    array -- "is this cell a genuine, observed value" -- kept separable so a real
+    per-signal ``known`` mask can be emitted additively later. The caller applies
+    the sentinel; here we already fold the
     sentinel into ``values`` (NaN for float channels, the reserved
     ``UNKNOWN_STRING_CODE`` for string/int64 channels) using ``known``.
 
@@ -224,7 +224,7 @@ def _rasterize_grid(grid_times, period_ns, sample_times, sample_values, rule, is
     st = np.asarray(sample_times, dtype=np.int64)
     sv = np.asarray(sample_values).astype(target_dtype, copy=False)
 
-    # Carry-forward seed (design Bug-1 fix): prepend the pre-batch reading so
+    # Carry-forward seed: prepend the pre-batch reading so
     # cells before the first in-batch reading carry the value already in effect.
     # The seed is always earlier than grid_times[0], so after this merge every
     # grid cell has a prior reading and carry-forward is batch-size independent.
@@ -242,13 +242,13 @@ def _rasterize_grid(grid_times, period_ns, sample_times, sample_values, rule, is
         # recent reading strictly before the cell's END, where cell i spans
         # [grid_times[i], grid_times[i] + period_ns).
         #
-        # NOTE (fix): this used to be `searchsorted(st, grid_times, side="right")`,
-        # i.e. the most recent reading at or before the cell's START. That silently
-        # DELAYED every mid-cell reading by one cell and, at the end of a definition
-        # range, DROPPED it outright: a lone reading landing in the final cell had no
-        # later cell to surface in, so the window came back all-sentinel with
-        # actual_count == 0 despite a genuine observation inside the range. It also
-        # left carry_forward using a different cell-attribution convention from
+        # Deliberately NOT `searchsorted(st, grid_times, side="right")`, which would
+        # take the most recent reading at or before the cell's START. That silently
+        # DELAYS every mid-cell reading by one cell and, at the end of a definition
+        # range, DROPS it outright: a lone reading landing in the final cell has no
+        # later cell to surface in, so the window comes back all-sentinel with
+        # actual_count == 0 despite a genuine observation inside the range. It would
+        # also leave carry_forward using a different cell-attribution convention from
         # `sparse`/`aggregate:*` (which bucket a reading into the cell it falls in).
         # Attributing a reading to the cell it occurs in fixes both: no reading inside
         # the range can be invisible, and all aperiodic rules now agree on which cell
@@ -314,17 +314,16 @@ _SEED_LOOKBACK_BASE_CELLS = 4     # first chunk = 4 grid cells
 _SEED_LOOKBACK_GROWTH = 8         # each empty chunk widens the search 8x
 
 # How far BEFORE the definition's range start carry-forward may look for the
-# reading already in effect at the range start (design section 21.3: a `sample`
-# cell holds "the most recent prior reading"; the unknown sentinel is reserved
-# for genuinely-unknown cells).
+# reading already in effect at the range start. A `sample` cell holds "the most
+# recent prior reading"; the unknown sentinel is reserved for genuinely-unknown
+# cells.
 #
 # Why a horizon at all, and why this one:
 #
 # * It must be a function of the DEFINITION's range start alone -- never of the
 #   batch, of ``num_windows_prefetch`` or of a ``cached_windows_per_source``
 #   split -- or batching would change rendered values. Subtracting a constant
-#   from the definition range start preserves that property exactly, which is
-#   what the Phase-3 audit fix protects.
+#   from the definition range start preserves that property exactly.
 # * It must be finite. An unbounded "scan back to the beginning of time" makes
 #   the first window of every cohort pay for the whole history of the stream.
 # * 24 h is longer than the charting interval of every routinely-recorded slow
@@ -461,7 +460,7 @@ def get_signal_dictionary(sdk, device_id, query_patient_id, window_duration_ns, 
                           carry_forward_lookback_ns=None):
     """Build the per-measure sliding windows for one batch.
 
-    ``render_config`` (Phase 3) maps ``measure_id -> {signal_kind, value_type,
+    ``render_config`` maps ``measure_id -> {signal_kind, value_type,
     period_ns, fill_rule, is_string}``. When it is ``None`` (older iterators /
     the definition-filter path) or a measure resolves to the untouched
     waveform-numeric case, the exact legacy NaN-grid path runs -- this keeps the
@@ -506,7 +505,7 @@ def get_signal_dictionary(sdk, device_id, query_patient_id, window_duration_ns, 
                 (sliced_windowed_measure_times, sliced_windowed_measure_values, grid.window_size)
             continue
 
-        # ---- Phase 3 aperiodic / string fill path -------------------------- #
+        # ---- aperiodic / string fill path ---------------------------------- #
         period_ns = cfg['period_ns']
         rule = cfg['fill_rule']
         is_string = cfg['is_string']
@@ -517,15 +516,15 @@ def get_signal_dictionary(sdk, device_id, query_patient_id, window_duration_ns, 
 
         # Whole-batch value array pre-filled with the sentinel.
         #
-        # NOTE (fix): event presence/count cells are a meaningful 0 ("no event
-        # occurred") ONLY inside the definition range. The batch array is longer
-        # than the range whenever a trailing partial window overhangs the range
-        # end, and those overhanging cells were previously left as a fabricated
-        # 0 -- indistinguishable from a genuine "no alarm" and reported by
-        # actual_count as fully covered. They are now NaN (the same unknown
-        # sentinel every other float channel uses out of range); the in-range
-        # slice below is overwritten wholesale with the real 0/1 (or count) grid,
-        # so genuine absence inside the range is still a hard 0.
+        # Event presence/count cells are a meaningful 0 ("no event occurred")
+        # ONLY inside the definition range. The batch array is longer than the
+        # range whenever a trailing partial window overhangs the range end, so
+        # those overhanging cells must NOT be a fabricated 0 -- that would be
+        # indistinguishable from a genuine "no alarm" and reported by
+        # actual_count as fully covered. They are NaN (the same unknown sentinel
+        # every other float channel uses out of range); the in-range slice below
+        # is overwritten wholesale with the real 0/1 (or count) grid, so genuine
+        # absence inside the range is still a hard 0.
         if is_string and rule not in OCCUPANCY_FILL_RULES:
             measure_filled_value_array = np.full(
                 measure_filled_time_array.shape, UNKNOWN_STRING_CODE, dtype=np.int64)
@@ -541,12 +540,12 @@ def get_signal_dictionary(sdk, device_id, query_patient_id, window_duration_ns, 
             grid_slice = measure_filled_time_array[grid.data_slice]
             # String measures read raw int64 codes (analog=False); numeric
             # aperiodic measures read analog-scaled values. Neither uses the
-            # numeric return_nan_filled path (design section 21.5).
+            # numeric return_nan_filled path.
             _, r_times, r_values = sdk.get_data(
                 measure_id, data_start_time, data_end_time, device_id=device_id,
                 patient_id=query_patient_id, analog=not is_string)
 
-            # Carry-forward seed (Bug-1 fix): make carry-forward deterministic and
+            # Carry-forward seed: makes carry-forward deterministic and
             # independent of the batch size (num_windows_prefetch). The per-batch
             # read only covers [data_start_time, data_end_time); a reading that
             # precedes this batch would otherwise be invisible and a genuinely

@@ -97,9 +97,9 @@ def _validate_measures(definition, sdk, measure_tag_match_rule="best"):
                 'freq_nhz': measure_info.get('freq_nhz'),
                 'units': measure_info.get('unit'),
                 'period_ns': measure_info.get('period_ns'),
-                # Phase 2 metadata carried through so the iterator can pick the
-                # Phase 3 nominal period + per-kind fill rule (read-time defaults
-                # already applied by get_measure_info: waveform / numeric).
+                # Carried through so the iterator can pick the nominal period and
+                # per-kind fill rule (read-time defaults already applied by
+                # get_measure_info: waveform / numeric).
                 'signal_kind': measure_info.get('signal_kind'),
                 'value_type': measure_info.get('value_type'),
             }
@@ -255,9 +255,9 @@ def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, 
 
     interval_list = []
     for region_data in time_specs:
-        # Phase 5 event-anchored regions (design section 23): 'anchor' (X pre / Y post
-        # around every occurrence of an event value) or 'from'/'to' (between an opening
-        # event and its next closing event, via P4's get_event_intervals). These resolve
+        # Event-anchored regions: 'anchor' (X pre / Y post around every occurrence of
+        # an event value) or 'from'/'to' (between an opening event and its next closing
+        # event, via get_event_intervals). These resolve
         # to a list of (start, end) windows -- already clipped to global bounds and
         # intersected with the source's data union -- exactly the shape the classic
         # branches below produce, so they flow through map_validated_sources/the iterator
@@ -363,30 +363,29 @@ def _observed_data_end(sdk, measure_interval_arrays, device_id, patient_id, inde
 
 def _resolve_event_region(region_data, sdk, device_id, patient_id, start_time_n, end_time_n, union_intervals,
                           measure_interval_arrays=None):
-    """Resolve a Phase 5 event-anchored region (design section 23) to a list of
-    ``[start, end]`` ns windows for one source.
+    """Resolve an event-anchored region to a list of ``[start, end]`` ns windows
+    for one source.
 
     Two forms:
 
     * ``anchor``: for each occurrence of the ``anchor`` value in the event ``measure``
-      for THIS source over the global bounds, emit ``[t - pre, t + post]`` (section
-      23.1). The region's optional ``within`` scopes the emitted windows by
-      intersecting them with the resolved container (section 23.2 #4); unscoped when no
-      ``within`` is given.
-    * ``from``/``to``: call P4's :meth:`AtriumSDK.get_event_intervals` (which applies the
+      for THIS source over the global bounds, emit ``[t - pre, t + post]``. The
+      region's optional ``within`` scopes the emitted windows by intersecting them
+      with the resolved container; unscoped when no ``within`` is given.
+    * ``from``/``to``: call :meth:`AtriumSDK.get_event_intervals` (which applies the
       ``within`` cascade itself), then pad each interval by ``pre``/``post``, cap its
       length at ``max_duration`` if given, and handle censoring per ``on_censored``
       (default ``clip`` + warn; ``drop`` omits either-censored intervals; ``keep`` keeps
-      them unchanged) -- section 23.2 #3.
+      them unchanged).
 
     In both forms the windows are then clipped to the global bounds and intersected with
     the source's data union (``union_intervals``), exactly like the classic region
-    branches. The event measure is NOT added to the definition's measures
-    (anchor-only, section 23.2 #2).
+    branches. The event measure is NOT added to the definition's measures: it anchors
+    the region without becoming one of the measures read.
 
-    Validation (section 23.3), all raised at ``validate()`` time: an unknown event
-    ``measure`` tag/id, a non-string measure, or an ``anchor``/``from``/``to`` value not
-    in the measure's vocabulary. A source with no such events warns and contributes no
+    Validation, all raised at ``validate()`` time: an unknown event ``measure``
+    tag/id, a non-string measure, or an ``anchor``/``from``/``to`` value not in the
+    measure's vocabulary. A source with no such events warns and contributes no
     ranges.
     """
     # Global read bounds: explicit global bounds when given, otherwise the data-union
@@ -413,11 +412,11 @@ def _resolve_event_region(region_data, sdk, device_id, patient_id, start_time_n,
         raise ValueError("An event-anchored region requires a 'measure' (the event/string measure tag or id).")
     measure_ref = region_data['measure']
 
-    # Resolve the event measure tag/id against the dataset (section 23.2 #1). An unknown
-    # tag/id raises here (get_measure_id_from_generic_measure -> "No matching measures").
+    # Resolve the event measure tag/id against the dataset. An unknown tag/id raises
+    # here (get_measure_id_from_generic_measure -> "No matching measures").
     # For a TAG, prefer a STRING measure: the "best" rule ranks by block count and
-    # ignores value_type, so a numeric measure sharing the tag could otherwise shadow a
-    # valid string measure (P5 audit hazard). An int id / full spec is unambiguous.
+    # ignores value_type, so a numeric measure sharing the tag would otherwise shadow a
+    # valid string measure. An int id / full spec is unambiguous.
     if isinstance(measure_ref, str):
         candidate_ids = [int(mid) for mid in
                          get_measure_id_from_generic_measure(sdk, measure_ref, measure_tag_match_rule="all")
@@ -433,7 +432,7 @@ def _resolve_event_region(region_data, sdk, device_id, patient_id, start_time_n,
             raise ValueError(f"No matching event measure for tag {measure_ref!r}.")
     else:
         event_measure_id = int(get_measure_id_from_generic_measure(sdk, measure_ref, measure_tag_match_rule="best")[0])
-    # Reuse P4's guard: raises a clear error for a numeric (non-string) measure.
+    # Shared guard: raises a clear error for a numeric (non-string) measure.
     string_dict = sdk._require_string_measure(event_measure_id)
 
     within = region_data.get('within', None)
@@ -447,7 +446,7 @@ def _resolve_event_region(region_data, sdk, device_id, patient_id, start_time_n,
 
     if 'anchor' in region_data:
         anchor_value = region_data['anchor']
-        # Vocabulary check (section 23.3): unknown anchor value -> raise at validate().
+        # Vocabulary check: an unknown anchor value raises at validate() time.
         if string_dict.code_for(anchor_value) is None:
             raise ValueError(
                 f"anchor value {anchor_value!r} is not in the vocabulary of event measure "
@@ -456,7 +455,7 @@ def _resolve_event_region(region_data, sdk, device_id, patient_id, start_time_n,
         pre = int(region_data.get('pre', 0))
         post = int(region_data.get('post', 0))
 
-        # Occurrence times for THIS source over the global bounds (reuse P4's read path).
+        # Occurrence times for THIS source over the global bounds.
         times, values = sdk.get_string_data(
             measure_id=event_measure_id, start_time_n=global_start, end_time_n=global_end,
             device_id=device_id, patient_id=patient_id, time_units="ns")
@@ -471,7 +470,7 @@ def _resolve_event_region(region_data, sdk, device_id, patient_id, start_time_n,
         windows = [[t - pre, t + post] for t in occ_times]
 
         # Honor the region's within by intersecting the emitted windows with the
-        # resolved container (section 23.2 #4). from/to gets within via get_event_intervals.
+        # resolved container. from/to gets within via get_event_intervals instead.
         if within is not None:
             container_windows, _label = sdk._resolve_within_windows(
                 within, device_id, patient_id, global_start, global_end)

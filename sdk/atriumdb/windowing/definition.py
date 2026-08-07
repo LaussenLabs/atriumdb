@@ -545,8 +545,8 @@ class DatasetDefinition:
             raise ValueError(f"{source_type} {source_id}: times must be 'all' or a list of time dictionaries")
 
         # 'anchor'/'from'/'to'/'measure'/'within'/'max_duration'/'on_censored' are the
-        # Phase 5 event-anchored region keys (design section 23); 'pre'/'post' are shared
-        # with both the classic time0 form and the event forms.
+        # event-anchored region keys; 'pre'/'post' are shared with both the classic
+        # time0 form and the event forms.
         allowed_keys = ['start', 'end', 'time0', 'pre', 'post', 'files',
                         'anchor', 'from', 'to', 'measure', 'within', 'max_duration',
                         'on_censored']
@@ -587,19 +587,19 @@ class DatasetDefinition:
                         #               f"formatted in seconds. However {key} will be interpreted as nanosecond data.")
                         pass
 
-            # 'pre'/'post' need an anchoring key: the classic 'time0', or (Phase 5) an
-            # event 'anchor'/'from' that they pad around.
+            # 'pre'/'post' need an anchoring key: the classic 'time0', or an event
+            # 'anchor'/'from' that they pad around.
             if ('pre' in time_dict or 'post' in time_dict) and not (
                     'time0' in time_dict or is_event_region):
                 raise ValueError(f"{source_type} {source_id}: 'pre' and 'post' cannot be provided without "
                                  f"'time0', 'anchor', or 'from'")
 
-            # Event-anchored region shape checks (design section 23).
+            # Event-anchored region shape checks.
             if is_event_region:
                 # _get_validated_entries branches on 'anchor'/'from' and never
                 # looks at 'start'/'end'/'time0' in the same dict, so a region
                 # that reads like "anchor on START, but only within this shift"
-                # used to validate cleanly and silently return the whole range.
+                # would validate cleanly and silently return the whole range.
                 # Reject the combination rather than ignore it; scope an event
                 # region with the definition-wide start_time/end_time bounds (or
                 # a 'within' container) instead.

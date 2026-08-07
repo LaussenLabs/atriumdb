@@ -45,12 +45,12 @@ class SQLHandler(ABC):
         raise NotImplementedError
 
     def update_measure_metadata(self, measure_id: int, signal_kind: str = None, value_type: str = None):
-        """Set the Phase 2 signal_kind/value_type columns for a measure (only the
+        """Set the signal_kind/value_type columns for a measure (only the
         provided fields). Backends override."""
         raise NotImplementedError
 
     # ------------------------------------------------------------------ #
-    # String dictionary high-water mark (Wave-2 W8)
+    # String dictionary high-water mark
     #
     # The per-measure string dictionary lives on the FILESYSTEM
     # (``meta/string_dict/measure_<id>.jsonl``) while the blocks that reference its
