@@ -233,25 +233,30 @@ def test_encounter_family_transfer_deid_scrambles_visit_and_shifts_times():
     assert dest_de[0][0] == ids["enc_start"] + shift
     assert dest_de[0][1] == ids["enc_end"] + shift
 
-    # bed / unit / institution transferred (referential integrity) with pseudonymized names.
+    # bed / unit / institution transferred (referential integrity) with VERBATIM names --
+    # RE-POINTED: location names are not a de-identification surface any more.
     assert _count(dest, "bed") == 1
     assert _count(dest, "unit") == 1
     assert _count(dest, "institution") == 1
     inst_name = _raw_all(dest, "SELECT name FROM institution")[0][0]
     bed_name = _raw_all(dest, "SELECT name FROM bed")[0][0]
     unit_name = _raw_all(dest, "SELECT name FROM unit")[0][0]
-    assert inst_name != "General Hospital"
-    assert bed_name != "Bed-12"
-    assert unit_name != "PICU"
+    assert inst_name == "General Hospital"
+    assert bed_name == "Bed-12"
+    assert unit_name == "PICU"
 
 
-def test_keep_identified_opts_location_name_back_to_identified():
+def test_keep_identified_opts_visit_number_back_to_identified():
+    """RE-POINTED (was ``test_keep_identified_opts_location_name_back_to_identified``).
+
+    ``visit_number`` is the one encounter-family field de-identification alters, so it is
+    the one ``keep_identified`` still has work to do on. Location names are now identified
+    at the default, which makes ``keep_identified`` entries for them a validated no-op --
+    asserted here so the machinery cannot rot."""
     src, _ = _fresh_sdk("keep_src")
     dest, _ = _fresh_sdk("keep_dest")
     ids = _build_source(src)
 
-    # Keep the institution fully identified, and the encounter visit_number identified;
-    # bed and unit names should still be pseudonymized.
     transfer_data(src, dest, _definition(ids), deidentify=True,
                   keep_identified={"institution": "all", "encounter": ["visit_number"]})
 
@@ -260,10 +265,24 @@ def test_keep_identified_opts_location_name_back_to_identified():
     unit_name = _raw_all(dest, "SELECT name FROM unit")[0][0]
     visit = _raw_all(dest, "SELECT visit_number FROM encounter")[0][0]
 
-    assert inst_name == "General Hospital"          # kept identified
     assert str(visit) == ids["visit_number"]        # kept identified (not scrambled)
-    assert bed_name != "Bed-12"                     # still pseudonymized
-    assert unit_name != "PICU"                      # still pseudonymized
+    assert inst_name == "General Hospital"          # named in keep_identified; a no-op now
+    assert bed_name == "Bed-12"                     # verbatim by default
+    assert unit_name == "PICU"                      # verbatim by default
+
+
+def test_visit_number_still_scrambled_without_keep_identified():
+    """Do-no-harm counterpart: narrowing the scope must not weaken the patient-level
+    scrub. Without an opt-in, ``visit_number`` is still replaced."""
+    src, _ = _fresh_sdk("visit_scramble_src")
+    dest, _ = _fresh_sdk("visit_scramble_dest")
+    ids = _build_source(src)
+
+    transfer_data(src, dest, _definition(ids), deidentify=True)
+
+    visit = _raw_all(dest, "SELECT visit_number FROM encounter")[0][0]
+    assert str(visit) != ids["visit_number"]
+    assert str(int(visit)) == str(visit)
 
 
 def test_log_hl7_adt_never_transferred_even_identified():

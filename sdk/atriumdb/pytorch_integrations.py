@@ -33,6 +33,15 @@ class AtriumDBMapDataset(Dataset):
     :param num_threads (int): Number of threads for data decompression. WARNING: AtriumDB will use OpenMP to deal with threading.
     It will set the OMP_NUM_THREADS environment variable to the value you specify. Pytorch and related libraries sometimes
     also use this variable which would be overwritten and could cause slower performance in other libraries if set to a low number.
+    :param iterator_type (str): Which underlying iterator to use. Defaults to ``"lightmapped"`` (lowest RAM), which
+    renders every measure through the numeric NaN sample grid and therefore supports **waveform measures only** --
+    constructing it over a string or aperiodic (``sample``/``state``/``event``) measure raises a ValueError naming the
+    measure. For a definition containing aperiodic or string measures pass ``iterator_type="mapped"``, which rasterizes
+    them and honours ``aperiodic_fill`` / ``fill_overrides`` / ``period_overrides``.
+    :param aperiodic_fill (str): Default fill rule for aperiodic measures. Only applied by ``iterator_type="mapped"``.
+    :param fill_overrides (dict): ``{measure_id: rule}`` per-measure fill rules. Only applied by ``iterator_type="mapped"``.
+    :param period_overrides (dict): ``{measure_id: period}`` per-measure nominal raster periods in ``time_units``.
+    Only applied by ``iterator_type="mapped"``.
 
 
     Example:
@@ -66,7 +75,8 @@ class AtriumDBMapDataset(Dataset):
     """
 
     def __init__(self, dataset_location, dataset_definition_path, window_duration, window_slide, memcache_metadata,
-                 time_units="s", gap_tolerance=0, num_threads=2):
+                 time_units="s", gap_tolerance=0, num_threads=2, iterator_type="lightmapped",
+                 aperiodic_fill=None, fill_overrides=None, period_overrides=None):
 
         super(AtriumDBMapDataset).__init__()
 
@@ -80,9 +90,18 @@ class AtriumDBMapDataset(Dataset):
         if memcache_metadata:
             self.sdk.load_definition(self.dataset_def, gap_tolerance=gap_tolerance)
 
-        # get your iterator over the dataset from the atriumdb
+        # get your iterator over the dataset from the atriumdb.
+        #
+        # iterator_type defaults to the low-RAM 'lightmapped' iterator, which is
+        # numeric-grid only. get_iterator raises a measure-named ValueError if the
+        # definition contains a string or aperiodic measure, pointing at
+        # iterator_type="mapped" -- previously this class hard-coded 'lightmapped'
+        # and such a definition failed deep inside iteration (or, for a numeric
+        # aperiodic measure, with an opaque block-codec error).
         self.iterator_base_instance = self.sdk.get_iterator(self.dataset_def, window_duration=window_duration, window_slide=window_slide,
-                                                            time_units=time_units, iterator_type="lightmapped", shuffle=False, gap_tolerance=gap_tolerance)
+                                                            time_units=time_units, iterator_type=iterator_type, shuffle=False, gap_tolerance=gap_tolerance,
+                                                            aperiodic_fill=aperiodic_fill, fill_overrides=fill_overrides,
+                                                            period_overrides=period_overrides)
 
         _LOGGER.info(f"Number of samples: {self.__len__()}")
 

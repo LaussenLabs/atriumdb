@@ -572,6 +572,15 @@ class DatasetDefinition:
                 if key in ['pre', 'post', 'max_duration'] and isinstance(value, (int, float)) and value < 0:
                     raise ValueError(f"{source_type} {source_id}: {key} cannot be negative")
 
+                # max_duration == 0 caps every interval to zero length, so the
+                # `if start < end` filter drops them all and the region silently
+                # contributes nothing to the cohort. 'pre'/'post' == 0 are
+                # meaningful (no padding); a zero cap is not.
+                if key == 'max_duration' and isinstance(value, (int, float)) and value == 0:
+                    raise ValueError(f"{source_type} {source_id}: max_duration must be greater than 0; "
+                                     f"a max_duration of 0 caps every interval to zero length and would "
+                                     f"silently drop the entire region. Omit max_duration for no cap.")
+
                 if key in numeric_keys and isinstance(value, (int, float)):
                     if value < 1e9 or (value < 1e16 and key in ['start', 'end', 'time0']):
                         # warnings.warn(f"{source_type} {source_id}: The epoch for {key}: {value} looks like it's "
@@ -587,6 +596,20 @@ class DatasetDefinition:
 
             # Event-anchored region shape checks (design section 23).
             if is_event_region:
+                # _get_validated_entries branches on 'anchor'/'from' and never
+                # looks at 'start'/'end'/'time0' in the same dict, so a region
+                # that reads like "anchor on START, but only within this shift"
+                # used to validate cleanly and silently return the whole range.
+                # Reject the combination rather than ignore it; scope an event
+                # region with the definition-wide start_time/end_time bounds (or
+                # a 'within' container) instead.
+                ignored_keys = [key for key in ('start', 'end', 'time0') if key in time_dict]
+                if ignored_keys:
+                    raise ValueError(
+                        f"{source_type} {source_id}: an event region ('anchor'/'from'/'to') cannot be "
+                        f"combined with {', '.join(repr(k) for k in ignored_keys)} -- those keys are not "
+                        f"applied to event regions. Use the definition-wide start_time/end_time bounds "
+                        f"or a 'within' container to scope the region, or use a separate classic region.")
                 if 'anchor' in time_dict and ('from' in time_dict or 'to' in time_dict):
                     raise ValueError(f"{source_type} {source_id}: a region cannot combine 'anchor' with "
                                      f"'from'/'to'; use one event region form or the other")

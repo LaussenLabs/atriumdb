@@ -129,18 +129,28 @@ def test_bug_string_state_sentinel_leaks_across_batch_boundary(sdk):
 # DOCUMENTED-BEHAVIOR probes (these PASS; they pin down current semantics and
 # the acknowledged sentinel/censoring limitations so they can't silently drift)
 # =========================================================================== #
-def test_pass_carry_forward_ignores_reading_before_range_start(sdk):
-    """A reading BEFORE the definition's range start is never read, so
-    carry-forward left-censors the whole window to NaN even though the value was
-    in effect. Same root cause as the batch-boundary bugs but at the range edge;
-    arguably defensible as a range restriction, pinned here so it is explicit."""
+def test_pass_carry_forward_sees_reading_before_range_start(sdk):
+    """A reading BEFORE the definition's range start IS the value in effect at
+    the range start, and carry-forward now seeds from it.
+
+    This probe used to pin the opposite ("value known-before-range is dropped"),
+    on the reasoning that a hard floor at the range start was defensible as a
+    range restriction. It is not: it made the same wall-clock window render
+    differently depending on where the cohort's region happened to begin, so the
+    flagship "N minutes either side of every event" recipe returned NaN for the
+    whole pre-anchor half of every window on any slow measure. Design 21.3 says a
+    `sample` cell holds "the most recent prior reading"; the unknown sentinel is
+    for genuinely-unknown cells, and this cell is not one. The lookback is bounded
+    (windowing_functions.CARRY_FORWARD_LOOKBACK_NS) and is a pure function of the
+    definition's range start, so batch independence is untouched -- the tests
+    above still pin that."""
     m = sdk.insert_measure("nibp", freq=1.0, freq_units="Hz", units="mmHg", signal_kind="sample")
     dev = sdk.insert_device(device_tag="dev1")
     sdk.write_time_value_pairs(m, dev, BASE + np.array([2], dtype=np.int64) * SEC, np.array([100.0]))
     # range starts at 5s, reading is at 2s (before it)
     defn = _region_def(sdk, "nibp", dev, BASE + 5 * SEC, BASE + 15 * SEC)
     _, sig = _one(next(iter(sdk.get_iterator(defn, 10 * SEC, 10 * SEC))))
-    assert np.all(np.isnan(sig["values"]))  # value known-before-range is dropped
+    assert list(sig["values"]) == [100.0] * 10
 
 
 def test_pass_real_nan_reading_conflated_with_unknown(sdk):
@@ -320,18 +330,26 @@ def test_pass_wrong_kind_override_raises(sdk):
         sdk.get_iterator(defn, 5 * SEC, 5 * SEC, fill_overrides={m: "carry_forward"})
 
 
-def test_pass_unknown_measure_override_ignored(sdk):
+def test_unknown_measure_override_is_rejected(sdk):
     """A fill_override / period_override keyed by a measure id NOT in the
-    definition is silently ignored (does not crash, does not affect real
-    measures)."""
+    definition is rejected.
+
+    This previously *silently ignored* the key, so a typo (or a measure TAG,
+    which is how definitions identify measures everywhere else) produced a
+    differently rasterized dataset with no error and no warning."""
     m = sdk.insert_measure("nibp", freq=1.0, freq_units="Hz", units="mmHg", signal_kind="sample")
     dev = sdk.insert_device(device_tag="dev1")
     sdk.write_time_value_pairs(m, dev, BASE + np.array([2], dtype=np.int64) * SEC, np.array([100.0]))
     defn = _region_def(sdk, "nibp", dev, BASE, BASE + 10 * SEC)
-    it = sdk.get_iterator(defn, 10 * SEC, 10 * SEC,
-                          fill_overrides={999999: "sparse"}, period_overrides={999999: 3})
+    with pytest.raises(ValueError, match="fill_overrides"):
+        sdk.get_iterator(defn, 10 * SEC, 10 * SEC, fill_overrides={999999: "sparse"})
+    with pytest.raises(ValueError, match="period_overrides"):
+        sdk.get_iterator(defn, 10 * SEC, 10 * SEC, period_overrides={999999: 3})
+
+    # the real measure, keyed correctly, still resolves as before
+    it = sdk.get_iterator(defn, 10 * SEC, 10 * SEC)
     _, sig = _one(next(iter(it)))
-    assert it.render_config[m]["fill_rule"] == "carry_forward"   # real measure unchanged
+    assert it.render_config[m]["fill_rule"] == "carry_forward"
     assert sig["values"][2] == 100.0
 
 
@@ -476,16 +494,28 @@ def test_pass_num_iterators_thread_fill_config(sdk):
         assert sub.render_config[m]["fill_rule"] == "sparse"
 
 
-def test_pass_lightmapped_warns_and_ignores_fill_config(sdk):
-    """'lightmapped' documents that it does NOT apply the P3 fill config; it must
-    warn (and not silently pretend to honor it)."""
+def test_lightmapped_warns_then_rejects_an_aperiodic_measure(sdk):
+    """'lightmapped' is the numeric NaN-grid path only.
+
+    It still warns that the P3 fill config is not applied (never silently
+    pretends to honor it), and it now refuses an aperiodic/string measure at
+    construction with a measure-named error instead of failing deep inside
+    iteration with an opaque block-codec message."""
     m = sdk.insert_measure("nibp", freq=1.0, freq_units="Hz", units="mmHg", signal_kind="sample")
     dev = sdk.insert_device(device_tag="dev1")
     sdk.write_time_value_pairs(m, dev, BASE + np.array([2], dtype=np.int64) * SEC, np.array([100.0]))
     defn = _region_def(sdk, "nibp", dev, BASE, BASE + 10 * SEC)
     with pytest.warns(UserWarning):
-        sdk.get_iterator(defn, 10 * SEC, 10 * SEC, iterator_type="lightmapped",
-                         aperiodic_fill="sparse")
+        with pytest.raises(ValueError, match=f"Measure {m}"):
+            sdk.get_iterator(defn, 10 * SEC, 10 * SEC, iterator_type="lightmapped",
+                             aperiodic_fill="sparse")
+
+    # a plain waveform definition still works on 'lightmapped'
+    m_wave = sdk.insert_measure("ecg", freq=1.0, freq_units="Hz", units="mV")
+    sdk.write_time_value_pairs(m_wave, dev, BASE + np.arange(10, dtype=np.int64) * SEC,
+                               np.arange(10.0))
+    wave_defn = _region_def(sdk, "ecg", dev, BASE, BASE + 10 * SEC)
+    assert sdk.get_iterator(wave_defn, 10 * SEC, 10 * SEC, iterator_type="lightmapped") is not None
 
 
 # =========================================================================== #

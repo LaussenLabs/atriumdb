@@ -26,10 +26,11 @@ from datetime import datetime
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
-from atriumdb.windowing.window import Window
+from atriumdb.windowing.window import Window, assert_decodable_string_signal
 from atriumdb.windowing.windowing_functions import get_signal_dictionary, find_closest_measurement, \
     get_label_dictionary, _get_patient_info_from_cache, _load_patient_cache, get_window_list, \
     resolve_fill_rule, resolve_nominal_period_ns
+from atriumdb.measure_kinds import SIGNAL_KIND_WAVEFORM, is_string_value_type, measure_kind_of
 
 
 class DatasetIterator:
@@ -89,6 +90,10 @@ class DatasetIterator:
         self.patient_history_fields = patient_history_fields
 
         self.max_cache_duration = max_cache_duration
+        # {(source_type, source_id): [definition_range_start per (possibly split)
+        # time range]} -- only populated when _split_time_ranges rewrites
+        # self.sources. See _split_time_ranges.
+        self.range_start_floors = {}
         if shuffle is not False and max_cache_duration is not None:
             assert max_cache_duration >= window_duration_ns, \
                 "max_cache_duration must be greater than window_duration_ns"
@@ -193,13 +198,43 @@ class DatasetIterator:
         """Resolve, per measure, the nominal raster period and fill rule used by
         ``get_signal_dictionary``. Keeps the waveform-numeric case on the legacy
         ``grid`` path (byte-for-byte identical output)."""
+        # Both override dicts are keyed by measure ID. A key that matches no
+        # measure in this definition (a typo, a stale id, or -- easy to do, since
+        # definitions identify measures by tag everywhere else -- a measure TAG)
+        # used to be silently dropped, leaving the user with a differently
+        # rasterized dataset than they asked for. Reject it instead, and name the
+        # ids that would have worked.
+        known_ids = {measure['id'] for measure in self.measures}
+        id_hint = ", ".join(f"{measure['id']} ({measure['tag']})" for measure in self.measures)
+        for param_name, overrides in (('fill_overrides', self.fill_overrides),
+                                      ('period_overrides', self.period_overrides)):
+            unknown = [key for key in overrides if key not in known_ids]
+            if unknown:
+                raise ValueError(
+                    f"{param_name} contains key(s) {unknown} that match no measure in this "
+                    f"definition. Keys must be measure IDs (integers), not measure tags. "
+                    f"Measures in this definition: {id_hint}.")
+
         config = {}
         for measure in self.measures:
             measure_id = measure['id']
-            signal_kind = measure.get('signal_kind') or 'waveform'
-            value_type = measure.get('value_type') or 'numeric'
+            signal_kind, value_type = measure_kind_of(measure)
+            period_override = self.period_overrides.get(measure_id)
+            # A period override on a waveform measure used to be accepted and then
+            # re-grid the legacy NaN-fill path while get_data still filled at the
+            # measure's real frequency -- surfacing as an opaque, measure-less
+            # "input array must be of size ..." from the block codec. period
+            # overrides are an aperiodic-raster concept only.
+            if period_override is not None and signal_kind == SIGNAL_KIND_WAVEFORM:
+                raise ValueError(
+                    f"Measure {measure_id} ('{measure['tag']}') is a 'waveform' measure; "
+                    f"period_overrides only applies to aperiodic measures "
+                    f"('sample'/'state'/'event'), whose nominal raster period is a "
+                    f"rendering choice. A waveform is always sampled on its own stored "
+                    f"period ({measure['period_ns']} ns). Remove measure {measure_id} from "
+                    f"period_overrides.")
             period_ns = int(resolve_nominal_period_ns(
-                measure, period_override=self.period_overrides.get(measure_id)))
+                measure, period_override=period_override))
             # Bug-3 fix: a resolved nominal period larger than the window duration
             # (or slide) makes window_duration // period == 0, which downstream
             # surfaces as an opaque "slice step cannot be zero" from
@@ -229,7 +264,7 @@ class DatasetIterator:
                 'value_type': value_type,
                 'period_ns': int(period_ns),
                 'fill_rule': fill_rule,
-                'is_string': value_type == 'string',
+                'is_string': is_string_value_type(value_type),
             }
         return config
 
@@ -242,39 +277,65 @@ class DatasetIterator:
         reserved unknown sentinel (``UNKNOWN_STRING_CODE``) maps to
         ``unknown_value`` (``"<unknown>"`` by default; pass ``None`` explicitly
         for Python ``None``) rather than raising."""
-        from atriumdb.string_dictionary import MeasureStringDictionary, UNKNOWN_STRING_VALUE
-        if unknown_value is None:
-            unknown_value = UNKNOWN_STRING_VALUE
-        string_dict = MeasureStringDictionary.load(self.sdk._meta_dir, int(measure_id))
-        return string_dict.decode_with_unknown(
-            np.asarray(codes).astype(np.int64), unknown_value=unknown_value)
+        from atriumdb.string_dictionary import decode_window_codes
+        return decode_window_codes(self.sdk, measure_id, codes, unknown_value=unknown_value)
 
     def decode_window_strings(self, window, measure_key, unknown_value=None):
         """Convenience: decode the string codes of one signal in a ``Window`` to
         strings. ``measure_key`` is the ``(tag, freq_hz, units)`` tuple used to
         key ``window.signals``."""
         signal = window.signals[measure_key]
+        # Refuse a non-code channel (e.g. an 'event' measure rendered as
+        # presence/count) instead of fabricating strings from occupancy numbers.
+        assert_decodable_string_signal(signal, measure_key)
         return self.decode_string_codes(signal['measure_id'], signal['values'], unknown_value=unknown_value)
 
     def _split_time_ranges(self, max_duration):
+        """Chop each source range into ``max_duration``-sized pieces (the
+        ``cached_windows_per_source`` shuffle knob).
+
+        This is a pure RAM/randomness knob and must not change a single rendered
+        value. Splitting rewrites ``self.sources``, so the DEFINITION's true range
+        start -- which ``_extract_cache_info`` otherwise reads straight off the
+        (now split) range and which is the carry-forward seed floor -- would
+        become each piece's own start, re-introducing exactly the batch-boundary
+        corruption the Bug-1 fix removed (state left-censoring reappearing after
+        the first split). So record the originating range start per split piece in
+        ``self.range_start_floors`` and let ``_extract_cache_info`` use that.
+        """
+        floors = {}
         for source_type, sources in self.sources.items():
             for source_id, time_ranges in sources.items():
                 new_time_ranges = []
+                new_floors = []
                 for start, end in time_ranges:
+                    definition_range_start = start
                     while start + max_duration < end:
                         new_time_ranges.append([start, start + max_duration])
+                        new_floors.append(definition_range_start)
                         start += max_duration
                     new_time_ranges.append([start, end])
+                    new_floors.append(definition_range_start)
                 self.sources[source_type][source_id] = new_time_ranges
-
+                floors[(source_type, source_id)] = new_floors
+        self.range_start_floors = floors
 
     def _extract_cache_info(self):
-        # Flattening the nested dictionary/list structure
+        # Flattening the nested dictionary/list structure. The 5th element is the
+        # carry-forward seed floor: the DEFINITION's range start, which differs
+        # from this (possibly split) range's own start whenever
+        # _split_time_ranges ran.
+        floors = getattr(self, 'range_start_floors', None) or {}
         flattened_sources = []
         for source_type, sources in self.sources.items():
             for source_id, time_ranges in sources.items():
-                for range_start_time, range_end_time in time_ranges:
-                    flattened_sources.append([source_type, source_id, range_start_time, range_end_time])
+                source_floors = floors.get((source_type, source_id))
+                for range_index, (range_start_time, range_end_time) in enumerate(time_ranges):
+                    definition_range_start_time = range_start_time
+                    if source_floors is not None and range_index < len(source_floors):
+                        definition_range_start_time = source_floors[range_index]
+                    flattened_sources.append([source_type, source_id, range_start_time, range_end_time,
+                                              definition_range_start_time])
 
         # Shuffling if random_gen is not None
         if self.random_gen is not None:
@@ -288,7 +349,7 @@ class DatasetIterator:
         current_batch_num_windows = 0
 
         for source in flattened_sources:
-            source_type, source_id, range_start_time, range_end_time = source
+            source_type, source_id, range_start_time, range_end_time, definition_range_start_time = source
             num_time_range_windows = 0
             time_range_info_start = cur_window_start = range_start_time
             time_range_info_end = cur_window_end = cur_window_start + self.window_duration_ns
@@ -316,10 +377,11 @@ class DatasetIterator:
                         min(range_end_time, time_range_info_end),
                         num_time_range_windows,
                         # The originating definition range start for this source's
-                        # time range (NOT the per-batch sub-range start). Carry it
+                        # time range (NOT the per-batch sub-range start, and NOT a
+                        # cached_windows_per_source split piece's start). Carry it
                         # so carry-forward seeding (Bug-1 fix) can look back across
                         # batch boundaries but never before the definition range.
-                        range_start_time,
+                        definition_range_start_time,
                     ]
                     current_batch.append(time_range_info)
 
@@ -350,7 +412,7 @@ class DatasetIterator:
                     min(range_end_time, time_range_info_end),
                     num_time_range_windows,
                     # See note above: originating definition range start.
-                    range_start_time,
+                    definition_range_start_time,
                 ]
                 current_batch.append(time_range_info)
 

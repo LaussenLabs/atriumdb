@@ -49,6 +49,53 @@ class SQLHandler(ABC):
         provided fields). Backends override."""
         raise NotImplementedError
 
+    # ------------------------------------------------------------------ #
+    # String dictionary high-water mark (Wave-2 W8)
+    #
+    # The per-measure string dictionary lives on the FILESYSTEM
+    # (``meta/string_dict/measure_<id>.jsonl``) while the blocks that reference its
+    # codes are indexed in THIS database. The two can therefore be restored
+    # independently -- a DB + ``tsc/`` restore that omits ``meta/`` is the ordinary
+    # case -- and nothing tied the dictionary's length to the codes already committed.
+    # After such a loss the next write started again at code 0, so every historical
+    # code silently decoded to a DIFFERENT string: undetectable, permanent clinical
+    # data corruption.
+    #
+    # The invariant to enforce is "len(dictionary) >= max code in blocks + 1". Deriving
+    # the right-hand side means decoding blocks, which is far too expensive to do on
+    # every write, so instead the vocabulary size is recorded here (in the metadata
+    # database, which survives the loss) each time a string write commits. Comparing
+    # the file's length against that high-water mark is one indexed primary-key lookup
+    # per string write and catches both total loss and tail truncation.
+    #
+    # Stored in the existing ``setting`` table so no schema migration is needed and
+    # every already-deployed dataset picks the guard up on its next string write.
+    # ------------------------------------------------------------------ #
+    STRING_DICT_SIZE_SETTING_PREFIX = "string_dict_size_measure_"
+
+    @classmethod
+    def _string_dict_size_setting_name(cls, measure_id: int) -> str:
+        return f"{cls.STRING_DICT_SIZE_SETTING_PREFIX}{int(measure_id)}"
+
+    def get_string_dict_watermark(self, measure_id: int):
+        """Largest vocabulary size ever committed for this measure's string
+        dictionary, or None when the measure has never had a string write commit
+        (including every dataset written before this guard existed)."""
+        row = self.select_setting(self._string_dict_size_setting_name(measure_id))
+        if row is None:
+            return None
+        try:
+            return int(row[1])
+        except (TypeError, ValueError, IndexError):  # pragma: no cover - corrupt row
+            return None
+
+    def set_string_dict_watermark(self, measure_id: int, vocabulary_size: int):
+        """Raise the recorded vocabulary size for a measure. Monotonic: a smaller
+        value is ignored, so an out-of-order or concurrent writer can never lower the
+        mark and weaken the guard. Backends override with a single-statement upsert;
+        this fallback is read-then-write and is only safe for a single writer."""
+        raise NotImplementedError
+
     @abstractmethod
     def upgrade_mrn_schema(self):
         """Upgrade the patient table mrn column from INTEGER to TEXT if needed."""

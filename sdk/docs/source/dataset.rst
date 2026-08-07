@@ -1018,6 +1018,31 @@ If you're sharing data externally (e.g., for research or compliance), you can en
 
 These can be used independently, but are often combined for data privacy.
 
+.. important:: **Scope of de-identification**
+
+   De-identification in AtriumDB covers **patient-level PHI and time-shifting**. Concretely,
+   that is: the patient table's identifying columns (name, MRN, DOB, …), the patient ID
+   remap, the ``encounter.visit_number`` scramble, and the uniform ``time_shift`` applied to
+   every time-bearing column. ``log_hl7_adt`` is never transferred at all.
+
+   It does **not** alter signal or label content. In particular, none of the following are
+   changed by ``deidentify=True``:
+
+   - **Numeric sample values** — unchanged, as you would expect.
+   - **String (event) measure values** — unchanged. A string measure's values are signal
+     data in exactly the way a numeric measure's samples are; ``deidentify=True`` will not
+     replace "SIMV" or an alarm string with a placeholder.
+   - **Label names, label text and label sources** — unchanged. Only a label's device and
+     measure IDs are remapped and its times shifted.
+   - **Bed, unit and institution names** — unchanged. A location name says *where* a
+     recording happened, not *whose* it is.
+
+   The principle is that if a caller is permitted to read a signal, they read all of it.
+   De-identification is not a content filter over the data, and it does not silently
+   redact it. If you have a specific free-text measure you want scrubbed anyway, ask for it
+   explicitly with ``string_value_policy`` (see :ref:`string_value_policy_label`); it is
+   never applied on your behalf.
+
 .. code-block:: python
 
    # Scramble patient IDs and shift timestamps by 2 hours
@@ -1065,44 +1090,47 @@ space.
 What de-identification does to the encounter family
 ***************************************************
 
-When ``deidentify`` is enabled, the sensitive fields of the encounter family are
-pseudonymized or scrambled **by default** — you do not have to configure anything to get a
-safe transfer. When ``deidentify=False`` every field is copied identified and the
-``keep_identified`` setting below is a no-op.
+When ``deidentify`` is enabled, the encounter family's **patient-level identifier** is
+scrambled by default — you do not have to configure anything. When ``deidentify=False``
+every field is copied identified and the ``keep_identified`` setting below is a no-op.
 
-The table below is the complete inventory of what de-identification touches. IDs are always
-remapped and times are always shifted (by ``time_shift``) for referential and temporal
-integrity — those are not configurable. The **Sensitive fields** column lists the values that
-are pseudonymized/scrambled by default and that ``keep_identified`` can opt back to
-identified.
+The table below is the complete inventory of what de-identification touches on these
+tables. IDs are always remapped and times are always shifted (by ``time_shift``) for
+referential and temporal integrity — those are not configurable. The **Altered by
+de-identification** column lists the values that are changed by default and that
+``keep_identified`` can opt back to identified.
 
 .. list-table:: Encounter-family de-identification (under ``deidentify=True``)
    :header-rows: 1
-   :widths: 20 34 46
+   :widths: 20 40 40
 
    * - Table
-     - Sensitive fields (default treatment)
+     - Altered by de-identification
      - Always applied (not configurable)
    * - ``encounter``
      - ``visit_number`` → **scrambled** to a random integer via a consistent per-transfer map
      - ``patient_id`` / ``bed_id`` remapped; ``start_time`` / ``end_time`` / ``last_updated``
        shifted
    * - ``device_encounter``
-     - *(none)* — no free identifying field of its own
+     - *(nothing)*
      - ``device_id`` / ``encounter_id`` remapped; ``start_time`` / ``end_time`` shifted
    * - ``bed``
-     - ``name`` → **pseudonymized** to a stable pseudonym
+     - *(nothing)* — ``name`` transfers **verbatim**
      - ``bed_id`` / ``unit_id`` remapped
    * - ``unit``
-     - ``name`` → **pseudonymized** to a stable pseudonym
+     - *(nothing)* — ``name`` transfers **verbatim**
      - ``unit_id`` / ``institution_id`` remapped
    * - ``institution``
-     - ``name`` → **pseudonymized** to a stable pseudonym
+     - *(nothing)* — ``name`` transfers **verbatim**
      - ``institution_id`` remapped
 
-Pseudonyms are **stable within a transfer**: the same source location name always maps to the
-same pseudonym, and the same source ``visit_number`` always maps to the same scrambled
-integer, so relationships in the data are preserved while the original values are hidden.
+``visit_number`` is scrambled because it is a direct visit identifier that joins straight
+back to the source record system. Location names are not: "PICU" or "Bed-12" describe where
+a recording happened, not whose it is, and the destination needs them to remain meaningful.
+
+The scramble is **stable within a transfer**: the same source ``visit_number`` always maps
+to the same integer, so relationships in the data are preserved while the original value is
+hidden.
 
 Keeping specific fields identified
 **********************************
@@ -1114,39 +1142,70 @@ identified. It is a dictionary of ``{table: [field names]}``, with the shorthand
 .. code-block:: python
 
    keep_identified = {
-       "institution": "all",        # keep every sensitive field of institution identified
        "encounter": ["visit_number"],  # keep the real visit_number
    }
 
-Only the tables and fields listed in the inventory above are valid keys — passing an unknown
-table or a field that is not a sensitive field of that table raises a ``ValueError``. Omitting
-``keep_identified`` (or passing ``{}``) pseudonymizes/scrambles every sensitive field, which is
-the safe default.
+``encounter.visit_number`` is the only field this currently has an effect on, since it is
+the only encounter-family field de-identification alters. Entries for ``bed`` / ``unit`` /
+``institution`` names remain valid (they are accepted and validated) but are a no-op: those
+names are already identified. Passing an unknown table, or a field that is not a listed
+field of that table, raises a ``ValueError``. Omitting ``keep_identified`` (or passing
+``{}``) scrambles ``visit_number``, which is the safe default.
 
 .. code-block:: python
 
-   # De-identified export that keeps the real institution names but pseudonymizes
-   # everything else (bed/unit names scrambled, visit_number scrambled), with a 2-hour
-   # time shift applied to every timestamp including the encounter times.
+   # De-identified export that keeps the real visit numbers, with a 2-hour time shift
+   # applied to every timestamp including the encounter times.
    two_hours_s = 2 * 60 * 60
    transfer_data(
        src_sdk=main_sdk,
        dest_sdk=export_sdk,
        definition=cohort_def,
        deidentify=True,
-       keep_identified={"institution": "all"},
+       keep_identified={"encounter": ["visit_number"]},
        time_shift=two_hours_s,
        time_units="s",
    )
 
-   # ——> Encounters/device_encounters copied for the cohort; bed & unit names and
-   #     visit numbers scrambled; institution names preserved; all times shifted.
+   # ——> Encounters/device_encounters copied for the cohort; bed, unit and institution
+   #     names preserved; visit numbers preserved by the opt-in; all times shifted;
+   #     patient IDs remapped and patient metadata dropped.
 
 .. note::
 
    ``keep_identified`` only affects the encounter family. Patient-level de-identification is
    still controlled by ``deidentify`` / ``patient_info_to_transfer`` /
    ``deidentification_functions`` as described above.
+
+.. _string_value_policy_label:
+
+Scrubbing a specific free-text measure (opt-in)
+***********************************************
+
+String measure values transfer **verbatim in every mode**, ``deidentify=True`` included —
+they are signal data, and de-identification does not alter signal content.
+
+If you nonetheless have one particular free-text measure you want scrubbed on the way out,
+``string_value_policy`` lets you ask for that explicitly. It is **never** applied on your
+behalf:
+
+- ``"transfer"`` — copy the strings verbatim. **The default, always.**
+- ``"redact"`` — write every string value as ``"<redacted>"``. Event times, counts and the
+  interval index survive; the text does not.
+- ``"skip"`` — do not transfer any string measure data (the measures are still created).
+- a callable ``f(value, measure_info) -> str | None`` — per-value scrubbing; returning
+  ``None`` drops that value and its timestamp.
+
+.. code-block:: python
+
+   # Nothing is scrubbed unless you say so.
+   transfer_data(
+       src_sdk=main_sdk,
+       dest_sdk=export_sdk,
+       definition=cohort_def,
+       deidentify=True,
+       string_value_policy="redact",   # explicit opt-in
+   )
 
 Export Formats & CSV Example
 ############################

@@ -146,8 +146,57 @@ def find_intervals(freq_nhz=None, raw_time_type=None, time_data=None, data_start
     return intervals
 
 
+# Which stored copy of a duplicated timestamp survives a read-side collapse.
+#   "last"  -- the most recently written copy (matches the dataset's default
+#              'overwrite'/'ignore' merge conflict policy: the newer write's values win).
+#   "first" -- the earliest written copy (matches the 'protect' policy: existing wins).
+DUPLICATE_KEEP_OPTIONS = ("last", "first")
+
+
+def collapse_duplicate_times(times, values, keep="last"):
+    """Collapse samples that share a timestamp down to one value per timestamp.
+
+    This is the read-side counterpart of the write path's duplicate handling. Duplicate
+    means **same timestamp** -- exactly what ``write_data``'s block merge and
+    ``_merge_write_data``'s buffer dedup mean by it -- and it is decided on the timestamp
+    alone, whether or not the two copies carry the same value.
+
+    Which copy survives follows the dataset's merge conflict policy, so a read agrees with
+    what a write would have done had the two copies met in one block:
+
+    * ``keep="last"``  -- the most recently written copy wins ('overwrite'/'ignore', the
+      default policy).
+    * ``keep="first"`` -- the earliest written copy wins ('protect').
+
+    ``times`` / ``values`` must be in STORAGE order, which is what the read path hands in:
+    ``select_blocks`` returns blocks ordered by ``file_id, start_byte``, and both grow
+    monotonically as data is appended, so array order is write order.
+
+    Fully vectorized -- one stable argsort and one boolean mask, no per-sample Python loop.
+    Returns ``(times, values)`` sorted ascending by time.
+    """
+    if times.size == 0:
+        return times, values
+
+    # Stable sort => equal timestamps keep their relative storage order, which is what
+    # makes "first"/"last" mean earliest/most-recently written.
+    order = np.argsort(times, kind="stable")
+    ordered_times = times[order]
+
+    unique_mask = np.empty(ordered_times.size, dtype=bool)
+    if keep == "first":
+        unique_mask[0] = True
+        np.not_equal(ordered_times[1:], ordered_times[:-1], out=unique_mask[1:])
+    else:
+        unique_mask[-1] = True
+        np.not_equal(ordered_times[1:], ordered_times[:-1], out=unique_mask[:-1])
+
+    return ordered_times[unique_mask], values[order[unique_mask]]
+
+
 # if you want to just use this to sort data will have to add default vals for start/end time and skip bisect
-def sort_data(times, values, headers, start_time, end_time, allow_duplicates=True):
+def sort_data(times, values, headers, start_time, end_time, allow_duplicates=True,
+              duplicate_keep="last"):
     start_bench = time.perf_counter()
     if len(headers) == 0:
         return times, values
@@ -173,9 +222,8 @@ def sort_data(times, values, headers, start_time, end_time, allow_duplicates=Tru
         # if duplicates are allowed then just return times and values
         if allow_duplicates:
             return times, values
-        # if duplicates are not allowed then remove them using np.unique
-        sorted_times, sorted_time_indices = np.unique(times, return_index=True)
-        return sorted_times, values[sorted_time_indices]
+        # if duplicates are not allowed collapse them to one sample per timestamp
+        return collapse_duplicate_times(times, values, keep=duplicate_keep)
 
     start_bench = time.perf_counter()
     # if the start times were not sorted, sort them if they were then don't bother running the sort
@@ -214,9 +262,8 @@ def sort_data(times, values, headers, start_time, end_time, allow_duplicates=Tru
 
             times, values = times[sorted_time_indices], values[sorted_time_indices]
     else:
-        # if duplicates are not allowed then remove them using np.unique
-        times, sorted_time_indices = np.unique(times, return_index=True)
-        values = values[sorted_time_indices]
+        # if duplicates are not allowed collapse them to one sample per timestamp
+        times, values = collapse_duplicate_times(times, values, keep=duplicate_keep)
 
     # if the start or end time is in the middle of a block, more times/values will be decoded than are needed so
     # bisect the array on the left and right sides to truncate the data

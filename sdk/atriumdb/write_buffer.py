@@ -1,6 +1,9 @@
+import logging
 import time
 
 from atriumdb.adb_functions import time_unit_options
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class WriteBuffer:
@@ -40,8 +43,12 @@ class WriteBuffer:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.flush_all()
-        self.sdk._active_buffer = None  # Remove active buffer in the SDK
+        # Detach the buffer even when the flush raises, otherwise the SDK is left
+        # pointing at a dead buffer and every later write silently queues into it.
+        try:
+            self.flush_all()
+        finally:
+            self.sdk._active_buffer = None  # Remove active buffer in the SDK
 
     def _get_sub_buffer(self, key):
         if key not in self.sub_buffers:
@@ -105,22 +112,24 @@ class WriteBuffer:
         measure_id, device_id = key
         continuous = sub_buffer['continuous']
         merge_blocks = sub_buffer['merge_blocks']
-        if sub_buffer['buffered_messages']:
-            self.sdk._write_segments_to_dataset(
-                measure_id, device_id, sub_buffer['buffered_messages'],
-                interval_gap_tolerance_nano=self.gap_tolerance_nano, continuous=continuous,
-                merge_blocks=merge_blocks)
+        # The sub-buffer is dropped whether or not the write succeeds: a batch that
+        # the write path rejected will be rejected identically on every retry, and
+        # leaving it queued would make a later flush of an unrelated measure fail too.
+        try:
+            if sub_buffer['buffered_messages']:
+                self.sdk._write_segments_to_dataset(
+                    measure_id, device_id, sub_buffer['buffered_messages'],
+                    interval_gap_tolerance_nano=self.gap_tolerance_nano, continuous=continuous,
+                    merge_blocks=merge_blocks)
 
-        if sub_buffer['buffered_time_value_pairs']:
-            self.sdk._write_time_value_pairs_to_dataset(
-                measure_id, device_id, sub_buffer['buffered_time_value_pairs'],
-                interval_gap_tolerance_nano=self.gap_tolerance_nano, continuous=continuous,
-                merge_blocks=merge_blocks)
-
-
-        self.total_values_buffered -= sub_buffer['total_values_buffered']
-
-        del self.sub_buffers[key]
+            if sub_buffer['buffered_time_value_pairs']:
+                self.sdk._write_time_value_pairs_to_dataset(
+                    measure_id, device_id, sub_buffer['buffered_time_value_pairs'],
+                    interval_gap_tolerance_nano=self.gap_tolerance_nano, continuous=continuous,
+                    merge_blocks=merge_blocks)
+        finally:
+            self.total_values_buffered -= sub_buffer['total_values_buffered']
+            del self.sub_buffers[key]
 
     def flush_oldest_sub_buffer(self):
         # Find the sub-buffer with the oldest last_pushed_time
@@ -135,5 +144,25 @@ class WriteBuffer:
             self.flush_sub_buffer(oldest_key)
 
     def flush_all(self):
+        """Flush every sub-buffer, isolating failures per (measure, device).
+
+        One rejected batch must not discard the other measures queued in the same
+        context (Wave-2 W2): every sub-buffer is attempted, and the first failure is
+        re-raised afterwards so the caller still sees the error.
+        """
+        first_error = None
+        failed_keys = []
         for key in list(self.sub_buffers.keys()):
-            self.flush_sub_buffer(key)
+            try:
+                self.flush_sub_buffer(key)
+            except Exception as flush_error:
+                failed_keys.append(key)
+                if first_error is None:
+                    first_error = flush_error
+
+        if first_error is not None:
+            _LOGGER.error(
+                f"{len(failed_keys)} buffered (measure_id, device_id) batches failed to flush "
+                f"{failed_keys}; every other buffered batch was written. Re-raising the first "
+                f"failure.")
+            raise first_error

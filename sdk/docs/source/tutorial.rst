@@ -730,6 +730,69 @@ We will iterate through the records in the MIT-BIH Arrhythmia Database and compa
            assert np.allclose(record.p_signal.T[i], read_values)
 
 
+.. _duplicate_timestamps_on_read:
+
+Duplicate Timestamps on Read
+-----------------------------
+
+A dataset can legitimately hold **more than one sample at the same timestamp**. AtriumDB
+deduplicates on write only as a side effect of the small-write block merge: a write smaller
+than one optimal block merges into the closest existing block and collapses shared
+timestamps, while a write of a full block or more is simply appended. Write speed is the
+priority and the write path is not going to decode, merge and re-encode existing blocks to
+guarantee otherwise, so a live feed that restarts and replays a large buffer stores both
+copies.
+
+Duplicates are therefore resolved on **read**, with ``allow_duplicates``:
+
+.. code-block:: python
+
+   # Default: every stored sample comes back, duplicates included.
+   _, times, values = sdk.get_data(measure_id, start_ns, end_ns, device_id=device_id)
+
+   # Collapsed: exactly one sample per timestamp.
+   _, times, values = sdk.get_data(measure_id, start_ns, end_ns, device_id=device_id,
+                                   allow_duplicates=False)
+
+Semantics
+^^^^^^^^^
+
+- **A duplicate is two samples with the same timestamp.** It is decided on the timestamp
+  alone — the same thing the write path's block merge means by it — whether or not the two
+  copies carry the same value.
+- **Exactly one sample per timestamp is returned**, and the result is sorted ascending by
+  time.
+- **Which copy survives follows the dataset's** ``overwrite`` **merge conflict policy**, so a
+  read resolves a duplicate the same way a write would have if the two copies had met in one
+  block:
+
+  - ``"overwrite"`` / ``"ignore"`` (the default) — the **most recently written** copy wins.
+  - ``"protect"`` — the **earliest written** copy wins.
+
+  Pass ``duplicate_keep="last"`` or ``duplicate_keep="first"`` to override that for a single
+  call.
+- It applies when ``sort=True`` and ``time_type=1`` (the defaults) — collapsing requires
+  ordering.
+- The default is ``allow_duplicates=True``, i.e. **unchanged behaviour**. The collapse is
+  vectorized (one stable sort and one mask, no per-sample loop), but it does cost that sort,
+  so it is opt-in.
+
+``get_string_data`` takes the same two parameters, with identical semantics. Duplicates are
+collapsed on the stored dictionary codes before decoding, so the returned strings are always
+the surviving samples' own text:
+
+.. code-block:: python
+
+   times, values = sdk.get_string_data(measure_id, start_ns, end_ns, device_id=device_id,
+                                       allow_duplicates=False)
+
+.. note::
+
+   If you would rather such a write were refused outright than stored, create the dataset
+   with ``overwrite="error"``: an overlapping write that cannot be deduplicated then raises
+   instead of committing.
+
+
 Retrieving Labels from the Dataset
 ------------------------------------------
 

@@ -404,6 +404,20 @@ class MariaDBHandler(SQLHandler):
             cursor.execute("SELECT 1 FROM block_index WHERE measure_id = ? LIMIT 1", (int(measure_id),))
             return cursor.fetchone() is not None
 
+    def set_string_dict_watermark(self, measure_id: int, vocabulary_size: int):
+        """Raise this measure's recorded string-vocabulary size (see
+        ``SQLHandler.set_string_dict_watermark``). One statement, so concurrent
+        writers cannot interleave a read and a write and lower the mark; GREATEST
+        makes it monotonic."""
+        name = self._string_dict_size_setting_name(measure_id)
+        value = str(int(vocabulary_size))
+        with self.maria_db_connection(begin=True) as (conn, cursor):
+            cursor.execute(
+                "INSERT INTO setting (name, value) VALUES (?, ?) "
+                "ON DUPLICATE KEY UPDATE value = "
+                "GREATEST(CAST(setting.value AS UNSIGNED), CAST(VALUES(value) AS UNSIGNED))",
+                (name, value))
+
     def update_measure_metadata(self, measure_id: int, signal_kind: str = None, value_type: str = None):
         """Set the Phase 2 metadata columns for a measure. Only the provided
         (non-None) fields are written; used to persist first-write value_type
@@ -547,7 +561,14 @@ class MariaDBHandler(SQLHandler):
 
                 # delete it from the file_index
                 cursor.execute("DELETE FROM file_index WHERE id = ?", (old_block[3],))
-                return file_name[0]
+                # A racing writer that merged into the same old block can have removed the
+                # file_index row already. That used to raise TypeError: 'NoneType' object
+                # is not subscriptable here, aborting this transaction and losing this
+                # write entirely (Wave-2 W5). The merge is now serialized by a per-(measure,
+                # device) lock so this should be unreachable, but the row genuinely being
+                # gone means only that someone else has already unlinked the file -- there
+                # is nothing left for the caller to remove, which is what None means.
+                return file_name[0] if file_name is not None else None
 
             return None
 

@@ -15,8 +15,10 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import logging
 import random
 import time
+import warnings
 from collections import defaultdict
 from pathlib import Path
 from typing import List
@@ -25,6 +27,7 @@ import numpy as np
 from tqdm import tqdm
 
 from atriumdb.block_wrapper import BlockMetadata
+from atriumdb.measure_kinds import is_string_value_type
 from atriumdb.intervals.union import intervals_union_list
 from atriumdb.transfer.adb.csv import _write_csv
 from atriumdb.transfer.adb.datestring_conversion import nanoseconds_to_date_string_with_tz
@@ -42,7 +45,7 @@ from atriumdb.adb_functions import convert_value_to_nanoseconds, condense_byte_r
     create_gap_arr_from_variable_messages
 from atriumdb.transfer.adb.devices import transfer_devices
 from atriumdb.transfer.adb.encounters import transfer_encounters
-from atriumdb.transfer.adb.measures import transfer_measures
+from atriumdb.transfer.adb.measures import transfer_measures, preflight_measure_value_types
 from atriumdb.windowing.verify_definition import verify_definition
 
 MIN_TRANSFER_TIME = -(2 ** 63)
@@ -50,12 +53,41 @@ MAX_TRANSFER_TIME = (2 ** 63) - 1
 DEFAULT_GAP_TOLERANCE = 5 * 60 * 1_000_000_000  # 5 minutes in nanoseconds
 time_unit_options = {"ns": 1, "s": 10 ** 9, "ms": 10 ** 6, "us": 10 ** 3}
 
+_LOGGER = logging.getLogger(__name__)
+
+# String-value policies for a transfer.
+#
+# SCOPE NOTE: de-identification in AtriumDB covers patient-level PHI (patient columns,
+# patient id remapping, visit_number, time-shifting). It does NOT alter signal content.
+# String measure values are DATA, not a PHI surface: if a caller is permitted to read a
+# signal, they are permitted to read all of it. So "transfer" is the default in EVERY
+# mode, ``deidentify=True`` included. The other policies remain available as an explicit,
+# opt-in tool for a caller who has their own reason to scrub a particular free-text
+# measure -- they are never selected automatically.
+STRING_VALUE_POLICIES = ("transfer", "redact", "skip")
+
+# What a redacted string value becomes when a caller explicitly asks for
+# ``string_value_policy="redact"``. Deliberately a single constant token: the timing and
+# presence of the events survive, the free text does not.
+REDACTED_STRING_VALUE = "<redacted>"
+
+# Export formats whose value column can hold text, so a string measure exports as
+# its decoded strings rather than as raw dictionary codes (which are meaningless
+# outside the dataset that assigned them) or as nothing at all.
+#
+# 'wfdb' is deliberately absent: a WFDB record is a numeric signal file with a
+# per-signal gain/baseline, and there is no honest place to put "V-TACH" in it.
+# String measures requested for a WFDB export are omitted -- loudly, and without
+# being listed in the exported definition.
+STRING_CAPABLE_FILE_EXPORT_FORMATS = ("csv", "npz", "parquet")
+
 
 def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDefinition, export_format='tsc',
                   start_time=None, end_time=None, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
                   include_labels=True, measure_tag_match_rule=None, deidentification_functions=None, time_shift=None,
                   time_units=None, export_time_format=None, parquet_engine=None, timezone_str=None,
-                  reencode_waveforms=False, include_encounters=True, keep_identified=None, **kwargs):
+                  reencode_waveforms=False, include_encounters=True, keep_identified=None,
+                  string_value_policy=None, **kwargs):
     """
     Transfers data from a source AtriumSDK instance to a destination AtriumSDK instance based on a specified dataset definition.
     This includes transferring measures, devices, patient information, and labels with options for data de-identification,
@@ -95,14 +127,31 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         ``device_encounter``, plus ``bed`` / ``unit`` / ``institution`` for referential integrity) for the
         transferred patients/devices. Default True. ``log_hl7_adt`` is never transferred, regardless of this flag
         or the de-identification setting.
-    :param Optional[dict] keep_identified: Per-table allowlist controlling which sensitive fields of the
+    :param Optional[dict] keep_identified: Per-table allowlist controlling which fields of the
         encounter family stay identified under de-identification. A dict of ``table -> [field names] | "all"``
-        (``"all"`` keeps the whole table identified). Absent / ``{}`` pseudonymizes/scrambles every sensitive
-        field. Sensitive fields per table: ``encounter``: ``visit_number`` (scrambled to a random int);
-        ``bed`` / ``unit`` / ``institution``: ``name`` (pseudonymized to a stable pseudonym). Ids
+        (``"all"`` keeps the whole table identified). The only encounter-family field de-identification
+        alters is ``encounter.visit_number``, which is scrambled to a random int; ``bed`` / ``unit`` /
+        ``institution`` **names transfer verbatim** (location names are not treated as PHI), so
+        ``keep_identified`` entries for those tables are accepted and validated but are a no-op. Ids
         (``patient_id`` / ``device_id`` / ``bed_id``) are always remapped and all encounter/device_encounter
         times always shifted, regardless of this setting. When ``deidentify=False`` everything is identified and
-        this is a no-op. Example: ``keep_identified={"institution": "all", "encounter": ["visit_number"]}``.
+        this is a no-op. Example: ``keep_identified={"encounter": ["visit_number"]}``.
+    :param string_value_policy: What to do with the VALUES of string measures. **Defaults to
+        ``"transfer"`` in every mode, including ``deidentify=True``.** De-identification here
+        covers patient-level PHI and time-shifting; it does not alter signal content, and a
+        string measure's values are signal data exactly as a numeric measure's samples are.
+        This parameter exists only for a caller who has their own reason to scrub one
+        particular free-text measure. Options:
+
+        * ``"transfer"`` -- copy the strings verbatim. The default, always.
+        * ``"redact"`` -- write every string value as ``"<redacted>"``. Event timing, counts and
+          the interval index survive; the text does not. Never selected automatically.
+        * ``"skip"`` -- do not transfer any string measure data (the measures are still created).
+        * a callable ``f(value: str, measure_info: dict) -> str | None`` -- per-value scrubbing.
+          Returning ``None`` drops that value and its timestamp.
+
+        Label names, label text and label sources are likewise never altered by
+        ``deidentify``; only their device/measure ids are remapped and their times shifted.
 
     Examples:
     ---------
@@ -127,10 +176,10 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     >>> my_deid_funcs = {'height': lambda x: x + random.uniform(-1.5, 1.5)}
     >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,deidentify=True,deidentification_functions=my_deid_funcs,time_shift=time_shift,time_units='s')
 
-    De-identify the encounter family but keep the real institution names (bed/unit names and
-    visit numbers are still scrambled by default):
+    De-identify the patient data but keep the real visit numbers (bed / unit / institution
+    names, and all signal and label content, transfer verbatim either way):
 
-    >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,deidentify=True,keep_identified={"institution": "all"})
+    >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,deidentify=True,keep_identified={"encounter": ["visit_number"]})
 
     """
 
@@ -165,6 +214,9 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     gap_tolerance = DEFAULT_GAP_TOLERANCE if gap_tolerance is None else gap_tolerance
     measure_tag_match_rule = "all" if measure_tag_match_rule is None else measure_tag_match_rule
 
+    # Resolve the string-value policy before anything is written (Wave-2 W3).
+    string_value_policy = _resolve_string_value_policy(string_value_policy, deidentify)
+
     # Validate the dataset definition if not already done
     if not definition.is_validated:
         definition.validate(sdk=src_sdk, gap_tolerance=gap_tolerance,
@@ -178,6 +230,12 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
     src_measure_id_list = [measure_info["id"] for measure_info in validated_measure_list]
     src_device_id_list, src_patient_id_list = extract_src_device_and_patient_id_list(validated_sources)
+
+    # Fail fast on a source/destination value_type collision, BEFORE any measure, device,
+    # patient or block reaches the destination (Wave-2 W4). Discovering it at the first
+    # string write left the destination half-populated with no rollback.
+    preflight_measure_value_types(src_sdk, dest_sdk, measure_id_list=src_measure_id_list,
+                                  measure_tag_match_rule=measure_tag_match_rule)
 
     # Transfer measure, devices, patients between SDKs
     measure_id_map = transfer_measures(src_sdk, dest_sdk, measure_id_list=src_measure_id_list,
@@ -211,6 +269,12 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
     file_path_dicts = {}
 
+    # Source measure ids whose VALUES this export cannot carry (a string measure into
+    # wfdb, or any string measure under string_value_policy='skip'). They are warned
+    # about below and struck from the exported definition, so meta/definition.yaml can
+    # never advertise a measure whose data is not in the bundle.
+    omitted_string_measure_ids = set()
+
     for source_type, sources in validated_sources.items():
         for source_id, time_ranges in tqdm(list(sources.items())):
             dest_device_id, src_device_id = extract_device_ids(source_id, source_type, device_id_map)
@@ -227,10 +291,11 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                     # code space. This is correct for BOTH a fresh destination (new dict) and a
                     # merge into a destination that already has a dict for this measure (the
                     # write path unions + remaps for free).
-                    if src_measure_value_types.get(src_measure_id) == 'string':
+                    if is_string_value_type(src_measure_value_types.get(src_measure_id)):
                         _transfer_string_measure(
                             src_sdk, dest_sdk, src_measure_id, dest_measure_id, src_device_id,
-                            dest_device_id, time_ranges, time_shift)
+                            dest_device_id, time_ranges, time_shift,
+                            string_value_policy=string_value_policy)
                         continue
 
                     seen_block_ids = set()
@@ -534,10 +599,28 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                     # Insert Waveforms
                     if export_format == "tsc":
                         break
-                    elif src_measure_value_types.get(src_measure_id) == 'string':
-                        # String measures are handled on the tsc path only in Phase 6; the
-                        # numeric-oriented file exports (csv/npz/parquet/wfdb) cannot rasterize
-                        # string values, so skip them here rather than raise on the string guard.
+                    elif is_string_value_type(src_measure_value_types.get(src_measure_id)):
+                        # String measures used to be silently dropped by every file export:
+                        # no warning, no error, and the exported meta/definition.yaml still
+                        # listed the measure -- so an extract that contained none of the
+                        # events looked complete. csv/npz/parquet all have a text-capable
+                        # value column, so export the DECODED strings there (raw dictionary
+                        # codes are meaningless outside the dataset that assigned them).
+                        # wfdb genuinely cannot hold them; that case warns below and is
+                        # struck from the exported definition.
+                        if (export_format not in STRING_CAPABLE_FILE_EXPORT_FORMATS
+                                or string_value_policy == "skip"):
+                            omitted_string_measure_ids.add(src_measure_id)
+                            continue
+                        file_path = _export_string_measure_file(
+                            src_sdk, dest_sdk, src_measure_id, dest_measure_id, src_device_id,
+                            dest_device_id, start_time_nano, end_time_nano, time_shift,
+                            string_value_policy=string_value_policy, export_format=export_format,
+                            export_time_format=export_time_format, parquet_engine=parquet_engine,
+                            timezone_str=timezone_str, **kwargs)
+                        if file_path is not None:
+                            file_path_dicts[(source_type, source_id, start_time_nano, end_time_nano)][
+                                dest_measure_id] = file_path
                         continue
                     else:
                         headers, times, values = src_sdk.get_data(
@@ -579,24 +662,204 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                         label_dict['start_time_n'] += time_shift
                         label_dict['end_time_n'] += time_shift
 
-                # Make the list of label tuples to insert to the other dataset
+                # Make the list of label tuples to insert to the other dataset.
+                #
+                # insert_labels takes (name, source_id, measure, LABEL_SOURCE, start, end) --
+                # the label source sits in position 4, BEFORE the two times. This list used to
+                # build (name, device, measure, start, end, source_id), so every transferred
+                # label was unpacked one field out of step: the start time was read as the
+                # label_source_id, the end time became the start, and end_time collapsed to the
+                # source id (typically 1). Labels survived the transfer with corrupt times and a
+                # bogus source, silently -- only the KeyError of D5 stopped it being noticed.
+                #
+                # The source is carried by NAME rather than by id: label sources are not part of
+                # transfer_label_sets (which only maps label *names*), so a raw source id from
+                # the source dataset means nothing in the destination. insert_labels resolves a
+                # str against the destination and creates it when missing.
                 dest_labels = [(label['label_name'], device_id_map[label['device_id']],
-                                measure_id_map[label['measure_id']], label['start_time_n'], label['end_time_n'],
-                                label['label_source_id']) for label in labels]
+                                _map_label_measure_id(label, measure_id_map),
+                                label.get('label_source'),
+                                label['start_time_n'], label['end_time_n']) for label in labels]
 
                 dest_sdk.insert_labels(dest_labels, source_type="device_id")
 
+    # A measure this export could not carry must not appear in the bundle's own
+    # definition: a manifest that lists a measure whose data was silently dropped is
+    # worse than the dropped data, because the extract looks complete.
+    exported_measure_list = validated_measure_list
+    if omitted_string_measure_ids:
+        _warn_omitted_string_measures(src_sdk, omitted_string_measure_ids, export_format,
+                                      string_value_policy)
+        exported_measure_list = [m for m in validated_measure_list
+                                 if m.get("id") not in omitted_string_measure_ids]
+
     # Create new definition file
     export_definition = create_dataset_definition_from_verified_data(
-        src_sdk, validated_measure_list, validated_sources, validated_label_set_list=validated_label_set_list,
+        src_sdk, exported_measure_list, validated_sources, validated_label_set_list=validated_label_set_list,
         prefer_patient=True, patient_id_map=patient_id_map, file_path_dicts=file_path_dicts, time_shift_nano=time_shift)
 
     definition_path = Path(dest_sdk.dataset_location) / "meta" / "definition.yaml"
     definition_path.parent.mkdir(parents=True, exist_ok=True)
     export_definition.save(definition_path, force=True)
 
+def _map_label_measure_id(label, measure_id_map):
+    """Translate one label's ``measure_id`` from source ids to destination ids.
+
+    Two cases the raw ``measure_id_map[label['measure_id']]`` lookup got wrong (defect D5):
+
+    * ``measure_id is None`` -- a label that annotates a span of a *source* rather than
+      one signal. ``insert_labels`` documents ``measure_id`` as optional and the tutorial
+      teaches exactly this pattern, so real datasets are full of them. The dict lookup
+      died with a bare ``KeyError: None`` and took the whole transfer with it. ``None``
+      is meaningful and carries through unchanged.
+    * a measure the transfer does not include -- the definition selected some measures and
+      this label points at a different one. There is no destination id to map it to, so it
+      is rejected by name with an actionable message instead of a bare ``KeyError: 7``.
+      It is never silently dropped: the label is real data and losing it quietly would be
+      worse than failing.
+    """
+    src_measure_id = label.get('measure_id')
+    if src_measure_id is None:
+        return None
+    try:
+        return measure_id_map[src_measure_id]
+    except KeyError:
+        raise ValueError(
+            f"Label {label.get('label_name')!r} (source label_entry_id "
+            f"{label.get('label_entry_id')}, device_id {label.get('device_id')}) is attached to "
+            f"source measure_id {src_measure_id}, which this transfer does not include, so it has "
+            f"no destination measure to point at. Add that measure to the definition's `measures` "
+            f"list, or narrow the definition's `labels` list so this label is not selected."
+        ) from None
+
+
+def _resolve_string_value_policy(string_value_policy, deidentify):
+    """Resolve and validate the string-value policy for a transfer.
+
+    The default is ``"transfer"`` in every mode, ``deidentify=True`` included.
+
+    De-identification in AtriumDB is scoped to patient-level PHI -- the patient
+    columns, the patient id remap, ``visit_number``, and time-shifting. It is NOT a
+    content filter over the signals themselves. A string measure's values are signal
+    DATA in exactly the way a numeric measure's samples are: nobody expects
+    ``deidentify=True`` to null out a heart rate, and nothing should silently replace a
+    ventilator mode or an alarm name either. A caller permitted to read a signal reads
+    all of it.
+
+    ``deidentify`` therefore has no influence on this function's result. The
+    ``"redact"`` / ``"skip"`` / callable policies stay available as an explicit tool for
+    a caller with their own reason to scrub one particular free-text measure, but they
+    are only ever used when asked for by name.
+    """
+    if callable(string_value_policy):
+        return string_value_policy
+
+    if string_value_policy is None:
+        return "transfer"
+
+    if string_value_policy not in STRING_VALUE_POLICIES:
+        raise ValueError(
+            f"string_value_policy must be one of {STRING_VALUE_POLICIES}, a callable "
+            f"f(value, measure_info) -> str | None, or None; got {string_value_policy!r}.")
+
+    return string_value_policy
+
+
+def _apply_string_value_policy(values, policy, measure_info):
+    """Apply a resolved string-value policy to one batch of decoded strings.
+
+    Returns ``(values, keep_mask)`` where ``keep_mask`` is None when every value is kept.
+    """
+    if policy == "transfer":
+        return values, None
+
+    if policy == "redact":
+        return np.array([REDACTED_STRING_VALUE] * len(values), dtype=object), None
+
+    # Callable: per-value scrubbing, None drops the value (and its timestamp).
+    scrubbed = []
+    for value in values:
+        result = policy(str(value), measure_info)
+        if result is not None and not isinstance(result, str):
+            raise ValueError(
+                "string_value_policy callable must return a str or None; got "
+                f"{type(result).__name__}.")
+        scrubbed.append(result)
+    keep_mask = np.array([s is not None for s in scrubbed], dtype=bool)
+    kept = np.array([s for s in scrubbed if s is not None], dtype=object)
+    return kept, keep_mask
+
+
+def _warn_omitted_string_measures(src_sdk, omitted_measure_ids, export_format, string_value_policy):
+    """Say out loud which string measures this export left out, and why.
+
+    The failure this exists to prevent is silence: a request for a numeric measure
+    plus a string measure produced only the numeric one -- no warning, no error --
+    and a request for the string measure alone produced a bundle with zero data
+    files. Both looked like successful exports.
+    """
+    names = []
+    for measure_id in sorted(omitted_measure_ids):
+        info = src_sdk.get_measure_info(measure_id) or {}
+        names.append(f"{info.get('tag', measure_id)!r} (measure_id {measure_id})")
+    measures_desc = ", ".join(names)
+
+    if string_value_policy == "skip":
+        reason = "string_value_policy='skip' was requested"
+    else:
+        reason = (f"export_format={export_format!r} has no text-capable value column "
+                  f"(string measures export to {', '.join(STRING_CAPABLE_FILE_EXPORT_FORMATS)} "
+                  f"or to the native 'tsc' format)")
+
+    message = (f"transfer_data(export_format={export_format!r}): no data was exported for string "
+               f"measure(s) {measures_desc} because {reason}. They have been removed from the "
+               f"exported meta/definition.yaml so the manifest does not claim data the bundle "
+               f"does not contain.")
+    _LOGGER.warning(message)
+    warnings.warn(message)
+
+
+def _export_string_measure_file(src_sdk, dest_sdk, src_measure_id, dest_measure_id, src_device_id,
+                                dest_device_id, start_time_nano, end_time_nano, time_shift,
+                                string_value_policy="transfer", export_format="csv",
+                                export_time_format=None, parquet_engine=None, timezone_str=None,
+                                **kwargs):
+    """Write one string measure's DECODED strings for one time range to a file export.
+
+    csv / npz / parquet all take a text value column, so the honest export of a string
+    measure is its strings -- not the int64 dictionary codes, which only mean anything
+    next to the dataset that assigned them. Returns the written file's relative path, or
+    ``None`` when the range holds nothing to write.
+    """
+    measure_info = src_sdk.get_measure_info(src_measure_id) or {}
+
+    times, values = src_sdk.get_string_data(
+        src_measure_id, int(start_time_nano), int(end_time_nano), device_id=src_device_id)
+
+    if times is None or len(times) == 0:
+        return None
+
+    times = np.asarray(times).astype(np.int64)
+    values, keep_mask = _apply_string_value_policy(values, string_value_policy, measure_info)
+    if keep_mask is not None:
+        times = times[keep_mask]
+    if times.size == 0:
+        return None
+
+    if time_shift is not None:
+        times = times + time_shift
+
+    # numpy/parquet reject a dtype=object array of str; a fixed-width unicode array is
+    # what every one of these writers can serialize.
+    values = np.asarray([str(v) for v in values], dtype=np.str_)
+
+    return ingest_data(dest_sdk, dest_measure_id, dest_device_id, None, times, values,
+                       export_format=export_format, export_time_format=export_time_format,
+                       parquet_engine=parquet_engine, timezone_str=timezone_str, **kwargs)
+
+
 def _transfer_string_measure(src_sdk, dest_sdk, src_measure_id, dest_measure_id, src_device_id,
-                             dest_device_id, time_ranges, time_shift):
+                             dest_device_id, time_ranges, time_shift, string_value_policy="transfer"):
     """Dict-safe transfer of a string measure (§24.1#2 / §24.2#1).
 
     Reads decoded strings from the source over each requested time range and re-writes them to
@@ -605,7 +868,15 @@ def _transfer_string_measure(src_sdk, dest_sdk, src_measure_id, dest_measure_id,
     destination (new dictionary) and for a merge into a destination that already has a
     dictionary for this measure (the vocabularies union and codes remap for free). Times are
     shifted by ``time_shift`` when requested, wired explicitly like every other time field.
+
+    ``string_value_policy`` (already resolved by :func:`_resolve_string_value_policy`) decides
+    what happens to the free text itself -- see ``transfer_data``.
     """
+    if string_value_policy == "skip":
+        return
+
+    measure_info = src_sdk.get_measure_info(src_measure_id) or {}
+
     for start_time_nano, end_time_nano in time_ranges:
         times, values = src_sdk.get_string_data(
             src_measure_id, int(start_time_nano), int(end_time_nano), device_id=src_device_id)
@@ -614,6 +885,12 @@ def _transfer_string_measure(src_sdk, dest_sdk, src_measure_id, dest_measure_id,
             continue
 
         times = np.asarray(times).astype(np.int64)
+        values, keep_mask = _apply_string_value_policy(values, string_value_policy, measure_info)
+        if keep_mask is not None:
+            times = times[keep_mask]
+        if times.size == 0:
+            continue
+
         if time_shift is not None:
             times = times + time_shift
 

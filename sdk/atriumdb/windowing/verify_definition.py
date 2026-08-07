@@ -29,6 +29,7 @@ from atriumdb.adb_functions import get_measure_id_from_generic_measure
 from atriumdb.intervals.union import intervals_union_list
 from atriumdb.intervals.intersection import list_intersection
 from atriumdb.windowing.map_definition_sources import map_validated_sources
+from atriumdb.measure_kinds import is_string_value_type
 
 
 def verify_definition(definition, sdk, gap_tolerance=None, measure_tag_match_rule="best", start_time_n=None,
@@ -210,12 +211,15 @@ def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, 
                            start_time_n=None, end_time_n=None):
     gap_tolerance = 60 * 60 * 1_000_000_000 if gap_tolerance is None else gap_tolerance
 
-    union_intervals = intervals_union_list([
-        sdk.get_interval_array(
-            measure_info['id'], device_id=device_id, patient_id=patient_id,
-            gap_tolerance_nano=gap_tolerance, start=start_time_n, end=end_time_n)
+    measure_interval_arrays = [
+        (measure_info,
+         sdk.get_interval_array(
+             measure_info['id'], device_id=device_id, patient_id=patient_id,
+             gap_tolerance_nano=gap_tolerance, start=start_time_n, end=end_time_n))
         for measure_info in validated_measures
-    ])
+    ]
+
+    union_intervals = intervals_union_list([arr for _measure, arr in measure_interval_arrays])
 
     merged_union_intervals = []
     for start, end in union_intervals:
@@ -261,7 +265,8 @@ def _get_validated_entries(time_specs, validated_measures, sdk, device_id=None, 
         if 'anchor' in region_data or 'from' in region_data:
             interval_list.extend(
                 _resolve_event_region(region_data, sdk, device_id, patient_id,
-                                      start_time_n, end_time_n, union_intervals))
+                                      start_time_n, end_time_n, union_intervals,
+                                      measure_interval_arrays))
             continue
 
         if 'time0' in region_data:
@@ -301,7 +306,63 @@ def _merge_windows(windows):
     return merged
 
 
-def _resolve_event_region(region_data, sdk, device_id, patient_id, start_time_n, end_time_n, union_intervals):
+def _observed_data_end(sdk, measure_interval_arrays, device_id, patient_id, indexed_end):
+    """The last instant the definition's measures actually observed something.
+
+    ``indexed_end`` is the end of the measures' interval-array union, and for
+    every kind except ``event`` it is exactly right. An aperiodic block's index
+    entry ends at ``last_sample_time + period``, which for a `sample` or `state`
+    measure is meaningful (the reading stays in effect after its timestamp) but
+    for an ``event`` measure is pure padding: an event is instantaneous, and the
+    span between the final event and that padded end contains, by construction,
+    no event at all.
+
+    Where an event measure is what pushes the union to its end, that padding
+    becomes a fabricated container boundary -- and ``on_censored='clip'`` clips a
+    never-closed interval to it, producing a tail of windows past the end of the
+    recording in which every channel is empty. (Observed: a 7200 s recording
+    whose event stream's auto-detected period was 1800 s yielded 20 all-NaN ECG
+    windows out to 8400 s.) So substitute each event measure's last real event
+    timestamp for its padded index end; every other kind keeps its indexed end.
+
+    Returns ``indexed_end`` unchanged when no event measure participates, when
+    the event stream cannot be read, or when the trim would not move the bound.
+    """
+    from atriumdb.measure_kinds import SIGNAL_KIND_EVENT
+
+    observed_end = None
+    for measure_info, interval_array in measure_interval_arrays:
+        arr = np.asarray(interval_array)
+        if arr.size == 0:
+            continue
+        m_start, m_end = int(arr[0][0]), int(arr[-1][1])
+
+        kind = sdk.get_measure_kind(measure_info['id'])
+        if kind is not None and kind[0] == SIGNAL_KIND_EVENT:
+            try:
+                _headers, times, _values = sdk.get_data(
+                    measure_id=int(measure_info['id']), start_time_n=m_start, end_time_n=m_end,
+                    device_id=device_id, patient_id=patient_id, analog=False, time_units="ns")
+            except Exception:
+                # Never let the trim itself break validation -- fall back to the
+                # indexed end, i.e. exactly the previous behaviour.
+                times = None
+            times = np.asarray(times, dtype=np.int64).reshape(-1) if times is not None else np.empty(0, np.int64)
+            if times.size == 0:
+                continue
+            # +1 ns so the bound is an exclusive end that still includes the
+            # final event itself.
+            m_end = int(times.max()) + 1
+
+        observed_end = m_end if observed_end is None else max(observed_end, m_end)
+
+    if observed_end is None:
+        return int(indexed_end)
+    return min(int(indexed_end), int(observed_end))
+
+
+def _resolve_event_region(region_data, sdk, device_id, patient_id, start_time_n, end_time_n, union_intervals,
+                          measure_interval_arrays=None):
     """Resolve a Phase 5 event-anchored region (design section 23) to a list of
     ``[start, end]`` ns windows for one source.
 
@@ -330,8 +391,21 @@ def _resolve_event_region(region_data, sdk, device_id, patient_id, start_time_n,
     """
     # Global read bounds: explicit global bounds when given, otherwise the data-union
     # extent (union_intervals is guaranteed non-empty by the caller).
+    #
+    # The end is the whole-stream container boundary that get_event_intervals clips a
+    # censored interval to, so it must be a real edge of the recording. The raw union
+    # end is not, whenever an EVENT measure's index padding is what reaches it --
+    # see _observed_data_end. Clip it back to the last thing actually observed.
     global_start = int(start_time_n) if start_time_n is not None else int(union_intervals[0][0])
-    global_end = int(end_time_n) if end_time_n is not None else int(union_intervals[-1][1])
+    if end_time_n is not None:
+        global_end = int(end_time_n)
+    elif measure_interval_arrays:
+        global_end = _observed_data_end(sdk, measure_interval_arrays, device_id, patient_id,
+                                        int(union_intervals[-1][1]))
+    else:
+        global_end = int(union_intervals[-1][1])
+    if global_end <= global_start:
+        global_end = int(union_intervals[-1][1])
 
     source_desc = (f"device_id {device_id}" if device_id is not None else f"patient_id {patient_id}")
 
@@ -348,7 +422,8 @@ def _resolve_event_region(region_data, sdk, device_id, patient_id, start_time_n,
         candidate_ids = [int(mid) for mid in
                          get_measure_id_from_generic_measure(sdk, measure_ref, measure_tag_match_rule="all")
                          if mid is not None]
-        string_ids = [mid for mid in candidate_ids if sdk.get_measure_kind(mid)[1] == "string"]
+        string_ids = [mid for mid in candidate_ids
+                      if is_string_value_type(sdk.get_measure_kind(mid)[1])]
         if string_ids:
             best_id = int(get_measure_id_from_generic_measure(sdk, measure_ref, measure_tag_match_rule="best")[0])
             event_measure_id = best_id if best_id in string_ids else string_ids[0]

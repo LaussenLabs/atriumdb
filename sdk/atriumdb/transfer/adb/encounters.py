@@ -19,33 +19,38 @@
 
 Transfers ``encounter`` + ``device_encounter`` (and the ``bed`` / ``unit`` /
 ``institution`` rows they reference, for referential integrity) for the patients and
-devices already being transferred. Applies the §15.3 field-level de-identification and
+devices already being transferred. Applies the field-level de-identification and
 time-shifting:
 
 * ``patient_id`` / ``device_id`` remapped via the existing transfer maps.
 * ``bed_id`` remapped (a fresh bed/unit/institution chain is created at the destination).
 * ``visit_number`` scrambled to a random int via a consistent per-transfer map (the same
   id-scramble style used for patient ids — see :mod:`atriumdb.transfer.adb.patients`).
-* location NAMES (bed / unit / institution) pseudonymized to stable pseudonyms.
 * ``start_time`` / ``end_time`` / ``last_updated`` shifted by ``time_shift_nano`` — every
   time-bearing column is wired explicitly (there is no global shift pass).
 
-Everything above is governed by the ``keep_identified`` per-table allowlist (§24.2#2): a
-``dict[str, list[str] | "all"]`` opting fields back to identified. When ``deidentify`` is
-False every field is identified and ``keep_identified`` is a no-op.
+SCOPE (corrected): location NAMES — ``bed.name`` / ``unit.name`` / ``institution.name`` —
+transfer **verbatim**, in every mode. "PICU", "Bed-12" and "General Hospital" describe
+where a signal was recorded, not who it belongs to; the project owner's direction is that
+they need no pseudonymization, superseding the earlier design decision (§15.3/§24.2) that
+scrambled them. ``visit_number`` is the one encounter-family field de-identification still
+alters, because it is a direct visit identifier that joins straight back to the source
+record system.
+
+The ``keep_identified`` per-table allowlist stays wired and validated: a
+``dict[str, list[str] | "all"]`` opting fields back to identified. For the location-name
+fields it is now a no-op (they are already identified at the default); for
+``encounter.visit_number`` it still works. When ``deidentify`` is False every field is
+identified and ``keep_identified`` is a no-op for everything.
 
 ``log_hl7_adt`` is **never** transferred (§24.1#4) — this module simply never touches it.
 """
 
 import random
 
-# The per-table inventory of identifying / quasi-identifying fields that de-identification
-# pseudonymizes or scrambles by default. This is the authoritative list that
-# ``keep_identified`` opts back to identified (see the module docstring and design §24.4).
-#   encounter.visit_number   -> scrambled to a random int (direct identifier)
-#   bed.name / unit.name / institution.name -> pseudonymized to a stable pseudonym
-#   device_encounter has no free identifying field of its own (ids are always remapped for
-#   referential integrity; times are always shifted) -- listed for completeness/uniformity.
+# The per-table vocabulary ``keep_identified`` accepts: the fields a caller may name.
+# Unchanged so existing calls such as ``keep_identified={"institution": "all"}`` keep
+# validating rather than turning into a hard error.
 SENSITIVE_FIELDS = {
     "encounter": ["visit_number"],
     "device_encounter": [],
@@ -54,12 +59,35 @@ SENSITIVE_FIELDS = {
     "institution": ["name"],
 }
 
+# The fields de-identification ACTUALLY alters by default. This is the narrower,
+# authoritative list -- de-identification's scope is patient-level PHI, so the only
+# encounter-family field on it is the direct visit identifier.
+#
+# Location names are deliberately absent: bed / unit / institution names describe where a
+# recording happened, not whose it is, and the project owner's direction is that they need
+# no pseudonymization. Their entries survive in SENSITIVE_FIELDS above so
+# ``keep_identified`` keeps accepting them; naming them is simply a no-op now.
+DEIDENTIFIED_BY_DEFAULT = {
+    "encounter": ["visit_number"],
+    "device_encounter": [],
+    "bed": [],
+    "unit": [],
+    "institution": [],
+}
+
 
 def _field_identified(deidentify, keep_identified, table, field):
     """Return True if ``table.field`` should remain identified (i.e. NOT pseudonymized /
-    scrambled). Identified when de-id is off, or when the caller opted the field back in
-    via ``keep_identified`` (``"all"`` shorthand keeps the whole table identified)."""
+    scrambled).
+
+    Identified when de-id is off, when the field is not one de-identification alters by
+    default (see :data:`DEIDENTIFIED_BY_DEFAULT`), or when the caller opted the field back
+    in via ``keep_identified`` (``"all"`` shorthand keeps the whole table identified).
+    """
     if not deidentify:
+        return True
+    if field not in DEIDENTIFIED_BY_DEFAULT.get(table, ()):
+        # Not a de-identification surface at all -- transfers verbatim.
         return True
     keep = keep_identified.get(table)
     if keep is None:
@@ -121,7 +149,8 @@ def transfer_encounters(src_sdk, dest_sdk, patient_id_map, device_id_map, deiden
     :param dest_sdk: Destination SDK.
     :param dict patient_id_map: ``{src_patient_id: dest_patient_id}`` (from patient transfer).
     :param dict device_id_map: ``{src_device_id: dest_device_id}`` (from device transfer).
-    :param deidentify: Truthy to pseudonymize/scramble sensitive fields by default.
+    :param deidentify: Truthy to scramble the encounter family's patient-level identifiers
+        (``visit_number``) by default. Location names are never altered.
     :param dict keep_identified: Per-table allowlist opting fields back to identified.
     :param int time_shift_nano: Nanoseconds to add to every time-bearing column.
     """
@@ -145,7 +174,13 @@ def transfer_encounters(src_sdk, dest_sdk, patient_id_map, device_id_map, deiden
     source_id_map = {}
 
     def pseudonymize_name(table, name):
-        """Return a stable pseudonym for a location name (or the original if kept)."""
+        """Return the location name.
+
+        At the default de-identification scope this returns ``name`` unchanged for every
+        table: location names are not a PHI surface. The pseudonym branch is retained for
+        the case where a future policy (or a caller-facing option) puts a name table back
+        on :data:`DEIDENTIFIED_BY_DEFAULT`; it is unreachable at the current default.
+        """
         if _field_identified(deidentify, keep_identified, table, "name"):
             return name
         table_map = pseudonyms[table]

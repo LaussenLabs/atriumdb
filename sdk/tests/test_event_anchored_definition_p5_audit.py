@@ -269,16 +269,17 @@ def test_from_to_max_duration_measured_from_PADDED_start(sdk):
     assert resolved(defn, sdk, d) == [(5.0, 15.0)]
 
 
-def test_from_to_max_duration_zero_drops_everything(sdk):
-    # max_duration=0 is allowed by validation (not negative) but collapses every
-    # interval to zero width -> all dropped, silently, no warning.
+def test_from_to_max_duration_zero_is_rejected(sdk):
+    # max_duration=0 used to pass validation (it is not negative) and then
+    # collapse every interval to zero width -> the whole region silently
+    # dropped. It is now rejected when the definition is built.
     numeric_id, event_id, d = setup_source(sdk, numeric_span_s=(0, 60))
     write_events(sdk, event_id, d, [(10, "START"), (30, "STOP")])
-    defn = DatasetDefinition(
-        measures=["hr"],
-        device_ids={d: [{"from": "START", "to": "STOP", "measure": "evt",
-                         "within": "none", "max_duration": 0}]})
-    assert resolved(defn, sdk, d) == []
+    with pytest.raises(ValueError, match="max_duration"):
+        DatasetDefinition(
+            measures=["hr"],
+            device_ids={d: [{"from": "START", "to": "STOP", "measure": "evt",
+                             "within": "none", "max_duration": 0}]})
 
 
 def test_from_to_left_censored_start(sdk):

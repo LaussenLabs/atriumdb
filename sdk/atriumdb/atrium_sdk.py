@@ -21,6 +21,7 @@ import numpy as np
 import bisect
 
 import threading
+from contextlib import ExitStack
 
 from atriumdb.intervals.intersection import intervals_intersect, list_intersection
 from atriumdb.windowing.definition import DatasetDefinition
@@ -32,20 +33,27 @@ from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_i
     choose_interval_gap_tolerance, choose_time_encoding, collapse_continuous_write_intervals, \
     observed_median_delta_ns, observed_median_delta_from_gap_array, widen_gap_tolerance_for_observed_spacing, \
     APERIODIC_MIN_PERIOD_NS, DEFAULT_TIME_COMPRESSION_LEVEL, ENCODE_SAMPLE_SIZE, \
-    INTERVAL_DENSITY_WARNING_RATIO, INTERVAL_DENSITY_WARNING_MIN_ROWS
+    INTERVAL_DENSITY_WARNING_RATIO, INTERVAL_DENSITY_WARNING_MIN_ROWS, DUPLICATE_KEEP_OPTIONS
 from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
 from atriumdb.file_api import AtriumFileHandler
+from atriumdb.file_lock import make_file_lock
 from atriumdb.string_dictionary import MeasureStringDictionary
+from atriumdb.event_intervals import (
+    union_windows, pair_from_to, clip_intervals_to_containers, collapse_event_intervals)
 
 # Phase 2 measure-metadata axes (see design §4/§19). These are stored as two
 # independent nullable columns on the measure table; a NULL is read-time
 # defaulted below so every existing dataset stays correct with no backfill.
-SIGNAL_KIND_VALUES = ("waveform", "sample", "event", "state")
-VALUE_TYPE_VALUES = ("numeric", "string")
-DEFAULT_SIGNAL_KIND = "waveform"
-DEFAULT_VALUE_TYPE = "numeric"
+# The vocabulary, the defaults and the predicates that go with them live in
+# :mod:`atriumdb.measure_kinds` so the SDK, the windowing layer and the transfer
+# layer describe the same model; re-exported here for backwards compatibility.
+from atriumdb.measure_kinds import (
+    SIGNAL_KIND_VALUES, VALUE_TYPE_VALUES, DEFAULT_SIGNAL_KIND, DEFAULT_VALUE_TYPE,
+    SIGNAL_KIND_WAVEFORM, VALUE_TYPE_NUMERIC, VALUE_TYPE_STRING, is_string_value_type,
+    measure_kind_of, changed_kind_fields, is_invalid_kind_combination,
+    invalid_kind_combination_message, STRING_SIGNAL_KIND_FALLBACK)
 from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_macos, shared_lib_filename_linux, protected_mode_default_setting, \
     overwrite_default_setting
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME, \
@@ -68,6 +76,7 @@ from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
 from atriumdb.windowing.light_mapped_iterator import LightMappedIterator
 from atriumdb.windowing.random_access_iterator import MappedIterator
 from atriumdb.windowing.verify_definition import verify_definition
+from atriumdb.windowing.windowing_functions import resolve_nominal_period_ns, validate_fill_rule_name
 from atriumdb.windowing.definition_splitter import partition_dataset
 from atriumdb.write_buffer import WriteBuffer
 
@@ -94,6 +103,51 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_META_CONNECTION_TYPE = 'sqlite'
+
+# numpy dtype kinds that the write path treats as "string": fixed-width unicode,
+# fixed-width bytes and object. All three become int64 dictionary codes, so they
+# are one value kind even though numpy reports a different dtype per batch width.
+_STRING_DTYPE_KINDS = ('U', 'S', 'O')
+
+# The subset of the above whose width is baked into the dtype ('<U2' for ["OK"]
+# vs '<U8' for ["ASYSTOLE"]). Those are normalized to dtype=object before
+# buffering so two ordinary alarm strings are not mistaken for two different
+# data types; 'O' is deliberately absent because it is already the target.
+_FIXED_WIDTH_STRING_DTYPE_KINDS = ('U', 'S')
+
+# Column positions in a raw ``measure`` row as returned by
+# ``sql_handler.select_measure`` / ``select_all_measures``. The handlers select an
+# explicit column list (see ``sqlite_select_measure_from_id_query`` and its Maria
+# twin), so the order is fixed -- but a bare ``row[11]`` at four call sites is a
+# silent breakage waiting for the next column to be added in the middle. Name the
+# two Phase 2 columns and read them through the accessors below.
+MEASURE_ROW_ID = 0
+MEASURE_ROW_SIGNAL_KIND = 10
+MEASURE_ROW_VALUE_TYPE = 11
+
+
+def measure_row_signal_kind(row):
+    """The raw (possibly ``None``) ``signal_kind`` column of a measure row."""
+    return row[MEASURE_ROW_SIGNAL_KIND]
+
+
+def measure_row_value_type(row):
+    """The raw (possibly ``None``) ``value_type`` column of a measure row.
+
+    ``None`` means "not established yet" -- it is NOT the same as ``'numeric'``;
+    see :meth:`AtriumSDK._established_value_type`."""
+    return row[MEASURE_ROW_VALUE_TYPE]
+
+
+def _same_write_value_kind(dtype_a, dtype_b) -> bool:
+    """True if two value dtypes are the same *kind* of write (both string-like, or
+    the identical numeric dtype). Used to validate a batched flush without
+    rejecting logically identical text of different widths ('<U2' vs '<U8')."""
+    a_is_string = dtype_a.kind in _STRING_DTYPE_KINDS
+    b_is_string = dtype_b.kind in _STRING_DTYPE_KINDS
+    if a_is_string or b_is_string:
+        return a_is_string and b_is_string
+    return dtype_a == dtype_b
 
 # _LOGGER.basicConfig(
 #     level=_LOGGER.debug,
@@ -401,8 +455,10 @@ class AtriumSDK:
             values; "protect" keeps the existing values; "error" raises when a write would conflict with existing
             data. The policy is enforced where deduplication happens - writes smaller than one block that merge with
             an existing block, and duplicate pushes within one buffer flush. Overlapping writes of a full block or
-            more never merge, so both copies are stored regardless of this setting (reads resolve them with
-            ``allow_duplicates=False``).
+            more never merge, so both copies are stored regardless of this setting -- that is accepted (write speed
+            is the priority) and is resolved on READ with ``get_data(..., allow_duplicates=False)``, which keeps one
+            sample per timestamp using this same policy: the newer write's value under "overwrite"/"ignore", the
+            existing value under "protect".
         :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" database type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
         :param bool no_pool: If true disables Mariadb connection pooling, instead using a new connection for each query.
         :param bool auto_upgrade: If True, automatically upgrade the database schema if needed (e.g., adding new columns). This allows the SDK to initialize successfully even if the database schema is outdated. Default is False.
@@ -488,34 +544,70 @@ class AtriumSDK:
                 "it is unavailable in this SDK mode.")
         return Path(self.dataset_location) / "meta"
 
+    def _dictionary_establishes_string(self, measure_id):
+        """The single rule for "this measure's P1 dictionary file proves it is string-typed".
+
+        A dictionary file alone is NOT proof. ``write_data`` appends to the dictionary
+        *before* the block bytes and SQL rows are committed (the codes have to be baked
+        into the encoded block), so a write killed in between -- SIGKILL, power loss, or a
+        rollback that could not run because a concurrent appender owned the tail -- leaves
+        a dictionary describing data the dataset does not contain. Treating that husk as an
+        establishment locks a numeric measure to 'string' with no public way back (Wave-2
+        W1). Requiring a committed block makes the husk inert and self-healing: the measure
+        stays unestablished, and whichever kind of data commits first establishes it.
+
+        Every consumer of the dictionary-file signal (:meth:`_resolve_measure_kind`,
+        :meth:`_established_value_type`, :meth:`_backfill_string_value_types`) must use
+        this one rule, or they disagree with each other -- which is the residual half of
+        W1: ``get_measure_kind`` served 'string' off the bare file while the write path
+        resolved 'None' off the same measure and happily accepted numeric data.
+
+        The cheap filesystem check is deliberately evaluated first so the block query only
+        runs for a measure that has a dictionary file AND a NULL value_type column -- after
+        a measure's first committed write the column is set and neither check is reached.
+        """
+        if measure_id is None or self.dataset_location is None:
+            return False
+        if not MeasureStringDictionary.exists(self._meta_dir, measure_id):
+            return False
+        return bool(self.sql_handler.measure_has_blocks(measure_id))
+
     def _backfill_string_value_types(self):
         """Opportunistic, idempotent Phase 2 backfill (design §19.2): any measure
-        that already has a P1 string-dictionary file is marked
-        ``value_type='string'`` in the measure table. Read-time defaults make this
+        that already has a P1 string-dictionary file *with committed blocks behind it* is
+        marked ``value_type='string'`` in the measure table. Read-time defaults make this
         unnecessary for correctness (a NULL value_type with a dict file still reads
         as string), but persisting it lets later phases avoid the file check. Safe
-        to re-run; never overwrites an already-set value_type."""
+        to re-run; never overwrites an already-set value_type.
+
+        The block requirement is load-bearing, not an optimization: without it this
+        backfill *persisted* the poisoning W1 was supposed to have closed. An orphan
+        dictionary left by a killed write made the very next ``AtriumSDK(auto_upgrade=True)``
+        write ``value_type='string'`` into the column, which then permanently rejected the
+        numeric writes the measure actually exists for -- a self-inflicted brick on a
+        routine schema upgrade."""
         if self.dataset_location is None:
             return
         for row in self.sql_handler.select_all_measures():
-            measure_id, stored_value_type = row[0], row[11]
-            if stored_value_type is None and MeasureStringDictionary.exists(self._meta_dir, measure_id):
-                self.sql_handler.update_measure_metadata(measure_id, value_type="string")
+            measure_id, stored_value_type = row[MEASURE_ROW_ID], measure_row_value_type(row)
+            if stored_value_type is None and self._dictionary_establishes_string(measure_id):
+                self.sql_handler.update_measure_metadata(measure_id, value_type=VALUE_TYPE_STRING)
 
     def _resolve_measure_kind(self, measure_id, stored_signal_kind, stored_value_type):
         """Apply the Phase 2 read-time defaults to the raw measure columns.
 
         ``NULL signal_kind`` -> ``waveform``. ``NULL value_type`` -> ``string``
-        when a P1 string-dictionary file exists for the measure (so un-migrated /
-        un-backfilled datasets still read correctly), otherwise ``numeric``. The
-        column, when set, always wins. This is the single source of truth used by
-        ``get_measure_info`` / ``get_all_measures`` and the ``get_data`` guard."""
+        when a P1 string-dictionary file establishes it (see
+        :meth:`_dictionary_establishes_string` -- a dictionary with committed blocks
+        behind it, so un-migrated / un-backfilled datasets still read correctly),
+        otherwise ``numeric``. The column, when set, always wins. This is the single
+        source of truth used by ``get_measure_info`` / ``get_all_measures`` and the
+        ``get_data`` guard."""
         signal_kind = stored_signal_kind if stored_signal_kind is not None else DEFAULT_SIGNAL_KIND
         if stored_value_type is not None:
             value_type = stored_value_type
-        elif measure_id is not None and self.dataset_location is not None \
-                and MeasureStringDictionary.exists(self._meta_dir, measure_id):
-            value_type = "string"
+        elif self._dictionary_establishes_string(measure_id):
+            value_type = VALUE_TYPE_STRING
         else:
             value_type = DEFAULT_VALUE_TYPE
         return signal_kind, value_type
@@ -527,18 +619,25 @@ class AtriumSDK:
         Distinct from :meth:`_resolve_measure_kind`, which read-time-defaults a
         brand-new measure to ``numeric``; here an un-written measure returns
         ``None`` so a first string write is not wrongly rejected. Resolution order:
-        the raw ``value_type`` column, then a P1 dictionary file (-> string), then
-        the presence of any block (-> numeric)."""
+        the raw ``value_type`` column, then a P1 dictionary file *with committed
+        blocks* (-> string), then the presence of any block (-> numeric).
+
+        The dictionary file only establishes ``string`` when the measure also has
+        blocks: a dictionary with no data behind it is the fingerprint of a write
+        that was rolled back or killed mid-flight, and honouring it would lock a
+        numeric measure to ``string`` forever with no public way back (Wave-2 W1)."""
         row = self.sql_handler.select_measure(measure_id=measure_id)
         if row is None:
             return None
-        stored_value_type = row[11]
+        stored_value_type = measure_row_value_type(row)
         if stored_value_type is not None:
             return stored_value_type
-        if self.dataset_location is not None and MeasureStringDictionary.exists(self._meta_dir, measure_id):
-            return "string"
+        # Same rule as _resolve_measure_kind / the backfill, so the three can never
+        # disagree about the same measure (the residual half of Wave-2 W1).
+        if self._dictionary_establishes_string(measure_id):
+            return VALUE_TYPE_STRING
         if self.sql_handler.measure_has_blocks(measure_id):
-            return "numeric"
+            return VALUE_TYPE_NUMERIC
         return None
 
     def _check_value_type_invariant(self, measure_id, incoming_is_string):
@@ -548,7 +647,7 @@ class AtriumSDK:
         :meth:`_establish_value_type`), so a write that raises downstream can never
         leave a poisoning value_type behind (Phase 2 audit fix). Returns the
         established value_type, or None if the measure has no data yet."""
-        incoming = "string" if incoming_is_string else "numeric"
+        incoming = VALUE_TYPE_STRING if incoming_is_string else VALUE_TYPE_NUMERIC
         established = self._established_value_type(measure_id)
         if established is not None and established != incoming:
             raise ValueError(
@@ -562,13 +661,233 @@ class AtriumSDK:
         """Persist the measure's value_type after a successful write, iff the
         column is not already set. Called only once the write has committed, so a
         write that raises can never establish (and thus poison) a value_type. The
-        prior :meth:`_check_value_type_invariant` already guaranteed no conflict."""
+        prior :meth:`_check_value_type_invariant` already guaranteed no conflict.
+
+        The in-process measure cache is dropped either way, so a cached view can
+        never disagree with the persisted row (the second half of Wave-2 W1: a
+        stale cache saying 'numeric' while the write path resolved 'string' left
+        the measure rejecting numeric writes AND string reads)."""
         row = self.sql_handler.select_measure(measure_id=measure_id)
-        if row is None or row[11] is not None:
+        if row is None:
             return
+        stored_value_type = measure_row_value_type(row)
+        if stored_value_type is not None:
+            # Already established (possibly by another process). Drop a cached view
+            # that disagrees rather than serving a stale value_type.
+            cached = self._measures.get(measure_id)
+            if cached is not None and cached.get('value_type') != stored_value_type:
+                self._measures.pop(measure_id, None)
+            return
+        # A first string write establishes value_type='string'. If the measure's
+        # signal_kind is (or read-time-defaults to) 'waveform' that lands the measure in
+        # the one combination the design forbids -- and this is the exact route the docs'
+        # former string example took: insert_measure() with no signal_kind, then
+        # write_time_value_pairs() with text. get_string_data() then works and
+        # get_iterator() dies hours later. Repair the shape in the same statement that
+        # establishes the encoding, and say so loudly (defect D6).
+        repaired_signal_kind = None
+        if incoming_is_string and is_invalid_kind_combination(
+                measure_row_signal_kind(row), VALUE_TYPE_STRING):
+            repaired_signal_kind = STRING_SIGNAL_KIND_FALLBACK
+            _LOGGER.warning(invalid_kind_combination_message(measure_id, repaired_signal_kind))
+
         self.sql_handler.update_measure_metadata(
-            measure_id, value_type=("string" if incoming_is_string else "numeric"))
+            measure_id,
+            signal_kind=repaired_signal_kind,
+            value_type=(VALUE_TYPE_STRING if incoming_is_string else VALUE_TYPE_NUMERIC))
         self._measures.pop(measure_id, None)
+
+    def _block_merge_lock(self, measure_id, device_id):
+        """Exclusive cross-process lock for the small-write block merge of one
+        (measure, device) stream (Wave-2 W5).
+
+        ``write_data``'s merge path is a read-modify-write: select the closest block,
+        decode its file, merge, write a new file, delete the old block row. Nothing
+        isolated those steps, so concurrent writers to the same stream silently lost
+        writes -- and events, which are always far below ``block_size``, take that path on
+        every single write. This lock makes the sequence atomic between processes and
+        threads alike.
+
+        Keyed per (measure, device), because that is the granularity the merge actually
+        conflicts at, so independent streams keep writing in parallel. Held only around
+        the merge itself; ordinary block-sized writes never take it.
+
+        Advisory and filesystem-based (see :mod:`atriumdb.file_lock`): it coordinates
+        writers that share a ``dataset_location``. Without one -- the storage-handler /
+        API configurations, which do not merge locally -- there is nothing to key on and
+        this degrades to a no-op rather than pretending to protect anything.
+
+        The zero-byte lock files are nested one directory per measure so no single
+        directory ever holds measures x devices entries."""
+        if self.dataset_location is None:
+            return ExitStack()  # inert context manager
+        return make_file_lock(
+            self._meta_dir / "locks" / f"measure_{int(measure_id)}" / f"device_{int(device_id)}.lock")
+
+    def _check_string_dictionary_not_lost(self, measure_id, string_dict, established_value_type,
+                                          watermark):
+        """Refuse a string write whose dictionary has fewer entries than the codes
+        already committed to this measure's blocks (Wave-2 W8).
+
+        The dictionary is a file under ``meta/`` and the blocks that reference its codes
+        are indexed in the metadata database; the two are restored independently, so a
+        DB + ``tsc/`` restore that omits ``meta/`` leaves the codes with no vocabulary. The
+        next write then started again at code 0 and every historical code silently began
+        decoding to a DIFFERENT string -- no error, no warning, permanently wrong clinical
+        values. This is the guard that makes that impossible.
+
+        Two O(1) checks, both indexed lookups -- no block is read and no data is decoded:
+
+        1. The high-water mark recorded in the metadata database (which survives the loss
+           of ``meta/``) is the vocabulary size of the last committed string write. A
+           dictionary file shorter than it has lost entries. Catches total loss *and* tail
+           truncation. ``watermark`` must have been read BEFORE ``string_dict`` was loaded
+           (see the call site) or a concurrent writer's commit turns this into a false
+           positive.
+        2. Datasets written before the mark existed have none, so fall back to the fact
+           that a measure the database has *established* as string, with blocks behind it,
+           cannot legitimately have an empty vocabulary -- every committed string write
+           leaves at least one entry. Catches total loss on legacy datasets.
+
+        Neither check can fire for a first write to a fresh measure: there is no mark, and
+        an unwritten measure is not established.
+        """
+        vocabulary_size = len(string_dict)
+        remedy = (
+            "Restore meta/string_dict/ from the backup taken with this dataset's .tsc files "
+            "and metadata database, and do not write to this measure until you do -- writing "
+            "now would re-issue codes that committed blocks already use, silently changing "
+            "what historical values decode to. If the dictionary is genuinely unrecoverable, "
+            "the measure's existing string data cannot be read back and the measure should be "
+            "retired rather than appended to.")
+
+        if watermark is not None and vocabulary_size < watermark:
+            raise ValueError(
+                f"String dictionary for measure {measure_id} has lost data: "
+                f"'{MeasureStringDictionary.path_for(self._meta_dir, measure_id)}' holds "
+                f"{vocabulary_size} entries but {watermark} were committed (blocks for this "
+                f"measure may reference codes up to {watermark - 1}). " + remedy)
+
+        if watermark is None and vocabulary_size == 0 \
+                and is_string_value_type(established_value_type) \
+                and self.sql_handler.measure_has_blocks(measure_id):
+            raise ValueError(
+                f"String dictionary for measure {measure_id} is missing or empty "
+                f"('{MeasureStringDictionary.path_for(self._meta_dir, measure_id)}'), but the "
+                f"measure is recorded as a string measure and already holds committed blocks, "
+                f"so those blocks reference codes this dictionary can no longer resolve. "
+                + remedy)
+
+    def _record_string_dictionary_size(self, measure_id, vocabulary_size):
+        """Persist the vocabulary size a just-committed string write may reference.
+
+        Best-effort and non-fatal: the blocks are already durable at this point, so
+        failing the caller's write because the watermark could not be recorded would turn
+        a successful write into a spurious error. A missed update only weakens the W8
+        guard back to its legacy behaviour for this measure."""
+        try:
+            self.sql_handler.set_string_dict_watermark(measure_id, vocabulary_size)
+        except Exception as watermark_error:  # pragma: no cover - defensive
+            _LOGGER.warning(
+                f"Could not record the string dictionary size for measure {measure_id} "
+                f"({vocabulary_size} entries). The dictionary-loss guard for this measure "
+                f"falls back to detecting total loss only: {watermark_error}")
+
+    def _apply_kind_to_existing_measure(self, measure_id, signal_kind, value_type):
+        """Apply explicitly-requested Phase 2 metadata on ``insert_measure``'s
+        get-or-insert path instead of silently discarding it (Wave-2 W7).
+
+        ``insert_measure`` returns the existing id when tag/freq/units already match.
+        Dropping ``signal_kind`` there meant an ingest pipeline that creates its
+        measures with get-or-insert could never classify them: the measure stayed
+        ``waveform``, and ``waveform`` + ``string`` is the combination the windowing
+        layer cannot iterate, with no public way to repair it.
+
+        Only stated fields are applied, and only when they actually differ (so the
+        common repeat-insert stays a no-op). A ``value_type`` that conflicts with data
+        already written raises, exactly as a conflicting write would."""
+        if signal_kind is None and value_type is None:
+            return
+        current = self.get_measure_kind(measure_id)
+        if current is None:
+            return
+        current_signal_kind, current_value_type = current
+        new_signal_kind, new_value_type = changed_kind_fields(
+            current_signal_kind, current_value_type, signal_kind, value_type)
+        if new_signal_kind is None and new_value_type is None:
+            return
+        _LOGGER.warning(
+            f"insert_measure: measure {measure_id} already exists; applying the requested "
+            f"metadata to it (signal_kind {current_signal_kind!r} -> {new_signal_kind or current_signal_kind!r}, "
+            f"value_type {current_value_type!r} -> {new_value_type or current_value_type!r}). "
+            f"Use set_measure_kind() to change this explicitly.")
+        self.set_measure_kind(measure_id, signal_kind=new_signal_kind, value_type=new_value_type)
+
+    def set_measure_kind(self, measure_id: int, signal_kind: str = None, value_type: str = None):
+        """Set (or correct) a measure's Phase 2 metadata after it was created.
+
+        ``insert_measure`` is a get-or-insert, so a measure auto-created by an ingest
+        pipeline (or by an earlier transfer) commonly ends up with the default
+        ``waveform`` shape. ``value_type`` self-heals on the first write, but
+        ``signal_kind`` never does, and ``waveform`` + ``string`` is precisely the
+        combination the windowing layer cannot iterate. Before this setter existed the
+        only fix was the private ``sql_handler.update_measure_metadata`` (Wave-2 W7).
+
+        :param int measure_id: The measure to update.
+        :param str signal_kind: New temporal shape, one of ``waveform | sample | event |
+            state``. ``None`` leaves it unchanged. Purely descriptive metadata -- safe to
+            change at any time.
+        :param str value_type: New value encoding, one of ``numeric | string``. ``None``
+            leaves it unchanged. Changing it to conflict with data that has already been
+            written raises ``ValueError``: the stored blocks are either dictionary codes
+            or numbers and re-labelling them would make the measure unreadable.
+
+        :return: ``(signal_kind, value_type)`` as resolved after the update.
+        :rtype: tuple
+
+        >>> measure_id = sdk.insert_measure("vent_mode", freq=1, freq_units="Hz", units="string")
+        >>> sdk.set_measure_kind(measure_id, signal_kind="state", value_type="string")
+        ('state', 'string')
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for measure updates.")
+        if signal_kind is not None and signal_kind not in SIGNAL_KIND_VALUES:
+            raise ValueError(
+                f"signal_kind must be one of {SIGNAL_KIND_VALUES} or None; got {signal_kind!r}.")
+        if value_type is not None and value_type not in VALUE_TYPE_VALUES:
+            raise ValueError(
+                f"value_type must be one of {VALUE_TYPE_VALUES} or None; got {value_type!r}.")
+
+        if self.sql_handler.select_measure(measure_id=int(measure_id)) is None:
+            raise ValueError(f"measure_id {measure_id} not found in the dataset.")
+
+        if value_type is not None:
+            established = self._established_value_type(int(measure_id))
+            if established is not None and established != value_type:
+                raise ValueError(
+                    f"Measure {measure_id} already holds '{established}' data; it cannot be "
+                    f"relabelled as '{value_type}'. A measure is either numeric or string -- "
+                    f"write '{value_type}' data to a separate measure.")
+
+        # The setter must not be able to *create* the un-iterable waveform+string
+        # measure it exists to repair. The resulting combination -- the requested
+        # fields laid over the stored ones -- is what matters: 'value_type=string'
+        # alone on a waveform measure produces it just as surely as stating both
+        # (defect D6).
+        current_kind = self.get_measure_kind(int(measure_id)) or (None, None)
+        resulting_signal_kind = signal_kind if signal_kind is not None else current_kind[0]
+        resulting_value_type = value_type if value_type is not None else current_kind[1]
+        if is_invalid_kind_combination(resulting_signal_kind, resulting_value_type):
+            _LOGGER.warning(invalid_kind_combination_message(measure_id, STRING_SIGNAL_KIND_FALLBACK))
+            signal_kind = STRING_SIGNAL_KIND_FALLBACK
+
+        if signal_kind is not None or value_type is not None:
+            self.sql_handler.update_measure_metadata(
+                int(measure_id), signal_kind=signal_kind, value_type=value_type)
+            # Never serve a cached view that predates the change.
+            self._measures.pop(int(measure_id), None)
+
+        return self.get_measure_kind(int(measure_id))
 
     def get_measure_kind(self, measure_id: int):
         """Convenience: return ``(signal_kind, value_type)`` for a measure with the
@@ -583,7 +902,8 @@ class AtriumSDK:
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
                  freq: Union[int, float] = None, units: str = None, freq_units: str = None,
-                 device_tag: str = None, mrn: str = None, return_nan_filled: bool | np.ndarray = False):
+                 device_tag: str = None, mrn: str = None, return_nan_filled: bool | np.ndarray = False,
+                 duplicate_keep: str = None):
         """
         .. _get_data_label:
 
@@ -607,7 +927,26 @@ class AtriumSDK:
         :param block_info: Custom block_info list to skip metadata table check.
         :param str time_units: Unit for the time array returned. Options: ["s", "ms", "us", "ns"].
         :param bool sort: Whether to sort the returned data by time. Sorting is only applied when time_type is 1.
-        :param bool allow_duplicates: Allow duplicate times in returned data. Affects performance if false.
+        :param bool allow_duplicates: Whether duplicate timestamps may appear in the returned data.
+            **Default True, which returns every stored sample** -- unchanged behaviour.
+
+            Set it to False to collapse duplicates on read. This is the supported way to deal
+            with duplicate samples: the write path deduplicates only as a *side effect* of the
+            small-write block merge (write speed is the priority, and a live feed that replays a
+            large buffer legitimately stores the same timestamps twice), so surviving duplicates
+            are resolved here instead.
+
+            Semantics: a **duplicate is two samples with the same timestamp**, decided on the
+            timestamp alone -- the same thing ``write_data``'s merge means by it -- whether or not
+            the two carry the same value. Exactly one sample per timestamp is returned. Which one
+            survives follows this dataset's ``overwrite`` merge conflict policy, so a read resolves
+            a duplicate the way a write would have: under ``'overwrite'`` / ``'ignore'`` (the
+            default) the most recently written copy wins; under ``'protect'`` the earliest written
+            copy wins. ``duplicate_keep`` overrides that per call.
+
+            Only applies when ``sort=True`` and ``time_type=1`` (collapsing requires ordering).
+            It is vectorized -- one stable sort and one mask, no per-sample loop -- but it does
+            cost that sort, so it is off by default.
         :param str measure_tag: A short string identifying the signal. Required if measure_id is None.
         :param freq: The sample frequency of the signal. Helpful with measure_tag.
         :param str units: The units of the signal. Helpful with measure_tag.
@@ -618,9 +957,21 @@ class AtriumSDK:
             This can be floating point numpy array of shape (int(round((end_ns - start_ns) / period_ns),) which works
             like the `out` param in the numpy library, filling the result into the passed in array instead of creating
             a new array, which provides a modest performance increase if you already have a result array allocated.
+        :param str duplicate_keep: Which copy of a duplicated timestamp survives when
+            ``allow_duplicates=False``: ``"last"`` (the most recently written) or ``"first"`` (the
+            earliest written). Default None follows the dataset's ``overwrite`` merge conflict
+            policy as described above. Ignored when ``allow_duplicates`` is True.
 
         :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
         :returns: List of Block header objects, 1D numpy array for time data, 1D numpy array for value data.
+
+        Examples:
+
+        >>> # Every stored sample, duplicates included (default, unchanged).
+        >>> headers, times, values = sdk.get_data(measure_id, start, end, device_id=device_id)
+        >>> # One sample per timestamp; the most recently written value wins.
+        >>> headers, times, values = sdk.get_data(
+        ...     measure_id, start, end, device_id=device_id, allow_duplicates=False)
         """
         # check that a correct unit type was entered
         time_units = "ns" if time_units is None else time_units
@@ -672,7 +1023,7 @@ class AtriumSDK:
         is_string_measure = False
         if measure_id is not None and self.dataset_location is not None:
             _minfo = self.get_measure_info(measure_id)
-            is_string_measure = _minfo is not None and _minfo.get('value_type') == 'string'
+            is_string_measure = _minfo is not None and is_string_value_type(_minfo.get('value_type'))
         if is_string_measure:
             if isinstance(return_nan_filled, np.ndarray) or return_nan_filled:
                 raise ValueError(
@@ -739,7 +1090,8 @@ class AtriumSDK:
 
         # Sort the data based on the timestamps if sort is true
         if sort and time_type == 1:
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates,
+                                          duplicate_keep=self._duplicate_keep(duplicate_keep))
 
         # Convert time data from nanoseconds to unit of choice
         if time_units != 'ns':
@@ -751,7 +1103,7 @@ class AtriumSDK:
                         device_id: int = None, patient_id=None, time_type=1, block_info=None,
                         time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
                         freq: Union[int, float] = None, units: str = None, freq_units: str = None,
-                        device_tag: str = None, mrn: str = None):
+                        device_tag: str = None, mrn: str = None, duplicate_keep: str = None):
         """
         .. _get_string_data_label:
 
@@ -774,7 +1126,15 @@ class AtriumSDK:
         :param block_info: Optional pre-fetched block info, as in :meth:`get_data`.
         :param str time_units: Unit for the returned time array. One of ["s","ms","us","ns"].
         :param bool sort: Whether to sort the returned data by time.
-        :param bool allow_duplicates: Allow duplicate timestamps in the result.
+        :param bool allow_duplicates: Whether duplicate timestamps may appear in the result.
+            Default True (every stored value). False collapses them to exactly one value per
+            timestamp, with identical semantics to :meth:`get_data` -- duplicate means same
+            timestamp, and the survivor follows the dataset's ``overwrite`` merge conflict policy
+            (newest write wins by default, existing value wins under ``'protect'``). Duplicates
+            are collapsed on the stored dictionary codes before decoding, so the returned strings
+            are always the survivors' own text.
+        :param str duplicate_keep: Override the survivor rule for this call: ``"last"`` or
+            ``"first"``. See :meth:`get_data`.
         :param str measure_tag: Signal tag; required if measure_id is None.
         :param freq: Sample frequency, helpful with measure_tag.
         :param str units: Measure units, helpful with measure_tag.
@@ -815,7 +1175,7 @@ class AtriumSDK:
             device_id=device_id, patient_id=patient_id, time_type=time_type, analog=False,
             block_info=block_info, time_units=time_units, sort=sort, allow_duplicates=allow_duplicates,
             measure_tag=measure_tag, freq=freq, units=units, freq_units=freq_units,
-            device_tag=device_tag, mrn=mrn, return_nan_filled=False)
+            device_tag=device_tag, mrn=mrn, return_nan_filled=False, duplicate_keep=duplicate_keep)
 
         # Resolve the measure_id the same way get_data did, so we load the matching
         # dictionary (get_data accepts either measure_id or measure_tag+freq+units).
@@ -838,17 +1198,39 @@ class AtriumSDK:
         """Validate that ``measure_id`` is a string/event measure and return its
         loaded :class:`MeasureStringDictionary`. Raises a clear ``ValueError`` for a
         missing measure or a numeric (``value_type != 'string'``) measure -- events
-        are string measures (design section 22.2 #1)."""
+        are string measures (design section 22.2 #1).
+
+        The error distinguishes the two ways a caller lands here, because the fix
+        is completely different: a measure that genuinely holds numbers (nothing
+        to do but pick another measure) versus one that holds text but was never
+        classified -- ``value_type`` is nullable, and a measure created by an
+        ingest pipeline reads as ``numeric`` until its first string write or an
+        explicit :meth:`set_measure_kind`."""
         kind = self.get_measure_kind(measure_id)
         if kind is None:
             raise ValueError(f"Measure {measure_id} does not exist.")
         signal_kind, value_type = kind
-        if value_type != "string":
+        if not is_string_value_type(value_type):
+            info = self.get_measure_info(measure_id) or {}
+            described = f"Measure {measure_id}"
+            if info.get('tag'):
+                described += f" ('{info['tag']}')"
+            if self._established_value_type(measure_id) is None:
+                # No data committed yet, so nothing is actually established: the
+                # 'numeric' above is only the read-time default for a NULL column.
+                remedy = (f"This measure has no data yet, so {value_type!r} is only the default "
+                          f"for an unset value_type. If it is meant to hold text, classify it "
+                          f"first with sdk.set_measure_kind({measure_id}, value_type='string') "
+                          f"(and signal_kind='event' or 'state'), or just write string values to "
+                          f"it -- the first string write establishes the type.")
+            else:
+                remedy = ("This measure holds numeric data, which has no string vocabulary to "
+                          "pair on. Query the string measure that carries the event text "
+                          "instead; sdk.get_all_measures() reports each measure's value_type.")
             raise ValueError(
-                f"Measure {measure_id} has value_type {value_type!r}, not 'string'. "
+                f"{described} has value_type {value_type!r}, not 'string'. "
                 f"Event / string queries (vocabulary, values-present, event intervals) "
-                f"operate on string measures only; a numeric measure has no event "
-                f"vocabulary to pair on.")
+                f"operate on string measures only. {remedy}")
         return MeasureStringDictionary.load(self._meta_dir, measure_id)
 
     def _resolve_event_source(self, device_id, patient_id, device_tag, mrn):
@@ -869,20 +1251,11 @@ class AtriumSDK:
                 "patient_id, or mrn.")
         return device_id, patient_id
 
-    @staticmethod
-    def _union_windows(windows):
-        """Sort + merge overlapping/touching ``[start, end]`` windows (ns) so a
-        container is a set of disjoint spans. Returns a new list; input untouched."""
-        if not windows:
-            return []
-        ordered = sorted([int(s), int(e)] for s, e in windows)
-        merged = [ordered[0]]
-        for s, e in ordered[1:]:
-            if s <= merged[-1][1]:
-                merged[-1][1] = max(merged[-1][1], e)
-            else:
-                merged.append([s, e])
-        return merged
+    # The pure interval algebra lives in :mod:`atriumdb.event_intervals` (pairing,
+    # container clipping, window union). These stay as methods because they are
+    # part of the established internal surface, but they are one-line delegations
+    # so the algorithm has exactly one implementation.
+    _union_windows = staticmethod(union_windows)
 
     def _collect_device_patient_windows(self, device_id, patient_id, start_n, end_n):
         """Device<->patient mapping spans for the source, clipped to [start,end].
@@ -980,98 +1353,18 @@ class AtriumSDK:
             f"Unknown within option {within!r}; expected None (cascade), "
             f"'device_patient', 'encounter', or 'none' (whole-stream).")
 
-    @staticmethod
-    def _pair_from_to(from_times, to_times, c0, c1):
-        """Vectorized COLLAPSE pairing (design section 22.2 #2) inside one container
-        span ``[c0, c1]``. ``from_times``/``to_times`` are sorted ns arrays already
-        restricted to the span. Returns a list of
-        ``(start, end, start_censored, end_censored)`` tuples, non-overlapping.
-
-        Rule: a run of ``from``s until the next ``to`` is ONE interval
-        (first-open -> first-close). A ``from`` with no following ``to`` in the span
-        is right-censored to ``c1``; a ``to`` before the first ``from`` (the span
-        opened already inside the state) is left-censored from ``c0``. No boundary is
-        fabricated -- censored ends are clipped to the container, never invented.
-
-        Implementation is fully vectorized: ``searchsorted`` maps each ``from`` to the
-        first ``to`` strictly after it, and ``np.unique`` on that (monotonic) index
-        collapses each run of ``from``s to its earliest member. No per-event loop.
-
-        Precondition: ``from_times`` and ``to_times`` hold DISTINCT timestamps (no
-        ``from`` coincident with a ``to``). The public path guarantees this -- storage
-        dedups values at one timestamp to a single code (newest wins) -- so a ``from``
-        and ``to`` can never share an exact ns. If this helper is called directly with
-        coincident timestamps, ``side="right"`` treats the coincident ``to`` as not
-        closing the ``from`` (a degenerate, non-reachable case)."""
-        out = []
-        n_from = from_times.shape[0]
-        n_to = to_times.shape[0]
-
-        # Leading left-censored interval: the span opened already inside the state
-        # (a `to` occurs before any `from`). Only the first such `to` closes the
-        # pre-existing open state; later stray `to`s while "out" are no-ops.
-        if n_to > 0 and (n_from == 0 or to_times[0] < from_times[0]):
-            out.append((int(c0), int(to_times[0]), True, False))
-
-        if n_from > 0:
-            # For each `from`, index of the first `to` strictly greater than it;
-            # == n_to when no `to` follows (right-censored). Monotonic because both
-            # arrays are sorted.
-            close_pos = np.searchsorted(to_times, from_times, side="right")
-            # Collapse: froms sharing a close index are one run; the first (min time,
-            # since from_times is sorted) opens the interval.
-            uniq_close, first_idx = np.unique(close_pos, return_index=True)
-            starts = from_times[first_idx]
-            for close_idx, start in zip(uniq_close.tolist(), starts.tolist()):
-                if close_idx == n_to:
-                    out.append((int(start), int(c1), False, True))
-                else:
-                    out.append((int(start), int(to_times[close_idx]), False, False))
-
-        out.sort(key=lambda r: r[0])
-        return out
-
-    @staticmethod
-    def _clip_intervals_to_containers(raw_intervals, windows):
-        """Intersect paired ``(start, end, sc, ec)`` intervals (already censored
-        relative to the whole query range) with the ``within`` container windows,
-        carrying censoring flags (design section 22.2 #3). This is the same
-        intersection math as ``intervals/intersection.list_intersection`` but done
-        per (interval, window) so the censoring flags survive the clip:
-
-          * an interval clipped at a container START becomes ``start_censored`` (the
-            state was open before the container -- the far side is flagged, never a
-            fabricated boundary);
-          * clipped at a container END becomes ``end_censored``.
-
-        A pair whose ``from`` lands in one window and ``to`` in the next is thereby
-        split into a right-censored piece in the first window and a left-censored
-        piece in the second, never crossing the gap between them."""
-        out = []
-        for (s, e, sc, ec) in raw_intervals:
-            for w0, w1 in windows:
-                cs = max(s, w0)
-                ce = min(e, w1)
-                if cs < ce:
-                    out.append((int(cs), int(ce),
-                                bool(sc or s < w0),
-                                bool(ec or e > w1)))
-        out.sort(key=lambda r: r[0])
-        return out
+    # Pure pairing / clipping math -- see :mod:`atriumdb.event_intervals` for the
+    # documented implementation and the interval + censoring conventions.
+    _pair_from_to = staticmethod(pair_from_to)
+    _clip_intervals_to_containers = staticmethod(clip_intervals_to_containers)
 
     def _collapse_event_intervals(self, times, codes, from_code, to_code,
                                   range_start, range_end, windows):
-        """Pair ``from``/``to`` on the FULL event stream over the query range (one
-        vectorized :meth:`_pair_from_to`, censored to ``[range_start, range_end]``),
-        then clip the result to the container windows via
-        :meth:`_clip_intervals_to_containers`. Pairing on the full stream (rather than
-        per-window slices) is what lets a container window that sits entirely inside
-        an open state -- with no events of its own -- still be recognised as fully
-        inside (both ends censored)."""
-        from_times = times[codes == from_code]
-        to_times = times[codes == to_code]
-        raw = self._pair_from_to(from_times, to_times, range_start, range_end)
-        return self._clip_intervals_to_containers(raw, windows)
+        """Pair ``from``/``to`` on the full event stream over the query range, then
+        clip to the ``within`` container windows. See
+        :func:`atriumdb.event_intervals.collapse_event_intervals`."""
+        return collapse_event_intervals(times, codes, from_code, to_code,
+                                        range_start, range_end, windows)
 
     def get_measure_string_vocabulary(self, measure_id: int) -> list:
         """Return EVERY string value ever written to a string measure, in code order.
@@ -1234,7 +1527,8 @@ class AtriumSDK:
         ]
 
     def get_data_from_blocks(self, block_list, filename_dict, start_time_n, end_time_n, analog=True,
-                             time_type=1, sort=True, allow_duplicates=True, return_nan_gap=False):
+                             time_type=1, sort=True, allow_duplicates=True, return_nan_gap=False,
+                             duplicate_keep=None):
         """
         Retrieve data from blocks.
 
@@ -1254,6 +1548,10 @@ class AtriumSDK:
         :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
             nothing if sort is false.
         :param bool | ndarray return_nan_gap: Whether or not to return values as a list of nans from start to end.
+        :param duplicate_keep: Which copy of a duplicated timestamp survives when
+            ``allow_duplicates`` is False -- ``"last"`` (most recently written) or ``"first"``
+            (earliest written). ``None`` follows this dataset's merge conflict policy, which is
+            what :meth:`get_data` passes.
         :return: Tuple containing headers, times, and values.
         :rtype: tuple
         """
@@ -1280,9 +1578,30 @@ class AtriumSDK:
 
         # Sort the data based on the timestamps if sort is true
         if sort and time_type == 1:
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates,
+                                          duplicate_keep=self._duplicate_keep(duplicate_keep))
 
         return headers, r_times, r_values
+
+    def _duplicate_keep(self, duplicate_keep=None):
+        """Which copy of a duplicated timestamp a read keeps, as a ``collapse_duplicate_times``
+        ``keep`` value.
+
+        ``None`` derives it from the dataset's merge conflict policy so a read resolves a
+        duplicate the same way a write would have: ``'protect'`` keeps the existing (earliest
+        written) value, every other policy keeps the newer write's value.
+        """
+        if duplicate_keep is not None:
+            if duplicate_keep not in DUPLICATE_KEEP_OPTIONS:
+                raise ValueError(
+                    f"duplicate_keep must be one of {DUPLICATE_KEEP_OPTIONS} or None; "
+                    f"got {duplicate_keep!r}.")
+            return duplicate_keep
+        try:
+            return "first" if self._merge_conflict_policy() == 'protect' else "last"
+        except Exception:
+            # A mode without a settings table (e.g. api) still gets the default convention.
+            return "last"
 
     def _get_data_api(self, measure_id: int, start_time_n: int, end_time_n: int, device_id: int = None,
                       patient_id: int = None, mrn: str = None, time_type=1, analog=True, sort=True,
@@ -1309,7 +1628,8 @@ class AtriumSDK:
 
         # Sort the data based on the timestamps if sort is true
         if sort:
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates,
+                                          duplicate_keep=self._duplicate_keep())
 
         return headers, r_times, r_values
 
@@ -1403,6 +1723,16 @@ class AtriumSDK:
 
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for writing data.")
+
+        # write_data_easy always chooses a numeric raw_value_type, so string values
+        # reached write_data's string guard and produced advice the caller could not
+        # act on ("Omit raw_value_type" -- they never passed one) (Wave-2 W12).
+        if isinstance(value_data, np.ndarray) and value_data.dtype.kind in _STRING_DTYPE_KINDS:
+            raise ValueError(
+                "write_data_easy does not support string values: it is a fixed-frequency "
+                "convenience wrapper that always writes a numeric value type. Write string "
+                "values with write_time_value_pairs(measure_id, device_id, times, values), "
+                "which dictionary-encodes them, and read them back with get_string_data().")
 
         # Set default time and frequency units if not provided
         time_units = "ns" if time_units is None else time_units
@@ -1547,143 +1877,239 @@ class AtriumSDK:
         # rejected instead of being silently accepted and corrupting readability
         # (the P1 audit bug). The first write to an as-yet-empty measure ESTABLISHES
         # its value_type.
-        incoming_is_string = value_data.dtype.kind in ('U', 'S', 'O')
+        incoming_is_string = value_data.dtype.kind in _STRING_DTYPE_KINDS
+        established_value_type = None
         if self.dataset_location is not None:
             # Only CHECK for a conflict here (may raise); the value_type is
             # ESTABLISHED after the write commits (see below), so a write that
             # raises downstream cannot poison the measure's value_type.
-            self._check_value_type_invariant(int(measure_id), incoming_is_string)
+            established_value_type = self._check_value_type_invariant(int(measure_id), incoming_is_string)
 
         # String storage (Phase 1): a string/object value array is transparently
         # converted to int64 dictionary codes *before* _resolve_value_types (which
         # would otherwise send it to V_TYPE_DOUBLE). From here on it is an ordinary
         # int64 write -- merge, interval index and time encoding are unchanged
         # because the codes are plain int64 with stable, append-only meaning.
+        string_dict = None
         if incoming_is_string:
             if raw_value_type is not None and raw_value_type != V_TYPE_INT64:
                 raise ValueError(
                     "String/object value arrays are stored as int64 dictionary codes; a numeric "
                     f"raw_value_type ({VALUE_TYPES_STR.get(raw_value_type, raw_value_type)}) cannot "
                     "be combined with string data. Omit raw_value_type for string writes.")
+            # Read the high-water mark BEFORE the dictionary file, not after. Both only
+            # ever grow, and the mark is raised only once the entries behind it are
+            # durably in the file, so reading in this order guarantees
+            # "file length >= mark" whenever nothing has been lost. Reading the mark
+            # second would let a concurrent writer's commit land in between and report a
+            # perfectly healthy dictionary as truncated.
+            dictionary_watermark = self.sql_handler.get_string_dict_watermark(int(measure_id))
             string_dict = MeasureStringDictionary.load(self._meta_dir, int(measure_id))
+            # Refuse to hand out codes that history already uses (Wave-2 W8). Must run
+            # BEFORE encode(), which is what would silently re-issue code 0.
+            self._check_string_dictionary_not_lost(
+                int(measure_id), string_dict, established_value_type, dictionary_watermark)
             value_data = string_dict.encode(value_data)
             raw_value_type = V_TYPE_INT64
             # Codes are exact identifiers, never scaled: force identity scaling.
             scale_m = 1.0
             scale_b = 0.0
 
-        freq_nhz, period_ns, _, period_ns_for_calc = self._resolve_write_frequency(
-            freq_nhz, period_ns, raw_time_type, time_data)
+        # Everything from here on can still fail (encode, file write, SQL). Any
+        # failure must also undo the dictionary append made just above, otherwise a
+        # rejected batch's free text is retained on disk forever and the measure is
+        # permanently established as string-typed by a write that never committed
+        # (Wave-2 W1). The append is therefore transactional with the write.
+        # ---------------------------------------------------------------- #
+        # Serialize the block-merge read-modify-write (Wave-2 W5).
+        #
+        # A write smaller than one optimal block does not simply insert: it SELECTs the
+        # closest existing block, reads and decodes that block's file, merges the new
+        # values into it, writes a new file and then deletes the old block row. That is a
+        # read-modify-write with no isolation, so two processes writing to the same
+        # (measure, device) both merge into the SAME old block and the second one to
+        # commit finds the row already deleted -- losing its own values and raising
+        # TypeError: 'NoneType' object is not subscriptable out of
+        # insert_merged_block_data. Aperiodic/event measures make this the normal case
+        # rather than an edge case: every event batch is far below block_size, so events
+        # ALWAYS take the merge path. Measured before this lock: 65-77 of 100 events
+        # readable across four trials, with 17-32 raises per trial.
+        #
+        # The lock is taken only when the merge path is reachable, so ordinary
+        # block-sized bulk writes are completely unaffected, and it is keyed per
+        # (measure, device), so unrelated streams still write fully in parallel. It is
+        # held across the merge, the encode and the commit -- the whole read-modify-write
+        # -- and released before the post-commit bookkeeping.
+        # ---------------------------------------------------------------- #
+        merge_path_reachable = merge_blocks and value_data.size < self.block.block_size
+        with ExitStack() as merge_lock:
+            if merge_path_reachable:
+                merge_lock.enter_context(self._block_merge_lock(measure_id, device_id))
+            try:
+                freq_nhz, period_ns, _, period_ns_for_calc = self._resolve_write_frequency(
+                    freq_nhz, period_ns, raw_time_type, time_data)
 
-        # Explicitly requested encodings are honored exactly; omitted ones are
-        # auto-chosen from the data after any block merge.
-        requested_encoded_time_type = encoded_time_type
-        requested_encoded_value_type = encoded_value_type
-        raw_value_type, encoded_value_type = self._resolve_value_types(value_data, raw_value_type, encoded_value_type)
+                # Explicitly requested encodings are honored exactly; omitted ones are
+                # auto-chosen from the data after any block merge.
+                requested_encoded_time_type = encoded_time_type
+                requested_encoded_value_type = encoded_value_type
+                raw_value_type, encoded_value_type = self._resolve_value_types(value_data, raw_value_type, encoded_value_type)
 
-        if encoded_time_type is not None and \
-                not ((raw_time_type == 1 and encoded_time_type == 2) or (raw_time_type == encoded_time_type)):
-            raise ValueError(
-                f"Cannot encode raw time type {TIME_TYPES_STR[raw_time_type]} to encoded time type {TIME_TYPES_STR[encoded_time_type]}")
+                if encoded_time_type is not None and \
+                        not ((raw_time_type == 1 and encoded_time_type == 2) or (raw_time_type == encoded_time_type)):
+                    raise ValueError(
+                        f"Cannot encode raw time type {TIME_TYPES_STR[raw_time_type]} to encoded time type {TIME_TYPES_STR[encoded_time_type]}")
 
-        # None means "no scaling", stored as m=1.0 / b=0.0 in block headers.
-        scale_m = 1.0 if scale_m is None else float(scale_m)
-        scale_b = 0.0 if scale_b is None else float(scale_b)
+                # None means "no scaling", stored as m=1.0 / b=0.0 in block headers.
+                scale_m = 1.0 if scale_m is None else float(scale_m)
+                scale_b = 0.0 if scale_b is None else float(scale_b)
 
-        interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
-        assert interval_index_mode in allowed_interval_index_modes, \
-            f"interval_index must be one of {allowed_interval_index_modes}"
+                interval_index_mode = "merge" if interval_index_mode is None else interval_index_mode
+                assert interval_index_mode in allowed_interval_index_modes, \
+                    f"interval_index must be one of {allowed_interval_index_modes}"
 
-        time_0, measure_id, device_id = int(time_0), int(measure_id), int(device_id)
+                time_0, measure_id, device_id = int(time_0), int(measure_id), int(device_id)
 
-        time_data, value_data, time_0 = self._sort_write_data(
-            raw_time_type, time_data, value_data, time_0, freq_nhz, period_ns, period_ns_for_calc)
+                time_data, value_data, time_0 = self._sort_write_data(
+                    raw_time_type, time_data, value_data, time_0, freq_nhz, period_ns, period_ns_for_calc)
 
-        write_intervals = find_intervals(freq_nhz=freq_nhz, period_ns=period_ns, raw_time_type=raw_time_type,
-                                         time_data=time_data, data_start_time=time_0, num_values=int(value_data.size))
-        # A `continuous` write collapses to a single interval bounded by the
-        # caller's own data, captured before any block merge so continuity is
-        # never asserted over time the caller's data does not cover.
-        continuous_bounds = (int(write_intervals[0][0]), int(write_intervals[-1][-1])) if continuous else None
+                write_intervals = find_intervals(freq_nhz=freq_nhz, period_ns=period_ns, raw_time_type=raw_time_type,
+                                                 time_data=time_data, data_start_time=time_0, num_values=int(value_data.size))
+                # A `continuous` write collapses to a single interval bounded by the
+                # caller's own data, captured before any block merge so continuity is
+                # never asserted over time the caller's data does not cover.
+                continuous_bounds = (int(write_intervals[0][0]), int(write_intervals[-1][-1])) if continuous else None
 
-        # Merge writes smaller than one optimal block into the closest existing
-        # block, then recompute the intervals so they describe the merged whole.
-        old_block = None
-        if merge_blocks and value_data.size < self.block.block_size:
-            old_block, time_data, value_data, time_0, raw_time_type = self._merge_small_write_with_closest_block(
-                measure_id, device_id, time_data, value_data, time_0, raw_time_type, raw_value_type,
-                freq_nhz=freq_nhz, period_ns=period_ns, scale_m=scale_m, scale_b=scale_b,
-                requested_encoded_time_type=requested_encoded_time_type,
-                requested_encoded_value_type=requested_encoded_value_type)
-            if old_block is not None:
-                write_intervals = find_intervals(
-                    freq_nhz=freq_nhz, period_ns=period_ns, raw_time_type=raw_time_type,
-                    time_data=time_data, data_start_time=time_0, num_values=int(value_data.size))
+                # Merge writes smaller than one optimal block into the closest existing
+                # block, then recompute the intervals so they describe the merged whole.
+                old_block = None
+                # Deduplication is a side effect of the merge below, so track whether it
+                # could have happened at all; when it could not, the write is checked for
+                # overlap with existing data and reported instead of silently duplicating
+                # it (defect D4).
+                overlap_reason = None
+                if merge_blocks and value_data.size < self.block.block_size:
+                    old_block, time_data, value_data, time_0, raw_time_type, merge_declined = \
+                        self._merge_small_write_with_closest_block(
+                            measure_id, device_id, time_data, value_data, time_0, raw_time_type, raw_value_type,
+                            freq_nhz=freq_nhz, period_ns=period_ns, scale_m=scale_m, scale_b=scale_b,
+                            requested_encoded_time_type=requested_encoded_time_type,
+                            requested_encoded_value_type=requested_encoded_value_type)
+                    if merge_declined:
+                        overlap_reason = ("the existing block it would have merged with holds a "
+                                          "different raw value type, scale factors or encoding, or "
+                                          "is already full")
+                    if old_block is not None:
+                        write_intervals = find_intervals(
+                            freq_nhz=freq_nhz, period_ns=period_ns, raw_time_type=raw_time_type,
+                            time_data=time_data, data_start_time=time_0, num_values=int(value_data.size))
+                elif merge_blocks:
+                    # A write of a full optimal block or more never takes the merge path,
+                    # so nothing deduplicates it no matter what it overlaps.
+                    overlap_reason = (
+                        f"it holds {int(value_data.size)} values, which is at least one optimal "
+                        f"block ({self.block.block_size}), and only writes smaller than that merge "
+                        f"with -- and are deduplicated against -- existing blocks")
 
-        if continuous_bounds is not None:
-            write_intervals = collapse_continuous_write_intervals(write_intervals, *continuous_bounds)
+                if overlap_reason is not None:
+                    self._report_undeduplicated_overlap(
+                        measure_id, device_id,
+                        start_time=time_0,
+                        end_time=self._write_end_time(raw_time_type, time_data, value_data.size,
+                                                      time_0, freq_nhz, period_ns),
+                        num_values=int(value_data.size), reason=overlap_reason)
 
-        # The observed typical sample spacing of the (possibly merged) data
-        # classifies waveform vs aperiodic for the tolerance and encoding choices.
-        # It is derived for gap arrays too, so the same aperiodic data gets the
-        # same interval gap tolerance whether written as segments or timestamps.
-        if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
-            median_delta_ns = observed_median_delta_ns(time_data)
-        else:
-            median_delta_ns = observed_median_delta_from_gap_array(
-                time_data, value_data.size, period_ns_for_calc)
+                if continuous_bounds is not None:
+                    write_intervals = collapse_continuous_write_intervals(write_intervals, *continuous_bounds)
 
-        # The density warning only applies when the tolerance was auto-chosen;
-        # an explicit tolerance (e.g. 0 to record every gap) is the caller's call.
-        gap_tolerance_was_auto = gap_tolerance is None
-        gap_tolerance = self._resolve_gap_tolerance(gap_tolerance, period_ns_for_calc, median_delta_ns)
+                # The observed typical sample spacing of the (possibly merged) data
+                # classifies waveform vs aperiodic for the tolerance and encoding choices.
+                # It is derived for gap arrays too, so the same aperiodic data gets the
+                # same interval gap tolerance whether written as segments or timestamps.
+                if raw_time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+                    median_delta_ns = observed_median_delta_ns(time_data)
+                else:
+                    median_delta_ns = observed_median_delta_from_gap_array(
+                        time_data, value_data.size, period_ns_for_calc)
 
-        allow_timestamp = requested_encoded_time_type is None and median_delta_ns is not None \
-            and median_delta_ns > APERIODIC_MIN_PERIOD_NS
-        encoded_time_type, t_compression, t_compression_level = self._resolve_time_encoding(
-            encoded_time_type, t_compression, t_compression_level,
-            time_data, value_data, raw_time_type, period_ns_for_calc, allow_timestamp)
+                # The density warning only applies when the tolerance was auto-chosen;
+                # an explicit tolerance (e.g. 0 to record every gap) is the caller's call.
+                gap_tolerance_was_auto = gap_tolerance is None
+                gap_tolerance = self._resolve_gap_tolerance(gap_tolerance, period_ns_for_calc, median_delta_ns)
 
-        encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
-            times=time_data, values=value_data, freq_nhz=freq_nhz, period_ns=period_ns, start_ns=time_0,
-            raw_time_type=raw_time_type, raw_value_type=raw_value_type,
-            encoded_time_type=encoded_time_type, encoded_value_type=encoded_value_type,
-            scale_m=scale_m, scale_b=scale_b,
-            t_compression=t_compression, t_compression_level=t_compression_level)
+                allow_timestamp = requested_encoded_time_type is None and median_delta_ns is not None \
+                    and median_delta_ns > APERIODIC_MIN_PERIOD_NS
+                encoded_time_type, t_compression, t_compression_level = self._resolve_time_encoding(
+                    encoded_time_type, t_compression, t_compression_level,
+                    time_data, value_data, raw_time_type, period_ns_for_calc, allow_timestamp)
 
-        filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
+                encoded_bytes, encoded_headers, byte_start_array = self.block.encode_blocks(
+                    times=time_data, values=value_data, freq_nhz=freq_nhz, period_ns=period_ns, start_ns=time_0,
+                    raw_time_type=raw_time_type, raw_value_type=raw_value_type,
+                    encoded_time_type=encoded_time_type, encoded_value_type=encoded_value_type,
+                    scale_m=scale_m, scale_b=scale_b,
+                    t_compression=t_compression, t_compression_level=t_compression_level)
 
-        block_data, interval_data = get_block_and_interval_data(
-            measure_id, device_id, encoded_headers, byte_start_array, write_intervals,
-            interval_gap_tolerance=gap_tolerance)
+                filename = self.file_api.write_bytes(measure_id, device_id, encoded_bytes)
 
-        if gap_tolerance_was_auto and len(interval_data) > max(
-                INTERVAL_DENSITY_WARNING_MIN_ROWS, int(INTERVAL_DENSITY_WARNING_RATIO * value_data.size)):
-            _LOGGER.warning(
-                f"Write for measure {measure_id}, device {device_id} produced {len(interval_data)} interval rows "
-                f"for {value_data.size} values. The interval index is meant to give a coarse sense of where data "
-                f"exists; consider a larger gap_tolerance (or continuous=True) if this data is not truly gapped.")
+                block_data, interval_data = get_block_and_interval_data(
+                    measure_id, device_id, encoded_headers, byte_start_array, write_intervals,
+                    interval_gap_tolerance=gap_tolerance)
 
-        if old_block is not None:
-            old_tsc_file_name = self.sql_handler.insert_merged_block_data(filename, block_data, old_block,
-                                                                          interval_data, interval_index_mode,
-                                                                          gap_tolerance)
-            # remove the old tsc file from disk if it no longer holds any blocks
-            if old_tsc_file_name is not None:
-                self.file_api.remove(
-                    self.file_api.to_abs_path(filename=old_tsc_file_name, measure_id=measure_id, device_id=device_id))
-        else:
-            self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, interval_index_mode,
-                                                  gap_tolerance)
+                if gap_tolerance_was_auto and len(interval_data) > max(
+                        INTERVAL_DENSITY_WARNING_MIN_ROWS, int(INTERVAL_DENSITY_WARNING_RATIO * value_data.size)):
+                    _LOGGER.warning(
+                        f"Write for measure {measure_id}, device {device_id} produced {len(interval_data)} interval rows "
+                        f"for {value_data.size} values. The interval index is meant to give a coarse sense of where data "
+                        f"exists; consider a larger gap_tolerance (or continuous=True) if this data is not truly gapped.")
 
-        # The write has committed: now (and only now) establish/persist the
-        # measure's value_type on its first write. Doing this post-commit means a
-        # write that raised anywhere above never leaves a poisoning value_type
-        # (Phase 2 audit fix).
-        if self.dataset_location is not None:
-            self._establish_value_type(int(measure_id), incoming_is_string)
+                if old_block is not None:
+                    old_tsc_file_name = self.sql_handler.insert_merged_block_data(filename, block_data, old_block,
+                                                                                  interval_data, interval_index_mode,
+                                                                                  gap_tolerance)
+                    # remove the old tsc file from disk if it no longer holds any blocks
+                    if old_tsc_file_name is not None:
+                        self.file_api.remove(
+                            self.file_api.to_abs_path(filename=old_tsc_file_name, measure_id=measure_id, device_id=device_id))
+                else:
+                    self.sql_handler.insert_tsc_file_data(filename, block_data, interval_data, interval_index_mode,
+                                                          gap_tolerance)
 
-        return encoded_bytes, encoded_headers, byte_start_array, filename
+                # The blocks are durable, so the dictionary codes they reference must
+                # stay: from here on the append is no longer rolled back. Record the
+                # vocabulary size those durable blocks may reference, in the metadata
+                # database, so a later loss of meta/string_dict/ is detected instead of
+                # silently re-issuing the codes they use (Wave-2 W8).
+                if string_dict is not None:
+                    self._record_string_dictionary_size(int(measure_id), len(string_dict))
+                string_dict = None
+
+                # The write has committed: now (and only now) establish/persist the
+                # measure's value_type on its first write. Doing this post-commit means a
+                # write that raised anywhere above never leaves a poisoning value_type
+                # (Phase 2 audit fix).
+                if self.dataset_location is not None:
+                    self._establish_value_type(int(measure_id), incoming_is_string)
+
+                return encoded_bytes, encoded_headers, byte_start_array, filename
+            except BaseException:
+                # Roll back the dictionary append only while the measure holds no committed
+                # blocks. With no blocks, no stored data can possibly reference the codes
+                # being removed, so reclaiming them is provably safe -- and that is exactly
+                # the situation the poisoning bug needs (a measure whose value_type column is
+                # still NULL has never completed a write). Once the measure has data, another
+                # writer may already have encoded against these codes, and removing them could
+                # make committed blocks decode wrongly; the appended strings are left in place
+                # instead, where they can no longer establish anything.
+                if string_dict is not None and not self.sql_handler.measure_has_blocks(int(measure_id)):
+                    try:
+                        string_dict.rollback_appends()
+                    except Exception as rollback_error:  # pragma: no cover - defensive
+                        _LOGGER.error(
+                            f"Failed to roll back the string dictionary for measure {measure_id} after a "
+                            f"failed write; the dictionary may contain unused codes: {rollback_error}")
+                    self._measures.pop(int(measure_id), None)
+                raise
 
     def _resolve_write_frequency(self, freq_nhz, period_ns, raw_time_type, time_data):
         """Resolve the mutually exclusive freq_nhz/period_ns pair for a write,
@@ -1798,12 +2224,20 @@ class AtriumSDK:
         """Try to merge a small write (less than one optimal block worth of values)
         with the closest existing block for this measure/device.
 
-        Returns ``(old_block, time_data, value_data, time_0, raw_time_type)``.
+        Returns ``(old_block, time_data, value_data, time_0, raw_time_type, merge_declined)``.
         When a merge happened, ``old_block`` is the block-index row whose data is
         now contained in the returned arrays (the caller must delete it once the
         merged block is written) and the returned arrays/raw time type describe
         the combined data. When no merge happened, ``old_block`` is None and the
         data is returned unchanged.
+
+        ``merge_declined`` distinguishes the two ways ``old_block`` comes back None:
+        ``False`` means no candidate block exists near this time range at all (so the
+        write cannot be duplicating anything), ``True`` means a candidate WAS found and
+        rejected -- wrong raw value type, wrong scale factors, an explicitly requested
+        encoding the old block does not use, or a full end block. In that second case
+        deduplication silently does not happen, so the caller runs the overlap check
+        (see :meth:`_report_undeduplicated_overlap`, defect D4).
 
         A merge requires the old block to hold the same kind of data: the same raw
         value type (int/float) and the same scale factors. When the caller
@@ -1821,23 +2255,20 @@ class AtriumSDK:
         same time can lose one of the writes.
         """
         # Find the end time of the new data so we can find the closest block.
-        if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
-            # _calc_end_time_from_gap_data returns end_time + one period.
-            end_time = _calc_end_time_from_gap_data(values_size=value_data.size, gap_array=time_data,
-                                                    start_time=time_0, freq_nhz=freq_nhz, period_ns=period_ns)
-            end_time -= freq_nhz_to_period_ns(freq_nhz) if freq_nhz is not None else period_ns
-        else:
-            end_time = int(time_data[-1])
+        end_time = self._write_end_time(raw_time_type, time_data, value_data.size, time_0,
+                                        freq_nhz, period_ns)
 
         # find the closest block to the data we are trying to insert
         old_block, end_block = self.sql_handler.select_closest_block(measure_id, device_id, time_0, end_time)
         if old_block is None:
-            return None, time_data, value_data, time_0, raw_time_type
+            # Nothing anywhere near this write's time range, so there is nothing to
+            # merge with AND nothing it could be duplicating.
+            return None, time_data, value_data, time_0, raw_time_type, False
 
         # If the new data goes on the end and the current end block is already full,
         # start a fresh block instead of re-encoding a full one even bigger.
         if end_block and old_block[8] >= self.block.block_size:
-            return None, time_data, value_data, time_0, raw_time_type
+            return None, time_data, value_data, time_0, raw_time_type, True
 
         # get the file info for the block we are going to merge these values into
         file_info = self.sql_handler.select_file(file_id=old_block[3])
@@ -1856,24 +2287,24 @@ class AtriumSDK:
                 f"The time type ({TIME_TYPES_STR[requested_encoded_time_type]}) you are trying to encode the times as "
                 f"doesn't match the encoded time type ({TIME_TYPES_STR[header[0].t_encoded_type]}) of the block "
                 f"you are trying to merge with.")
-            return None, time_data, value_data, time_0, raw_time_type
+            return None, time_data, value_data, time_0, raw_time_type, True
         if requested_encoded_value_type is not None and header[0].v_encoded_type != requested_encoded_value_type:
             _LOGGER.warning(
                 f"The value type ({VALUE_TYPES_STR[requested_encoded_value_type]}) you are trying to encode the values "
                 f"as doesn't match the encoded value type ({VALUE_TYPES_STR[header[0].v_encoded_type]}) of the block "
                 f"you are trying to merge with.")
-            return None, time_data, value_data, time_0, raw_time_type
+            return None, time_data, value_data, time_0, raw_time_type, True
 
         # The raw value type (int vs float) must match; a block can only hold one.
         if header[0].v_raw_type != raw_value_type:
             _LOGGER.warning(
                 f"The raw value type ({VALUE_TYPES_STR[raw_value_type]}) doesn't match the raw value type "
                 f"({VALUE_TYPES_STR[header[0].v_raw_type]}) of the block you are trying to merge with.")
-            return None, time_data, value_data, time_0, raw_time_type
+            return None, time_data, value_data, time_0, raw_time_type, True
 
         # make sure the scale factors match. If they don't then don't merge the blocks
         if not (header[0].scale_m == scale_m and header[0].scale_b == scale_b):
-            return None, time_data, value_data, time_0, raw_time_type
+            return None, time_data, value_data, time_0, raw_time_type, True
 
         # if the original time type of the old block is not the same as the time type
         # of the data we are trying to save, we need to make them the same
@@ -1933,7 +2364,87 @@ class AtriumSDK:
                                                                value_data, time_data, time_0,
                                                                freq_nhz=freq_nhz, period_ns=period_ns)
 
-        return old_block, time_data, value_data, time_0, raw_time_type
+        return old_block, time_data, value_data, time_0, raw_time_type, False
+
+    @staticmethod
+    def _write_end_time(raw_time_type, time_data, num_values, time_0, freq_nhz=None, period_ns=None):
+        """Timestamp of a write's LAST sample, in the same inclusive convention the
+        block index stores (``block_index.end_time_n``). Shared by the block-merge
+        candidate search and the D4 overlap check so the two cannot disagree about
+        where a write ends -- a half-period difference there turns a contiguous
+        append into a false overlap report."""
+        if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
+            # _calc_end_time_from_gap_data returns end_time + one period.
+            end_time = _calc_end_time_from_gap_data(values_size=num_values, gap_array=time_data,
+                                                    start_time=time_0, freq_nhz=freq_nhz, period_ns=period_ns)
+            end_time -= freq_nhz_to_period_ns(freq_nhz) if freq_nhz is not None else period_ns
+            return int(end_time)
+        return int(time_data[-1])
+
+    def _report_undeduplicated_overlap(self, measure_id, device_id, start_time, end_time,
+                                       num_values, reason):
+        """Enforce ``overwrite='error'`` for a write that overlaps existing data on a path
+        where no deduplication can happen.
+
+        Replay idempotency in this SDK is a *side effect* of the small-write block merge:
+        ``write_data`` merges into the closest existing block only when the write is
+        smaller than one optimal block, and that merge is what collapses duplicate
+        timestamps. A write of ``block_size`` values or more skips the merge entirely and
+        is simply appended, so the SAME timestamps can be stored twice.
+
+        That is accepted, deliberately. Write speed is the priority and duplicates are
+        expected at live ingest; the write path is not going to decode, merge, re-encode
+        and delete N overlapping blocks to guarantee dedup. **Surviving duplicates are a
+        READ-side concern**: ``get_data(..., allow_duplicates=False)`` (and
+        ``get_string_data``) collapse them to one sample per timestamp, cheaply and
+        vectorized. See :meth:`get_data` for the exact semantics.
+
+        So this method is quiet by design. It exists for the one case that still has to be
+        enforced at write time -- a dataset configured with ``overwrite='error'``, which
+        asks for such a write to be refused rather than stored. Under every other policy
+        the overlap is reported at DEBUG level only, and the ``select_blocks`` query is
+        skipped entirely unless someone has DEBUG logging on, so ordinary large writes pay
+        nothing for it and emit nothing.
+
+        Block-index bounds are the real bounds of stored data (unlike interval rows, which
+        are padded by ``gap_tolerance``), so a contiguous append -- the normal bulk-ingest
+        case -- finds nothing. Overlap is reported at time-range granularity: two writes
+        can share a span without sharing a single timestamp, so the message says
+        "overlaps", not "duplicates", and names the span.
+        """
+        enforcing = self._merge_conflict_policy() == 'error'
+        if not enforcing and not _LOGGER.isEnabledFor(logging.DEBUG):
+            # Nothing to raise and nothing anyone would see: skip the index query so the
+            # write path pays no cost for a condition that is handled on read.
+            return
+
+        overlapping = self.sql_handler.select_blocks(
+            int(measure_id), int(start_time), int(end_time), device_id=int(device_id))
+        if not overlapping:
+            return
+
+        existing_values = sum(int(block[8]) for block in overlapping)
+        overlap_start = max(int(start_time), min(int(block[6]) for block in overlapping))
+        overlap_end = min(int(end_time), max(int(block[7]) for block in overlapping))
+        detail = (
+            f"Write for measure {measure_id}, device {device_id} covering "
+            f"[{int(start_time)}, {int(end_time)}] ns ({num_values} values) overlaps data already "
+            f"stored for that stream over [{overlap_start}, {overlap_end}] ns "
+            f"({existing_values} values in {len(overlapping)} existing block(s)), and this write "
+            f"cannot be deduplicated against it because {reason}.")
+
+        if enforcing:
+            raise ValueError(
+                detail + " This dataset's overwrite setting is 'error'. Write non-overlapping "
+                         "data, or set the overwrite setting to 'overwrite'/'protect' to accept "
+                         "the duplication and resolve it on read with "
+                         "get_data(..., allow_duplicates=False).")
+
+        _LOGGER.debug(
+            detail + " Both copies will be stored; this is expected and not an error. Read with "
+                     "get_data(..., allow_duplicates=False) / "
+                     "get_string_data(..., allow_duplicates=False) to collapse them to one "
+                     "sample per timestamp.")
 
     @staticmethod
     def _raise_if_merge_conflicts(measure_id, device_id, old_times, old_size, old_start, new_times, new_size,
@@ -2315,6 +2826,15 @@ class AtriumSDK:
         if not isinstance(times, np.ndarray):
             times = np.asarray(times)
 
+        # Collapse fixed-width unicode/bytes value arrays to dtype=object. numpy
+        # sizes '<U2' for ["OK"] and '<U8' for ["ASYSTOLE"], so two ordinary alarm
+        # strings would otherwise look like two different data types to the buffered
+        # flush's dtype-consistency check and abort the whole flush (Wave-2 W2).
+        # Every real event stream has variable-length text; object is the dtype the
+        # string write path uses anyway.
+        if values.dtype.kind in _FIXED_WIDTH_STRING_DTYPE_KINDS:
+            values = values.astype(object)
+
         if values.size == 0:
             return
 
@@ -2409,8 +2929,15 @@ class AtriumSDK:
                     raise ValueError("Data dictionaries have inconsistent frequencies/periods.")
             if data['scale_m'] != scale_m or data['scale_b'] != scale_b:
                 raise ValueError("Data dictionaries have inconsistent scale factors.")
-            if data['values'].dtype != data_dtype:
-                raise ValueError("Data dictionaries have inconsistent data types.")
+            # Compare the dtype KIND, not the exact dtype: all string-like arrays
+            # ('U'/'S'/'O') are one data type as far as the write path is concerned
+            # (they all become dictionary codes), and numpy's per-array width for
+            # unicode arrays is an artifact of the batch, not of the data (Wave-2 W2).
+            if not _same_write_value_kind(data['values'].dtype, data_dtype):
+                raise ValueError(
+                    f"Data dictionaries have inconsistent data types "
+                    f"({data['values'].dtype} vs {data_dtype}); string and numeric values "
+                    f"cannot be written together.")
 
         # Combine times and values. np.unique keeps the first occurrence of each
         # duplicate timestamp, so push order decides who wins, following the
@@ -2434,7 +2961,7 @@ class AtriumSDK:
         # Encode the block(s). String/object value arrays are left unforced so
         # write_data detects them and converts to int64 dictionary codes; forcing
         # a numeric raw_value_type here would trip write_data's string guard.
-        if values.dtype.kind in ('U', 'S', 'O'):
+        if values.dtype.kind in _STRING_DTYPE_KINDS:
             raw_v_t = None
             encoded_v_t = None
         elif np.issubdtype(values.dtype, np.integer):
@@ -3311,12 +3838,45 @@ class AtriumSDK:
             raise ValueError(
                 f"value_type must be one of {VALUE_TYPE_VALUES} or None; got {value_type!r}.")
 
+        # Reject the one invalid combination at the point the mistake is made rather
+        # than hours later inside get_iterator's fill path. A string measure whose
+        # signal_kind is (or defaults to) 'waveform' is auto-corrected to 'event' and
+        # the caller is told how to choose 'state'/'sample' instead. Auto-correction
+        # rather than a raise, because this is also the shape a legacy dataset carries
+        # into transfer_measures -> insert_measure, and a transfer of an already-broken
+        # source measure must repair it, not abort (defect D6).
+        if is_invalid_kind_combination(signal_kind, value_type):
+            _LOGGER.warning(invalid_kind_combination_message(
+                f"'{measure_tag}'", STRING_SIGNAL_KIND_FALLBACK, measure_exists=False))
+            signal_kind = STRING_SIGNAL_KIND_FALLBACK
+
         # Check for mutually exclusive parameters
         if freq is not None and period is not None:
             raise ValueError("freq and period are mutually exclusive. Specify only one.")
 
         if freq is None and period is None:
             raise ValueError("Either freq or period must be specified.")
+
+        # Validate freq / period BEFORE any row is written. freq=0 used to insert the
+        # measure row and only THEN compute ``10 ** 18 // freq_nhz``: the row was
+        # committed with freq_nhz=0 and every later ``AtriumSDK(...)`` on that dataset
+        # died in get_all_measures on the same expression -- the dataset could never be
+        # opened again (Wave-2 W6 / Wave-1 #1). freq=0 is exactly what an aperiodic
+        # ingest reaches for, so the message points at the supported route.
+        if freq is not None and freq <= 0:
+            raise ValueError(
+                f"freq must be greater than 0; got {freq!r}. The frequency is used as a divisor "
+                f"(period_ns = 10**18 // freq_nhz), so 0 is not a usable value and a negative one "
+                f"makes every raster computation meaningless. Do NOT use freq=0 to mean "
+                f"'aperiodic': give the measure a nominal frequency (e.g. freq=1, freq_units='Hz') "
+                f"and declare its temporal shape with signal_kind='sample' | 'event' | 'state', "
+                f"then write it with write_time_value_pairs().")
+        if period is not None and period <= 0:
+            raise ValueError(
+                f"period must be greater than 0; got {period!r}. Do NOT use period=0 to mean "
+                f"'aperiodic': give the measure a nominal period and declare its temporal shape "
+                f"with signal_kind='sample' | 'event' | 'state', then write it with "
+                f"write_time_value_pairs().")
 
         # Check if measure_tag, measure_name, and units are either strings or None
         assert isinstance(measure_tag, str)
@@ -3348,10 +3908,23 @@ class AtriumSDK:
         else:  # period is not None
             # Convert period to nanoseconds then to equivalent frequency in nanohertz
             period_ns = int(period * time_unit_options[time_units])
+            if period_ns <= 0:
+                raise ValueError(
+                    f"period {period!r} {time_units} rounds to {period_ns} nanoseconds, which is "
+                    f"not a usable sampling period. Specify a period of at least 1 nanosecond.")
             freq_nhz = 10 ** 18 // period_ns
 
         # Force Cast Python integer
         freq_nhz = int(freq_nhz)
+
+        # A frequency that rounds down to zero would commit the same unopenable
+        # freq_nhz=0 row as freq=0 itself, so it is rejected here too, still before
+        # any insert (Wave-2 W6).
+        if freq_nhz <= 0:
+            raise ValueError(
+                f"freq {freq!r} {freq_units} converts to {freq_nhz} nHz, which is not a usable "
+                f"frequency (it is used as a divisor: period_ns = 10**18 // freq_nhz). Specify a "
+                f"frequency of at least 1 nHz.")
 
         # Check for id clash
         if measure_id is not None:
@@ -3362,12 +3935,14 @@ class AtriumSDK:
                 if measure_info['tag'] == measure_tag and \
                         measure_info['freq_nhz'] == freq_nhz and \
                         measure_info['unit'] == units:
+                    self._apply_kind_to_existing_measure(measure_id, signal_kind, value_type)
                     return measure_id
                 raise ValueError(f"Inserted measure_id {measure_id} already exists with data: {measure_info}")
 
         # Check if the measure already exists in the dataset
         check_measure_id = self.get_measure_id(measure_tag, freq=freq_nhz, freq_units="nHz", units=units)
         if check_measure_id is not None:
+            self._apply_kind_to_existing_measure(check_measure_id, signal_kind, value_type)
             return check_measure_id
 
         # Insert the new measure into the database
@@ -5875,6 +6450,103 @@ class AtriumSDK:
 
         return result_array
 
+    def _preflight_window_sizing(self, definition, window_duration, window_slide,
+                                 period_overrides, time_units):
+        """Validate the window geometry against every measure and size the batch.
+
+        Two jobs that both need the same per-measure "how many values does a
+        window/slide actually contain" number, which is why they live together:
+
+        1. reject a window duration or slide that would contain zero values for
+           some measure -- a condition that otherwise surfaces far downstream as
+           an opaque "slice step cannot be zero" from ``sliding_window_view``;
+        2. return the values-per-slide of the FASTEST measure, which is what the
+           default ``num_windows_prefetch`` / ``cached_windows_per_source``
+           divide by.
+
+        Waveform measures are checked with the exact original frequency
+        arithmetic and error text; aperiodic kinds are checked against their
+        resolved nominal raster period instead, because ``freq_nhz`` is not a
+        raster rate for them.
+
+        Extracted from ``get_iterator`` verbatim: it is 50 lines of dense
+        reasoning that had nothing to do with the surrounding argument handling.
+
+        :returns: values per window slide for the fastest measure (at least 1).
+        """
+        # Pre-flight sample-count guard.
+        #
+        # This used to derive the per-window sample count purely from
+        # measure_info['freq_nhz'], which is meaningless for an aperiodic measure:
+        # a genuinely 1/300 Hz NIBP declared honestly was rejected outright, and
+        # period_overrides could not rescue it because this runs before the
+        # iterator exists. Aperiodic kinds are rasterized onto a nominal grid
+        # period instead (period_overrides -> 1 s default), so use that resolved
+        # period for them. Waveform measures keep the exact original arithmetic,
+        # so the numeric windowing path is untouched.
+        _period_overrides = period_overrides or {}
+        _effective_freqs_nhz = []
+        for measure_info in definition.validated_data_dict['measures']:
+            signal_kind = measure_info.get('signal_kind') or DEFAULT_SIGNAL_KIND
+            if signal_kind == SIGNAL_KIND_WAVEFORM:
+                # Unchanged legacy behaviour and legacy error text. (A period
+                # override on a waveform is rejected with a measure-named error
+                # when the iterator is built.)
+                freq_nhz = int(measure_info['freq_nhz'])
+                if (int(window_duration) * freq_nhz) // (10 ** 18) == 0:
+                    raise ValueError(
+                        f"Window Slide {window_duration} with units {time_units} is less than a single "
+                        f"value. Please increase it to at least one sample period.")
+                if (int(window_slide) * freq_nhz) // (10 ** 18) == 0:
+                    raise ValueError(
+                        f"Window Slide {window_slide} with units {time_units} is less than a single "
+                        f"value. Please increase it to at least one sample period.")
+                _effective_freqs_nhz.append(freq_nhz)
+                continue
+
+            # Aperiodic kinds are rasterized onto a nominal grid period, so check
+            # THAT, with the same measure-named message the iterator uses.
+            nominal_period_ns = int(resolve_nominal_period_ns(
+                measure_info, period_override=_period_overrides.get(measure_info['id'])))
+            if nominal_period_ns > int(window_duration):
+                raise ValueError(
+                    f"Measure {measure_info['id']}: resolved nominal raster period "
+                    f"{nominal_period_ns} ns is larger than the window duration "
+                    f"{int(window_duration)} ns, so a window would contain zero grid cells. "
+                    f"Increase window_duration or lower this measure's period via period_overrides.")
+            if nominal_period_ns > int(window_slide):
+                raise ValueError(
+                    f"Measure {measure_info['id']}: resolved nominal raster period "
+                    f"{nominal_period_ns} ns is larger than the window slide "
+                    f"{int(window_slide)} ns, so the slide would advance zero grid cells. "
+                    f"Increase window_slide or lower this measure's period via period_overrides.")
+            _effective_freqs_nhz.append(max(1, (10 ** 18) // max(1, nominal_period_ns)))
+
+        # Batch sizing below divides by this, so floor it at 1: the per-measure
+        # guards above ensure at least one grid cell per slide, but the
+        # freq-from-period round trip can still floor a legitimate aperiodic
+        # period (e.g. 3 s) to 0 values.
+        #
+        # NOTE (fix, PRE-EXISTING defect -- reproduces identically on main with two
+        # plain waveform measures): this used to divide by the SLOWEST measure's
+        # values-per-slide (`min(_effective_freqs_nhz)`), but the batch's memory
+        # footprint is driven by the FASTEST measure. The iterator allocates
+        # `max_batch_size * row_size` float64s, and `row_size` is derived from the
+        # LOWEST period in the definition (dataset_iterator.py: `row_size =
+        # window_duration_ns // lowest_period_ns`). So the default batch was
+        # inflated by the definition's rate ratio: adding one 1 Hz measure to a
+        # 250 Hz, 10 s-window definition took the default batch from ~10 MB to
+        # ~2621 MB (shuffling: ~104 MB to ~26 GB). Dividing by the FASTEST
+        # measure restores the intended "about N blocks of the data actually being
+        # read" sizing, is unchanged for single-rate definitions (min == max, so
+        # the numeric single-measure path is byte-identical), and can only ever
+        # LOWER the default, never raise it.
+        max_freq_nhz = max(_effective_freqs_nhz)
+        number_of_values_per_window_slide = max(
+            1, (int(window_slide) * int(max_freq_nhz)) // (10 ** 18))
+
+        return number_of_values_per_window_slide
+
     def get_iterator(self, definition, window_duration, window_slide, gap_tolerance=None, num_windows_prefetch=None,
                      time_units: str = None, label_threshold=0.5, iterator_type=None, window_filter_fn=None,
                      shuffle=False, cached_windows_per_source=None, patient_history_fields=None, start_time=None,
@@ -5937,15 +6609,26 @@ class AtriumSDK:
           ``fill_overrides`` (``{measure_id: rule}``) and ``period_overrides`` (``{measure_id: period}``).
 
           Unknown / left-censored cells (data gaps, empty ``sparse`` cells, the region of a ``state`` before
-          its first observed transition) are marked **with a sentinel in the ``values`` array**: ``NaN`` for
+          its first observed transition, and any cell of a trailing partial window that lies **outside the
+          definition range**) are marked **with a sentinel in the ``values`` array**: ``NaN`` for
           numeric channels and ``-1`` (``UNKNOWN_STRING_CODE``, decodes to ``"<unknown>"``) for string/code
-          channels. **Limitation:** the sentinel conflates "unknown/censored" with a genuine missing reading
-          -- there is no separate ``known`` mask yet (a planned enhancement). String measures carry int64
-          dictionary codes in the window; decode on demand with ``Window.decode_string_signal(sdk,
-          measure_key)`` or ``iterator.decode_window_strings(window, measure_key)``. This fill configuration
-          is applied only by the default/mapped iterators; the ``lightmapped`` iterator and the
-          ``DatasetDefinition.filter`` path use the numeric grid only and ignore it. State right-censoring
-          and event pairing are later phases.
+          channels. ``presence``/``count`` cells INSIDE the range are a meaningful ``0`` ("no event
+          occurred"); only their out-of-range tail is ``NaN``, so ``actual_count`` reports true coverage.
+          **Limitation:** the sentinel conflates "unknown/censored" with a genuine missing reading
+          -- there is no separate ``known`` mask yet (a planned enhancement).
+
+          String measures carry int64 dictionary codes in the window; decode on demand with
+          ``Window.decode_string_signal(sdk, measure_key)`` or
+          ``iterator.decode_window_strings(window, measure_key)``. Those accessors decode **code channels
+          only**: a string ``event`` measure rendered as ``presence``/``count`` holds occupancy floats, not
+          codes, and decoding it would fabricate vocabulary strings, so it raises. Read the underlying
+          strings with :meth:`get_string_data` / :meth:`get_event_intervals` instead.
+
+          This fill configuration is applied only by the default/mapped iterators; the
+          ``DatasetDefinition.filter`` path uses the numeric grid only and ignores it, and the
+          ``lightmapped`` iterator -- numeric grid only -- **rejects** a definition containing a string or
+          aperiodic measure with a measure-named error pointing at ``iterator_type='mapped'``. State
+          right-censoring and event pairing are later phases.
 
         :param definition: A DatasetDefinition object or string representation specifying the measures and
                            patients or devices over particular time intervals.
@@ -5978,17 +6661,24 @@ class AtriumSDK:
             21.2 #3). One of ``"carry_forward"``, ``"sparse"``, ``"aggregate:last|mean|min|max"`` (for
             ``sample`` kinds) or ``"presence"`` / ``"count"`` (for ``event`` kinds). When ``None`` each
             measure uses its per-``signal_kind`` default (``sample``/``state`` -> carry-forward,
-            ``event`` -> presence). A global default incompatible with a given measure's kind silently
-            falls back to that kind's default. ``waveform`` numeric measures are unaffected (unchanged
-            NaN grid). Unknown / left-censored cells carry a sentinel: ``NaN`` for numeric channels, a
-            reserved unknown code for string channels (a sentinel conflates unknown/censored with a
-            genuine missing reading).
+            ``event`` -> presence). A rule name that is not a supported fill rule at all (e.g. the
+            hyphen typo ``"carry-forward"``) raises; a *valid* rule that is merely incompatible with a
+            given measure's kind silently falls back to that kind's default. ``waveform`` numeric
+            measures are unaffected (unchanged NaN grid). Unknown / left-censored cells carry a
+            sentinel: ``NaN`` for numeric channels, a reserved unknown code for string channels (a
+            sentinel conflates unknown/censored with a genuine missing reading).
         :param dict fill_overrides: ``{measure_id: rule}`` per-measure fill rule overrides. Unlike
-            ``aperiodic_fill``, an override incompatible with the measure's kind raises.
+            ``aperiodic_fill``, an override incompatible with the measure's kind raises. Keys must be
+            measure IDs present in the definition -- a key matching no measure (for instance a measure
+            *tag*) raises rather than being silently ignored.
         :param dict period_overrides: ``{measure_id: period}`` per-measure nominal raster period
             overrides in ``time_units``. Highest precedence in period resolution
-            (override -> measure.period_ns for waveform -> 1 s default for aperiodic kinds).
-of DatasetIterator objects depending on the value of num_iterators.
+            (override -> 1 s default for aperiodic kinds). **Aperiodic kinds only**: a waveform is
+            always sampled on its own stored period, so an override on a ``waveform`` measure raises.
+            Unknown keys raise, as with ``fill_overrides``.
+
+        :returns: A single DatasetIterator, or a list of DatasetIterator objects, depending on the
+            value of num_iterators.
         :rtype: Union[DatasetIterator, List[DatasetIterator]]
 
         **Example**:
@@ -6091,32 +6781,33 @@ of DatasetIterator objects depending on the value of num_iterators.
                           f"different from your requested iterator window slide {window_slide} ns. Windows will "
                           f"not be the same as the filter function's windows.")
 
-        min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
-        number_of_values_per_window_duration = (int(window_duration) * int(min_freq_nhz)) // (10 ** 18)
-        if number_of_values_per_window_duration == 0:
-            raise ValueError(f"Window Slide {window_duration} with units {time_units} is less than a single value. "
-                             f"Please increase it to at least one sample period.")
+        # Reject an unsupported aperiodic_fill rule NAME up front, before any
+        # measure-by-measure kind-compatibility resolution, so a typo such as
+        # "carry-forward" can never be silently swallowed (it used to fall
+        # through to the per-kind default with no error and no warning).
+        validate_fill_rule_name(aperiodic_fill, param_name="aperiodic_fill")
 
-        number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
-        if number_of_values_per_window_slide == 0:
-            raise ValueError(f"Window Slide {window_slide} with units {time_units} is less than a single value. "
-                             f"Please increase it to at least one sample period.")
+        number_of_values_per_window_slide = self._preflight_window_sizing(
+            definition, window_duration, window_slide, period_overrides, time_units)
 
         if not isinstance(shuffle, bool) or shuffle:
             # Set some sensible defaults for pseudorandom yet efficient shuffle
             if cached_windows_per_source is None:
-                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
-                number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
-                cached_windows_per_source = self.block.block_size // number_of_values_per_window_slide
+                # max(1, ...): a window slide holding more values than one block
+                # (e.g. a 600 s slide at 250 Hz) floored this to 0, and
+                # num_windows_prefetch = 100 * 0 = 0 degenerated the iterator to
+                # one window per batch. An explicit cached_windows_per_source is
+                # already asserted > 0 above; the derived one must be too.
+                cached_windows_per_source = max(
+                    1, self.block.block_size // number_of_values_per_window_slide)
             if num_windows_prefetch is None:
-                num_windows_prefetch = 100 * cached_windows_per_source
+                num_windows_prefetch = max(1, 100 * cached_windows_per_source)
 
         else:
             # Not shuffling
             if num_windows_prefetch is None:
-                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
-                number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
-                num_windows_prefetch = (10 * self.block.block_size) // number_of_values_per_window_slide
+                num_windows_prefetch = max(
+                    1, (10 * self.block.block_size) // number_of_values_per_window_slide)
 
         # Create appropriate iterator object based on iterator_type
         if iterator_type == 'mapped':
@@ -6130,6 +6821,28 @@ of DatasetIterator objects depending on the value of num_iterators.
             if aperiodic_fill is not None or fill_overrides or period_overrides:
                 warnings.warn("aperiodic_fill / fill_overrides / period_overrides are not applied by the "
                               "'lightmapped' iterator; it uses the numeric grid path.")
+            # 'lightmapped' renders every measure through the numeric NaN sample
+            # grid (return_nan_filled), which cannot represent a string measure at
+            # all and mis-sizes an aperiodic one (an opaque, measure-less
+            # "input array must be of size ..." from the block codec, raised deep
+            # inside iteration). Fail at construction with an actionable message
+            # instead. This is also the path AtriumDBMapDataset used to hard-code.
+            for measure_info in definition.validated_data_dict['measures']:
+                signal_kind, value_type = measure_kind_of(measure_info)
+                if is_string_value_type(value_type):
+                    raise ValueError(
+                        f"Measure {measure_info['id']} ('{measure_info['tag']}') is a string measure; "
+                        f"the 'lightmapped' iterator uses the numeric NaN sample grid only and its "
+                        f"values cannot be NaN-filled. Use iterator_type='mapped' (random access) or "
+                        f"the default iterator_type=None, which rasterize string and aperiodic "
+                        f"measures and accept aperiodic_fill / fill_overrides / period_overrides.")
+                if signal_kind != SIGNAL_KIND_WAVEFORM:
+                    raise ValueError(
+                        f"Measure {measure_info['id']} ('{measure_info['tag']}') is an aperiodic "
+                        f"('{signal_kind}') measure; the 'lightmapped' iterator uses the numeric NaN "
+                        f"sample grid only and cannot rasterize it onto a nominal grid period. Use "
+                        f"iterator_type='mapped' (random access) or the default iterator_type=None, "
+                        f"which accept aperiodic_fill / fill_overrides / period_overrides.")
             iterator = LightMappedIterator(
                 self, definition,
                 window_duration, window_slide,
@@ -6430,10 +7143,15 @@ of DatasetIterator objects depending on the value of num_iterators.
         * ``'error'`` - refuse (raise) a merge whose write shares timestamps with
           the block it would merge into.
 
-        The policy is enforced where deduplication happens: writes smaller than
-        one block that merge with an existing block, and duplicate pushes within
-        one buffer flush. Overlapping writes of a full block or more never merge,
-        so both copies are stored regardless of the policy."""
+        The policy is enforced where deduplication happens on write: writes smaller
+        than one block that merge with an existing block, and duplicate pushes within
+        one buffer flush. Overlapping writes of a full block or more never merge, so
+        both copies are stored under 'overwrite'/'protect' -- accepted, because write
+        speed is the priority and duplicates are expected at live ingest. The same
+        policy then governs the READ-side collapse
+        (``get_data(..., allow_duplicates=False)``), so a read resolves a surviving
+        duplicate exactly as a write would have. Under 'error',
+        :meth:`_report_undeduplicated_overlap` refuses such a write outright."""
         setting = getattr(self, 'settings_dict', None) and self.settings_dict.get(OVERWRITE_SETTING_NAME)
         if setting in ('protect', 'error'):
             return setting
@@ -6450,7 +7168,8 @@ of DatasetIterator objects depending on the value of num_iterators.
 
         # Sort the data based on the timestamps if sort is true
         if sort and time_type == 1:
-            r_times, r_values = sort_data(r_times, r_values, headers, 0, (2**63) - 1, allow_duplicates)
+            r_times, r_values = sort_data(r_times, r_values, headers, 0, (2**63) - 1, allow_duplicates,
+                                          duplicate_keep=self._duplicate_keep())
 
         return headers, r_times, r_values
 
@@ -6574,7 +7293,8 @@ of DatasetIterator objects depending on the value of num_iterators.
 
         # Sort the data based on the timestamps if sort is true
         if sort:
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
+            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates,
+                                          duplicate_keep=self._duplicate_keep())
 
         return headers, r_times, r_values
 

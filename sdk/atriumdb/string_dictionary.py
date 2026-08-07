@@ -59,51 +59,11 @@ UNKNOWN_STRING_CODE = -1
 # "unknown / censored" with a genuine missing reading -- see design 21.2 #2(a).
 UNKNOWN_STRING_VALUE = "<unknown>"
 
-# Prefer filelock (a robust cross-platform advisory lock). Fall back to a small
-# fcntl-based lock on POSIX so the dependency is optional. Both guard only the
-# append; reads never need the lock because the file is append-only.
-try:
-    from filelock import FileLock as _FileLock
-
-    _HAS_FILELOCK = True
-except ImportError:  # pragma: no cover - exercised only when filelock is absent
-    _HAS_FILELOCK = False
-    try:
-        import fcntl as _fcntl
-    except ImportError:  # pragma: no cover - non-POSIX without filelock
-        _fcntl = None
-
-
-class _FcntlLock:
-    """Minimal exclusive file lock using fcntl, used only when filelock is not
-    installed. Creates/opens a ``.lock`` sidecar file and holds an exclusive
-    ``flock`` for the duration of the ``with`` block."""
-
-    def __init__(self, lock_path):
-        self._lock_path = str(lock_path)
-        self._fh = None
-
-    def __enter__(self):
-        if _fcntl is None:  # pragma: no cover
-            raise RuntimeError(
-                "String dictionary appends require either the 'filelock' package "
-                "or POSIX fcntl; neither is available in this environment.")
-        self._fh = open(self._lock_path, "w")
-        _fcntl.flock(self._fh.fileno(), _fcntl.LOCK_EX)
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        try:
-            _fcntl.flock(self._fh.fileno(), _fcntl.LOCK_UN)
-        finally:
-            self._fh.close()
-            self._fh = None
-
-
-def _make_lock(lock_path):
-    if _HAS_FILELOCK:
-        return _FileLock(str(lock_path))
-    return _FcntlLock(lock_path)
+# The append is guarded by a cross-process advisory lock. The implementation is shared
+# with the block-merge lock in ``write_data`` -- see :mod:`atriumdb.file_lock` for the
+# filelock/fcntl selection and its caveats. Reads never need the lock because the file is
+# append-only.
+from atriumdb.file_lock import make_file_lock as _make_lock
 
 
 class MeasureStringDictionary:
@@ -119,6 +79,10 @@ class MeasureStringDictionary:
         # index -> string (code == index); str -> code for fast encode lookups.
         self._strings: list = list(strings)
         self._code_of: dict = {s: i for i, s in enumerate(self._strings)}
+        # Bookkeeping for the most recent :meth:`encode` so a caller whose write
+        # fails downstream can undo the appends (see :meth:`rollback_appends`).
+        self.last_appended: list = []
+        self.last_length_before_append: int = len(self._strings)
 
     # ------------------------------------------------------------------ #
     # Location / existence
@@ -130,13 +94,21 @@ class MeasureStringDictionary:
 
     @classmethod
     def exists(cls, meta_dir: Union[str, PurePath], measure_id: int) -> bool:
-        """True if a string dictionary file exists for this measure.
+        """True if a NON-EMPTY string dictionary file exists for this measure.
 
         Phase 1 uses the presence of this file as the single signal that a measure
         is string-typed. Keep this the one detection call site so Phase 2 can swap
         it for a ``signal_kind`` schema column without touching callers.
+
+        A zero-byte file is deliberately NOT an establishment signal: it carries no
+        vocabulary, so treating it as "this measure is string-typed" would let a
+        crashed or rolled-back write permanently lock a numeric measure (Wave-2 W1).
         """
-        return cls.path_for(meta_dir, measure_id).is_file()
+        path = cls.path_for(meta_dir, measure_id)
+        try:
+            return path.is_file() and path.stat().st_size > 0
+        except OSError:  # pragma: no cover - racing unlink
+            return False
 
     # ------------------------------------------------------------------ #
     # Loading
@@ -155,13 +127,27 @@ class MeasureStringDictionary:
         strings: list = []
         if self._path.is_file():
             with open(self._path, "r", encoding="utf-8") as f:
-                for line in f:
+                for line_number, line in enumerate(f, start=1):
                     # Trailing newline is the record separator; blank final line
                     # (no content) is skipped, but ``""`` decodes to empty string.
                     line = line.rstrip("\n")
                     if line == "":
                         continue
-                    strings.append(json.loads(line))
+                    try:
+                        strings.append(json.loads(line))
+                    except json.JSONDecodeError as decode_error:
+                        # A crash mid-append leaves a partial final line. The bare
+                        # JSONDecodeError named neither the measure, the file, nor a
+                        # remedy (Wave-2 W8), and every code from here on is unreadable.
+                        raise ValueError(
+                            f"String dictionary '{self._path}' is corrupt at line {line_number} "
+                            f"(code {len(strings)}): {decode_error}. The file is append-only JSON "
+                            f"Lines, so this is normally a truncated final line from an interrupted "
+                            f"write, or a partial restore. Restore meta/string_dict/ from the backup "
+                            f"taken with this dataset's .tsc files and metadata database, and do not "
+                            f"write to this measure until you do -- writing now would re-issue codes "
+                            f"that existing blocks already use."
+                        ) from decode_error
         self._strings = strings
         self._code_of = {s: i for i, s in enumerate(strings)}
 
@@ -205,6 +191,10 @@ class MeasureStringDictionary:
                 seen.add(s)
                 unknown.append(s)
 
+        # Reset the rollback bookkeeping for this call.
+        self.last_appended = []
+        self.last_length_before_append = len(self._strings)
+
         if unknown:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             lock = _make_lock(str(self._path) + ".lock")
@@ -212,6 +202,7 @@ class MeasureStringDictionary:
                 # Re-sync with the file: another process may have appended codes
                 # (or the very strings we were about to add) since we loaded.
                 self._reload_from_file()
+                self.last_length_before_append = len(self._strings)
                 to_append = [s for s in unknown if s not in self._code_of]
                 if to_append:
                     with open(self._path, "a", encoding="utf-8") as f:
@@ -219,15 +210,99 @@ class MeasureStringDictionary:
                             f.write(json.dumps(s, ensure_ascii=False) + "\n")
                             self._code_of[s] = len(self._strings)
                             self._strings.append(s)
+                            self.last_appended.append(s)
 
         return np.fromiter((self._code_of[s] for s in coerced), dtype=np.int64, count=len(coerced))
 
-    def decode(self, codes: np.ndarray) -> np.ndarray:
-        """Map ``int64`` codes back to strings, returning an object ndarray.
+    def rollback_appends(self) -> bool:
+        """Undo the appends made by the most recent :meth:`encode` call.
 
-        A code outside ``[0, len(self))`` raises ``ValueError`` -- it indicates a
-        dictionary/data mismatch, which is never expected within one dataset.
+        A string write encodes its values (appending genuinely new strings) *before*
+        the block bytes and SQL rows are committed, because the codes have to be
+        baked into the encoded block. If the write then fails, those appended
+        strings describe data the dataset does not contain -- they retain free text
+        (potentially PHI) from a rejected batch and, worse, make the mere existence
+        of the dictionary file establish the measure as string-typed forever
+        (Wave-2 W1). This makes the append transactional with the write.
+
+        The truncation is done under the same lock as the append and only when the
+        file still ends with exactly the lines this instance wrote -- if another
+        process appended in the meantime the codes are no longer ours to reclaim,
+        so nothing is removed and ``False`` is returned. When the rollback empties
+        the dictionary the file is unlinked, so no zero-byte husk is left behind.
+
+        Returns True when the appends were undone (or there was nothing to undo).
         """
+        appended = list(self.last_appended)
+        if not appended:
+            return True
+
+        previous_length = self.last_length_before_append
+        lock = _make_lock(str(self._path) + ".lock")
+        with lock:
+            self._reload_from_file()
+            if self._strings[previous_length:] != appended:
+                # A concurrent writer appended after us (or the file changed under
+                # us). Truncating would destroy codes we do not own.
+                self.last_appended = []
+                return False
+
+            if previous_length == 0:
+                try:
+                    self._path.unlink()
+                except FileNotFoundError:  # pragma: no cover - already gone
+                    pass
+            else:
+                kept = self._strings[:previous_length]
+                tmp_path = self._path.with_suffix(self._path.suffix + ".rollback")
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    for s in kept:
+                        f.write(json.dumps(s, ensure_ascii=False) + "\n")
+                tmp_path.replace(self._path)
+
+            self._reload_from_file()
+
+        self.last_appended = []
+        self.last_length_before_append = len(self._strings)
+        return True
+
+    def _out_of_range_error(self, code: int) -> ValueError:
+        """The error for a code this dictionary cannot resolve.
+
+        Three genuinely different situations land here, and at 3am the difference
+        is what matters, so the message names which one it looks like:
+        the reserved unknown sentinel decoded through the strict accessor, an
+        emptied/rolled-back dictionary, and a dictionary that is merely older than
+        the blocks (the restore-mismatch case ``_check_string_dictionary_not_lost``
+        guards on the write side)."""
+        n_vocab = len(self._strings)
+        if code == UNKNOWN_STRING_CODE:
+            cause = (f"{UNKNOWN_STRING_CODE} is the reserved 'unknown' sentinel that "
+                     f"rasterized windows use for gap / censored cells, so these codes "
+                     f"came from a window rather than from stored data: decode them with "
+                     f"decode_with_unknown() (Window.decode_string_signal does this for "
+                     f"you) instead of decode().")
+        elif n_vocab == 0:
+            cause = ("The dictionary is empty or missing, so NO code can be resolved. "
+                     "Restore meta/string_dict/ from the backup taken with this dataset's "
+                     ".tsc files and metadata database.")
+        else:
+            cause = (f"Codes 0..{n_vocab - 1} are known, so the blocks reference strings "
+                     f"this dictionary file does not have: it is older than the data "
+                     f"(a partial restore, or a truncated append). Restore "
+                     f"meta/string_dict/ from the backup taken with this dataset's .tsc "
+                     f"files and metadata database.")
+        return ValueError(
+            f"String code {code} is out of range for a dictionary of size {n_vocab} "
+            f"(measure dictionary '{self._path}'). This indicates a dictionary/data "
+            f"mismatch. {cause}")
+
+    def _decode_codes(self, codes, unknown_code=None, unknown_value=None) -> np.ndarray:
+        """Shared decode loop for :meth:`decode` / :meth:`decode_with_unknown`.
+
+        ``unknown_code=None`` means "no sentinel is tolerated" (strict decode of
+        stored data); otherwise that one code maps to ``unknown_value`` and every
+        other out-of-range code still raises."""
         codes_arr = np.asarray(codes)
         n_vocab = len(self._strings)
         out = np.empty(codes_arr.shape, dtype=object)
@@ -235,13 +310,24 @@ class MeasureStringDictionary:
         out_flat = out.reshape(-1)
         for i, c in enumerate(flat):
             code = int(c)
+            if unknown_code is not None and code == unknown_code:
+                out_flat[i] = unknown_value
+                continue
             if code < 0 or code >= n_vocab:
-                raise ValueError(
-                    f"String code {code} is out of range for a dictionary of size "
-                    f"{n_vocab} (measure dictionary '{self._path}'). This indicates "
-                    f"a dictionary/data mismatch.")
+                raise self._out_of_range_error(code)
             out_flat[i] = self._strings[code]
         return out
+
+    def decode(self, codes: np.ndarray) -> np.ndarray:
+        """Map ``int64`` codes back to strings, returning an object ndarray.
+
+        Strict: this is the accessor for codes read straight out of stored blocks,
+        where every code must resolve. A code outside ``[0, len(self))`` raises
+        ``ValueError`` -- it indicates a dictionary/data mismatch, which is never
+        expected within one dataset. Rasterized WINDOW codes may legitimately
+        carry the unknown sentinel; decode those with :meth:`decode_with_unknown`.
+        """
+        return self._decode_codes(codes)
 
     def decode_with_unknown(self, codes: np.ndarray,
                             unknown_code: int = UNKNOWN_STRING_CODE,
@@ -255,23 +341,8 @@ class MeasureStringDictionary:
         sentinel decodes to ``unknown_value`` (``"<unknown>"`` by default, or
         pass ``None`` to get ``None`` for those cells). Any other out-of-range
         code still raises, as it indicates a dictionary/data mismatch."""
-        codes_arr = np.asarray(codes)
-        n_vocab = len(self._strings)
-        out = np.empty(codes_arr.shape, dtype=object)
-        flat = codes_arr.reshape(-1)
-        out_flat = out.reshape(-1)
-        for i, c in enumerate(flat):
-            code = int(c)
-            if code == unknown_code:
-                out_flat[i] = unknown_value
-                continue
-            if code < 0 or code >= n_vocab:
-                raise ValueError(
-                    f"String code {code} is out of range for a dictionary of size "
-                    f"{n_vocab} (measure dictionary '{self._path}'). This indicates "
-                    f"a dictionary/data mismatch.")
-            out_flat[i] = self._strings[code]
-        return out
+        return self._decode_codes(codes, unknown_code=unknown_code,
+                                  unknown_value=unknown_value)
 
     # ------------------------------------------------------------------ #
     # Introspection
@@ -297,3 +368,22 @@ class MeasureStringDictionary:
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"MeasureStringDictionary(path={self._path!s}, size={len(self._strings)})"
+
+
+def decode_window_codes(sdk, measure_id: int, codes, unknown_value=None) -> np.ndarray:
+    """Decode one string measure's rasterized WINDOW codes back to strings.
+
+    The one implementation behind :meth:`Window.decode_string_signal` and
+    :meth:`DatasetIterator.decode_string_codes`, which are the same three steps
+    (locate the measure's dictionary under the dataset's ``meta/``, load it,
+    decode tolerating the unknown sentinel) and must not drift apart.
+
+    ``unknown_value=None`` selects the default :data:`UNKNOWN_STRING_VALUE`
+    (``"<unknown>"``). To get Python ``None`` for unknown cells instead, decode
+    via :meth:`MeasureStringDictionary.decode_with_unknown` directly.
+    """
+    if unknown_value is None:
+        unknown_value = UNKNOWN_STRING_VALUE
+    string_dict = MeasureStringDictionary.load(sdk._meta_dir, int(measure_id))
+    return string_dict.decode_with_unknown(
+        np.asarray(codes).astype(np.int64), unknown_value=unknown_value)

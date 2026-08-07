@@ -1279,6 +1279,23 @@ time (P5), so what transfers is the ranges, not the event regions.
 
 ### 24.2 Decisions (✅ confirmed with requester)
 
+> **⚠️ SUPERSEDED IN PART — de-identification scope (owner direction).**
+> The project owner has since narrowed what de-identification covers. It is **patient-level
+> PHI and time-shifting only**; it does **not** alter signal or label content.
+>
+> * **§24.2#2 / §15.3 location-name pseudonymization is reversed.** `bed.name`, `unit.name`
+>   and `institution.name` transfer **verbatim** in every mode. There is no need to
+>   pseudonymize location names. `keep_identified` remains wired and validated for those
+>   tables but is a no-op for them.
+> * **String measure VALUES are never redacted by default.** They are signal data. The
+>   `string_value_policy` parameter defaults to `"transfer"` in every mode, `deidentify=True`
+>   included; `"redact"` / `"skip"` / a callable are explicit opt-ins only.
+> * **Label names, label text and label sources are never altered** by `deidentify`.
+> * **Unchanged:** §24.2#3 (`visit_number` → scrambled int), patient column handling, the
+>   patient id remap, every time-shift, and §24.1#4 (`log_hl7_adt` never transfers).
+>
+> See `sdk/docs/source/dataset.rst` for the shipped, authoritative description.
+
 1. **✅ String-dictionary transfer: fresh-copy + full union/remap on merge.** Fresh
    destination measure → dict copies verbatim (codes valid). Destination already has a
    dictionary for the measure → **union the vocabularies and remap the transferred blocks'

@@ -370,9 +370,12 @@ def test_get_interval_array_unaffected_numeric_and_string(sdk):
 
 def test_transfer_measures_do_no_harm(sdk):
     """Do-no-harm (spec section 19.6): transferring measures between two datasets must
-    not CHOKE on the new columns. P2 deliberately does NOT carry signal_kind/value_type
-    (that is P6), so the destination measures default to waveform/numeric -- this test
-    documents that current, intended behavior and that the transfer completes."""
+    not CHOKE on the new columns.
+
+    Updated for Phase 6 (spec section 24.1#1): ``_transfer_measure`` now deliberately
+    CARRIES signal_kind/value_type to the destination, so 'nibp' arrives as
+    ``sample``/``numeric`` rather than falling back to the destination defaults. A
+    measure that never stated them ('plain') still resolves to the defaults."""
     src = sdk
     m1 = src.insert_measure(measure_tag="plain", freq=1.0, freq_units="Hz", units="x")
     m2 = src.insert_measure(measure_tag="nibp", freq=1.0, freq_units="Hz", units="mmHg",
@@ -385,9 +388,12 @@ def test_transfer_measures_do_no_harm(sdk):
         transfer_measures(src, dst, measure_id_list=[m1, m2])
         dst_measures = {mm["tag"]: mm for mm in dst.get_all_measures().values()}
         assert "plain" in dst_measures and "nibp" in dst_measures
-        # Columns are NOT carried in P2: destination defaults apply.
+        # P6 carries the columns across the transfer.
         assert dst_measures["nibp"]["value_type"] == "numeric"
-        assert dst_measures["nibp"]["signal_kind"] == "waveform"
+        assert dst_measures["nibp"]["signal_kind"] == "sample"
+        # A measure that never stated them still resolves to the read-time defaults.
+        assert dst_measures["plain"]["value_type"] == "numeric"
+        assert dst_measures["plain"]["signal_kind"] == "waveform"
     except ImportError:
         pytest.skip("transfer_measures helper not importable in this build")
     finally:

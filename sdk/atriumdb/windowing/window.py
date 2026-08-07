@@ -52,6 +52,53 @@ class CommonWindowFormat:
 
 @dataclass
 class Window:
+    """One window of data emitted by ``AtriumSDK.get_iterator``.
+
+    :ivar dict signals: One entry per measure, keyed by ``(tag, freq_hz, units)``
+        -- note that the key does NOT include the value type, so a numeric and a
+        string measure sharing a tag/freq/units would collide. Each entry is::
+
+            {'times':          (N,) int64   the GRID timestamps, not observation times
+             'values':         (N,) float64, or (N,) int64 for string CODE channels
+             'expected_count': int          N, the number of grid cells
+             'actual_count':   int          cells that are not the unknown sentinel
+             'measure_id':     int}
+
+        ``N`` is per measure (``window_duration // that measure's raster
+        period``), so a mixed-rate window has channels of different lengths.
+
+        **Sentinels.** A cell whose value is not known -- a gap, an empty
+        ``sparse`` cell, the region of a ``state`` before its first observed
+        transition, or any cell of a trailing partial window that falls outside
+        the definition range -- carries ``NaN`` on a numeric channel and
+        :data:`~atriumdb.string_dictionary.UNKNOWN_STRING_CODE` (``-1``, which
+        decodes to ``"<unknown>"``) on a string code channel. Real dictionary
+        codes are always ``>= 0``, so ``values >= 0`` is an exact known-mask for
+        string channels; a numeric channel has no such mask, because a genuinely
+        written NaN reading is indistinguishable from an unfilled cell.
+
+        **``actual_count`` measures fill coverage, not observation density.** A
+        carried-forward stale value counts as present, and a genuinely written
+        NaN counts as absent. For observation times or counts, read the raw
+        stream with ``AtriumSDK.get_data`` / ``get_string_data`` over the same
+        range.
+
+        **String channels hold codes, not text.** Decode on demand with
+        :meth:`decode_string_signal`. An ``event`` measure rendered with the
+        default ``presence``/``count`` rule holds occupancy floats instead and
+        cannot be decoded -- see :func:`assert_decodable_string_signal`.
+
+    :ivar int start_time: Window start in epoch nanoseconds.
+    :ivar int device_id: Source device, or ``None`` for a patient source.
+    :ivar int patient_id: Source patient, or ``None`` for a device source.
+    :ivar np.ndarray label_time_series: ``(num_label_sets, row_size)`` int8 0/1
+        per-sample label channel, on the FASTEST measure's grid, or ``None``.
+    :ivar np.ndarray label: Window-level label per label set, obtained by
+        thresholding ``label_time_series`` at ``label_threshold``, or ``None``.
+    :ivar dict patient_info: Patient demographics for this window (plus any
+        requested ``patient_history_fields``, resolved as of the window start).
+    """
+
     signals: dict
     start_time: int
     device_id: int
@@ -68,12 +115,53 @@ class Window:
         demand via the measure's :class:`MeasureStringDictionary`. ``measure_key``
         is the ``(tag, freq_hz, units)`` tuple keying :attr:`signals`. The
         reserved unknown sentinel decodes to ``unknown_value`` (``"<unknown>"``
-        by default) instead of raising."""
+        by default) instead of raising.
+
+        Only a *code* channel can be decoded. A channel rendered with the
+        ``presence`` / ``count`` fill rules -- which is what an ``event`` measure
+        gets by default -- holds occupancy **floats**, not dictionary codes, so
+        decoding it would silently fabricate a plausible-looking but entirely
+        wrong sequence of clinical strings. Such a channel raises
+        :class:`ValueError` here; see :func:`assert_decodable_string_signal`."""
         # Imported lazily to avoid a module import cycle at load time.
-        from atriumdb.string_dictionary import MeasureStringDictionary, UNKNOWN_STRING_VALUE
-        if unknown_value is None:
-            unknown_value = UNKNOWN_STRING_VALUE
+        from atriumdb.string_dictionary import decode_window_codes
         signal = self.signals[measure_key]
-        string_dict = MeasureStringDictionary.load(sdk._meta_dir, int(signal['measure_id']))
-        return string_dict.decode_with_unknown(
-            np.asarray(signal['values']).astype(np.int64), unknown_value=unknown_value)
+        assert_decodable_string_signal(signal, measure_key)
+        return decode_window_codes(sdk, signal['measure_id'], signal['values'],
+                                   unknown_value=unknown_value)
+
+
+def assert_decodable_string_signal(signal, measure_key=None):
+    """Raise unless ``signal['values']`` really holds int64 dictionary codes.
+
+    The window's value dtype is the exact discriminator: rasterized string codes
+    are ``int64`` (with ``UNKNOWN_STRING_CODE`` for censored cells), while every
+    numeric channel -- including the ``presence`` / ``count`` rasterization of a
+    *string* ``event`` measure -- is ``float64``.
+
+    Blindly ``astype(int64)``-ing a presence channel turns 0/1 occupancy into
+    dictionary codes 0/1 and returns real vocabulary words for cells where
+    nothing happened. That is silent fabrication of clinical values through a
+    documented API, so it is refused instead.
+
+    There is no "right" decoding for a presence/count channel: it is an
+    occupancy count over a grid cell, deliberately lossy about *which* value
+    occurred (a cell may contain several distinct events). To read the strings
+    themselves use :meth:`AtriumSDK.get_string_data` /
+    :meth:`AtriumSDK.get_event_intervals` on the same time range, which return
+    the raw event stream rather than a rasterized grid.
+    """
+    values = np.asarray(signal['values'])
+    if np.issubdtype(values.dtype, np.integer):
+        return
+    where = f" for signal {measure_key}" if measure_key is not None else ""
+    raise ValueError(
+        f"Cannot decode string codes{where}: the window's values have dtype "
+        f"{values.dtype}, not int64 dictionary codes. This channel is a numeric "
+        f"rasterization -- an 'event' measure filled with 'presence'/'count' holds "
+        f"occupancy floats, and a numeric measure holds measurements; neither carries "
+        f"decodable codes. Decoding it would fabricate vocabulary strings from those "
+        f"numbers. To read the underlying strings use AtriumSDK.get_string_data() or "
+        f"AtriumSDK.get_event_intervals() over the same time range; to get a decodable "
+        f"code channel from a string measure, render it with a code-preserving fill "
+        f"rule (e.g. fill_overrides={{measure_id: 'sparse'}} on a 'sample'/'state' kind).")

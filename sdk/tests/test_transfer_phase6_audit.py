@@ -251,9 +251,15 @@ def test_visit_number_scramble_consistent_and_collision_free():
 
 # =========================================================================== DE-ID LEAKAGE
 def test_deid_no_identifier_leakage_across_encounter_family():
-    """After a de-identified transfer with keep_identified={} (the default), NO real
-    location name, NO real visit_number, and NO patient identifier may appear anywhere on
-    the destination encounter family."""
+    """RE-POINTED for the corrected de-identification scope.
+
+    De-identification covers patient-level PHI. On the encounter family that is exactly
+    one field: ``visit_number``, a direct visit identifier that joins back to the source
+    record system. It must not survive a de-identified transfer.
+
+    Location NAMES (bed / unit / institution) are no longer pseudonymized -- they say where
+    a recording happened, not whose it is -- so this test now asserts they transfer
+    verbatim, where it previously required them to be scrambled."""
     src, _ = _fresh_sdk("leak_src")
     dest, _ = _fresh_sdk("leak_dest")
     ids = _base_measures_and_patient(src)
@@ -271,16 +277,25 @@ def test_deid_no_identifier_leakage_across_encounter_family():
     assert _count(dest, "unit") == 1
     assert _count(dest, "bed") == 1
 
-    # Collect every text value on the dest encounter family.
+    # Location names are signal context, not PHI: they transfer verbatim.
+    assert _raw_all(dest, "SELECT name FROM institution")[0][0] == "General Hospital"
+    assert _raw_all(dest, "SELECT name FROM unit")[0][0] == "PICU"
+    assert _raw_all(dest, "SELECT name FROM bed")[0][0] == "Bed-12"
+
+    # The patient-level identifiers must NOT survive.
+    dest_visit = _raw_all(dest, "SELECT visit_number FROM encounter")[0][0]
+    assert dest_visit is not None, "the encounter must still be present (guard against a vacuous pass)"
+    assert str(dest_visit) != "VISIT-SECRET-42", "the real visit_number leaked under de-id"
+    assert str(int(dest_visit)) == str(dest_visit), "visit_number is scrambled to a random int"
+
+    # And no patient identifier appears anywhere on the family.
+    forbidden = {"VISIT-SECRET-42", "900900"}
     dest_texts = set()
     for tbl, col in [("institution", "name"), ("unit", "name"), ("bed", "name"),
                      ("encounter", "visit_number")]:
         for (v,) in _raw_all(dest, f"SELECT {col} FROM {tbl}"):
             if v is not None:
                 dest_texts.add(str(v))
-    assert len(dest_texts) == 4, "expected a pseudonymized value in each of the four slots"
-
-    forbidden = {"General Hospital", "PICU", "Bed-12", "VISIT-SECRET-42", "900900"}
     leaked = forbidden & dest_texts
     assert not leaked, f"real identifiers leaked under de-id: {leaked}"
 
