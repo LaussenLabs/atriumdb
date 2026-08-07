@@ -15,6 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import pytest
 from atriumdb import AtriumSDK
 import shutil
 from pathlib import Path
@@ -23,8 +24,8 @@ import os
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 
 from atriumdb.transfer.formats.dataset import export_dataset, import_dataset
-from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset
-from tests.testing_framework import _test_for_both
+from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset, TRUNCATED_SAMPLES_PER_RECORD
+from tests.testing_framework import parametrized_backends, prepare_backend
 
 
 DB_NAME = 'atrium-formats-transfer'
@@ -32,10 +33,18 @@ PARTIAL_DB_NAME = 'atrium-formats-partial-transfer'
 MAX_RECORDS = 1
 SEED = 42
 
+# csv/parquet round-trip is indifferent to sample count. Truncate the
+# waveform (still multi-block) and keep every assertion.
 
-def test_csv_dataset():
-    for data_format in ["csv", "parquet"]:
-        _test_for_both(DB_NAME, _test_csv_dataset, data_format)
+
+# real parametrization instead of the _test_for_both helper -- both backends
+# still run, but each gets its own test id ([sqlite] / [mariadb]), can be selected
+# with -k/-m, reports its failure independently and shows up in --durations.
+@pytest.mark.mitbih
+@pytest.mark.parametrize("data_format", ["csv", "parquet"])
+@pytest.mark.parametrize("backend", parametrized_backends())
+def test_csv_dataset(backend, data_format):
+    _test_csv_dataset(*prepare_backend(DB_NAME, backend), data_format)
 
 
 def _test_csv_dataset(db_type, dataset_location, connection_params, data_format):
@@ -66,7 +75,8 @@ def _test_csv_dataset(db_type, dataset_location, connection_params, data_format)
     shutil.rmtree(dataset_dir, ignore_errors=True)
     os.mkdir(dataset_dir)
 
-    write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
+    write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED,
+                             max_samples_per_record=TRUNCATED_SAMPLES_PER_RECORD)
 
     measure_id_list = None
     device_id_list = None
@@ -82,4 +92,5 @@ def _test_csv_dataset(db_type, dataset_location, connection_params, data_format)
 
     import_dataset(sdk_2, directory=dataset_dir, data_format=data_format)
 
-    assert_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED)
+    assert_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED,
+                              max_samples_per_record=TRUNCATED_SAMPLES_PER_RECORD)

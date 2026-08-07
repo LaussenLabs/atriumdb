@@ -16,23 +16,51 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import numpy as np
+import pytest
 
 from atriumdb import AtriumSDK
-from tests.testing_framework import _test_for_both
+from tests.testing_framework import parametrized_backends, prepare_backend
 
 DB_NAME = 'oversized_block'
 
+# The behaviour under test is oversized-block *splitting*, which the block writer
+# decides purely from num_values / block_size:
+#     num_blocks   = max(1, num_values // block_size)          -> 30
+#     split index  = (num_blocks - 1) * block_size             -> the oversized block
+# Both numbers are therefore scaled down 10x, holding that ratio exactly:
+#     1,000,000 / 32,768 = 30.5 blocks   ->   100,000 / 3,276 = 30.5 blocks
+# and the oversized final block stays the same multiple of a full block
+#     49,728 / 32,768 = 1.52             ->     4,996 / 3,276 = 1.53
+# Every gap index scales by the same 10x, EXCEPT the indices that were chosen to sit
+# exactly on the split (950,271 == 29*32,768 - 1); those are recomputed from the new
+# split, SPLIT_INDEX - 1 == 95,003, so the "exact" cases stay exact.
+BLOCK_SIZE = 3_276
+NUM_VALUES = 100_000                     # 30 blocks; last one oversized
+SPLIT_INDEX = (max(1, NUM_VALUES // BLOCK_SIZE) - 1) * BLOCK_SIZE   # 95,004
+EXACT_SPLIT_GAP_INDEX = SPLIT_INDEX - 1                             # 95,003
+ONLY_OVERSIZED_BLOCK_VALUES = 6_000      # 1 block, oversized  (was 60,000)
+EXACTLY_FULL_BLOCKS_VALUES = 2 * BLOCK_SIZE                         # (was 65,536)
+LESS_THAN_ONE_BLOCK_VALUES = 3_000       # (was 30,000)
 
-def test_write_oversized_block():
-    _test_for_both(DB_NAME, _test_write_oversized_block_timestamp)
-    _test_for_both(DB_NAME, _test_write_oversized_block_gap)
+
+# real parametrization instead of the _test_for_both helper -- both backends
+# still run, but each gets its own test id ([sqlite] / [mariadb]), can be selected
+# with -k/-m, reports its failure independently and shows up in --durations.
+@pytest.mark.parametrize("backend", parametrized_backends())
+def test_write_oversized_block_timestamp(backend):
+    _test_write_oversized_block_timestamp(*prepare_backend(DB_NAME, backend))
+
+
+@pytest.mark.parametrize("backend", parametrized_backends())
+def test_write_oversized_block_gap(backend):
+    _test_write_oversized_block_gap(*prepare_backend(DB_NAME, backend))
 
 
 def _test_write_oversized_block_timestamp(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    sdk.block.block_size = 32768
+    sdk.block.block_size = BLOCK_SIZE
 
     # Create Raw Data
     start_time_s = 1234567890
@@ -43,9 +71,9 @@ def _test_write_oversized_block_timestamp(db_type, dataset_location, connection_
 
     period_ns = (10 ** 18) // freq_nhz
 
-    num_values = 1_000_000
+    num_values = NUM_VALUES
 
-    gap_data = [10_000, 24_000_000, 12_000, 138_000_000, 54_403, 34_560_000_000, 104_903, 56_530_000_000]
+    gap_data = [1_000, 24_000_000, 1_200, 138_000_000, 5_440, 34_560_000_000, 10_490, 56_530_000_000]
     gap_data = np.array(gap_data, dtype=np.int64)
 
     timestamp_arr, values, end_time_nano = make_gap_data(gap_data, start_time_nano, num_values, period_ns)
@@ -66,8 +94,8 @@ def _test_write_oversized_block_timestamp(db_type, dataset_location, connection_
     assert np.array_equal(r_values, values)
 
     ### test for case where there is only the oversized block being created ###
-    num_values = 60_000
-    gap_data = [10_000, 24_000_000, 12_000, 138_000_000, 54_403, 34_560_000_000]
+    num_values = ONLY_OVERSIZED_BLOCK_VALUES
+    gap_data = [1_000, 24_000_000, 1_200, 138_000_000, 5_440, 34_560_000_000]
     gap_data = np.array(gap_data, dtype=np.int64)
 
     timestamp_arr, values, end_time_nano = make_gap_data(gap_data, start_time_nano, num_values, period_ns)
@@ -86,8 +114,8 @@ def _test_write_oversized_block_timestamp(db_type, dataset_location, connection_
     assert np.array_equal(r_values, values)
 
     ### test for case where there are only full blocks ###
-    num_values = 65_536
-    gap_data = [10_000, 24_000_000, 12_000, 138_000_000, 54_403, 34_560_000_000]
+    num_values = EXACTLY_FULL_BLOCKS_VALUES
+    gap_data = [1_000, 24_000_000, 1_200, 138_000_000, 5_440, 34_560_000_000]
     gap_data = np.array(gap_data, dtype=np.int64)
 
     timestamp_arr, values, end_time_nano = make_gap_data(gap_data, start_time_nano, num_values, period_ns)
@@ -107,8 +135,8 @@ def _test_write_oversized_block_timestamp(db_type, dataset_location, connection_
 
 
     ### test for case where there is less than one block worth of values ###
-    num_values = 30_000
-    gap_data = [10_000, 24_000_000, 12_000, 138_000_000]
+    num_values = LESS_THAN_ONE_BLOCK_VALUES
+    gap_data = [1_000, 24_000_000, 1_200, 138_000_000]
     gap_data = np.array(gap_data, dtype=np.int64)
 
     timestamp_arr, values, end_time_nano = make_gap_data(gap_data, start_time_nano, num_values, period_ns)
@@ -132,7 +160,7 @@ def _test_write_oversized_block_gap(db_type, dataset_location, connection_params
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     # set block size so tests on exact gap work
-    sdk.block.block_size = 32768
+    sdk.block.block_size = BLOCK_SIZE
     # Create Raw Data
     start_time_s = 1234567890
     start_time_nano = start_time_s * (10 ** 9)
@@ -140,37 +168,37 @@ def _test_write_oversized_block_gap(db_type, dataset_location, connection_params
     freq_hz = 500
     freq_nhz = freq_hz * (10 ** 9)
     period_ns = (10 ** 18) // freq_nhz
-    num_values = 1_000_000
+    num_values = NUM_VALUES
 
     # where values will be split somewhere in the middle of the last gap
-    gap_data_split_last_gap = [10_000, 24_000_000, 12_000, 138_000_000, 54_403, 34_560_000_000, 104_903, 56_530_000_000]
+    gap_data_split_last_gap = [1_000, 24_000_000, 1_200, 138_000_000, 5_440, 34_560_000_000, 10_490, 56_530_000_000]
     gap_data_split_last_gap = np.array(gap_data_split_last_gap, dtype=np.int64)
 
     # where values will be split somewhere in the gap just before the last gap
-    gap_data_split_just_before_last_gap = [10_000, 24_000_000, 12_000, 138_000_000, 54_403, 34_560_000_000,
-                                           104_903, 56_530_000_000, 950_500, 156_000_000]
+    gap_data_split_just_before_last_gap = [1_000, 24_000_000, 1_200, 138_000_000, 5_440, 34_560_000_000,
+                                           10_490, 56_530_000_000, 95_050, 156_000_000]
     gap_data_split_just_before_last_gap = np.array(gap_data_split_just_before_last_gap, dtype=np.int64)
 
     # there are multiple gaps after where the gap split should happen
-    gap_data_split_before_multiple_gaps = [10_000, 24_000_000, 12_000, 138_000_000, 54_403, 34_560_000_000,
-                                           104_903, 56_530_000_000, 950_500, 156_000_000, 970_000, 56_000_000,
-                                           985_123, 200_000_000]
+    gap_data_split_before_multiple_gaps = [1_000, 24_000_000, 1_200, 138_000_000, 5_440, 34_560_000_000,
+                                           10_490, 56_530_000_000, 95_050, 156_000_000, 97_000, 56_000_000,
+                                           98_512, 200_000_000]
     gap_data_split_before_multiple_gaps = np.array(gap_data_split_before_multiple_gaps, dtype=np.int64)
 
     # where the split happens on the last gap exactly
-    gap_data_split_on_last_gap_exact = [10_000, 24_000_000, 12_000, 138_000_000, 54_403, 34_560_000_000,
-                                        104_903, 56_530_000_000, 950_271, 56_530_000]
+    gap_data_split_on_last_gap_exact = [1_000, 24_000_000, 1_200, 138_000_000, 5_440, 34_560_000_000,
+                                        10_490, 56_530_000_000, EXACT_SPLIT_GAP_INDEX, 56_530_000]
     gap_data_split_on_last_gap_exact = np.array(gap_data_split_on_last_gap_exact, dtype=np.int64)
 
     # where values will be split exactly on the gap just before the last gap
-    gap_data_split_just_before_last_gap_exact = [10_000, 24_000_000, 12_000, 138_000_000, 54_403, 34_560_000_000,
-                                                 104_903, 56_530_000_000, 950_271, 100_000_000, 950_500, 156_000_000]
+    gap_data_split_just_before_last_gap_exact = [1_000, 24_000_000, 1_200, 138_000_000, 5_440, 34_560_000_000,
+                                                 10_490, 56_530_000_000, EXACT_SPLIT_GAP_INDEX, 100_000_000, 95_050, 156_000_000]
     gap_data_split_just_before_last_gap_exact = np.array(gap_data_split_just_before_last_gap_exact, dtype=np.int64)
 
     # there are multiple gaps after the exact location the gap split will happen
-    gap_data_split_before_multiple_gaps_exact = [10_000, 24_000_000, 12_000, 138_000_000, 54_403, 34_560_000_000,
-                                                 104_903, 56_530_000_000, 950_271, 100_000_000, 950_500,
-                                                 156_000_000, 970_000, 56_000_000, 985_123, 200_000_000]
+    gap_data_split_before_multiple_gaps_exact = [1_000, 24_000_000, 1_200, 138_000_000, 5_440, 34_560_000_000,
+                                                 10_490, 56_530_000_000, EXACT_SPLIT_GAP_INDEX, 100_000_000, 95_050,
+                                                 156_000_000, 97_000, 56_000_000, 98_512, 200_000_000]
     gap_data_split_before_multiple_gaps_exact = np.array(gap_data_split_before_multiple_gaps_exact, dtype=np.int64)
 
     gap_arrays = [gap_data_split_last_gap, gap_data_split_just_before_last_gap, gap_data_split_before_multiple_gaps,
@@ -202,8 +230,8 @@ def _test_write_oversized_block_gap(db_type, dataset_location, connection_params
         print(f"Test {i} passed!")
 
     # where there is only enough values for the oversized block
-    gap_data_split_only_oversized_block = np.array([10_000, 24_000_000, 12_000, 138_000_000], dtype=np.int64)
-    num_values = 60_000
+    gap_data_split_only_oversized_block = np.array([1_000, 24_000_000, 1_200, 138_000_000], dtype=np.int64)
+    num_values = ONLY_OVERSIZED_BLOCK_VALUES
 
     timestamp_arr, values, end_time_nano = make_gap_data(gap_data_split_only_oversized_block, start_time_nano, num_values, period_ns)
 
@@ -221,8 +249,8 @@ def _test_write_oversized_block_gap(db_type, dataset_location, connection_params
     assert np.array_equal(r_values, values)
 
     # where there arnt enough values for even one block
-    gap_data_split_lessthan_full_block = np.array([10_000, 24_000_000, 12_000, 138_000_000], dtype=np.int64)
-    num_values = 30_000
+    gap_data_split_lessthan_full_block = np.array([1_000, 24_000_000, 1_200, 138_000_000], dtype=np.int64)
+    num_values = LESS_THAN_ONE_BLOCK_VALUES
 
     timestamp_arr, values, end_time_nano = make_gap_data(gap_data_split_lessthan_full_block, start_time_nano, num_values, period_ns)
 

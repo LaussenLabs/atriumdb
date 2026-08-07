@@ -33,12 +33,29 @@ from atriumdb.windowing.cross_validation import (
     _generate_fold_combinations,
     _combine_fold_definitions,
 )
-from tests.test_mit_bih import write_mit_bih_to_dataset
-from tests.testing_framework import _test_for_both
+from tests.test_mit_bih import write_mit_bih_to_dataset, TRUNCATED_SAMPLES_PER_RECORD
+from tests.testing_framework import parametrized_backends, prepare_backend
 
 DB_NAME = 'combine-cv'
+# Keep MAX_RECORDS = 10: the cross-validation tests split *devices* into 3 folds and the
+# assertions depend on the device count. Truncation reduces samples, not records.
 MAX_RECORDS = 10
 SEED = 42
+
+
+# The five SDK-dependent tests below each used to build an identical 10-record
+# MIT-BIH dataset (same seed, same everything) and are then strictly read-only. That was
+# 10 dataset builds -- 41 minutes, 81% of the 33-file baseline sweep. They now share one
+# module-scoped dataset per backend: 2 builds instead of 10, truncated.
+# Both backends still run; the parametrization just makes them separate test ids.
+@pytest.fixture(scope="module", params=parametrized_backends())
+def cv_sdk(request):
+    db_type, dataset_location, connection_params = prepare_backend(DB_NAME, request.param)
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED,
+                             max_samples_per_record=TRUNCATED_SAMPLES_PER_RECORD)
+    return sdk
 
 
 # ===================================================================
@@ -535,15 +552,9 @@ def test_combine_fold_definitions_multiple():
 # SDK-dependent: combine_definitions with real data
 # ===================================================================
 
-def test_combine_definitions_with_sdk():
-    _test_for_both(DB_NAME, _test_combine_definitions_with_sdk)
-
-
-def _test_combine_definitions_with_sdk(db_type, dataset_location, connection_params):
-    sdk = AtriumSDK.create_dataset(
-        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
-
-    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
+@pytest.mark.mitbih
+def test_combine_definitions_with_sdk(cv_sdk):
+    sdk = cv_sdk
 
     measures = [measure_info['tag'] for measure_info in sdk.get_all_measures().values()]
     all_device_ids = list(sdk.get_all_devices().keys())
@@ -581,15 +592,9 @@ def _test_combine_definitions_with_sdk(db_type, dataset_location, connection_par
 # SDK-dependent: cross_validate_dataset
 # ===================================================================
 
-def test_cross_validate_dataset():
-    _test_for_both(DB_NAME, _test_cross_validate_dataset)
-
-
-def _test_cross_validate_dataset(db_type, dataset_location, connection_params):
-    sdk = AtriumSDK.create_dataset(
-        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
-
-    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
+@pytest.mark.mitbih
+def test_cross_validate_dataset(cv_sdk):
+    sdk = cv_sdk
 
     measures = [measure_info['tag'] for measure_info in sdk.get_all_measures().values()]
     device_ids = {np.int64(device_id): "all" for device_id in sdk.get_all_devices().keys()}
@@ -641,16 +646,10 @@ def _test_cross_validate_dataset(db_type, dataset_location, connection_params):
             assert len(loaded.data_dict['measures']) > 0
 
 
-def test_cross_validate_dataset_invalid_folds():
+@pytest.mark.mitbih
+def test_cross_validate_dataset_invalid_folds(cv_sdk):
     """Invalid fold configurations raise ValueError."""
-    _test_for_both(DB_NAME, _test_cross_validate_dataset_invalid_folds)
-
-
-def _test_cross_validate_dataset_invalid_folds(db_type, dataset_location, connection_params):
-    sdk = AtriumSDK.create_dataset(
-        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
-
-    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
+    sdk = cv_sdk
 
     measures = [measure_info['tag'] for measure_info in sdk.get_all_measures().values()]
     device_ids = {np.int64(device_id): "all" for device_id in sdk.get_all_devices().keys()}
@@ -665,16 +664,10 @@ def _test_cross_validate_dataset_invalid_folds(db_type, dataset_location, connec
         cross_validate_dataset(definition, sdk, n_folds=5, n_val_folds=0, n_test_folds=0)
 
 
-def test_cross_validate_dataset_zero_val_folds():
+@pytest.mark.mitbih
+def test_cross_validate_dataset_zero_val_folds(cv_sdk):
     """n_val_folds=0 produces combinations with val=None."""
-    _test_for_both(DB_NAME, _test_cross_validate_dataset_zero_val_folds)
-
-
-def _test_cross_validate_dataset_zero_val_folds(db_type, dataset_location, connection_params):
-    sdk = AtriumSDK.create_dataset(
-        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
-
-    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
+    sdk = cv_sdk
 
     measures = [measure_info['tag'] for measure_info in sdk.get_all_measures().values()]
     device_ids = {np.int64(device_id): "all" for device_id in sdk.get_all_devices().keys()}
@@ -691,16 +684,10 @@ def _test_cross_validate_dataset_zero_val_folds(db_type, dataset_location, conne
         assert isinstance(combo['test'], DatasetDefinition)
 
 
-def test_cross_validate_dataset_zero_test_folds():
+@pytest.mark.mitbih
+def test_cross_validate_dataset_zero_test_folds(cv_sdk):
     """n_test_folds=0 produces combinations with test=None."""
-    _test_for_both(DB_NAME, _test_cross_validate_dataset_zero_test_folds)
-
-
-def _test_cross_validate_dataset_zero_test_folds(db_type, dataset_location, connection_params):
-    sdk = AtriumSDK.create_dataset(
-        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
-
-    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
+    sdk = cv_sdk
 
     measures = [measure_info['tag'] for measure_info in sdk.get_all_measures().values()]
     device_ids = {np.int64(device_id): "all" for device_id in sdk.get_all_devices().keys()}

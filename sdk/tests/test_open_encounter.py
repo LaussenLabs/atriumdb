@@ -17,6 +17,7 @@
 
 from atriumdb import AtriumSDK, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64
 import numpy as np
+import pytest
 import time
 
 from tests.test_transfer_info import insert_random_patients
@@ -27,6 +28,9 @@ DB_NAME = 'atrium-open-ended-mapping'
 SEED = 42
 
 
+# Measured at 176s SQLite-only. `slow` keeps it out of the inner loop only; it still
+# runs in every full run, unchanged.
+@pytest.mark.slow
 def test_open_ended_device_patient_mapping():
     _test_for_both(DB_NAME, _test_open_ended_mapping)
 
@@ -175,6 +179,8 @@ def _test_open_ended_mapping(db_type, dataset_location, connection_params):
     print("\n=== All Open-Ended Mapping Tests Passed ===\n")
 
 
+# Measured at 48s SQLite-only.
+@pytest.mark.slow
 def test_multiple_overlapping_mappings():
     _test_for_both(DB_NAME + '-overlapping', _test_overlapping_mappings)
 

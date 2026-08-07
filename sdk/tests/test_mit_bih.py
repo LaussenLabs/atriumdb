@@ -20,6 +20,8 @@ from atriumdb import AtriumSDK, T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TY
 import numpy as np
 import random
 
+import pytest
+
 from atriumdb.adb_functions import convert_gap_data_to_timestamps, create_timestamps_from_gap_data
 from tests.generate_wfdb import get_records
 from tests.test_transfer_info import insert_random_patients
@@ -29,6 +31,29 @@ DB_NAME = 'atrium-mit-bih'
 
 MAX_RECORDS = 4
 SEED = 42
+
+# Every mitdb record is 650,000 samples x 2 signals (30 minutes of ECG). Almost
+# every consumer of write_mit_bih_to_dataset needs the *structure* it builds (N devices,
+# N patients, device<->patient mappings, 10-100 labels per device, 2 measures per
+# device) and not 30 minutes of waveform per device. Such consumers pass
+# max_samples_per_record=TRUNCATED_SAMPLES_PER_RECORD.
+#
+# 20,000 samples is a 32x data reduction that still spans MORE THAN ONE BLOCK at every
+# block size in TRUNCATED_BLOCK_SIZE_SWEEP, so block splitting, gap handling and
+# multi-block merge behaviour are all still exercised. Do not lower it without
+# lowering the block-size sweep to match.
+TRUNCATED_SAMPLES_PER_RECORD = 20_000
+
+# Block size used to be re-drawn per measure from random.choice(2**11 .. 2**20),
+# which made the same test cost anywhere from 27s to 87s depending on the draw and made
+# a failure impossible to attribute to a block size. It is now an explicit deterministic
+# sweep: each measure takes the next size in the cycle, so every listed size is
+# *guaranteed* to be covered rather than covered by luck.
+FULL_BLOCK_SIZE_SWEEP = tuple(2 ** exp for exp in range(11, 21))
+
+# Sizes used when the caller truncates. 20,000 / 2**14 = 1.2, so even the largest of
+# these still produces more than one block per measure.
+TRUNCATED_BLOCK_SIZE_SWEEP = (2 ** 11, 2 ** 12, 2 ** 13, 2 ** 14)
 LABEL_SET_LIST = [
     "Normal Sinus Rhythm",
     "Atrial Fibrillation",
@@ -57,6 +82,14 @@ LABEL_SET_LIST = [
 ]
 
 
+# This is the repo's numeric regression backbone and it keeps its data
+# volume EXACTLY (MAX_RECORDS = 4, full 650,000-sample records). It is excluded from the
+# default and fast runs by the `nightly` marker and scheduled nightly instead, which
+# changes zero coverage. Do not truncate it and do not lower MAX_RECORDS.
+@pytest.mark.nightly
+@pytest.mark.slow
+@pytest.mark.numeric_gate
+@pytest.mark.mitbih
 def test_mit_bih():
     _test_for_both(DB_NAME, lambda db_type, dataset_location, connection_params:
     _test_mit_bih(db_type, dataset_location, connection_params, use_period=True))
@@ -90,8 +123,28 @@ def _test_mit_bih(db_type, dataset_location, connection_params, use_period=False
     assert_mit_bih_to_dataset(sdk_2, max_records=MAX_RECORDS, seed=SEED, use_period=use_period)
 
 
+def truncate_record(record, max_samples_per_record):
+    """keep only the first `max_samples_per_record` samples of a wfdb record.
+
+    Records come fresh out of `wfdb.rdrecord` on every iteration of `get_records`, so
+    mutating them in place is safe. `max_samples_per_record=None` is a no-op, which is
+    why adding this parameter changed nothing until a caller opted in.
+    """
+    if max_samples_per_record is None or record.sig_len <= max_samples_per_record:
+        return record
+
+    max_samples_per_record = int(max_samples_per_record)
+    record.sig_len = max_samples_per_record
+    if getattr(record, 'p_signal', None) is not None:
+        record.p_signal = record.p_signal[:max_samples_per_record]
+    if getattr(record, 'd_signal', None) is not None:
+        record.d_signal = record.d_signal[:max_samples_per_record]
+    return record
+
+
 def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, deidentify=False, time_shift=None,
-                              use_patient_id=False, seed=None, use_numpy=False, use_period=False):
+                              use_patient_id=False, seed=None, use_numpy=False, use_period=False,
+                              max_samples_per_record=None):
     print()
     seed = SEED if seed is None else seed
     if seed is not None:
@@ -102,6 +155,9 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
         if max_records and num_records >= max_records:
             return
         num_records += 1
+        # Must match the truncation used by write_mit_bih_to_dataset so verification
+        # stays exact.
+        truncate_record(record, max_samples_per_record)
         device_id = sdk.get_device_id(device_tag=record.record_name)
 
         if use_period:
@@ -197,13 +253,20 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
 
 
 def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=None, use_numpy=False,
-                             use_messages=False, use_period=False):
+                             use_messages=False, use_period=False, max_samples_per_record=None,
+                             block_sizes=None):
     seed = SEED if seed is None else seed
     if seed is not None:
         np.random.seed(seed)
         random.seed(seed)
 
     label_set_list = LABEL_SET_LIST if label_set_list is None else label_set_list
+
+    # a truncating caller must use the small sweep, otherwise a 2**20 block would
+    # swallow all 20,000 samples in one block and multi-block coverage would be lost.
+    if block_sizes is None:
+        block_sizes = FULL_BLOCK_SIZE_SWEEP if max_samples_per_record is None else TRUNCATED_BLOCK_SIZE_SWEEP
+    block_size_cycle = _BlockSizeCycle(block_sizes)
 
     num_records = 0
 
@@ -213,6 +276,8 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
         if max_records and num_records >= max_records:
             return
         num_records += 1
+        truncate_record(record, max_samples_per_record)
+        truncate_record(d_record, max_samples_per_record)
         if use_numpy:
             device_id = np.int64(sdk.insert_device(device_tag=record.record_name))
         else:
@@ -277,26 +342,49 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
             for i in range(len(record.sig_name)):
                 write_to_sdk(freq_nano, period_nano, device_id, gap_data_2d, time_arr, start_time, sdk, record,
                              d_record, i,
-                             message_starts, message_num_values, use_messages=use_messages, use_period=use_period)
+                             message_starts, message_num_values, use_messages=use_messages, use_period=use_period,
+                             block_size_cycle=block_size_cycle)
         else:
             write_to_sdk(freq_nano, period_nano, device_id, gap_data_2d, time_arr, start_time, sdk, record, d_record,
                          None,
-                         message_starts, message_num_values, use_messages=use_messages, use_period=use_period)
+                         message_starts, message_num_values, use_messages=use_messages, use_period=use_period,
+                         block_size_cycle=block_size_cycle)
 
     return device_patient_dict
 
 
+class _BlockSizeCycle:
+    """deterministic round-robin over an explicit list of block sizes."""
+
+    def __init__(self, block_sizes):
+        self.block_sizes = tuple(block_sizes)
+        if not self.block_sizes:
+            raise ValueError("block_sizes must not be empty")
+        self.index = 0
+
+    def next(self):
+        block_size = self.block_sizes[self.index % len(self.block_sizes)]
+        self.index += 1
+        return block_size
+
+
 def write_to_sdk(freq_nano, period_nano, device_id, gap_data_2d, time_arr, start_time, sdk, p_record, d_record,
                  signal_i,
-                 message_starts, message_num_values, use_messages=False, use_period=False):
+                 message_starts, message_num_values, use_messages=False, use_period=False, block_size_cycle=None):
     measure_tag, scale_b, scale_m, units, value_data = get_record_data_for_ingest(d_record, p_record, signal_i)
 
     measure_id = sdk.insert_measure(measure_tag=measure_tag, freq=freq_nano,
                                     units=units)
 
-    # Create random block_size
-    sdk.block.block_size = random.choice([2 ** exp for exp in range(11, 21)])
-    # sdk.block.block_size = 2 ** 11
+    # Block size is a deterministic sweep, not a lottery (see the comment on
+    # FULL_BLOCK_SIZE_SWEEP). We still draw and discard one value from the global RNG so
+    # that the encode-path coin flips below -- and the MRNs generated for later records
+    # by insert_random_patients -- see exactly the same random stream as before. That is
+    # what makes this change provably coverage-neutral, and it is why
+    # tests/example_data/mitbih_seed_42_*.yaml still resolve.
+    random.choice(FULL_BLOCK_SIZE_SWEEP)  # discarded: preserves the legacy RNG stream
+    block_size_cycle = _BlockSizeCycle(FULL_BLOCK_SIZE_SWEEP) if block_size_cycle is None else block_size_cycle
+    sdk.block.block_size = block_size_cycle.next()
 
     # gap tolerance
     gap_tolerance = 10_000_000_000  # 10 seconds

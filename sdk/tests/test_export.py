@@ -16,21 +16,31 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from pathlib import Path
 
+import pytest
 from atriumdb import AtriumSDK, DatasetDefinition
 import shutil
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 from atriumdb.transfer.adb.dataset import transfer_data
-from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset
-from tests.testing_framework import _test_for_both, create_sibling_sdk
+from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset, TRUNCATED_SAMPLES_PER_RECORD
+from tests.testing_framework import create_sibling_sdk, parametrized_backends, prepare_backend
 
 DB_NAME = 'atrium-export'
 MAX_RECORDS = 1
 SEED = 42
 
+# a format round-trip test is indifferent to sample count. Truncate the
+# waveform (still multi-block, see test_mit_bih.TRUNCATED_SAMPLES_PER_RECORD) and
+# keep every export format and every assertion.
 
-def test_export():
-    _test_for_both(DB_NAME, _test_export)
+
+# real parametrization instead of the _test_for_both helper -- both backends
+# still run, but each gets its own test id ([sqlite] / [mariadb]), can be selected
+# with -k/-m, reports its failure independently and shows up in --durations.
+@pytest.mark.mitbih
+@pytest.mark.parametrize("backend", parametrized_backends())
+def test_export(backend):
+    _test_export(*prepare_backend(DB_NAME, backend))
 
 
 def _test_export(db_type, dataset_location, connection_params):
@@ -38,7 +48,8 @@ def _test_export(db_type, dataset_location, connection_params):
     sdk_1 = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
+    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED,
+                                                 max_samples_per_record=TRUNCATED_SAMPLES_PER_RECORD)
 
     measure_id_list = None
     device_id_list = None

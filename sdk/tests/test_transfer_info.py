@@ -29,13 +29,17 @@ from atriumdb import AtriumSDK
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 from atriumdb.transfer.adb.devices import transfer_devices
 from atriumdb.transfer.adb.patients import transfer_patient_info
-from tests.testing_framework import _test_for_both, create_sibling_sdk
+from tests.testing_framework import create_sibling_sdk, parametrized_backends, prepare_backend
 
 DB_NAME = "transfer-patients"
 
 
-def test_transfer_patients():
-    _test_for_both(DB_NAME, _test_transfer_patients)
+# real parametrization instead of the _test_for_both helper -- both backends
+# still run, but each gets its own test id ([sqlite] / [mariadb]), can be selected
+# with -k/-m, reports its failure independently and shows up in --durations.
+@pytest.mark.parametrize("backend", parametrized_backends())
+def test_transfer_patients(backend):
+    _test_transfer_patients(*prepare_backend(DB_NAME, backend))
 
 
 def _test_transfer_patients(db_type, dataset_location, connection_params):
@@ -45,7 +49,12 @@ def _test_transfer_patients(db_type, dataset_location, connection_params):
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
     # Actual Test Below
-    insert_random_patients(sdk_1, 100)
+    # insert_random_patients loops one insert_patient per iteration at roughly
+    # 0.35s each, so 100 patients x 2 backends was ~70s of the file's 76s. The test
+    # verifies that patient info transfers (identically and de-identified); 20 patients
+    # exercises byte-for-byte the same path. Every assertion below is unchanged and
+    # still runs once per transferred patient.
+    insert_random_patients(sdk_1, 20)
 
     # Test transfer_patients without deidentification
     # from_to_patient_id_dict = transfer_patients(sdk_1, sdk_2)

@@ -32,6 +32,15 @@ TEST_DIR = Path(__file__).parent
 EXAMPLE_DATA_DIR = TEST_DIR / "example_data"
 
 
+# Together with test_mit_bih.py this is the repo's numeric regression
+# backbone, and it keeps its data volume EXACTLY (max_records=2, full 650,000-sample
+# records, all 4 definition files x 4 iterator passes). It is excluded from the default
+# and fast runs by the `nightly` marker and scheduled nightly instead, which changes
+# zero coverage. Do not truncate it and do not thin the definition/iterator matrix.
+@pytest.mark.nightly
+@pytest.mark.slow
+@pytest.mark.numeric_gate
+@pytest.mark.mitbih
 def test_iterator():
     _test_for_both(f"{DB_NAME}_period", _test_iterator_period)
     _test_for_both(DB_NAME, _test_iterator_freq)

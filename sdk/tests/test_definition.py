@@ -21,7 +21,7 @@ import os
 from pathlib import Path
 
 from atriumdb import AtriumSDK, DatasetDefinition
-from tests.testing_framework import _test_for_both
+from tests.testing_framework import parametrized_backends, prepare_backend
 
 DB_NAME = 'definition'
 
@@ -70,15 +70,23 @@ def test_definition_file_formatting(filename, expected_exception, expected_warni
             DatasetDefinition(filename=str(full_path))
 
 
-def test_advanced_definition():
-    _test_for_both(DB_NAME, _test_advanced_definition)
+# real parametrization instead of the _test_for_both helper -- both backends
+# still run, but each gets its own test id ([sqlite] / [mariadb]), can be selected
+# with -k/-m, reports its failure independently and shows up in --durations.
+@pytest.mark.parametrize("backend", parametrized_backends())
+def test_advanced_definition(backend):
+    _test_advanced_definition(*prepare_backend(DB_NAME, backend))
 
 
 def _test_advanced_definition(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    highest_number = 10_000
+    # This used to be 10_000 x 20 = 200,000 samples at 1 Hz, windowed into 10,000
+    # windows and iterated twice (once in definition.filter, once in get_iterator), per
+    # backend. The assertion is only "odd numbers survive the filter"; 500 gives 10,000
+    # samples / 500 windows and walks byte-for-byte the same code path ~20x faster.
+    highest_number = 500
     repetitions_per_number = 20
     repeated_data = np.repeat(np.arange(highest_number), repetitions_per_number)
 
@@ -113,9 +121,10 @@ def _test_advanced_definition(db_type, dataset_location, connection_params):
     assert np.allclose(floating_odd_numbers, result_data)
 
 
-def test_filter_slide_greater_than_window():
+@pytest.mark.parametrize("backend", parametrized_backends())
+def test_filter_slide_greater_than_window(backend):
     """Test filtering with slide size greater than window size to verify warning behavior."""
-    _test_for_both(DB_NAME, _test_filter_slide_greater_than_window)
+    _test_filter_slide_greater_than_window(*prepare_backend(DB_NAME, backend))
 
 
 def _test_filter_slide_greater_than_window(db_type, dataset_location, connection_params):

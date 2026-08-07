@@ -14,13 +14,14 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import socket
 import time
 import threading
 import uvicorn
 from atriumdb.atrium_sdk import AtriumSDK
 from tests.mock_api.app import app
 from tests.mock_api.sdk_dependency import get_sdk_instance
-from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset
+from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset, TRUNCATED_SAMPLES_PER_RECORD
 from tests.testing_framework import _test_for_both
 import pytest
 
@@ -28,24 +29,56 @@ DB_NAME = 'api_test'
 MAX_RECORDS = 2
 SEED = 42
 
+# Every sample here crosses an HTTP boundary, so truncation is unusually
+# effective: the cost is serialisation, not encoding. MAX_RECORDS is unchanged.
+# See test_mit_bih.TRUNCATED_SAMPLES_PER_RECORD for why 20,000 is the floor.
 
-def test_api():
-    def start_server():
-        uvicorn.run(app, port=8123)
+# The server used to bind a hard-coded port 8123 in a daemon thread with no readiness
+# wait -- a latent flake and a blocker for pytest-xdist. Bind an ephemeral port instead
+# and wait until uvicorn reports it is actually serving.
+API_HOST = "127.0.0.1"
 
-    # start server in daemon thread so it exits when complete
-    api_thread = threading.Thread(target=start_server, daemon=True)
+
+def _find_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((API_HOST, 0))
+        return sock.getsockname()[1]
+
+
+@pytest.fixture(scope="module")
+def api_url():
+    port = _find_free_port()
+    config = uvicorn.Config(app, host=API_HOST, port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    # daemon thread so it exits when the session ends even if shutdown is missed
+    api_thread = threading.Thread(target=server.run, daemon=True)
     api_thread.start()
 
+    deadline = time.monotonic() + 30
+    while not server.started:
+        if not api_thread.is_alive() or time.monotonic() > deadline:
+            raise RuntimeError(f"mock API server failed to start on {API_HOST}:{port}")
+        time.sleep(0.05)
+
+    try:
+        yield f"http://{API_HOST}:{port}"
+    finally:
+        server.should_exit = True
+        api_thread.join(timeout=10)
+
+
+@pytest.mark.slow
+@pytest.mark.mitbih
+def test_api(api_url):
     # using MITBIH test for normal operation of the sdk
-    _test_for_both(DB_NAME, _test_api)
+    _test_for_both(DB_NAME, _test_api, api_url)
 
     # test labels functionality of the api
-    _test_for_both(DB_NAME, _test_api_labels)
+    _test_for_both(DB_NAME, _test_api_labels, api_url)
 
 
 # testing normal operation of the api, getting devices, patients, blocks ect
-def _test_api(db_type, dataset_location, connection_params):
+def _test_api(db_type, dataset_location, connection_params, api_url):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
@@ -53,20 +86,22 @@ def _test_api(db_type, dataset_location, connection_params):
     app.dependency_overrides[get_sdk_instance] = lambda: sdk
 
     # set up remote mode sdk to connect to the api
-    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="http://127.0.0.1:8123", validate_token=False)
+    api_sdk = AtriumSDK(metadata_connection_type="api", api_url=api_url, validate_token=False)
     # change the sdk token expiry so the test can work
     api_sdk.token_expiry = time.time() + 1_000_000
 
-    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED, use_period=True)
+    write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED, use_period=True,
+                             max_samples_per_record=TRUNCATED_SAMPLES_PER_RECORD)
 
-    assert_mit_bih_to_dataset(api_sdk, max_records=MAX_RECORDS, seed=SEED, use_period=True)
+    assert_mit_bih_to_dataset(api_sdk, max_records=MAX_RECORDS, seed=SEED, use_period=True,
+                              max_samples_per_record=TRUNCATED_SAMPLES_PER_RECORD)
 
     # close api connection
     api_sdk.close()
 
 
 # test label functionality of the sdk
-def _test_api_labels(db_type, dataset_location, connection_params):
+def _test_api_labels(db_type, dataset_location, connection_params, api_url):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
@@ -74,7 +109,7 @@ def _test_api_labels(db_type, dataset_location, connection_params):
     app.dependency_overrides[get_sdk_instance] = lambda: sdk
 
     # set up remote mode sdk to connect to the api
-    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="http://127.0.0.1:8123", validate_token=False)
+    api_sdk = AtriumSDK(metadata_connection_type="api", api_url=api_url, validate_token=False)
     # change the sdk token expiry so the test can work
     api_sdk.token_expiry = time.time() + 1_000_000
 

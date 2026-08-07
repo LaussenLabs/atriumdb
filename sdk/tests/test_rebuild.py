@@ -21,8 +21,8 @@ import numpy as np
 import pytest
 from atriumdb import AtriumSDK, DatasetDefinition
 from atriumdb.adb_functions import rebuild_intervals_from_existing_blocks
-from tests.test_mit_bih import write_mit_bih_to_dataset
-from tests.testing_framework import _test_for_both
+from tests.test_mit_bih import write_mit_bih_to_dataset, TRUNCATED_SAMPLES_PER_RECORD
+from tests.testing_framework import parametrized_backends, prepare_backend
 
 DB_NAME = 'rebuild'
 TEST_DIR = Path(__file__).parent
@@ -64,8 +64,13 @@ def calculate_continuous_intervals(times, period_ns):
     return intervals.astype(np.int64)
 
 
-def test_rebuild():
-    _test_for_both(DB_NAME, _test_rebuild)
+# real parametrization instead of the _test_for_both helper -- both backends
+# still run, but each gets its own test id ([sqlite] / [mariadb]), can be selected
+# with -k/-m, reports its failure independently and shows up in --durations.
+@pytest.mark.mitbih
+@pytest.mark.parametrize("backend", parametrized_backends())
+def test_rebuild(backend):
+    _test_rebuild(*prepare_backend(DB_NAME, backend))
 
 
 def _test_rebuild(db_type, dataset_location, connection_params):
@@ -73,7 +78,10 @@ def _test_rebuild(db_type, dataset_location, connection_params):
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     # larger test
-    write_mit_bih_to_dataset(sdk, max_records=2, seed=42)
+    # interval rebuilding is a function of the gap structure, not of
+    # samples-per-record. Truncate the waveform, keep both records.
+    write_mit_bih_to_dataset(sdk, max_records=2, seed=42,
+                             max_samples_per_record=TRUNCATED_SAMPLES_PER_RECORD)
 
     # Calculate expected intervals and warn if original intervals differ
     calculated_intervals_dict = {}

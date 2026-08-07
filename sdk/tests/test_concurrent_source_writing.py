@@ -26,15 +26,18 @@ import os
 from dotenv import load_dotenv
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
-from tests.testing_framework import _test_for_both
+from tests.testing_framework import _test_for_both, maria_db_credentials
 
 load_dotenv()
 
-# Get MariaDB connection details from .env file
-host = os.getenv("MARIA_DB_HOST")
-user = os.getenv("MARIA_DB_USER")
-password = os.getenv("MARIA_DB_PASSWORD")
-port = int(os.getenv("MARIA_DB_PORT"))
+# Read through the shared helper: it returns None instead of raising when the
+# MariaDB variables are absent, so a run without them degrades to SQLite-only
+# rather than dying at import and taking the whole collection down with it.
+_maria_credentials = maria_db_credentials() or {}
+host = _maria_credentials.get("host")
+user = _maria_credentials.get("user")
+password = _maria_credentials.get("password")
+port = _maria_credentials.get("port")
 
 DB_NAME = 'source_test'
 

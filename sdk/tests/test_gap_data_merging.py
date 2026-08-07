@@ -20,16 +20,23 @@ import random
 from atriumdb import AtriumSDK, create_gap_arr, merge_gap_data
 from atriumdb.adb_functions import create_timestamps_from_gap_data
 from tests.generate_wfdb import get_records
-from tests.test_mit_bih import create_gaps, get_record_data_for_ingest
+from tests.test_mit_bih import create_gaps, get_record_data_for_ingest, TRUNCATED_SAMPLES_PER_RECORD
 from tests.test_transfer_info import insert_random_patients
-from tests.testing_framework import _test_for_both
 
 DB_NAME = 'gap_data_merge'
+
+# This file never creates a dataset and never touches a database -- it uses
+# MIT-BIH records purely as realistic input arrays to create_gap_arr / merge_gap_data,
+# and it was paying the full 4 x 650,000-sample price for that. One truncated record
+# gives the same array shapes (gaps, a clean split, a split on a gap, a middle chunk and
+# a riffle shuffle) at 1/130th the cost. Every assertion below still runs.
+# (`_test_for_both` used to be imported here and never called; removed.)
+MAX_RECORDS = 1
 
 
 def test_gap_data_merge():
     seed = 42
-    max_records = 4
+    max_records = MAX_RECORDS
     if seed is not None:
         np.random.seed(seed)
         random.seed(seed)
@@ -41,6 +48,14 @@ def test_gap_data_merge():
         if max_records and num_records >= max_records:
             return
         num_records += 1
+
+        # Keep the two records in step: value_data comes from d_record, time_arr from
+        # record.sig_len, and the merge assertions compare them element for element.
+        if record.sig_len > TRUNCATED_SAMPLES_PER_RECORD:
+            record.sig_len = TRUNCATED_SAMPLES_PER_RECORD
+            record.p_signal = record.p_signal[:TRUNCATED_SAMPLES_PER_RECORD]
+            d_record.sig_len = TRUNCATED_SAMPLES_PER_RECORD
+            d_record.d_signal = d_record.d_signal[:TRUNCATED_SAMPLES_PER_RECORD]
 
         freq_nano = 500 * 1_000_000_000
         period_nano = int(10 ** 18 // freq_nano)

@@ -15,20 +15,35 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import numpy as np
+import pytest
 
 from atriumdb import AtriumSDK, DatasetDefinition, partition_dataset
 import shutil
 
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 from atriumdb.transfer.adb.dataset import transfer_data
-from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset
+from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset, TRUNCATED_SAMPLES_PER_RECORD
 from tests.testing_framework import _test_for_both, create_sibling_sdk
 
 DB_NAME = 'atrium-transfer-ext'
 MAX_RECORDS = 10
 SEED = 42
 
+# Transfer correctness is about metadata mapping, de-identification, time
+# shifting, label transfer and block copying -- none of which is a function of
+# samples-per-record. We keep MAX_RECORDS (device/patient cardinality is what the
+# assertions depend on) and truncate the waveform instead.
+#
+# DO NOT lower TRUNCATED_SAMPLES_PER_RECORD here: both the reencode_waveforms=True and
+# the reencode_waveforms=False paths must still see MORE THAN ONE BLOCK per measure so
+# block-boundary handling stays covered. 20,000 samples does that at every block size in
+# test_mit_bih.TRUNCATED_BLOCK_SIZE_SWEEP (max 2**14).
 
+
+# Still the heaviest surviving MIT-BIH test; `slow` keeps it out of
+# the sub-5-minute inner loop while it stays in every full run.
+@pytest.mark.slow
+@pytest.mark.mitbih
 def test_transfer():
     _test_for_both(DB_NAME, _test_transfer_with_patient_context)
     _test_for_both(DB_NAME, _test_transfer_with_patient_context_deidentify_timeshift)
@@ -40,7 +55,7 @@ def _test_partition_dataset(db_type, dataset_location, connection_params):
     sdk_1 = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
+    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED, max_samples_per_record=TRUNCATED_SAMPLES_PER_RECORD)
 
     measures = [measure_info['tag'] for measure_info in sdk_1.get_all_measures().values()]
     device_ids = {np.int64(device_id): "all" for device_id in sdk_1.get_all_devices().keys()}
@@ -94,7 +109,7 @@ def _test_transfer_with_patient_context(db_type, dataset_location, connection_pa
 
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
-    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
+    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED, max_samples_per_record=TRUNCATED_SAMPLES_PER_RECORD)
 
 
     measures = [measure_info['tag'] for measure_info in sdk_1.get_all_measures().values()]
@@ -104,7 +119,7 @@ def _test_transfer_with_patient_context(db_type, dataset_location, connection_pa
                   include_labels=False)
 
     assert_mit_bih_to_dataset(
-        sdk_2, device_patient_map=device_patient_dict, use_patient_id=True, max_records=MAX_RECORDS, seed=SEED)
+        sdk_2, device_patient_map=device_patient_dict, use_patient_id=True, max_records=MAX_RECORDS, seed=SEED, max_samples_per_record=TRUNCATED_SAMPLES_PER_RECORD)
 
 
 def _test_transfer_with_patient_context_deidentify_timeshift(db_type, dataset_location, connection_params):
@@ -115,7 +130,7 @@ def _test_transfer_with_patient_context_deidentify_timeshift(db_type, dataset_lo
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
     # Test
-    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED)
+    device_patient_dict = write_mit_bih_to_dataset(sdk_1, max_records=MAX_RECORDS, seed=SEED, max_samples_per_record=TRUNCATED_SAMPLES_PER_RECORD)
 
     measures = [measure_info['tag'] for measure_info in sdk_1.get_all_measures().values()]
     device_ids = {device_id: "all" for device_id in sdk_1.get_all_devices().keys()}
@@ -125,4 +140,4 @@ def _test_transfer_with_patient_context_deidentify_timeshift(db_type, dataset_lo
 
     assert_mit_bih_to_dataset(
         sdk_2, device_patient_map=device_patient_dict, deidentify=True, time_shift=-3600_000_000_000, max_records=MAX_RECORDS,
-        seed=SEED)
+        seed=SEED, max_samples_per_record=TRUNCATED_SAMPLES_PER_RECORD)

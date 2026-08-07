@@ -100,7 +100,23 @@ testing = [
 requires-python = ">=3.10"
 
 [tool.pytest.ini_options]
-log_cli = true
+# The default run excludes the `nightly` full-fidelity numeric gate
+# (test_mit_bih.py / test_iterator.py). Those two keep their data volume exactly and
+# are scheduled nightly instead -- see sdk/tests/README.md.
+# A command-line `-m` replaces this, so the fast loop's
+# `-m "not slow and not mariadb"` must (and does) also exclude them via `slow`.
+addopts = '-m "not nightly"'
+markers = [
+  "slow: takes more than ~30s",
+  "mariadb: requires a running MariaDB",
+  "network: requires network access (there should be none)",
+  "mitbih: requires the MIT-BIH wfdb cache",
+  "numeric_gate: protected numeric regression test - do not shrink its data",
+  "nightly: full-fidelity gate; excluded from the default run, scheduled nightly",
+]
+# log_cli streamed INFO logging for every test in the suite. Turn it on for a
+# single run with `--log-cli-level=INFO` instead of paying for it always.
+log_cli = false
 log_cli_level = "INFO"
 log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
