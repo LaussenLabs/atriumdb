@@ -32,6 +32,52 @@ from atriumdb.windowing.definition_splitter import partition_dataset
 from atriumdb.windowing.definition_combine import combine_definitions
 from atriumdb.windowing.cross_validation import cross_validate_dataset
 from atriumdb.windowing.window_config import WindowConfig
+from atriumdb.windowing.window import Window
+
+# String values
+from atriumdb.string_dictionary import UNKNOWN_STRING_CODE
 
 # Transfer
 from atriumdb.transfer.adb.dataset import transfer_data
+
+__all__ = [
+    # Core
+    "AtriumSDK",
+
+    # Gap-array helpers
+    "create_gap_arr",
+    "convert_gap_array_to_intervals",
+    "convert_intervals_to_gap_array",
+    "merge_gap_data",
+    "indices_to_signal",
+    "signal_to_indices",
+
+    # Time types
+    "T_TYPE_TIMESTAMP_ARRAY_INT64_NANO",
+    "T_TYPE_GAP_ARRAY_INT64_INDEX_NUM_SAMPLES",
+    "T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO",
+    "T_TYPE_START_TIME_NUM_SAMPLES",
+
+    # Value types
+    "V_TYPE_INT64",
+    "V_TYPE_DOUBLE",
+    "V_TYPE_DELTA_INT64",
+    "V_TYPE_XOR_DOUBLE",
+
+    # Windowing
+    "DatasetIterator",
+    "DatasetDefinition",
+    "Window",
+    "WindowConfig",
+    "partition_dataset",
+    "combine_definitions",
+    "cross_validate_dataset",
+
+    # String values: the sentinel a rasterized string window uses for an unknown
+    # or censored cell. Compare a window's int64 codes against this rather than
+    # against a bare -1.
+    "UNKNOWN_STRING_CODE",
+
+    # Transfer
+    "transfer_data",
+]
