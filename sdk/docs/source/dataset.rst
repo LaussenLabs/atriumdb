@@ -244,9 +244,33 @@ Each measure's ``signal_kind`` determines its default fill rule:
   ``mean|min|max`` are rejected).
 - ``state`` — **``carry_forward``** with **left-censoring**: cells before the first observed state
   transition in the window are marked unknown (the true prior state is not known from within the window).
+  A ``state`` value *is* carried across window boundaries within a region, so a long-running state stays
+  populated in every window after the transition that set it.
 - ``event`` — **``presence``** (default): each cell is ``1.0`` if any event occurred in it, else ``0.0``.
   Alternative: ``count`` (the number of events in the cell). Event cells are always "known" — absence is a
   meaningful ``0``, so there is no unknown sentinel for events.
+
+.. important::
+
+   **An** ``event`` **channel is occupancy, not identity.** ``presence`` and ``count`` are the *only*
+   fill rules an ``event`` measure accepts — ``sparse``, ``carry_forward`` and ``aggregate:*`` all raise::
+
+       ValueError: Fill rule 'sparse' is not valid for a 'event' measure.
+       Allowed: ('presence', 'count').
+
+   So an event measure holding ``ASYSTOLE``, ``V-TACH`` and ``SENSOR_OFF`` collapses in every window to a
+   single "something happened" channel; you cannot recover *which* value fired. If you need per-cell
+   identity, declare the measure ``signal_kind="state"`` (or ``"sample"``) instead — see
+   :ref:`Choosing a signal_kind <choosing_signal_kind>` — or use one measure per event value.
+
+.. warning::
+
+   **Because event cells are always "known",** ``actual_count`` **always equals**
+   ``expected_count`` **for an event channel.** The common quality-filter recipe below (and in
+   :ref:`the tutorial <filtering_dataset_definitions>`) rejects windows on
+   ``actual_count / expected_count``; that test can never fire for an event channel, so adding an event
+   measure to a definition silently removes those windows from the filter's protection. Filter on the
+   waveform / numeric channels you actually care about, keyed by measure id or ``signal_kind``.
 
 Nominal raster period (1 s default)
 ####################################
@@ -289,17 +313,63 @@ behaviour:
 - ``period_overrides`` — a ``{measure_id: period}`` mapping of per-measure nominal raster periods, expressed
   in the iterator's ``time_units``.
 
+.. note::
+
+   ``fill_overrides`` and ``period_overrides`` are keyed by **measure id (int)**, while a
+   ``DatasetDefinition`` is normally written in measure *tags*. Resolve the ids first with
+   `AtriumSDK.get_measure_id <contents.html#atriumdb.AtriumSDK.get_measure_id>`_::
+
+       nibp_id = sdk.get_measure_id(measure_tag="NIBP_SYS", freq=1.0, freq_units="Hz", units="mmHg")
+       iterator = sdk.get_iterator(definition, 60, 60, time_units="s",
+                                   fill_overrides={nibp_id: "sparse"})
+
+   Passing a tag raises with a list of the definition's measures and their ids.
+
+``get_iterator`` also accepts ``start_time`` and ``end_time`` (in the iterator's ``time_units``), which
+bound the whole iteration in the same way as ``validate(start_time=..., end_time=...)``. Setting an
+explicit ``end_time`` is the reliable way to stop windows being emitted past the end of your recording.
+
+.. _reading_string_windows:
+
 Reading string windows
 #######################
 
-String measures carry ``int64`` dictionary **codes** in ``window.signals[key]['values']``, not decoded
-strings — this keeps windows compact and tensor-friendly. Decode on demand with either accessor:
+Whether a string measure arrives in a window as decodable **codes** or as a numeric **occupancy** channel
+depends entirely on its ``signal_kind``:
 
-- ``window.decode_string_signal(sdk, measure_key)`` — a method on the :ref:`Window <window_format>` object;
-- ``iterator.decode_window_strings(window, measure_key)`` — the equivalent accessor on the iterator.
+- ``sample`` and ``state`` string measures carry ``int64`` dictionary **codes** in
+  ``window.signals[key]['values']``, not decoded strings — this keeps windows compact and tensor-friendly.
+  Decode on demand with either accessor:
 
-In both, ``measure_key`` is the ``(tag, freq_hz, units)`` tuple that keys ``window.signals``. The unknown
-sentinel (``-1``) decodes to ``"<unknown>"`` (override via the ``unknown_value`` argument).
+  - ``window.decode_string_signal(sdk, measure_key)`` — a method on the :ref:`Window <window_format>` object;
+  - ``iterator.decode_window_strings(window, measure_key)`` — the equivalent accessor on the iterator.
+
+  In both, ``measure_key`` is the ``(tag, freq_hz, units)`` tuple that keys ``window.signals``. The unknown
+  sentinel (``-1``) decodes to ``"<unknown>"`` (override via the ``unknown_value`` argument).
+
+- ``event`` string measures carry ``float64`` **occupancy** (``presence`` 0.0/1.0, or ``count``), not
+  codes. They are **not decodable** — the accessors deliberately raise rather than fabricate vocabulary
+  strings::
+
+      ValueError: Cannot decode string codes for signal ('alarm_text', 1.0, 'alarm'): the window's
+      values have dtype float64, not int64 dictionary codes. This channel is a numeric
+      rasterization -- an 'event' measure filled with 'presence'/'count' holds occupancy floats ...
+
+  There is no fill configuration that makes an ``event`` measure decodable; ``sparse`` and
+  ``carry_forward`` are rejected for that kind. To read the text of an ``event`` measure, use
+  `AtriumSDK.get_string_data <contents.html#atriumdb.AtriumSDK.get_string_data>`_ outside the iterator, or
+  declare the measure ``state``/``sample`` in the first place (see
+  :ref:`Choosing a signal_kind <choosing_signal_kind>`).
+
+.. code-block:: python
+
+    # A 'state' string measure -> int64 codes, decodable.
+    codes = window.signals[("vent_mode", 1.0, "mode")]['values']       # dtype int64
+    text = window.decode_string_signal(sdk, ("vent_mode", 1.0, "mode"))
+    # -> array(['SIMV', 'SIMV', 'PRVC', ...], dtype=object)
+
+    # An 'event' string measure -> float occupancy, NOT decodable.
+    occupancy = window.signals[("alarm_text", 1.0, "alarm")]['values']  # dtype float64, 0.0/1.0
 
 Example
 #######
@@ -357,13 +427,58 @@ Current limitations
 
 - **Sentinel, not a mask** — as noted above, unknown/censored cells are only distinguishable by the
   sentinel value in ``values``; there is no separate ``known`` mask yet.
-- **State right-censoring is not handled** — only *left*-censoring (before the first observed transition)
-  is applied. Correctly bounding a state on its right edge requires event pairing, which is a later phase.
-- **Event pairing / "in state A→B" queries are not implemented** — event *presence* / *count* work, but
-  pairing events into intervals is a later phase.
+- **State rasterization is left-censored only** — within a window, a ``state`` channel marks cells before
+  the first observed transition as unknown, but it does not itself bound the state on its *right* edge:
+  the last observed value is carried to the end of the region. If you need an explicitly right-bounded
+  state, derive it from
+  `AtriumSDK.get_event_intervals <contents.html#atriumdb.AtriumSDK.get_event_intervals>`_, whose
+  ``end_censored`` flag tells you when the closing marker was never seen — see
+  :ref:`Building an "in state" channel <in_state_channel>`.
+- **``carry_forward`` looks back a bounded distance, not an unbounded one** — at a region's start
+  the iterator seeds ``carry_forward`` from the most recent reading in the **24 hours** preceding
+  the definition's range start, so a region beginning mid-cycle for a slow-moving measure (NIBP
+  every 5 minutes, a lab result) renders from the value actually in effect rather than from
+  ``NaN``. A prior reading older than that horizon is not carried in, and those cells stay
+  unknown. The horizon is measured from the definition's range start, not from a batch boundary,
+  so rendered values do not change with ``num_windows_prefetch`` or batching.
 - **The ``lightmapped`` iterator and the ``definition.filter`` path ignore the fill configuration** — they
   use the numeric grid path only and do not apply ``aperiodic_fill`` / ``fill_overrides`` /
   ``period_overrides``. Passing fill configuration to a ``lightmapped`` iterator emits a warning.
+- **``Window`` carries no anchor identity** — windows arrive as a flat stream keyed only by
+  ``start_time``; see :ref:`Recovering the anchor <event_anchored_regions>` for the recipe to map a window
+  back to the event that produced it.
+
+.. _in_state_channel:
+
+Recipe: a 0/1 "in state A → B" channel
+#######################################
+
+Event pairing **is** implemented — see
+`AtriumSDK.get_event_intervals <contents.html#atriumdb.AtriumSDK.get_event_intervals>`_ and
+:ref:`Event Queries <event_queries>`. There is no API that turns a ``from → to`` pair directly into a
+per-cell channel, but the iterator already gives you the grid times, so building one is a few lines. This
+is the usual way to get an "is the patient in anesthesia right now" mask aligned with the waveform grid:
+
+.. code-block:: python
+
+    import numpy as np
+
+    ivs = sdk.get_event_intervals(
+        measure=event_measure_id,               # measure ID (int) - tags are not accepted here
+        from_value="Anesthesia START", to_value="Anesthesia STOP",
+        device_id=device_id, start_time=0, end_time=7200, time_units="s")
+
+    key = ("anesthesia_events", 1.0, "event")
+    for window in iterator:
+        t = np.asarray(window.signals[key]['times'])     # nanosecond grid
+        in_state = np.zeros(t.size, dtype=np.float32)
+        for iv in ivs:                                   # times are ALWAYS nanoseconds
+            in_state[(t >= iv['start_time_n']) & (t < iv['end_time_n'])] = 1.0
+        print(window.start_time, in_state.mean())
+
+Alternatively, if the same markers are declared as a ``state`` measure, the iterator produces the channel
+directly as decodable ``int64`` codes with no extra work — see
+:ref:`Choosing a signal_kind <choosing_signal_kind>`.
 
 Iterator Types
 ------------------------
@@ -581,14 +696,52 @@ becomes a region:
   and warn), ``"drop"`` (omit any censored interval), or ``"keep"`` (keep it unchanged).
 
 In both forms the emitted windows are clipped to the validation ``start_time``/``end_time``
-bounds and intersected with the source's data availability, exactly like the classic region
-types.
+bounds. They are resolved from the **event measure's** own availability, not from the
+availability of the measures you are asking for — an anchored region will happily cover a
+stretch where the ECG you requested has no data, and those windows come back all-``NaN``.
+
+.. note::
+
+   ``on_censored="clip"`` (the default) clips a censored interval to the container boundary. When
+   an **event** measure is what defines that boundary, the boundary used is its last *real* event
+   timestamp, not the padded end of its availability index — an event is instantaneous, and the
+   span between the final event and the index's padded end contains no event by construction. A
+   ``from`` event that never closes therefore stops at the last observed event rather than running
+   past the end of the recording.
+
+   Two habits still make censored regions predictable, and both are worth keeping:
+
+   - pass an explicit ``end_time`` to :py:meth:`~DatasetDefinition.validate` (or to
+     ``get_iterator``) that reflects the real end of your data, or use ``on_censored="drop"`` to
+     omit unterminated intervals altogether; and
+   - declare an explicit ``freq``/``period`` when writing the event measure, so its presence index
+     is not sized from a guessed period.
 
 .. note::
 
    **Event-anchored regions are anchor-only** — they only define *time ranges*. The event
    measure itself is **not** added to the returned data automatically. To also receive the
    event channel in each window, add the event measure to the definition's ``measures``.
+
+.. note::
+
+   **Recovering the anchor.** Windows arrive as a flat stream; a ``Window`` exposes
+   ``start_time``, ``device_id``, ``patient_id``, ``patient_info``, ``signals``, ``label`` and
+   ``label_time_series`` — there is no ``anchor_time`` or region index. To label a window
+   relative to its anchor ("t−2 min from START #3"), re-derive the anchors and bucket by
+   ``start_time``:
+
+   .. code-block:: python
+
+      times, values = sdk.get_string_data(event_measure_id, start_time_n=start_n,
+                                          end_time_n=end_n, device_id=device_id)
+      anchors = sorted(int(t) for t, v in zip(times, values) if v == "Anesthesia START")
+
+      for window in iterator:
+          # the anchor whose [t-pre, t+post] region contains this window
+          anchor = max((a for a in anchors if a - pre_ns <= window.start_time <= a + post_ns),
+                       key=lambda a: -abs(a - window.start_time), default=None)
+          offset_s = None if anchor is None else (window.start_time - anchor) / 1e9
 
 **The** ``within`` **cascade.** When given, ``within`` scopes the emitted ranges to a
 container. It follows the same cascade as
@@ -600,6 +753,23 @@ the ranges unscoped.
 ``measure`` tag/id that does not exist, a ``measure`` that is not a string measure, or an
 ``anchor``/``from``/``to`` value not in that measure's vocabulary. A source that simply has no
 matching events is not an error — it warns and contributes no ranges.
+
+Structural problems, by contrast, raise from ``DatasetDefinition.__init__`` — for example a
+region with an ``anchor``/``from``/``to`` but no ``measure`` key::
+
+    ValueError: device_id 1: an event-anchored region requires a 'measure'
+                (the event/string measure tag or id)
+
+If you are wrapping definition construction in error handling, wrap the constructor as well as
+``validate()``.
+
+.. note::
+
+   The ``measure`` key of an event-anchored region accepts a **tag or an id**.
+   `AtriumSDK.get_event_intervals <contents.html#atriumdb.AtriumSDK.get_event_intervals>`_, the
+   standalone query behind it, accepts a **measure id only** — passing a tag raises
+   ``ValueError: invalid literal for int() with base 10: '...'``. Resolve it with
+   ``sdk.get_measure_id(...)`` first.
 
 **Example.** Two cohorts against the ``anesthesia_events`` string measure: one 5-minute window
 around every ``"Anesthesia START"``, and one covering each ``"Anesthesia START"`` → next
@@ -1060,7 +1230,24 @@ These can be used independently, but are often combined for data privacy.
 
 .. note::
 
-   The mapping file lets you reconcile anonymized patient IDs if needed in the future.
+   The mapping file lets you reconcile anonymized patient IDs if needed in the future. It is a
+   **headerless** CSV of ``source_patient_id,destination_patient_id``, one pair per line::
+
+       1,10004
+       2,10000
+       3,10003
+
+   Store it separately from the shared extract — it is the key that undoes the pseudonymization.
+
+.. important::
+
+   ``deidentify`` handles patient-level metadata, ``encounter.visit_number`` and time-shifting.
+   It does **not** by itself make a shared extract free of identifying text: signal content
+   (including string measure values), label names and device tags all transfer **verbatim**, by
+   design. See :ref:`String / event measure values <string_value_policy>` and
+   :ref:`Other text surfaces <other_free_text_surfaces>` below before sharing.
+
+.. _transferring_encounters:
 
 Transferring Encounters and De-identification
 #############################################
@@ -1079,13 +1266,90 @@ The encounter family transfers **by default**. Set ``include_encounters=False`` 
    ``include_encounters`` or the de-identification setting. There is currently no opt-in to
    include it.
 
-**String / event measures transfer too.** String-valued measures (events, states, free-text)
-now transfer correctly: their per-measure dictionaries are reproduced in the destination and
-the ``value_type`` / ``signal_kind`` measure metadata is carried across, so ``get_string_data``
-works on the destination exactly as it did on the source. For a fresh destination the
-dictionary copies verbatim; when the destination already has a dictionary for that measure the
-vocabularies are unioned and the transferred codes are remapped into the destination's code
-space.
+.. _string_value_policy:
+.. _string_value_policy_label:
+
+String / event measure values
+******************************
+
+String-valued measures (events, states, free-text) transfer as first-class data in the native
+``tsc`` format: the ``value_type`` / ``signal_kind`` measure metadata is carried across, event
+timing and the interval index are preserved, and the per-measure dictionaries are reproduced in
+the destination. When the destination already has a dictionary for that measure the vocabularies
+are unioned and the transferred codes are remapped into the destination's code space.
+
+**String measure values transfer verbatim in every mode,** ``deidentify=True`` **included.**
+They are signal data in exactly the way a numeric measure's samples are: nobody expects
+``deidentify=True`` to null out a heart rate, and nothing replaces a ventilator mode or an
+alarm name either. Event queries and event-anchored definitions therefore keep working on the
+destination without any extra configuration.
+
+If you nonetheless have one particular free-text measure you want scrubbed on the way out,
+``string_value_policy`` lets you ask for that **explicitly**. It is never applied on your behalf,
+and ``deidentify`` has no influence on its default:
+
+.. list-table:: ``string_value_policy``
+   :header-rows: 1
+   :widths: 22 78
+
+   * - Value
+     - Effect
+   * - ``"transfer"``
+     - Copy the strings verbatim. **The default, always** — in every mode, ``deidentify=True``
+       included.
+   * - ``"redact"``
+     - Write every string value as ``"<redacted>"``. Event timing, counts and the interval index
+       survive; the text does not.
+   * - ``"skip"``
+     - Do not transfer any string measure data. The measures are still created in the
+       destination, but with no rows and an empty vocabulary.
+   * - a callable
+     - ``f(value: str, measure_info: dict) -> str | None``, applied per value.
+       Returning ``None`` drops that value and its timestamps. Use this to keep a controlled
+       alarm vocabulary while dropping a free-text note measure.
+
+.. warning::
+
+   If you *do* opt into ``"redact"`` or ``"skip"`` for a measure, every **event query** and every
+   event-anchored :ref:`DatasetDefinition <event_anchored_regions>` built against it fails on the
+   destination, because the values they pair on no longer exist::
+
+       ValueError: from_value 'Anesthesia START' is not in the string vocabulary of measure 4.
+       Known values come from get_measure_string_vocabulary().
+
+   If the research copy needs event-anchored cohorts, it needs the vocabulary — leave the default
+   ``"transfer"`` in place, or scrub with a callable that keeps the marker values.
+
+.. code-block:: python
+
+   # Nothing is scrubbed unless you say so. This share keeps its controlled vocabularies
+   # (alarm names, ventilator modes) and drops one free-text nurse-note measure.
+   FREE_TEXT_TAGS = {"clinical_note"}
+
+   def scrub(value, measure_info):
+       if measure_info["tag"] in FREE_TEXT_TAGS:
+           return None            # drop the value and its timestamps
+       return value               # controlled vocabulary: keep verbatim
+
+   transfer_data(
+       src_sdk=main_sdk,
+       dest_sdk=export_sdk,
+       definition=cohort_def,
+       deidentify="patient_mapping_file.csv",
+       string_value_policy=scrub,
+       time_shift=two_hours_s,
+       time_units="s",
+   )
+
+Only values inside a transferred time range are ever considered, so the reach of any one policy
+is bounded by the cohort's time ranges.
+
+.. note::
+
+   ``string_value_policy`` is a ``transfer_data`` parameter only. The
+   :doc:`CLI <cli>` ``export`` command has no equivalent flag, so a CLI export always uses the
+   default ``"transfer"`` — string values are copied verbatim, ``--deidentify`` or not. Scrubbing
+   a specific measure requires calling :py:func:`transfer_data` from Python.
 
 What de-identification does to the encounter family
 ***************************************************
@@ -1098,7 +1362,8 @@ The table below is the complete inventory of what de-identification touches on t
 tables. IDs are always remapped and times are always shifted (by ``time_shift``) for
 referential and temporal integrity — those are not configurable. The **Altered by
 de-identification** column lists the values that are changed by default and that
-``keep_identified`` can opt back to identified.
+``keep_identified`` can opt back to identified. Text surfaces *outside* the encounter
+family are inventoried in the second table below; read both before signing off on a share.
 
 .. list-table:: Encounter-family de-identification (under ``deidentify=True``)
    :header-rows: 1
@@ -1131,6 +1396,66 @@ a recording happened, not whose it is, and the destination needs them to remain 
 The scramble is **stable within a transfer**: the same source ``visit_number`` always maps
 to the same integer, so relationships in the data are preserved while the original value is
 hidden.
+
+.. _other_free_text_surfaces:
+
+Other text surfaces
+********************
+
+The encounter family is not the only place identifying text can live. None of the surfaces below
+are altered by ``deidentify``, and none of them are covered by ``keep_identified``. They are
+inventoried here so you know exactly what a shared extract contains:
+
+.. list-table:: Text surfaces outside the encounter family (under ``deidentify=True``)
+   :header-rows: 1
+   :widths: 26 34 40
+
+   * - Surface
+     - Default treatment
+     - How to control it
+   * - **String measure values**
+       (alarms, states, notes)
+     - Copied **verbatim** — signal content is not a de-identification surface
+     - :ref:`string_value_policy <string_value_policy>` — ``transfer`` (default) / ``redact`` /
+       ``skip`` / callable, applied only when you ask for it. Timestamps and the interval index
+       are preserved in every mode except ``skip``.
+   * - **Label names and label text**
+     - Copied **verbatim**
+     - Label names are user-authored free text (e.g. ``"Artifact by RN Chen"``) and get no
+       scrubbing — ``string_value_policy`` does not apply to them. Only a label's device and
+       measure IDs are remapped and its times shifted. Pass ``include_labels=False`` to omit
+       labels, or curate your label vocabulary before sharing. (A label's *source* is carried
+       across by name and re-created in the destination when missing.)
+   * - **Device ``tag`` and ``name``**
+     - Copied **verbatim**
+     - Not pseudonymized. In a hospital these are often room / bay / bed identifiers
+       (``OR-1``, ``ICU-3``), which combined with a timeline can be a re-identification vector.
+       Rename devices in the destination, or export by patient with device tags you control.
+   * - **Bed / unit / institution ``name``**
+     - Copied **verbatim**
+     - A location name says *where* a recording happened, not *whose* it is, so it is not
+       treated as PHI. Rename in the destination if your review requires it.
+   * - **Measure ``tag`` / ``units``**
+     - Copied **verbatim**
+     - Normally desirable; noted here for completeness.
+   * - ``log_hl7_adt``
+     - **Never** transferred
+     - Not configurable.
+
+.. note::
+
+   ``deidentify`` covers patient-level metadata, ``encounter.visit_number`` and time-shifting.
+   It does **not** inspect signal values, label names, device metadata, location names, or
+   measure metadata. If your compliance review needs those scrubbed, do it before or after the
+   transfer — or, for one specific string measure, ask for it explicitly with
+   :ref:`string_value_policy <string_value_policy>`.
+
+.. note::
+
+   A label whose ``measure`` is ``None`` — one that annotates a span of a source rather than a
+   single signal — transfers unchanged; ``None`` is meaningful and is carried through. A label
+   attached to a measure the transfer does **not** include raises a ``ValueError`` naming the
+   label and the missing measure, rather than being dropped silently.
 
 Keeping specific fields identified
 **********************************
@@ -1177,35 +1502,39 @@ field of that table, raises a ``ValueError``. Omitting ``keep_identified`` (or p
    still controlled by ``deidentify`` / ``patient_info_to_transfer`` /
    ``deidentification_functions`` as described above.
 
-.. _string_value_policy_label:
+.. _to_pandas:
 
-Scrubbing a specific free-text measure (opt-in)
-***********************************************
+Getting data into pandas
+#########################
 
-String measure values transfer **verbatim in every mode**, ``deidentify=True`` included —
-they are signal data, and de-identification does not alter signal content.
-
-If you nonetheless have one particular free-text measure you want scrubbed on the way out,
-``string_value_policy`` lets you ask for that explicitly. It is **never** applied on your
-behalf:
-
-- ``"transfer"`` — copy the strings verbatim. **The default, always.**
-- ``"redact"`` — write every string value as ``"<redacted>"``. Event times, counts and the
-  interval index survive; the text does not.
-- ``"skip"`` — do not transfer any string measure data (the measures are still created).
-- a callable ``f(value, measure_info) -> str | None`` — per-value scrubbing; returning
-  ``None`` drops that value and its timestamp.
+There is no ``to_dataframe`` / ``to_pandas`` helper on the SDK, the iterator or the ``Window``
+object. Building the DataFrame yourself is a few lines: read each measure, then align them with
+``merge_asof`` if they are on different clocks.
 
 .. code-block:: python
 
-   # Nothing is scrubbed unless you say so.
-   transfer_data(
-       src_sdk=main_sdk,
-       dest_sdk=export_sdk,
-       definition=cohort_def,
-       deidentify=True,
-       string_value_policy="redact",   # explicit opt-in
-   )
+    import pandas as pd
+
+    # A numeric measure.
+    _, hr_t, hr_v = sdk.get_data(hr_id, start_time_n=start_n, end_time_n=end_n, device_id=device_id)
+    hr_df = pd.DataFrame({"time_ns": hr_t, "heart_rate": hr_v})
+
+    # A string measure - read with get_string_data, not get_data.
+    al_t, al_v = sdk.get_string_data(alarm_id, start_time_n=start_n, end_time_n=end_n,
+                                     device_id=device_id)
+    al_df = pd.DataFrame({"time_ns": al_t.astype("int64"), "alarm": al_v})
+
+    # Put the text channel next to the numeric one, carrying each alarm forward.
+    merged = pd.merge_asof(hr_df.sort_values("time_ns"), al_df.sort_values("time_ns"),
+                           on="time_ns", direction="backward")
+
+.. note::
+
+   Read timestamps in **nanoseconds** (the default ``time_units="ns"``) when you care about exact
+   times. ``time_units="s"`` returns ``float64`` seconds, and a modern epoch (~1.77e9 s) only has
+   about microsecond resolution in a float64 — enough for plotting, not for joining.
+
+.. _export_formats:
 
 Export Formats & CSV Example
 ############################
@@ -1221,6 +1550,20 @@ AtriumDB supports multiple export formats:
 CSV is generally discouraged for waveform data due to high sample frequency and volume,
 disk usage becomes quickly unscalable, but still can be used for small-scale exports if desired.
 
+.. note::
+
+   **String (event / state / text) measures export to** ``csv``, ``npz`` **and** ``parquet``
+   as well as to the native ``tsc`` format. Those three have a text-capable value column, so
+   what is written is the **decoded strings** — not the ``int64`` dictionary codes, which only
+   mean anything alongside the dataset that assigned them.
+
+   ``wfdb`` genuinely cannot hold text. A string measure requested for a ``wfdb`` export (or any
+   measure under ``string_value_policy="skip"``) is **not** silently dropped: ``transfer_data``
+   raises a ``UserWarning`` naming each omitted measure and the reason, and strikes it from the
+   ``meta/definition.yaml`` written into the bundle, so the manifest never claims data the bundle
+   does not contain. Share a ``tsc``, ``csv``, ``npz`` or ``parquet`` export instead when a
+   collaborator needs your alarm / event text.
+
 .. code-block:: python
 
    transfer_data(
@@ -1232,4 +1575,30 @@ disk usage becomes quickly unscalable, but still can be used for small-scale exp
    )
 
    # ——> Waveforms saved as CSV files under `/export/path/csv/`
+
+The CSV bundle layout is::
+
+    <export_path>/meta/index.db
+    <export_path>/meta/definition.yaml
+    <export_path>/csv/<device_tag>/<measure_tag>^<freq>Hz^<units>/<ISO-8601 start>.csv
+
+with each file carrying the header ``Timestamp (ns),<measure_tag>``. ``npz`` and ``parquet`` use
+the same directory scheme with their own extensions.
+
+.. warning::
+
+   **A CSV export does not round-trip nanosecond timestamps exactly (known defect).** The CSV
+   writer divides the ``int64`` nanosecond times by the unit conversion factor before writing —
+   which for the default ``ns`` format is a division by 1, and still converts the array to
+   ``float64``. A modern nanosecond epoch is around ``1.77e18``, well past the ``2**53`` integer
+   range a ``float64`` can represent exactly, so the values written are rounded to roughly the
+   nearest few hundred nanoseconds and the last digits are lost::
+
+       stored:  1770000000000000001
+       in CSV:  1.77e+18            ->  1770000000000000000
+
+   Sample **values** are unaffected, and the error is far below one sample period for any
+   ordinary waveform rate — but a CSV export is not a lossless archive, and a round-trip back
+   into AtriumDB will not reproduce the original timestamps bit for bit. Use the native ``tsc``
+   format (or ``npz`` / ``parquet``, which keep the ``int64`` column) when exact times matter.
 

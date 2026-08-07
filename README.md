@@ -1,6 +1,15 @@
 # AtriumDB
 For more detailed documentation click [here](https://docs.atriumdb.io/).
 
+AtriumDB stores clinical timeseries: regularly sampled **waveforms**, **aperiodic** numeric
+signals (NIBP, labs, anything with irregular timestamps), and **text/string** measures (alarm
+messages, ventilator modes, clinical state markers, free-text notes). Text values are
+dictionary-encoded, queryable as events (`get_event_intervals` pairs `from → to` markers into
+state intervals with censoring flags), and rasterized alongside waveforms by the windowing
+iterator so mixed-rate windows stack into a tensor. Dataset definitions can be anchored on event
+values to build event-centred cohorts. See the
+[SDK README](sdk/README.md) and the [documentation](https://docs.atriumdb.io/).
+
 ## Installation
 
 To install the base version of AtriumDB run:

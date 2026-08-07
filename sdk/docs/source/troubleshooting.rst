@@ -9,6 +9,8 @@ This page addresses common issues encountered when using AtriumDB and provides r
 
 - :ref:`OpenMP Interference <openmp_interference>`
 - :ref:`CDLL Not Hashable <cdll_not_hashable>`
+- :ref:`NameError: name 'Dataset' is not defined <torch_not_installed>`
+- :ref:`Reading the runtime docstrings <runtime_docstrings>`
 
 
 .. _openmp_interference:
@@ -82,3 +84,50 @@ To ensure the `AtriumSDK` object is hashable, either:
 **Important Notes:**
 
 - The shared library is lazy-loaded, meaning it is not loaded until a timeseries read or write operation is performed.
+
+
+.. _torch_not_installed:
+
+``NameError: name 'Dataset' is not defined``
+---------------------------------------------
+
+**Problem**
+
+Importing ``atriumdb.pytorch_integrations`` without PyTorch installed fails with a confusing
+error:
+
+.. code-block:: text
+
+    NameError: name 'Dataset' is not defined
+    ERROR:atriumdb.pytorch_integrations:Error Pytorch not installed.
+       To use pytorch integrations please install pytorch.
+
+The logged message names the real cause; the raised ``NameError`` does not, because the module
+falls back to an undefined base class when the ``torch`` import fails.
+
+**Solution**
+
+Install PyTorch (``pip install torch``). The AtriumDB PyTorch integrations are optional and
+nothing else in the SDK requires it.
+
+
+.. _runtime_docstrings:
+
+The runtime docstrings are the most detailed reference
+-------------------------------------------------------
+
+Several methods have runtime docstrings that go into considerably more detail than these pages —
+notably `get_iterator <contents.html#atriumdb.AtriumSDK.get_iterator>`_ (fill rules,
+``signal_kind`` interactions, string-code caveats),
+`insert_measure <contents.html#atriumdb.AtriumSDK.insert_measure>`_ and
+`transfer_data <contents.html#atriumdb.transfer_data>`_ (every de-identification parameter). When
+a page here is ambiguous, check:
+
+.. code-block:: python
+
+    help(sdk.get_iterator)
+    help(sdk.insert_measure)
+
+AtriumDB's ``ValueError`` messages are also written to be actionable: they name the offending
+measure, state the rule, list the valid alternatives and usually name the method that fixes the
+problem. Read them in full before searching the docs.

@@ -34,6 +34,8 @@ API Reference
    .. automethod:: get_measure_id
    .. automethod:: get_measure_info
    .. automethod:: get_measure_kind
+   .. automethod:: set_measure_kind
+   .. automethod:: get_measure_id_list_from_tag
    .. automethod:: search_measures
    .. automethod:: get_all_measures
    .. automethod:: insert_measure
@@ -71,11 +73,17 @@ API Reference
 
    .. automethod:: get_label_source_id
    .. automethod:: get_label_source_info
+   .. automethod:: get_all_label_sources
    .. automethod:: insert_label_source
+   .. automethod:: get_label_time_series
 
    .. automethod:: get_measure_string_vocabulary
    .. automethod:: get_string_values_present
    .. automethod:: get_event_intervals
+
+   .. automethod:: insert_encounter
+   .. automethod:: get_encounters
+   .. automethod:: get_device_patient_encounters
 
    .. automethod:: get_iterator
    .. automethod:: get_interval_array
@@ -107,6 +115,13 @@ API Reference
 
    .. automethod:: __next__
    .. automethod:: __iter__
+   .. automethod:: decode_window_strings
+
+.. _window_class:
+
+.. autoclass:: atriumdb.windowing.window.Window
+
+   .. automethod:: decode_string_signal
 
 
 .. autofunction:: partition_dataset

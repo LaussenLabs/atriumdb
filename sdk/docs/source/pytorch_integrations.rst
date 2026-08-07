@@ -31,7 +31,44 @@ Prerequisites
 - ``atriumdb`` Python SDK
 - ``torch`` and ``torchvision`` (optional, for using :class:`DataLoader`)
 - ``numpy``
-- Waveform data and waveform labels in AtriumDB see :ref:`_inserting_data_into_the_dataset` and :ref:`_methods_of_inserting_data`
+- Waveform data and waveform labels in AtriumDB — see
+  :ref:`inserting_data_into_the_dataset` and :ref:`methods_of_inserting_data`
+
+.. note::
+
+   **Aperiodic and string measures.** ``AtriumDBMapDataset`` defaults to
+   ``iterator_type="lightmapped"``, the lowest-RAM iterator, which renders every measure through
+   the numeric NaN sample grid and therefore supports **waveform measures only** — constructing it
+   over a string or aperiodic (``sample`` / ``state`` / ``event``) measure raises a ``ValueError``
+   naming the measure.
+
+   For a definition containing aperiodic or string measures, pass ``iterator_type="mapped"``. That
+   iterator rasterizes them and honours the ``aperiodic_fill``, ``fill_overrides`` and
+   ``period_overrides`` constructor parameters, which behave exactly as documented for
+   :ref:`get_iterator <aperiodic_windowing>`::
+
+       ds = AtriumDBMapDataset(
+           dataset_location=..., dataset_definition_path=...,
+           window_duration=60, window_slide=60, time_units="s",
+           iterator_type="mapped",
+           aperiodic_fill="carry_forward",
+           fill_overrides={nibp_id: "sparse"},     # keys are measure IDs
+           period_overrides={nibp_id: 5},
+       )
+
+   Remember that an ``event`` string measure arrives as a ``float64`` occupancy channel and a
+   ``state`` / ``sample`` string measure as ``int64`` codes you decode with
+   ``window.decode_string_signal(sdk, key)`` — see
+   :ref:`Choosing a signal_kind <choosing_signal_kind>`.
+
+.. warning::
+
+   The ``__getitem__`` example further down interpolates across ``NaN`` with ``np.interp``. That is
+   reasonable for a dense waveform with short dropouts, but on an aperiodic or rasterized channel
+   ``NaN`` is the *unknown / censored* sentinel, so interpolating erases the distinction between
+   "no data here" and a genuine reading — see the sentinel warning in
+   :ref:`Aperiodic and String Measure Windowing <aperiodic_windowing>`. Decide per measure whether
+   interpolation is meaningful before copying that block.
 
 .. code-block:: bash
 

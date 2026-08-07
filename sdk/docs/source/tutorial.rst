@@ -99,33 +99,39 @@ for each record and handle multiple signals in a single record.
         # Define list of labels for the record
         labels = []
 
-        # Create labels for each annotation
+        # Create labels for each annotation.
+        # NOTE the tuple order expected by insert_labels:
+        #   (label_name, source_id, measure, label_source, start_time, end_time)
+        # `source_id` is interpreted according to `source_type` (here, a device id).
         for i in range(len(label_value_list)):
             start_time = label_time_array[i]
             end_time = start_time + (1 / record.fs)  # Assuming an annotation lasts for one sample
             label_name = label_value_list[i]
             label_measure_id = None  # No specific signal associated with this label.
             label_source = 'WFDB Arrhythmia Annotation'  # Where the label came from
-            labels.append((label_name, label_source, device_id, label_measure_id, start_time, end_time))
+            labels.append((label_name, device_id, label_measure_id, label_source, start_time, end_time))
 
         # Insert labels into the database
         sdk.insert_labels(labels=labels, time_units='s', source_type='device_id')
 
+        # The sampling frequency, expressed in nanohertz (1 Hz = 10^9 nHz).
+        freq_nano = record.fs * 1_000_000_000
+
         # If there are multiple signals in one record, split them into separate dataset entries
         start_time_s = 0
-        end_time_s_max = start_time_s
+        end_time_max = start_time_s
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
 
                 # Check if a measure with the given tag and frequency already exists in the dataset using the `get_measure_id` function
                 # If it doesn't exist, create a new measure using the `insert_measure` function
-                measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i], freq_units="nHz")
+                measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i], freq_units="nHz")
                 if measure_id is None:
-                    measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, unit=record.units[i], freq_units="nHz")
+                    measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i], freq_units="nHz")
 
                 # Calculate the digital to analog scale factors.
-                gain = segment.adc_gain[i]
-                baseline = segment.baseline[i]
+                gain = record.adc_gain[i]
+                baseline = record.baseline[i]
                 scale_m = 1 / gain
                 scale_b = -baseline / gain
 
@@ -140,26 +146,37 @@ for each record and handle multiple signals in a single record.
         else:
             # Check if a measure with the given tag and frequency already exists in the dataset using the `get_measure_id` function
             # If it doesn't exist, create a new measure using the `insert_measure` function
-            measure_id = sdk.get_measure_id(measure_tag=record.sig_name, freq=freq_nano, unit=record.units)
+            measure_id = sdk.get_measure_id(measure_tag=record.sig_name[0], freq=freq_nano, units=record.units[0], freq_units="nHz")
             if measure_id is None:
-                measure_id = sdk.insert_measure(measure_tag=record.sig_name, freq=freq_nano, unit=record.units)
+                measure_id = sdk.insert_measure(measure_tag=record.sig_name[0], freq=freq_nano, units=record.units[0], freq_units="nHz")
 
             # Calculate the digital to analog scale factors.
-            gain = segment.adc_gain
-            baseline = segment.baseline
+            gain = record.adc_gain[0]
+            baseline = record.baseline[0]
             scale_m = 1 / gain
             scale_b = -baseline / gain
 
-            # Write the data using the `write_data_easy` function
-            sdk.write_segment(measure_id, device_id, record.d_signal, start_time_s, freq=record.fs, scale_m=scale_m, scale_b=scale_b,
-                time_units="s", freq_units="Hz")
+            # Write the data using the `write_segment` function
+            sdk.write_segment(measure_id, device_id, record.d_signal.T[0], start_time_s, freq=record.fs,
+                scale_m=scale_m, scale_b=scale_b, time_units="s", freq_units="Hz")
 
-            end_time_s = start_time_s + len(record.d_signal) / record.fs
+            end_time_s = start_time_s + len(record.d_signal.T[0]) / record.fs
             end_time_max = max(end_time_max, end_time_s)
 
         # Map the newly inserted device data to the newly create patient
         if end_time_max > start_time_s:
             sdk.insert_device_patient_data([(device_id, patient_id, start_time_s, end_time_max)], time_units='s')
+
+.. note::
+
+   **Keyword names matter.**
+   `AtriumSDK.insert_measure <contents.html#atriumdb.AtriumSDK.insert_measure>`_ and
+   `AtriumSDK.get_measure_id <contents.html#atriumdb.AtriumSDK.get_measure_id>`_
+   take ``units=`` (plural). ``AtriumSDK.search_measures`` takes ``unit=`` (singular). Passing the
+   wrong one raises ``TypeError: ... got an unexpected keyword argument``.
+
+   A ready-to-run version of this whole walkthrough lives in
+   ``sdk/docs/source/scripts/tutorial_script.py``.
 
 
 .. _methods_of_inserting_data:
@@ -243,61 +260,77 @@ can be used for inserting time-value pairs, with arrays of values and correspond
     # Alternative: Inserting time-value pairs with expected period
     sdk.write_time_value_pairs(measure_id, device_id, times, values, period=2.0, time_units="s")
 
-.. _string_values:
+.. _aperiodic_measures:
 
-String Values
-^^^^^^^^^^^^^^
+Declaring an Aperiodic Measure
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-AtriumDB can store dynamically-sized **string** values for a measure, alongside its numeric measures.
-This is useful for aperiodic textual signals such as alarm messages, device status strings, or annotations.
+Irregular signals — NIBP every few minutes, a lab result, an alarm string, a ventilator mode —
+have no fixed sampling rate. AtriumDB still requires a frequency on every measure, so the
+question "what do I pass for ``freq``?" comes up immediately. The answers:
 
-You write strings with the **same methods used for numbers** -
-`AtriumSDK.write_time_value_pairs <contents.html#atriumdb.AtriumSDK.write_time_value_pairs>`_ or
-`AtriumSDK.write_data <contents.html#atriumdb.AtriumSDK.write_data>`_ -
-simply by passing a ``list[str]`` (or a string/object numpy array) as the values. Under the hood, each
-unique string is assigned an ``int64`` dictionary code and stored using the ordinary integer write path,
-so no special block format is involved. The per-measure dictionary is an append-only JSON Lines file at
-``<dataset_location>/meta/string_dict/measure_<measure_id>.jsonl``; existing codes are never rewritten, so
-historical blocks stay valid as new strings are appended.
+**You must pass a frequency (or a period).** ``insert_measure`` with neither raises
+``ValueError: Either freq or period must be specified.``
 
-To read string values back, use the dedicated
-`AtriumSDK.get_string_data <contents.html#atriumdb.AtriumSDK.get_string_data>`_ method, which returns a
-``(times, values)`` tuple where ``values`` is a 1D object numpy array of ``str``. It accepts the same
-selectors (``measure_id`` or ``measure_tag``/``freq``/``units``, plus device/patient selectors) as
-`AtriumSDK.get_data <contents.html#atriumdb.AtriumSDK.get_data>`_.
+**Do not pass** ``freq=0``. It is rejected, because the frequency is used as a divisor
+(``period_ns = 10**18 // freq_nhz``)::
+
+    ValueError: freq must be greater than 0; got 0. The frequency is used as a divisor
+    (period_ns = 10**18 // freq_nhz), so 0 is not a usable value and a negative one makes
+    every raster computation meaningless. Do NOT use freq=0 to mean 'aperiodic': give the
+    measure a nominal frequency (e.g. freq=1, freq_units='Hz') and declare its temporal
+    shape with signal_kind='sample' | 'event' | 'state', then write it with
+    write_time_value_pairs().
+
+**Give it a nominal frequency and declare** ``signal_kind``. The convention used throughout
+these docs is ``freq=1.0, freq_units="Hz"`` plus an explicit ``signal_kind``:
 
 .. code-block:: python
 
-    sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
-    measure_id = sdk.insert_measure(measure_tag="alarm_text", freq=1.0, freq_units="Hz")
-    device_id = sdk.insert_device(device_tag="test_device")
+    nibp_id = sdk.insert_measure(measure_tag="NIBP_SYS", freq=1.0, freq_units="Hz",
+                                 units="mmHg", signal_kind="sample", value_type="numeric")
 
-    # Write strings with the ordinary write methods - just pass a list[str].
-    times = np.array([0.0, 1.0, 2.0])  # seconds
-    values = ["ASYSTOLE", "V-TACH", "ASYSTOLE"]  # dictionary-encoded automatically
-    sdk.write_time_value_pairs(measure_id, device_id, times, values, time_units="s")
+.. warning::
 
-    # The advanced AtriumSDK.write_data method accepts string/object value arrays too
-    # (omit raw_value_type - the codes are stored as int64):
-    from atriumdb import T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
-    ts_ns = np.array([0, 1_000_000_000, 2_000_000_000], dtype=np.int64)  # nanosecond timestamps
-    sdk.write_data(measure_id, device_id, ts_ns, values, freq_nhz=1_000_000_000,
-                   time_0=int(ts_ns[0]), raw_time_type=T_TYPE_TIMESTAMP_ARRAY_INT64_NANO)
+    **The nominal frequency is part of the measure's identity.** ``get_measure_id``,
+    the ``{"tag": ..., "freq_hz": ..., "units": ...}`` triplets in a
+    :ref:`DatasetDefinition <definition_file_format>`, and the ``(tag, freq_hz, units)``
+    key of ``window.signals`` all include it. Choosing ``1.0`` versus ``0.005`` produces two
+    different measures, and every downstream lookup changes. Pick a convention (``1.0`` Hz is
+    the one used here) and keep it — it cannot be changed after data is written.
 
-    # Read them back with get_string_data -> (times, values), values is a str object array.
-    read_times, read_values = sdk.get_string_data(
-        measure_id, start_time_n=0, end_time_n=10, device_id=device_id, time_units="s")
-    print(read_values)  # array(['ASYSTOLE', 'V-TACH', 'ASYSTOLE'], dtype=object)
+    The nominal frequency does **not** affect the stored timestamps or what you read back.
+    ``write_time_value_pairs`` stores your timestamps as given; declaring a measure at 1.0 Hz
+    or at 0.005 Hz and writing the same irregular points reads back byte-identical.
 
-.. note::
+**Pass** ``freq``/``period`` **on the write too, to silence period detection.** If
+``write_time_value_pairs`` is given neither, it infers a period from the deltas in ``times``
+and warns when no single delta accounts for more than 30% of the intervals::
 
-    String measures cannot be analog-scaled or NaN-filled. Calling
-    `AtriumSDK.get_data <contents.html#atriumdb.AtriumSDK.get_data>`_ on a string measure with the default
-    ``analog=True``, or with ``return_nan_filled``, raises a ``ValueError`` pointing you to
-    ``get_string_data``. Point reads of string measures are served only by ``get_string_data``; they are
-    not folded into ``get_data``. The windowing iterator *does* support string measures, but it carries the
-    raw ``int64`` dictionary codes in each window (not decoded strings); see
-    :ref:`aperiodic_windowing` for how to decode them.
+    UserWarning: Automatic period detection: no single time delta accounts for >30% of
+    intervals. Using best-effort estimate of 190.0 (mode of deltas, 1/7 intervals).
+    For more accurate results, explicitly provide 'period' or 'freq'.
+
+For genuinely irregular data there is no good period, so this fires on essentially every
+write. The inferred period is **not** applied to your timestamps — those are stored exactly as
+supplied — but it *is* used to size the gap tolerance behind the availability index, which is
+why an aperiodic measure's
+`interval array <contents.html#atriumdb.AtriumSDK.get_interval_array>`_ can extend past its
+last observation by roughly one inferred period. Passing the measure's nominal
+``freq``/``period`` on each write both silences the warning and makes the availability index
+predictable:
+
+.. code-block:: python
+
+    times = np.array([0.0, 190.0, 480.0, 705.0, 1100.0, 1380.0, 1810.0, 2200.0])  # irregular
+    values = np.array([118.0, 122.0, 115.0, 130.0, 127.0, 119.0, 124.0, 121.0])
+
+    # Warns (period is guessed from the deltas):
+    sdk.write_time_value_pairs(nibp_id, device_id, times, values, time_units="s")
+
+    # Quiet, and the availability index is derived from the declared 1 Hz:
+    sdk.write_time_value_pairs(nibp_id, device_id, times, values,
+                               freq=1.0, freq_units="Hz", time_units="s")
 
 .. _measure_metadata:
 
@@ -315,7 +348,8 @@ These two axes are independent: a string signal can be an ``event``, a ``state``
 numeric signal can be any shape too.
 
 Both are **optional** on
-`AtriumSDK.insert_measure <contents.html#atriumdb.AtriumSDK.insert_measure>`_. When you omit them,
+`AtriumSDK.insert_measure <contents.html#atriumdb.AtriumSDK.insert_measure>`_, but for anything that is
+not a regularly sampled waveform you should always pass them. When you omit them,
 read-time defaults apply: a measure with no stored ``signal_kind`` reads back as ``waveform``, and a
 measure with no stored ``value_type`` defaults to ``numeric`` — unless string data is written to it, in
 which case it resolves to ``string``. In other words ``value_type`` is inferred from the first write
@@ -324,24 +358,102 @@ ever ``waveform`` unless you set it explicitly. Automatic shape inference beyond
 performed, so pass ``signal_kind`` yourself for aperiodic measures; ``sample`` is the safe default for
 aperiodic numeric data.
 
+.. warning::
+
+    **Never create a string measure without** ``signal_kind``. Omitting it produces a
+    ``waveform`` + ``string`` measure, which is not a meaningful combination: point reads with
+    ``get_string_data`` appear to work, but the windowing iterator refuses to rasterize it::
+
+        ValueError: Measure 4 is a string measure; its values cannot be NaN-filled.
+        Use AtriumSDK.get_string_data(...) to read string data.
+
+    Because the measure key (tag, frequency, units) is established by then and real data has
+    been written against it, this is expensive to discover late. Every string measure should be
+    declared ``signal_kind="event"``, ``"state"`` or ``"sample"``. If you inherit a measure in
+    this state, repair it with
+    `AtriumSDK.set_measure_kind <contents.html#atriumdb.AtriumSDK.set_measure_kind>`_ — no data
+    is rewritten.
+
+.. _choosing_signal_kind:
+
+Choosing a ``signal_kind`` for a string measure
+""""""""""""""""""""""""""""""""""""""""""""""""
+
+This is the most consequential decision you make about a text channel, because
+``signal_kind`` determines how the :ref:`windowing iterator <aperiodic_windowing>` rasterizes it
+and therefore what a downstream researcher can ever get out of it:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 40 48
+
+   * - ``signal_kind``
+     - What a window contains
+     - Use it for
+   * - ``event``
+     - ``float64`` **occupancy**: ``1.0``/``0.0`` presence per grid cell (or a count). It is
+       *never* decodable back to strings — the only legal fill rules are ``presence`` and
+       ``count``, and both discard the value's identity.
+     - "did *something* happen in this cell" indicators, where you do not need to know *which*
+       string fired. Read the actual text with ``get_string_data`` instead.
+   * - ``state``
+     - ``int64`` dictionary **codes**, one per grid cell, carried forward from the last observed
+       transition and left-censored before it. Decodable with
+       ``window.decode_string_signal``.
+     - Anything that is "in effect until the next value": ventilator mode, alarm state,
+       anesthesia START/STOP, an on/off condition you want as a per-cell channel.
+   * - ``sample``
+     - ``int64`` dictionary **codes**, one per grid cell (``carry_forward`` by default,
+       ``sparse`` and ``aggregate:last`` also available). Decodable.
+     - Discrete text readings that are point-in-time observations rather than a persisting
+       state.
+
+.. warning::
+
+    **An** ``event`` **string measure can never yield decoded strings in a window.** A single
+    alarm measure holding ``ASYSTOLE``, ``V-TACH`` and ``SENSOR_OFF`` collapses to one
+    undifferentiated "something happened" channel; ``window.decode_string_signal`` on it raises
+    ``ValueError: Cannot decode string codes ... the window's values have dtype float64``.
+    If you need to know *which* value was in effect at each grid cell — for example to build a
+    0/1 "in anesthesia" channel, or to feed alarm identity to a model — declare the measure
+    ``signal_kind="state"`` (or ``"sample"``), not ``"event"``. Alarm and START/STOP channels
+    generally want ``state``.
+
+    ``signal_kind`` is normally set at ``insert_measure`` time. If you get it wrong,
+    `AtriumSDK.set_measure_kind <contents.html#atriumdb.AtriumSDK.set_measure_kind>`_ can correct
+    it afterwards — ``signal_kind`` is descriptive metadata and is safe to change at any time,
+    including after data has been written::
+
+        sdk.set_measure_kind(measure_id, signal_kind="state")   # ('state', 'string')
+
+    ``value_type`` is **not** repairable in the same way: relabelling a measure that already
+    holds string data as ``numeric`` (or vice versa) raises. See
+    :ref:`Reading string windows <reading_string_windows>` for the full rasterization rules.
+
 You can read the metadata back either as part of the full measure record via
 `AtriumSDK.get_measure_info <contents.html#atriumdb.AtriumSDK.get_measure_info>`_, or as just the two
 axes via `AtriumSDK.get_measure_kind <contents.html#atriumdb.AtriumSDK.get_measure_kind>`_.
 
 .. code-block:: python
 
-    # Create a measure with explicit Phase 2 metadata.
-    measure_id = sdk.insert_measure(
-        measure_tag="alarm_text", freq=1.0, freq_units="Hz",
+    # An alarm channel you only need occupancy for.
+    alarm_id = sdk.insert_measure(
+        measure_tag="alarm_text", freq=1.0, freq_units="Hz", units="alarm",
         signal_kind="event", value_type="string")
 
-    # Read the full record back; it now includes signal_kind and value_type.
-    info = sdk.get_measure_info(measure_id)
+    # A ventilator mode: a state that persists until the next value, and that you want
+    # to be able to decode per grid cell in a window.
+    mode_id = sdk.insert_measure(
+        measure_tag="vent_mode", freq=1.0, freq_units="Hz", units="mode",
+        signal_kind="state", value_type="string")
+
+    # Read the full record back; it includes signal_kind and value_type.
+    info = sdk.get_measure_info(alarm_id)
     print(info['signal_kind'], info['value_type'])   # event string
 
     # Or fetch just the two axes as a tuple.
-    signal_kind, value_type = sdk.get_measure_kind(measure_id)
-    print(signal_kind, value_type)                   # event string
+    signal_kind, value_type = sdk.get_measure_kind(mode_id)
+    print(signal_kind, value_type)                   # state string
 
     # A measure created without the new fields defaults to waveform / numeric.
     numeric_id = sdk.insert_measure(measure_tag="heart_rate", freq=1.0, freq_units="Hz")
@@ -352,6 +464,116 @@ axes via `AtriumSDK.get_measure_kind <contents.html#atriumdb.AtriumSDK.get_measu
     A measure is **either numeric or string** — never both. Once a measure's ``value_type`` is
     established (explicitly at ``insert_measure`` time, or by its first write), writing the other kind of
     value to it raises a ``ValueError``. Write the conflicting data to a separate measure instead.
+
+.. note::
+
+    There is no method to filter measures by ``signal_kind`` / ``value_type``
+    (``AtriumSDK.search_measures`` matches on tag, frequency, unit and name only). Use a
+    comprehension over
+    `AtriumSDK.get_all_measures <contents.html#atriumdb.AtriumSDK.get_all_measures>`_::
+
+        text_measures = [m for m in sdk.get_all_measures().values()
+                         if m['value_type'] == 'string']
+
+.. _string_values:
+
+String Values
+^^^^^^^^^^^^^^
+
+AtriumDB can store dynamically-sized **string** values for a measure, alongside its numeric measures.
+This is useful for aperiodic textual signals such as alarm messages, device status strings, or annotations.
+
+You write strings with the **same methods used for numbers** -
+`AtriumSDK.write_time_value_pairs <contents.html#atriumdb.AtriumSDK.write_time_value_pairs>`_ or
+`AtriumSDK.write_data <contents.html#atriumdb.AtriumSDK.write_data>`_ -
+simply by passing a ``list[str]`` (or a string/object numpy array) as the values. Under the hood, each
+unique string is assigned an ``int64`` dictionary code and stored using the ordinary integer write path,
+so no special block format is involved. The per-measure dictionary is an append-only JSON Lines file at
+``<dataset_location>/meta/string_dict/measure_<measure_id>.jsonl``; existing codes are never rewritten, so
+historical blocks stay valid as new strings are appended.
+
+.. warning::
+
+    The dictionary files under ``<dataset_location>/meta/string_dict/`` are **not recoverable
+    from the block data**. Lose them and every waveform still reads perfectly while every string
+    value becomes permanently undecodable. They must be backed up together with ``tsc/`` and the
+    metadata database — see :ref:`Operations <operations>`.
+
+To read string values back, use the dedicated
+`AtriumSDK.get_string_data <contents.html#atriumdb.AtriumSDK.get_string_data>`_ method, which returns a
+``(times, values)`` tuple where ``values`` is a 1D object numpy array of ``str``. It accepts the same
+selectors (``measure_id`` or ``measure_tag``/``freq``/``units``, plus device/patient selectors) as
+`AtriumSDK.get_data <contents.html#atriumdb.AtriumSDK.get_data>`_.
+
+.. code-block:: python
+
+    sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+
+    # ALWAYS declare signal_kind on a string measure. 'state' is the right choice here:
+    # an alarm is in effect until the next value, and 'state' is the only kind that can be
+    # decoded back to strings inside a window. See "Choosing a signal_kind" above.
+    measure_id = sdk.insert_measure(measure_tag="alarm_text", freq=1.0, freq_units="Hz",
+                                    units="alarm", signal_kind="state", value_type="string")
+    device_id = sdk.insert_device(device_tag="test_device")
+
+    # Write strings with the ordinary write methods - just pass a list[str].
+    times = np.array([0.0, 1.0, 2.0])  # seconds
+    values = ["ASYSTOLE", "V-TACH", "ASYSTOLE"]  # dictionary-encoded automatically
+    sdk.write_time_value_pairs(measure_id, device_id, times, values,
+                               freq=1.0, freq_units="Hz", time_units="s")
+
+    # The advanced AtriumSDK.write_data method accepts string/object value arrays too
+    # (omit raw_value_type - the codes are stored as int64):
+    from atriumdb import T_TYPE_TIMESTAMP_ARRAY_INT64_NANO
+    ts_ns = np.array([10_000_000_000, 11_000_000_000, 12_000_000_000], dtype=np.int64)
+    sdk.write_data(measure_id, device_id, ts_ns, values, freq_nhz=1_000_000_000,
+                   time_0=int(ts_ns[0]), raw_time_type=T_TYPE_TIMESTAMP_ARRAY_INT64_NANO)
+
+    # Read them back with get_string_data -> (times, values), values is a str object array.
+    read_times, read_values = sdk.get_string_data(
+        measure_id, start_time_n=0, end_time_n=10, device_id=device_id, time_units="s")
+    print(read_values)  # array(['ASYSTOLE', 'V-TACH', 'ASYSTOLE'], dtype=object)
+
+.. note::
+
+    String measures cannot be analog-scaled or NaN-filled. Calling
+    `AtriumSDK.get_data <contents.html#atriumdb.AtriumSDK.get_data>`_ on a string measure with the default
+    ``analog=True``, or with ``return_nan_filled``, raises a ``ValueError`` pointing you to
+    ``get_string_data``:
+
+    .. code-block:: text
+
+        ValueError: Measure 1 is a string measure; its values cannot be analog-scaled.
+        Use AtriumSDK.get_string_data(...) to read string data.
+
+    ``get_data(..., analog=False)`` on a string measure does **not** raise — it returns the raw
+    ``int64`` dictionary codes with no decoding, which look like plausible small integers. Use
+    ``get_string_data`` for point reads; it is the only read path that decodes.
+
+    The windowing iterator *does* support string measures, and for ``state`` / ``sample`` kinds it
+    carries the raw ``int64`` dictionary codes in each window (not decoded strings); see
+    :ref:`aperiodic_windowing` for how to decode them. An ``event``-kind string measure is
+    rasterized as numeric occupancy and cannot be decoded — see
+    :ref:`Choosing a signal_kind <choosing_signal_kind>`.
+
+.. _counting_events:
+
+Counting event occurrences
+""""""""""""""""""""""""""""
+
+There is no aggregation helper — ``get_measure_string_vocabulary`` and
+``get_string_values_present`` both return *distinct* values only. To count occurrences, read the
+values and tally them:
+
+.. code-block:: python
+
+    from collections import Counter
+
+    times, values = sdk.get_string_data(alarm_id, start_time_n=0, end_time_n=10 ** 18,
+                                        device_id=device_id)
+    counts = Counter(values.tolist())
+    for value, n in counts.most_common():
+        print(f"{value:<12} {n}")
 
 .. _buffered_inserts:
 
@@ -411,7 +633,9 @@ The information includes:
 - `unit`: The unit of the measure (e.g., 'BPM' for beats per minute).
 - `unit_label`: A human-readable label for the unit (can be None if not defined).
 - `unit_code`: A code (usually CF_CODE10) representing the unit (can be None if not defined).
-- `source_id`: The identifier of the data source (e.g., device or patient) associated with the measure.
+- `period_ns`: The sampling period in nanoseconds, derived from ``freq_nhz`` (``10**18 // freq_nhz``).
+- `source_id`: The identifier of the ingest source that registered the measure. It is ``None`` for
+  measures created with `AtriumSDK.insert_measure <contents.html#atriumdb.AtriumSDK.insert_measure>`_ and is not a device or patient id.
 - `signal_kind`: The temporal shape of the signal, one of ``waveform``, ``sample``, ``event`` or ``state`` (defaults to ``waveform``). See :ref:`Measure Metadata <measure_metadata>`.
 - `value_type`: The value encoding of the signal, either ``numeric`` or ``string`` (defaults to ``numeric``). See :ref:`Measure Metadata <measure_metadata>`.
 
@@ -438,27 +662,35 @@ Example output:
            'tag': 'MLII',
            'name': None,
            'freq_nhz': 360000000000,
+           'period_ns': 2777777,
            'code': None,
            'unit': 'mV',
            'unit_label': None,
            'unit_code': None,
-           'source_id': 1
+           'source_id': None,
+           'signal_kind': 'waveform',
+           'value_type': 'numeric'
        },
        2: {
            'id': 2,
            'tag': 'V5',
            'name': None,
            'freq_nhz': 360000000000,
+           'period_ns': 2777777,
            'code': None,
            'unit': 'mV',
            'unit_label': None,
            'unit_code': None,
-           'source_id': 1
+           'source_id': None,
+           'signal_kind': 'waveform',
+           'value_type': 'numeric'
        },
    }
 
 In this example, the dataset contains two measures: ECG Lead MLII and ECG Lead V5,
 both with a sample frequency of 360000000000 nanohertz (360 Hz) and units in millivolts (mV).
+Both default to ``signal_kind='waveform'`` / ``value_type='numeric'`` because
+`AtriumSDK.insert_measure <contents.html#atriumdb.AtriumSDK.insert_measure>`_ was called without them.
 
 Retrieving All Devices
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -565,6 +797,24 @@ starting at epoch 0 and ending at epoch 1805555050000. This is because there are
     :ref:`get_data <get_data_label>` / `get_string_data <contents.html#atriumdb.AtriumSDK.get_string_data>`_
     rather than relying on ``get_interval_array``. Pass ``gap_tolerance_nano`` to control how aggressively
     adjacent intervals are merged.
+
+.. warning::
+
+    **An aperiodic interval array can extend past the last observation.** The widening described
+    above is derived from the measure's period, and when neither ``freq`` nor ``period`` was given
+    at write time that period is *guessed* (see
+    :ref:`Declaring an aperiodic measure <aperiodic_measures>`). An event measure whose last event
+    is at t = 6600 s can therefore report availability out to t = 8400 s, past the end of the whole
+    recording — which then leaks into anything built on that index, including
+    :ref:`event-anchored regions <event_anchored_regions>`.
+
+    Declaring the frequency on the write fixes it::
+
+        # no freq declared          -> [[ 600000000000  8400000000000]]
+        # freq=1.0 Hz declared      -> [[ 600000000000  6601000000000]]
+
+    Always pass ``freq``/``period`` to ``write_time_value_pairs``, and pass an explicit
+    ``end_time`` when validating a definition, if you care where availability ends.
 
 These methods allow you to survey the data in your dataset and obtain information about the measures, devices, and data availability.
 By understanding the data availability, you can make informed decisions about how to process, analyze, or visualize the data in your dataset.
@@ -869,6 +1119,17 @@ measure and returns the spans between them as a list of dicts::
 The two time fields are **always in nanoseconds**, regardless of the ``time_units`` you use
 for the input ``start_time``/``end_time``. Results are sorted by start time.
 
+**Required arguments.** ``start_time`` and ``end_time`` are **mandatory** — they bound the
+whole-stream container and define where censoring clips. Omitting either raises::
+
+    ValueError: start_time and end_time are required for get_event_intervals --
+    they bound the whole-stream container and define where censoring clips.
+
+``measure`` must be a **measure id** (int); a tag raises
+``ValueError: invalid literal for int() with base 10: '...'``. Resolve it with
+``sdk.get_measure_id(...)`` first. (The ``measure`` key of an
+:ref:`event-anchored region <event_anchored_regions>` *does* accept a tag.)
+
 **Collapse pairing.** Pairing uses the *collapse* rule: a run of ``from`` events up to the
 next ``to`` event is folded into ONE interval (first-open → first-close), and the returned
 intervals never overlap. Repeated ``from`` events before a ``to`` do not create nested or
@@ -892,6 +1153,51 @@ boundary lies outside the observed data — the boundary is clipped to the conta
   start.
 - A ``from`` event with no following ``to`` (the state never closes within the data) →
   ``end_censored=True``, with ``end_time_n`` clipped to the container/range end.
+
+.. note::
+
+   **Quieting the scoping warning.** On a dataset with no ``device_patient`` mappings and no
+   encounters — which is every dataset you build by following the quickstart — the default
+   ``within=None`` cascade warns on every call::
+
+       UserWarning: Neither device_patient nor encounter scoping data is available for this
+       source; falling back to whole-stream scoping (the query range).
+
+   Pass ``within="none"`` to ask for whole-stream scoping deliberately; the result is the same
+   and the warning goes away.
+
+.. warning::
+
+   ``get_event_intervals`` pairs **two named marker values**. It is not a "time in each state"
+   query and there is no wildcard: ``to_value=None`` / ``"*"`` / a list all raise.
+
+   For a ``state`` measure whose value simply changes (``SIMV`` → ``PRVC`` → ``CPAP``),
+   enumerating the other values and summing **double-counts badly**, because each ``SIMV`` run
+   pairs with *every* later mode::
+
+       SIMV -> PRVC: 50.0 min
+       SIMV -> CPAP: 100.0 min
+       SIMV -> PSV:  150.0 min
+       naive sum   = 300.0 min      <-- wrong; the true answer is 50 min
+
+   The correct approach for state occupancy is to read the raw transitions and diff consecutive
+   timestamps:
+
+   .. code-block:: python
+
+       from collections import defaultdict
+
+       times, values = sdk.get_string_data(mode_id, start_time_n=start_n, end_time_n=end_n,
+                                           device_id=device_id)
+       order = np.argsort(times)
+       times, values = np.asarray(times)[order], np.asarray(values)[order]
+
+       totals = defaultdict(float)
+       for i in range(len(times) - 1):
+           totals[values[i]] += (times[i + 1] - times[i]) / 1e9   # seconds
+
+       # The LAST state is right-censored: its end is unknown within this range.
+       print(dict(totals), "last state:", values[-1], "at", times[-1], "(right-censored)")
 
 .. code-block:: python
 
@@ -1097,6 +1403,8 @@ You can validate a dataset definition like this:
 
 Once validated, the definition is internally marked with `is_validated=True` so subsequent operations skip redundant validation steps.
 
+.. _filtering_dataset_definitions:
+
 Filtering Dataset Definitions
 -----------------------------
 
@@ -1128,6 +1436,26 @@ For example, to discard windows where less than 30% of the expected data is pres
    the `window_duration` and `window_slide` used in `definition.filter()` should match exactly
    those used in `get_iterator()`. Using different values may result in the iterator producing
    windows that were not evaluated, or not accepted, by the filter.
+
+.. warning::
+
+   This ``actual_count / expected_count`` recipe **cannot reject an** ``event`` **channel.**
+   Event cells are always "known" (absence is a meaningful ``0``), so an event measure always
+   reports ``actual_count == expected_count`` — even in a window that contains no data at all.
+   Adding an event measure to a definition therefore silently removes those windows from the
+   filter's protection. Filter on the specific measures you care about instead::
+
+       QUALITY_MEASURES = {ecg_id, nibp_id}   # ids from sdk.get_measure_id(...)
+
+       def low_quality_filter(window):
+           for signal_dict in window.signals.values():
+               if signal_dict["measure_id"] not in QUALITY_MEASURES:
+                   continue
+               if signal_dict["expected_count"] == 0:
+                   return False
+               if signal_dict["actual_count"] / signal_dict["expected_count"] < 0.3:
+                   return False
+           return True
 
 
 Saving Dataset Definitions

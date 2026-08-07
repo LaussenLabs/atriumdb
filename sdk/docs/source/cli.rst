@@ -399,3 +399,20 @@ Options
 +---------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------+
 | `--database-type-out`     | The metadata database type. Can also be specified through the ATRIUMDB_DATABASE_TYPE_OUT environment variable.                                             |
 +---------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+.. note::
+
+   The CLI exposes a subset of :py:func:`transfer_data`. In particular there is **no** CLI
+   equivalent of ``string_value_policy``, ``keep_identified`` or ``include_encounters``, and
+   ``parquet`` is not among the ``--export-format`` choices (it is available from Python).
+   Consequences:
+
+   - A CLI export always uses the default ``string_value_policy="transfer"``, so string measure
+     values are copied **verbatim**, with or without ``--deidentify``. To scrub one specific
+     free-text measure you must call :py:func:`transfer_data` from Python — see
+     :ref:`String / event measure values <string_value_policy>`.
+   - ``--export-format tsc``, ``csv`` and ``npz`` all carry string measures (``csv`` and ``npz``
+     write the decoded strings). ``wfdb`` cannot hold text and warns about each measure it
+     omits. See :ref:`Export Formats <export_formats>`.
+   - ``--export-format csv`` loses nanosecond timestamp precision; see the warning under
+     :ref:`Export Formats <export_formats>`.
