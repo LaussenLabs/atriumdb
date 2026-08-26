@@ -17,3 +17,20 @@
 
 DEFAULT_UNITS = ''
 SUPPORTED_DB_TYPES = ["mysql", "sqlite", "mariadb"]
+
+# Column positions in raw ``measure`` rows returned by the SQL handlers. Both
+# handlers select the same explicit column list, so callers can use named
+# accessors instead of repeating positional indexes.
+MEASURE_ROW_ID = 0
+MEASURE_ROW_SIGNAL_KIND = 10
+MEASURE_ROW_VALUE_TYPE = 11
+
+
+def measure_row_signal_kind(row):
+    """Return the raw, possibly-null ``signal_kind`` from a measure row."""
+    return row[MEASURE_ROW_SIGNAL_KIND]
+
+
+def measure_row_value_type(row):
+    """Return the raw, possibly-null ``value_type`` from a measure row."""
+    return row[MEASURE_ROW_VALUE_TYPE]

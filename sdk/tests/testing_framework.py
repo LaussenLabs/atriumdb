@@ -31,7 +31,7 @@ DEFAULT_MARIA_DB_PORT = 3306
 
 #: The backends the current pytest invocation should exercise.  Both are enabled by
 #: default; ``sdk/tests/conftest.py`` narrows this when ``--backend`` is given or when
-#: the ``-m`` expression deselects the ``mariadb`` marker (e.g. the fast inner loop).
+#: the ``-m`` expression deselects the ``mariadb`` marker.
 #: This exists so that ``_test_for_both`` -- which is a plain function and therefore
 #: invisible to pytest's marker machinery -- obeys the same selection as the properly
 #: parametrized tests.

@@ -19,15 +19,98 @@ import math
 from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple, Optional
 
-from atriumdb.sql_handler.maria.maria_functions import maria_insert_file_index_query, maria_insert_block_query
-from atriumdb.sql_handler.sql_helper import join_sql_and_bools
+
+def block_insert_tuples(block_data: List[Dict], file_id: int):
+    """The ``block_index`` insert parameters for ``block_data``, in column order.
+
+    The column order has to match the INSERT in both backends and in every caller that
+    writes blocks, so it is spelled once here rather than re-typed at each call site."""
+    return [(block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
+             block["start_time_n"], block["end_time_n"], block["num_values"]) for block in block_data]
+
+
+def interval_insert_tuples(interval_data: List[Dict]):
+    """The ``interval_index`` insert parameters for ``interval_data``, in column order."""
+    return [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
+             interval["end_time_n"]) for interval in interval_data]
 
 
 class SQLHandler(ABC):
+    # How this backend's driver words an error about a column that isn't there.
+    # SQLite says "no such column", MariaDB says "unknown column"; each backend
+    # only ever emits its own, so the wording stays per-backend rather than being
+    # matched loosely against both.
+    _MISSING_COLUMN_PHRASE = ""
+
+    # How this backend reports a query against a table that was never created --
+    # the driver exception class(es) to catch, and the phrases that must all appear
+    # in the message. Both are per-backend for the same reason as the column phrase
+    # above; an empty tuple of error types catches nothing, which is the right
+    # default for a backend that has not declared them.
+    _MISSING_TABLE_ERRORS = ()
+    _MISSING_TABLE_PHRASES = ()
+
     @abstractmethod
     def create_schema(self):
         # Creates Tables if they don't exist.
         pass
+
+    @staticmethod
+    def _int_id_list_clauses(**id_lists):
+        """Build ``<column> IN (?, ?, ...)`` clauses for the given ``column=id_list``
+        pairs, skipping any list that is ``None`` or empty.
+
+        Returns ``(clauses, args)``. A skipped list means "no filter on this column";
+        note that this is the *filter* reading of an empty list, which is why these
+        call sites differ from :meth:`_select_rows_in_list`, where an empty list is
+        the query itself and must match nothing."""
+        clauses, args = [], ()
+        for column, id_list in id_lists.items():
+            if id_list is None or len(id_list) == 0:
+                continue
+            clauses.append("{} IN ({})".format(column, ','.join(['?'] * len(id_list))))
+            args += tuple(int(value) for value in id_list)
+        return clauses, args
+
+    @staticmethod
+    def _append_limit_offset(query: str, limit, offset) -> str:
+        """Append ``LIMIT``/``OFFSET`` to a listing query when asked for.
+        An ``offset`` without a ``limit`` is ignored -- SQL has no bare OFFSET."""
+        if limit is None:
+            return query
+        return query + (f" LIMIT {limit} OFFSET {offset}" if offset is not None else f" LIMIT {limit}")
+
+    def _select_all_ordered(self, query: str, limit=None, offset=None):
+        """Run a parameterless listing query with optional LIMIT/OFFSET.
+
+        Returns ``[]`` when the table does not exist yet, so listing a dataset that
+        predates a table's migration reads as empty rather than raising."""
+        try:
+            with self.connection(begin=False) as (conn, cursor):
+                cursor.execute(self._append_limit_offset(query, limit, offset))
+                return cursor.fetchall()
+        except self._MISSING_TABLE_ERRORS as e:
+            message = str(e)
+            if self._MISSING_TABLE_PHRASES and all(phrase in message for phrase in self._MISSING_TABLE_PHRASES):
+                return []
+            raise
+
+    def _reraise_missing_measure_column(self, error):
+        """Translate a driver error about an absent measure column into an actionable
+        ValueError naming the upgrade.
+
+        The measure-kind columns (``period_ns``, ``signal_kind``, ``value_type``) are an
+        additive migration, so a dataset written by an older version reaches these
+        queries without them, and the raw driver error names neither the cause nor the
+        fix. Returns normally when ``error`` is anything else, leaving the caller to
+        re-raise it unchanged."""
+        message = str(error).lower()
+        if "period_ns" in message or self._MISSING_COLUMN_PHRASE in message:
+            raise ValueError(
+                "A required column is missing from the measure table (e.g. "
+                "'period_ns', 'signal_kind' or 'value_type'). "
+                "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
+            ) from error
 
     @abstractmethod
     def connection(self, begin: bool = False):
@@ -40,14 +123,29 @@ class SQLHandler(ABC):
         pass
 
     def measure_has_blocks(self, measure_id: int) -> bool:
-        """True if any block exists for this measure. Backends override; the base
-        implementation raises if not supported."""
-        raise NotImplementedError
+        """True if any block exists for this measure (used to detect an
+        already-established numeric measure when the value_type column is NULL)."""
+        with self.connection() as (conn, cursor):
+            cursor.execute("SELECT 1 FROM block_index WHERE measure_id = ? LIMIT 1", (int(measure_id),))
+            return cursor.fetchone() is not None
 
     def update_measure_metadata(self, measure_id: int, signal_kind: str = None, value_type: str = None):
-        """Set the signal_kind/value_type columns for a measure (only the
-        provided fields). Backends override."""
-        raise NotImplementedError
+        """Set the measure-kind columns for a measure. Only the provided
+        (non-None) fields are written; used to persist first-write value_type
+        inference and the opportunistic string backfill. Idempotent."""
+        sets, params = [], []
+        if signal_kind is not None:
+            sets.append("signal_kind = ?")
+            params.append(signal_kind)
+        if value_type is not None:
+            sets.append("value_type = ?")
+            params.append(value_type)
+        if not sets:
+            return
+        params.append(int(measure_id))
+        with self.connection() as (conn, cursor):
+            cursor.execute(f"UPDATE measure SET {', '.join(sets)} WHERE id = ?", params)
+            conn.commit()
 
     # ------------------------------------------------------------------ #
     # String dictionary high-water mark
@@ -96,6 +194,202 @@ class SQLHandler(ABC):
         this fallback is read-then-write and is only safe for a single writer."""
         raise NotImplementedError
 
+    # ------------------------------------------------------------------ #
+    # Dataset schema-version marker
+    #
+    # Nothing recorded which SDK shaped a dataset -- a dataset created by an older or
+    # newer SDK all look the same from the outside except
+    # for what they do or don't contain. That makes an upgrade gap detectable only by
+    # tripping over it (a query naming a column that isn't there) and makes a
+    # downgrade -- an older SDK opening a dataset a newer SDK wrote -- undetectable
+    # in either direction.
+    #
+    # This stamp does not, and cannot, close that second gap for datasets already in
+    # the wild: an SDK build that predates this marker has no code path that looks for
+    # it, so it will never refuse to open a stamped dataset. What it buys is real
+    # only for code that already knows to check it -- this build and anything after
+    # it -- which is why the version check in AtriumSDK._init_local_mode refuses to
+    # open a dataset stamped with a version NEWER than CURRENT_DATASET_SCHEMA_VERSION,
+    # rather than silently misreading it. Recorded in the existing `setting` table, so
+    # no schema migration is needed for the marker itself.
+    # ------------------------------------------------------------------ #
+    DATASET_SCHEMA_VERSION_SETTING_NAME = "dataset_schema_version"
+
+    # Bumped whenever a change requires something a dataset stamped with the previous
+    # version would not have (so far: the MariaDB insert_interval_union stored
+    # procedure). A dataset with no stamp at all predates the marker entirely -- every
+    # dataset ever written by `main` or by an SDK before this one.
+    CURRENT_DATASET_SCHEMA_VERSION = 1
+
+    def get_dataset_schema_version(self):
+        """The schema version this dataset was last stamped with, or None when it has
+        never been stamped. A pure read -- see :meth:`record_dataset_schema_version`
+        for the write side, and :meth:`pending_schema_upgrades` for how this feeds
+        detection."""
+        row = self.select_setting(self.DATASET_SCHEMA_VERSION_SETTING_NAME)
+        if row is None:
+            return None
+        try:
+            return int(row[1])
+        except (TypeError, ValueError):  # pragma: no cover - corrupt row
+            return None
+
+    def record_dataset_schema_version(self) -> bool:
+        """Stamp this dataset with the version this SDK build produces. A no-op, and
+        the single indexed read it costs is the "one cheap check" auto_upgrade must
+        pay on an already-current dataset, when the existing stamp already matches.
+        Unlike :meth:`set_string_dict_watermark` this is not monotonic -- the stamp
+        always becomes whatever this build's CURRENT_DATASET_SCHEMA_VERSION is,
+        because it is only ever written by code that just finished bringing the
+        dataset up to exactly that version."""
+        if self.get_dataset_schema_version() == self.CURRENT_DATASET_SCHEMA_VERSION:
+            return False
+        self._upsert_setting(self.DATASET_SCHEMA_VERSION_SETTING_NAME, str(self.CURRENT_DATASET_SCHEMA_VERSION))
+        return True
+
+    def _upsert_setting(self, name: str, value: str):
+        """Unconditional single-statement upsert for one `setting` row -- the new
+        value always wins, unlike the monotonic comparison in
+        set_string_dict_watermark. Backends override with a single statement; this
+        fallback is read-then-write and only safe for a single writer."""
+        with self.connection(begin=True) as (conn, cursor):
+            cursor.execute("SELECT 1 FROM setting WHERE name = ?", (name,))
+            if cursor.fetchone() is None:
+                cursor.execute("INSERT INTO setting (name, value) VALUES (?, ?)", (name, value))
+            else:
+                cursor.execute("UPDATE setting SET value = ? WHERE name = ?", (value, name))
+
+    # ------------------------------------------------------------------ #
+    # Legacy aperiodic measures (freq_nhz = 0)
+    #
+    # Before this SDK declared signal_kind, a writer expressed "this signal is
+    # aperiodic" by giving the measure a frequency of zero -- an intermittent
+    # measurement like a non-invasive blood pressure cuff, which has no sampling
+    # rate to state. The DATA those writers produced is already exactly what this
+    # SDK calls an aperiodic sample measure: an explicit timestamp array
+    # (T_TYPE_TIMESTAMP_ARRAY_INT64_NANO), with the period left unset at write time
+    # so it was detected from the timestamps and stored in each block header. Only
+    # the `measure` row is expressed in the old vocabulary.
+    #
+    # So this is a metadata rename, not a re-encode: give the row the nominal period
+    # its own blocks already demonstrate, and say signal_kind='sample' outright. No
+    # block is rewritten and no stored value changes.
+    #
+    # It has to happen during auto_upgrade because `freq_nhz = 0` is otherwise fatal
+    # on open -- AtriumSDK.__init__ caches every measure and computes
+    # 10 ** 18 // freq_nhz -- and the repair must therefore run before that cache is
+    # built.
+    # ------------------------------------------------------------------ #
+    DEFAULT_APERIODIC_PERIOD_NS = 10 ** 9
+
+    def select_zero_freq_measures(self):
+        """`(id, tag, unit)` for every measure row carrying the legacy zero-frequency
+        aperiodic marker. Read-only."""
+        with self.connection() as (conn, cursor):
+            cursor.execute(
+                "SELECT id, tag, unit FROM measure WHERE freq_nhz IS NULL OR freq_nhz <= 0")
+            return cursor.fetchall()
+
+    def _observed_period_ns(self, measure_id: int) -> int:
+        """The measure's typical sample spacing, from the block index alone.
+
+        Deliberately avoids reading block headers: this runs mid-construction, before
+        the file API and the codec are usable, and `block_index` already carries
+        everything needed -- a block's span divided by its gaps gives that block's mean
+        spacing. The median across blocks is robust to the odd sparse block, and mirrors
+        how the write path classifies a signal (observed median spacing), so a converted
+        measure is described the same way a freshly written one would be.
+
+        Falls back to one second for a measure with no multi-sample block, matching
+        ``detect_period``'s own fallback -- there is no evidence to do better, and the
+        value only ever serves as a nominal.
+        """
+        with self.connection() as (conn, cursor):
+            cursor.execute(
+                "SELECT start_time_n, end_time_n, num_values FROM block_index "
+                "WHERE measure_id = ? AND num_values > 1", (int(measure_id),))
+            rows = cursor.fetchall()
+        spacings = sorted((int(end) - int(start)) // (int(count) - 1)
+                          for start, end, count in rows
+                          if int(end) > int(start))
+        if not spacings:
+            return self.DEFAULT_APERIODIC_PERIOD_NS
+        return spacings[len(spacings) // 2]
+
+    def repair_zero_freq_measures(self) -> list:
+        """Convert legacy zero-frequency rows into declared aperiodic sample measures.
+
+        Returns `(measure_id, tag, period_ns)` per converted row; empty when there is
+        nothing to do, which is the common case and costs one indexed read.
+
+        ``value_type`` is left alone on purpose -- ``_backfill_string_value_types``
+        runs after this and decides it from the presence of a string dictionary, which
+        is better evidence than anything available here.
+        """
+        converted = []
+        for measure_id, tag, unit in self.select_zero_freq_measures():
+            period_ns = self._observed_period_ns(measure_id)
+            freq_nhz = (10 ** 18) // period_ns
+            # `UNIQUE (tag, freq_nhz, unit)` means the new frequency can collide with a
+            # real measure that already occupies it. Leave those alone and report them:
+            # merging two measures is a data decision, not a migration's to make.
+            with self.connection() as (conn, cursor):
+                cursor.execute(
+                    "SELECT id FROM measure WHERE tag = ? AND unit = ? AND freq_nhz = ? AND id != ?",
+                    (tag, unit, freq_nhz, int(measure_id)))
+                if cursor.fetchone() is not None:
+                    continue
+                cursor.execute(
+                    "UPDATE measure SET freq_nhz = ?, period_ns = ?, "
+                    "signal_kind = COALESCE(signal_kind, 'sample') WHERE id = ?",
+                    (freq_nhz, period_ns, int(measure_id)))
+                conn.commit()
+            converted.append((int(measure_id), tag, period_ns))
+        return converted
+
+    def interval_union_procedure_current(self) -> bool:
+        """True when this dataset already has whatever this backend needs for
+        union-merge interval writes. SQLite's merge mode is plain Python
+        (SQLiteHandler._insert_intervals), not a stored procedure, so there is
+        nothing to check and the base answer is always True; MariaDB overrides this
+        with a real check against information_schema.ROUTINES, because a dataset
+        without the procedure does not have it. ``MariaDBHandler.create_schema`` creates
+        it for a new dataset."""
+        return True
+
+    def ensure_interval_union_procedure(self) -> bool:
+        """Create whatever this backend needs for union-merge interval writes, if
+        this dataset predates it. No-op on SQLite (see
+        :meth:`interval_union_procedure_current`); MariaDB overrides this to run
+        `CREATE PROCEDURE IF NOT EXISTS insert_interval_union`. Returns True if
+        anything was actually created."""
+        return False
+
+    def pending_schema_upgrades(self) -> List[str]:
+        """Schema gaps auto_upgrade would close on this dataset, checked without
+        modifying anything -- the detection half kept separate from the repair half.
+        Empty means nothing to do, which is the one cheap check `auto_upgrade=True`
+        must pay on an already-current dataset, and what `auto_upgrade=False` uses to
+        raise before a caller trips over the gap some other way.
+
+        The additive measure columns (period_ns/signal_kind/value_type) and the mrn
+        column type are deliberately NOT re-checked here: both already fail fast with
+        their own actionable ValueError the moment a query names them
+        (_reraise_missing_measure_column; the check_mrn_column_is_text call in
+        AtriumSDK._init_local_mode), so probing them a second time here would just be
+        a redundant read of the same columns on every open.
+
+        An absent version stamp is likewise not listed. Every dataset written before
+        the marker existed lacks one, and the marker is bookkeeping this SDK invented
+        for its own benefit -- nothing reads it at query time. Reporting its absence as
+        a pending upgrade would make the entire existing installed base look broken,
+        and on SQLite, where there is no stored procedure to miss, it would be the only
+        thing ever reported."""
+        pending = []
+        if not self.interval_union_procedure_current():
+            pending.append("the insert_interval_union stored procedure")
+        return pending
+
     @abstractmethod
     def upgrade_mrn_schema(self):
         """Upgrade the patient table mrn column from INTEGER to TEXT if needed."""
@@ -111,9 +405,11 @@ class SQLHandler(ABC):
         """Check if a column exists in a table."""
         pass
 
-    @abstractmethod
     def select_all_devices(self):
-        pass
+        with self.connection() as (conn, cursor):
+            cursor.execute("SELECT id, tag, name, manufacturer, model, type, bed_id, source_id FROM device")
+            rows = cursor.fetchall()
+        return rows
 
     @abstractmethod
     def select_all_measures(self):
@@ -170,10 +466,16 @@ class SQLHandler(ABC):
                       model: Optional[str] = None, device_type: Optional[str] = None, bed_id: Optional[int] = None, source_id: Optional[int] = None):
         pass
 
-    @abstractmethod
     def select_device(self, device_id: Optional[int] = None, device_tag: Optional[str] = None):
         # Select a measure either by its id, or by its unique tag.
-        pass
+        device_columns = "id, tag, name, manufacturer, model, type, bed_id, source_id"
+        with self.connection() as (conn, cursor):
+            if device_id is not None:
+                cursor.execute(f"SELECT {device_columns} FROM device WHERE id = ?", (device_id,))
+            else:
+                cursor.execute(f"SELECT {device_columns} FROM device WHERE tag = ?", (device_tag,))
+            row = cursor.fetchone()
+        return row
 
     @abstractmethod
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
@@ -190,14 +492,10 @@ class SQLHandler(ABC):
             file_id = cursor.lastrowid
 
             # insert into block_index
-            block_tuples = [(block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
-                             block["start_time_n"], block["end_time_n"], block["num_values"])
-                            for block in block_data]
-
-            block_query = """INSERT INTO block_index 
+            block_query = """INSERT INTO block_index
                 (measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
-            cursor.executemany(block_query, block_tuples)
+            cursor.executemany(block_query, block_insert_tuples(block_data, file_id))
 
     def update_block_times(self,
                            block_ids: List[int],
@@ -230,10 +528,8 @@ class SQLHandler(ABC):
 
     def insert_intervals(self, interval_data):
         with self.connection(begin=True) as (conn, cursor):
-            interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                interval["end_time_n"]) for interval in interval_data]
             interval_index_query = "INSERT INTO interval_index (measure_id, device_id, start_time_n, end_time_n) VALUES (?, ?, ?, ?);"
-            cursor.executemany(interval_index_query, interval_tuples)
+            cursor.executemany(interval_index_query, interval_insert_tuples(interval_data))
 
     def insert_and_delete_tsc_file_data(self, file_path: str, block_data: List[Dict], block_ids_to_delete: List[int]):
         with self.connection(begin=True) as (conn, cursor):
@@ -242,13 +538,9 @@ class SQLHandler(ABC):
             file_id = cursor.lastrowid
 
             # Insert into block_index
-            block_tuples = [(block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
-                             block["start_time_n"], block["end_time_n"], block["num_values"])
-                            for block in block_data]
-
-            insert_block_query = """INSERT INTO block_index (measure_id, device_id, file_id, start_byte, num_bytes, 
+            insert_block_query = """INSERT INTO block_index (measure_id, device_id, file_id, start_byte, num_bytes,
                 start_time_n, end_time_n, num_values) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"""
-            cursor.executemany(insert_block_query, block_tuples)
+            cursor.executemany(insert_block_query, block_insert_tuples(block_data, file_id))
 
             # Delete blocks with matching block ids in the block_ids list
             if block_ids_to_delete:
@@ -283,6 +575,161 @@ class SQLHandler(ABC):
                 batch = interval_tuples[i:i + batch_size]
                 cursor.executemany(insert_query, batch)
 
+    def _interval_optimizer_lock_clause(self) -> str:
+        """SQL suffix used while an interval-optimizer batch is being changed.
+
+        SQLite obtains its writer lock on the first change, while InnoDB needs
+        explicit row locks to keep a concurrent merge-mode writer from changing
+        one of the rows selected by the optimizer.  Backends which need the
+        latter override this with ``" FOR UPDATE"``.
+        """
+        return ""
+
+    def optimize_interval_index(self, gap_tolerance_by_measure: Dict[int, int], *,
+                                measure_id: Optional[int] = None,
+                                device_id: Optional[int] = None,
+                                batch_size: int = 10_000) -> Dict[str, int]:
+        """Coalesce legacy interval-index rows without loading a stream into memory.
+
+        This is deliberately an in-place, keyset-paginated maintenance operation.
+        Each transaction reads and changes at most ``batch_size`` rows from one
+        measure/device pair.  Its only destructive operation is a delete by the
+        primary keys read in that same transaction, so an interval inserted by a
+        concurrent writer is never deleted by this method.  A writer can add a
+        row just behind the scan cursor; that row is simply considered by the
+        next optimizer run, which is the appropriate eventually-convergent
+        behavior for an index that remains online during ingestion.
+
+        ``gap_tolerance_by_measure`` must map every selected measure to its
+        desired tolerance in nanoseconds.  It is kept outside this low-level
+        method because resolving the SDK's smart default requires measure
+        metadata.
+        """
+        if not isinstance(batch_size, int) or isinstance(batch_size, bool) or batch_size < 1:
+            raise ValueError("batch_size must be a positive integer")
+        if measure_id is not None:
+            measure_id = int(measure_id)
+        if device_id is not None:
+            device_id = int(device_id)
+        if device_id is not None and measure_id is None:
+            raise ValueError("device_id requires measure_id")
+
+        tolerances = {int(key): int(value) for key, value in gap_tolerance_by_measure.items()}
+        if any(value < 0 for value in tolerances.values()):
+            raise ValueError("gap tolerances must be non-negative")
+
+        stats = {"pairs_processed": 0, "rows_examined": 0, "rows_merged": 0}
+        pair_cursor = None
+        while True:
+            clauses, params = [], []
+            if measure_id is not None:
+                clauses.append("measure_id = ?")
+                params.append(measure_id)
+            if device_id is not None:
+                clauses.append("device_id = ?")
+                params.append(device_id)
+            if pair_cursor is not None:
+                clauses.append("(measure_id > ? OR (measure_id = ? AND device_id > ?))")
+                params.extend((pair_cursor[0], pair_cursor[0], pair_cursor[1]))
+            where = " WHERE " + " AND ".join(clauses) if clauses else ""
+            with self.connection(begin=False) as (conn, cursor):
+                cursor.execute(
+                    "SELECT measure_id, device_id FROM interval_index" + where +
+                    " GROUP BY measure_id, device_id ORDER BY measure_id, device_id LIMIT ?",
+                    tuple(params + [batch_size]))
+                pairs = cursor.fetchall()
+
+            if not pairs:
+                break
+            for pair_measure_id, pair_device_id in pairs:
+                pair_measure_id, pair_device_id = int(pair_measure_id), int(pair_device_id)
+                tolerance = tolerances.get(pair_measure_id)
+                if tolerance is None:
+                    raise ValueError(f"No gap tolerance was provided for measure_id={pair_measure_id}")
+                pair_stats = self._optimize_interval_index_pair(
+                    pair_measure_id, pair_device_id, tolerance, batch_size)
+                stats["pairs_processed"] += 1
+                stats["rows_examined"] += pair_stats["rows_examined"]
+                stats["rows_merged"] += pair_stats["rows_merged"]
+            pair_cursor = (int(pairs[-1][0]), int(pairs[-1][1]))
+            # A bounded pair page also prevents a database with millions of
+            # measure/device combinations from consuming memory in this pass.
+            if len(pairs) < batch_size:
+                break
+        return stats
+
+    def _optimize_interval_index_pair(self, measure_id: int, device_id: int,
+                                      gap_tolerance: int, batch_size: int) -> Dict[str, int]:
+        """Merge one pair using one retained row plus one bounded source page.
+
+        The retained row is persisted after every page.  Thus even a single
+        continuous run containing hundreds of millions of old rows uses constant
+        Python memory and no transaction has to retain the whole run's locks or
+        undo log.
+        """
+        stats = {"rows_examined": 0, "rows_merged": 0}
+        last_start, last_id = None, None
+        carry_id = carry_start = carry_end = None
+        lock_clause = self._interval_optimizer_lock_clause()
+
+        while True:
+            with self.connection(begin=True) as (conn, cursor):
+                if last_start is None:
+                    cursor.execute(
+                        "SELECT id, start_time_n, end_time_n FROM interval_index "
+                        "WHERE measure_id = ? AND device_id = ? "
+                        "ORDER BY start_time_n, id LIMIT ?" + lock_clause,
+                        (measure_id, device_id, batch_size))
+                else:
+                    cursor.execute(
+                        "SELECT id, start_time_n, end_time_n FROM interval_index "
+                        "WHERE measure_id = ? AND device_id = ? AND "
+                        "(start_time_n > ? OR (start_time_n = ? AND id > ?)) "
+                        "ORDER BY start_time_n, id LIMIT ?" + lock_clause,
+                        (measure_id, device_id, last_start, last_start, last_id, batch_size))
+                rows = cursor.fetchall()
+                if not rows:
+                    break
+
+                # A concurrent writer may have absorbed the retained row between
+                # pages.  Refresh it under the same transaction; when it no longer
+                # exists the current page starts a new retained interval.  Nothing
+                # is lost, and a later pass will compact any newly bridged boundary.
+                if carry_id is not None:
+                    cursor.execute(
+                        "SELECT id, start_time_n, end_time_n FROM interval_index WHERE id = ?" + lock_clause,
+                        (carry_id,))
+                    carry = cursor.fetchone()
+                    if carry is None:
+                        carry_id = carry_start = carry_end = None
+                    else:
+                        carry_id, carry_start, carry_end = map(int, carry)
+
+                rows_to_delete = []
+                for row_id, start, end in rows:
+                    row_id, start, end = int(row_id), int(start), int(end)
+                    if carry_id is None:
+                        carry_id, carry_start, carry_end = row_id, start, end
+                    elif start - carry_end <= gap_tolerance:
+                        carry_end = max(carry_end, end)
+                        rows_to_delete.append((row_id,))
+                    else:
+                        cursor.execute(
+                            "UPDATE interval_index SET start_time_n = ?, end_time_n = ? WHERE id = ?",
+                            (carry_start, carry_end, carry_id))
+                        carry_id, carry_start, carry_end = row_id, start, end
+
+                cursor.execute(
+                    "UPDATE interval_index SET start_time_n = ?, end_time_n = ? WHERE id = ?",
+                    (carry_start, carry_end, carry_id))
+                if rows_to_delete:
+                    cursor.executemany("DELETE FROM interval_index WHERE id = ?", rows_to_delete)
+
+                stats["rows_examined"] += len(rows)
+                stats["rows_merged"] += len(rows_to_delete)
+                last_start, last_id = int(rows[-1][1]), int(rows[-1][0])
+        return stats
+
     @abstractmethod
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
                              file_ids_to_delete: List[int], gap_tolerance: int = 0):
@@ -293,20 +740,96 @@ class SQLHandler(ABC):
                                  interval_index_mode: str, gap_tolerance: int = 0):
         pass
 
-    @abstractmethod
+    @staticmethod
+    def _delete_merged_block(cursor, old_block: tuple):
+        """Drop the block a merge superseded, and unlink its tsc file if that block was
+        the last one in it. Returns the orphaned file's path for the caller to delete
+        from disk, or ``None`` when the file still holds other blocks.
+
+        Runs inside the caller's transaction, on the caller's cursor.
+        """
+        # delete the old block data
+        cursor.execute("DELETE FROM block_index WHERE id = ?", (old_block[0],))
+
+        # check if the old tsc file only contains the old block
+        cursor.execute("SELECT 1 FROM block_index WHERE file_id = ? LIMIT 1", (old_block[3],))
+        block_exists = cursor.fetchone()
+
+        # if there are no blocks with that file_id then delete the file from the file index
+        if block_exists is None:
+            # get the tsc file name
+            cursor.execute("SELECT path FROM file_index WHERE id = ?", (old_block[3],))
+            file_name = cursor.fetchone()
+
+            # delete it from the file_index
+            cursor.execute("DELETE FROM file_index WHERE id = ?", (old_block[3],))
+            # A racing writer that merged into the same old block can have removed the
+            # file_index row already. The merge is serialized by a per-(measure,
+            # device) lock so this should be unreachable, but indexing an absent row
+            # would abort this transaction and lose the write entirely. The row
+            # genuinely being gone means only that someone else has already unlinked
+            # the file -- there is nothing left for the caller to remove, which is
+            # what None means.
+            return file_name[0] if file_name is not None else None
+
+        return None
+
     def select_file(self, file_id: Optional[int] = None, file_path: Optional[str] = None):
         # Select a file path either by its id, or by its path.
-        pass
+        with self.connection() as (conn, cursor):
+            if file_id is not None:
+                cursor.execute("SELECT id, path FROM file_index WHERE id = ?;", (file_id,))
+            else:
+                cursor.execute("SELECT id, path FROM file_index WHERE path = ?;", (file_path,))
+            row = cursor.fetchone()
+        return row
 
-    @abstractmethod
     def select_files(self, file_id_list: List[int]):
-        # Selects all files from list of ids.
-        pass
+        """Every ``file_index`` row named by ``file_id_list``.
 
-    @abstractmethod
+        Raises ``RuntimeError`` if any requested id is absent: callers use this to
+        resolve the files a block read is about to open, so a missing row means the
+        read would fail later, further from the cause. An empty list asks for nothing
+        and gets ``[]`` (see :meth:`_select_rows_in_list`)."""
+        rows = self._select_rows_in_list("id, path", "file_index", file_id_list)
+
+        # Compare against the DISTINCT ids asked for -- a repeated id yields one row.
+        if len(rows) != len(set(file_id_list)):
+            missing = set(file_id_list) - {row[0] for row in rows}
+            raise RuntimeError(f"Cannot find file_ids={missing} in AtriumDB.")
+
+        return rows
+
     def select_blocks_from_file(self, file_id: int):
         # Selects all blocks from file_id
-        pass
+        with self.connection() as (conn, cursor):
+            cursor.execute(
+                "SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, "
+                "num_values FROM block_index WHERE file_id = ? ORDER BY start_byte;", (file_id,))
+            rows = cursor.fetchall()
+        return rows
+
+    def select_blocks_by_ids(self, block_id_list: List[int | str]):
+        """Every ``block_index`` row named by ``block_id_list``, in read order
+        (``file_id, start_byte``) so a caller can read them with sequential seeks.
+
+        Raises ``RuntimeError`` if any requested id is absent, for the same reason as
+        :meth:`select_files`. Ids may arrive as strings (they come off a URL query in
+        API mode), hence the ``int`` coercion when reporting.
+        """
+        rows = self._select_rows_in_list(
+            "id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values",
+            "block_index", block_id_list, order_by="file_id, start_byte ASC")
+
+        # Compare against the DISTINCT ids asked for. Comparing against the raw list
+        # length instead would treat a repeated id as a missing row and then report
+        # `block_ids=set()` -- an error naming nothing.
+        requested = {int(block_id) for block_id in block_id_list}
+        if len(rows) != len(requested):
+            missing = requested - {row[0] for row in rows}
+            raise RuntimeError(f"Cannot find block_ids={missing} in AtriumDB.")
+
+        return rows
 
     @abstractmethod
     def select_block(self, block_id: Optional[int] = None, measure_id: Optional[int] = None, device_id: Optional[int] = None, file_id: Optional[int] = None,
@@ -391,6 +914,12 @@ class SQLHandler(ABC):
             elif not isinstance(measure_ids, list):
                 raise TypeError("measure_ids must be an int, a list of ints, or None.")
 
+            # None means "every measure"; an EMPTY list means "these measures", of which
+            # there are none. Falling through would build `IN ()` -- accepted by SQLite,
+            # a syntax error on MariaDB.
+            if len(measure_ids) == 0:
+                return []
+
             # Build placeholders for SQL IN clause
             placeholders = ','.join(['?'] * len(measure_ids))
             block_query = f"""
@@ -415,6 +944,11 @@ class SQLHandler(ABC):
             return cursor.fetchall()
 
     def select_blocks_for_devices(self, device_ids: List[int], measure_ids: List[int]):
+        # Both filters are required here, so either being empty selects no rows. Build
+        # nothing: `IN ()` is a syntax error on MariaDB (SQLite tolerates it).
+        if len(device_ids) == 0 or len(measure_ids) == 0:
+            return []
+
         # Build placeholders for SQL IN clauses
         device_placeholders = ','.join(['?'] * len(device_ids))
         measure_placeholders = ','.join(['?'] * len(measure_ids))
@@ -433,21 +967,32 @@ class SQLHandler(ABC):
             cursor.execute(block_query, args)
             return cursor.fetchall()
 
-    @abstractmethod
     def select_interval(self, interval_id: Optional[int] = None, measure_id: Optional[int] = None, device_id: Optional[int] = None,
                         start_time_n: Optional[int] = None, end_time_n: Optional[int] = None):
         # Select an interval either by its id, or by all other params.
-        pass
+        interval_columns = "id, measure_id, device_id, start_time_n, end_time_n"
+        with self.connection() as (conn, cursor):
+            if interval_id is not None:
+                cursor.execute(f"SELECT {interval_columns} FROM interval_index WHERE id = ?;", (interval_id,))
+            else:
+                cursor.execute(
+                    f"SELECT {interval_columns} FROM interval_index WHERE measure_id = ? AND device_id = ? "
+                    "AND start_time_n = ? AND end_time_n = ?;",
+                    (measure_id, device_id, start_time_n, end_time_n))
+            row = cursor.fetchone()
+        return row
 
     @abstractmethod
     def insert_setting(self, setting_name: str, setting_value: str):
         # Inserts a setting into the database.
         pass
 
-    @abstractmethod
     def select_setting(self, setting_name: str):
         # Selects a setting from the database.
-        pass
+        with self.connection() as (conn, cursor):
+            cursor.execute("SELECT name, value FROM setting WHERE name = ?", (setting_name,))
+            setting = cursor.fetchone()
+        return setting
 
     @abstractmethod
     def insert_patient(self, patient_id: Optional[int] = None, mrn: Optional[str] = None, gender: Optional[str] = None, dob: Optional[str] = None,
@@ -509,15 +1054,71 @@ class SQLHandler(ABC):
 
             return results
 
-    @abstractmethod
     def select_all_settings(self):
         # Select all settings from settings table.
-        pass
+        with self.connection() as (conn, cursor):
+            cursor.execute("SELECT name, value FROM setting")
+            settings = cursor.fetchall()
+        return settings
 
-    @abstractmethod
     def select_blocks(self, measure_id: int, start_time_n: Optional[int] = None, end_time_n: Optional[int] = None, device_id: Optional[int] = None, patient_id: Optional[int] = None):
         # Get all matching blocks.
-        pass
+        assert device_id is not None or patient_id is not None, "Either device_id or patient_id must be provided"
+
+        block_columns = ("id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, "
+                         "num_values")
+
+        # Query by patient.
+        if patient_id is not None:
+            device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
+
+            block_query = (f"SELECT {block_columns} FROM block_index "
+                           "WHERE measure_id = ? AND device_id = ? AND end_time_n >= ? AND start_time_n <= ? "
+                           "ORDER BY file_id, start_byte ASC")
+
+            block_results = []
+
+            with self.connection(begin=False) as (conn, cursor):
+                for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
+                    args = (measure_id, encounter_device_id, encounter_start_time, encounter_end_time)
+
+                    cursor.execute(block_query, args)
+                    block_results.extend(cursor.fetchall())
+
+            # Filter results based on start_time_n and end_time_n parameters
+            filtered_results = []
+            for row in block_results:
+                row_start_time = row[6]  # start_time_n
+                row_end_time = row[7]  # end_time_n
+
+                # Check for overlap with parameter time range
+                if start_time_n is not None and row_end_time < start_time_n:
+                    continue  # Row ends before parameter start - no overlap
+                if end_time_n is not None and row_start_time > end_time_n:
+                    continue  # Row starts after parameter end - no overlap
+
+                filtered_results.append(row)
+
+            return filtered_results
+
+        # Query by device.
+        block_query = f"SELECT {block_columns} FROM block_index WHERE measure_id = ? AND device_id = ?"
+
+        args = (measure_id, device_id)
+
+        if end_time_n is not None:
+            block_query += " AND start_time_n <= ?"
+            args += (end_time_n,)
+
+        if start_time_n is not None:
+            block_query += " AND end_time_n >= ?"
+            args += (start_time_n,)
+
+        block_query += " ORDER BY file_id, start_byte ASC"
+
+        with self.connection(begin=False) as (conn, cursor):
+            cursor.execute(block_query, args)
+            return cursor.fetchall()
 
     def select_intervals(self, measure_id: int, start_time_n: Optional[int] = None, end_time_n: Optional[int] = None, device_id: Optional[int] = None, patient_id: Optional[int] = None):
         if device_id is None and patient_id is None:
@@ -577,64 +1178,76 @@ class SQLHandler(ABC):
         # Get all matching encounters.
         pass
 
-    @abstractmethod
+    def _select_rows_in_list(self, columns: str, table: str, id_list, id_column: str = "id",
+                             order_by: str = None):
+        """Select ``columns`` from ``table`` for every row whose ``id_column`` appears
+        in ``id_list``.
+
+        ``columns``/``table``/``id_column``/``order_by`` are literals from the call sites
+        below, never caller input; only the ids are bound, one placeholder each. Both
+        backends take ``?`` placeholders, so a single implementation serves them.
+
+        An empty ``id_list`` returns ``[]`` without touching the database. That is not
+        just an optimisation: the alternative is the degenerate SQL ``IN ()``, which
+        SQLite quietly accepts as "matches nothing" while MariaDB rejects as a syntax
+        error -- so the two backends disagreed on the empty case until this guard.
+        Matching no ids is a legitimate query with an empty answer, not an error.
+        """
+        if len(id_list) == 0:
+            return []
+        placeholders = ', '.join(['?'] * len(id_list))
+        query = f"SELECT {columns} FROM {table} WHERE {id_column} IN ({placeholders})"
+        if order_by is not None:
+            query += f" ORDER BY {order_by}"
+        with self.connection() as (conn, cursor):
+            cursor.execute(query, id_list)
+            rows = cursor.fetchall()
+        return rows
+
     def select_all_measures_in_list(self, measure_id_list: List[int]):
         # Get all matching measures.
-        pass
+        return self._select_rows_in_list(
+            "id, tag, name, freq_nhz, code, unit, unit_label, unit_code, source_id", "measure", measure_id_list)
 
     @abstractmethod
     def select_all_patients_in_list(self, patient_id_list: Optional[List[int]] = None, mrn_list: Optional[List[str]] = None):
         # Get all matching patients.
         pass
 
-    @abstractmethod
     def select_all_devices_in_list(self, device_id_list: List[int]):
         # Get all matching devices.
-        pass
+        return self._select_rows_in_list(
+            "id, tag, name, manufacturer, model, type, bed_id, source_id", "device", device_id_list)
 
-    @abstractmethod
     def select_all_beds_in_list(self, bed_id_list: List[int]):
         # Get all matching beds.
-        pass
+        return self._select_rows_in_list("id, unit_id, name", "bed", bed_id_list)
 
-    @abstractmethod
     def select_all_units_in_list(self, unit_id_list: List[int]):
         # Get all matching units.
-        pass
+        return self._select_rows_in_list("id, institution_id, name, type", "unit", unit_id_list)
 
-    @abstractmethod
     def select_all_institutions_in_list(self, institution_id_list: List[int]):
         # Get all matching institutions.
-        pass
+        return self._select_rows_in_list("id, name", "institution", institution_id_list)
 
-    @abstractmethod
     def select_all_device_encounters_by_encounter_list(self, encounter_id_list: List[int]):
         # Get all matching device_encounters by encounter id list.
-        pass
+        return self._select_rows_in_list(
+            "id, device_id, encounter_id, start_time, end_time, source_id", "device_encounter",
+            encounter_id_list, id_column="encounter_id")
 
-    @abstractmethod
     def select_all_sources_in_list(self, source_id_list: List[int]):
         # Get all matching sources.
-        pass
+        return self._select_rows_in_list("id, name, description", "source", source_id_list)
 
     def select_device_patients(self, device_id_list: List[int] = None, patient_id_list: List[int] = None,
                                start_time: int = None, end_time: int = None):
-        arg_tuple = ()
         sqlite_select_device_patient_query = \
             "SELECT device_id, patient_id, start_time, end_time FROM device_patient"
-        where_clauses = []
 
-        # Handle device_id_list
-        if device_id_list is not None and len(device_id_list) > 0:
-            where_clauses.append("device_id IN ({})".format(
-                ','.join(['?'] * len(device_id_list))))
-            arg_tuple += tuple(int(device_id) for device_id in device_id_list)
-
-        # Handle patient_id_list
-        if patient_id_list is not None and len(patient_id_list) > 0:
-            where_clauses.append("patient_id IN ({})".format(
-                ','.join(['?'] * len(patient_id_list))))
-            arg_tuple += tuple(int(patient_id) for patient_id in patient_id_list)
+        where_clauses, arg_tuple = self._int_id_list_clauses(
+            device_id=device_id_list, patient_id=patient_id_list)
 
         # Handle start_time
         if start_time is not None:
@@ -658,25 +1271,14 @@ class SQLHandler(ABC):
 
     def select_device_patient_encounters(self, timestamp: int, device_id_list: List[int] = None,
                                          patient_id_list: List[int] = None):
-        arg_tuple = (timestamp, timestamp)
         sql_select_query = (
             "SELECT device_id, patient_id, start_time, end_time "
             "FROM device_patient WHERE start_time <= ? AND (end_time > ? OR end_time IS NULL)"
         )
 
-        where_clauses = []
-
-        # Handle device_id_list
-        if device_id_list is not None and len(device_id_list) > 0:
-            where_clauses.append("device_id IN ({})".format(
-                ','.join(['?'] * len(device_id_list))))
-            arg_tuple += tuple(int(device_id) for device_id in device_id_list)
-
-        # Handle patient_id_list
-        if patient_id_list is not None and len(patient_id_list) > 0:
-            where_clauses.append("patient_id IN ({})".format(
-                ','.join(['?'] * len(patient_id_list))))
-            arg_tuple += tuple(int(patient_id) for patient_id in patient_id_list)
+        where_clauses, id_args = self._int_id_list_clauses(
+            device_id=device_id_list, patient_id=patient_id_list)
+        arg_tuple = (timestamp, timestamp) + id_args
 
         # Combine where clauses
         if where_clauses:
@@ -735,10 +1337,13 @@ class SQLHandler(ABC):
             cursor.execute(query, args)
             return cursor.fetchall()
 
-    @abstractmethod
     def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
         # Insert device_patient rows.
-        pass
+        with self.connection() as (conn, cursor):
+            cursor.executemany(
+                "INSERT INTO device_patient (device_id, patient_id, start_time, end_time) VALUES (?, ?, ?, ?)",
+                device_patient_data)
+            conn.commit()
 
     def insert_label_set(self, name: str, label_set_id: Optional[int] = None, parent_id: Optional[int] = None):
         if label_set_id is not None:
@@ -764,10 +1369,10 @@ class SQLHandler(ABC):
             conn.commit()
             return cursor.lastrowid if label_set_id is None else label_set_id
 
-    @abstractmethod
-    def select_label_sets(self):
+    def select_label_sets(self, limit=None, offset=None):
         # Retrieve all label types
-                pass
+        return self._select_all_ordered(
+            "SELECT id, name, parent_id FROM label_set ORDER BY id ASC", limit, offset)
 
     def select_label_set(self, label_set_id: int):
         query = "SELECT id, name, parent_id FROM label_set WHERE id = ? LIMIT 1"
@@ -960,12 +1565,7 @@ class SQLHandler(ABC):
         # Used in iterator logic, alter with caution.
         query += " ORDER BY start_time_n ASC, end_time_n ASC, label.id ASC"
 
-        # if limit and offset are specified add them to query
-        if limit is not None and offset is not None:
-            query += f" LIMIT {limit} OFFSET {offset}"
-        # if only limit is supplied then only add it to the query
-        elif limit is not None and offset is None:
-            query += f" LIMIT {limit}"
+        query = self._append_limit_offset(query, limit, offset)
 
         # Execute the query and return the results.
         with self.connection(begin=False) as (conn, cursor):
@@ -1099,9 +1699,10 @@ class SQLHandler(ABC):
             return {'id': result[0], 'name': result[1], 'description': result[2]} if result else None
         pass
 
-    @abstractmethod
     def select_all_label_sources(self, limit=None, offset=None):
-        pass
+        # Retrieve all label sources from the database.
+        return self._select_all_ordered(
+            "SELECT id, name FROM label_source ORDER BY id ASC", limit, offset)
 
     def get_measure_id_with_most_rows(self, tag: str) -> Optional[int]:
         # Query to get all matching measure.ids

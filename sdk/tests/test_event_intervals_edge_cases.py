@@ -15,15 +15,13 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-ADVERSARIAL / INDEPENDENT AUDIT of Phase 4 (design section 22): event query surface
-+ from->to pairing. Written by an auditor who did NOT write the code under test and
-does NOT trust it is correct.
+Event query and from->to pairing edge-case tests.
 
 Structure:
   A. Direct unit tests of the pure pairing engine ``AtriumSDK._pair_from_to`` and the
      container clip ``AtriumSDK._clip_intervals_to_containers`` with adversarial arrays.
-  B. An INDEPENDENT brute-force reference (this auditor's own state machine, not the
-     writer's) cross-checked against the vectorized public path over many random seeds.
+  B. A brute-force reference state machine cross-checked against the vectorized public
+     path over many random seeds.
   C. Property test: every censored edge lands on a REAL range/container boundary,
      never a fabricated value.
   D. ``within`` cascade integration (forced levels, patient source, empty
@@ -32,14 +30,14 @@ Structure:
   F. Vocabulary / validation (numeric rejection on all three methods, unknown value,
      empty vocabulary, range-scoped distinct + time_units).
   G. Source resolution & units.
-  H. Captured DEFECTS as xfail(strict=True): same-timestamp from/to fabricates a
+  H. Expected-failure cases: same-timestamp from/to fabricates a
      phantom open interval and drops the observed close; get_string_values_present
      raises a cryptic TypeError (not a clear ValueError) for a missing range.
 
 SQLite only:
     docker run --rm -v "<repo>:/atriumdb" -e PYTHONPATH=/atriumdb/sdk \
         atriumdb-test:latest python -m pytest \
-        /atriumdb/sdk/tests/test_event_intervals_p4_audit.py -q
+        /atriumdb/sdk/tests/test_event_intervals_edge_cases.py -q
 """
 import shutil
 import tempfile
@@ -59,7 +57,7 @@ BASE = 1_600_000_000 * SEC
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def sdk():
-    loc = tempfile.mkdtemp(prefix="atrium_p4audit_")
+    loc = tempfile.mkdtemp(prefix="atrium_event_intervals_edges_")
     shutil.rmtree(loc, ignore_errors=True)
     s = AtriumSDK.create_dataset(dataset_location=loc, database_type="sqlite")
     s._loc = loc
@@ -100,7 +98,7 @@ def quiet_intervals(sdk, *args, **kwargs):
 
 
 # --------------------------------------------------------------------------- #
-# INDEPENDENT brute-force reference (auditor's own; distinct-timestamp inputs).
+# Brute-force reference (distinct-timestamp inputs).
 # Collapse semantics: a run of `from`s until the next `to` is ONE interval
 # (first-open -> first-close); a leading `to` before any `from` left-censors ONCE;
 # a trailing open `from` right-censors; stray `to`s while closed are no-ops;
@@ -365,7 +363,7 @@ def test_runs_with_empty_device_patient_table(sdk):
 def test_window_inside_open_state_both_ends_censored(sdk):
     # A single long open state [ON@1 .. OFF@1000]; a dp window [400,500] sits entirely
     # inside it with NO events of its own -> must be reported fully in-state with BOTH
-    # ends censored (the writer's headline claim in _collapse_event_intervals).
+    # ends censored by _collapse_event_intervals.
     m, d = new_event_measure(sdk)
     p = sdk.insert_patient(mrn="inside")
     sdk.insert_device_patient_data([(d, p, int(BASE + 400 * SEC), int(BASE + 500 * SEC))])
@@ -528,12 +526,12 @@ def test_start_end_required_get_event_intervals(sdk):
 
 
 # =========================================================================== #
-# H. Captured DEFECTS (xfail strict) + characterization of degenerate inputs
+# H. Expected-failure cases and characterization of degenerate inputs
 # =========================================================================== #
 def test_same_timestamp_from_and_to_is_a_documented_precondition():
     # _pair_from_to assumes DISTINCT from/to timestamps. Storage guarantees this
     # (coincident values at one ns dedup to a single code, newest wins), so a `from`
-    # and `to` can never share an exact ns via get_event_intervals -- it is now a
+    # and `to` can never share an exact ns via get_event_intervals -- it is a
     # documented precondition on the helper. Characterize the degenerate helper-only
     # behavior: a coincident `to` (side='right') does not close the `from`.
     out = AtriumSDK._pair_from_to(arr([100]), arr([100]), 0, 1000)
@@ -549,9 +547,9 @@ def test_values_present_missing_range_should_raise_clear_error(sdk):
 
 def test_from_equals_to_degenerate_chaining_characterization():
     # CHARACTERIZATION of the low-level helper: given identical from/to timestamps the
-    # engine chains consecutive events. The PUBLIC method now guards against
+    # engine chains consecutive events. The public method guards against
     # from_value == to_value (see test below), so this chaining is unreachable through
-    # get_event_intervals; kept as a helper-level baseline.
+    # get_event_intervals; kept as a helper-level reference.
     out = AtriumSDK._pair_from_to(arr([10, 20, 30]), arr([10, 20, 30]), 0, 1000)
     assert out == [(10, 20, False, False), (20, 30, False, False), (30, 1000, False, True)]
 

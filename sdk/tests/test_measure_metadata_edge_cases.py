@@ -7,18 +7,14 @@
 #     the Free Software Foundation, either version 3 of the License, or
 #     (at your option) any later version.
 """
-INDEPENDENT ADVERSARIAL AUDIT of Phase 2 "measure metadata" (design section 19).
-
-This file probes BEYOND the writer's own test_measure_metadata_p2.py. It tries to
-break the migration, the read-time defaults, the numeric/string mix-rejection
-invariant on EVERY write entry point, persistence, caching, detection fallbacks,
-and do-no-harm on interval reads. Bugs are captured as xfail(strict=True) tests so
-that fixing the source flips them to PASS without editing this file.
+Edge-case tests for measure metadata, including schema upgrades, read-time defaults,
+numeric/string mix rejection, persistence, caching, detection fallbacks, and interval
+reads. Unsupported cases use expected-failure markers.
 
 SQLite (the gate):
     docker run --rm -v "<repo>:/atriumdb" -e PYTHONPATH=/atriumdb/sdk \
         atriumdb-test:latest python -m pytest \
-        /atriumdb/sdk/tests/test_measure_metadata_p2_audit.py -q
+        /atriumdb/sdk/tests/test_measure_metadata_edge_cases.py -q
 
 MariaDB (optional; container atriumdb-mariadb up):
     ... add -e MARIA_DB_HOST=host.docker.internal
@@ -42,7 +38,7 @@ SEC = 1_000_000_000
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def sdk():
-    loc = tempfile.mkdtemp(prefix="atrium_p2audit_")
+    loc = tempfile.mkdtemp(prefix="atrium_measure_metadata_edges_")
     shutil.rmtree(loc, ignore_errors=True)
     s = AtriumSDK.create_dataset(dataset_location=loc, database_type="sqlite")
     s._loc = loc
@@ -82,8 +78,8 @@ def read_raw_value_type(sdk_obj, measure_id):
         return cursor.fetchone()[0]
 
 
-def drop_p2_columns(sdk_obj):
-    """Simulate a P0/P1 dataset that has period_ns but NOT the P2 columns."""
+def drop_measure_metadata_columns(sdk_obj):
+    """Simulate a dataset with period_ns but without the metadata columns."""
     with sdk_obj.sql_handler.connection() as (conn, cursor):
         cursor.execute("ALTER TABLE measure DROP COLUMN signal_kind")
         cursor.execute("ALTER TABLE measure DROP COLUMN value_type")
@@ -100,7 +96,7 @@ BASE = 1_600_000_000 * SEC
 # 1. MIGRATION
 # =========================================================================== #
 def test_migration_idempotent_three_runs(sdk):
-    drop_p2_columns(sdk)
+    drop_measure_metadata_columns(sdk)
     assert "signal_kind" not in measure_columns(sdk)
     assert sdk.sql_handler.update_measure_schema() is True   # adds both
     assert sdk.sql_handler.update_measure_schema() is False  # no-op
@@ -110,7 +106,7 @@ def test_migration_idempotent_three_runs(sdk):
 
 
 def test_migration_adds_only_missing_column(sdk):
-    """period_ns present, one P2 column present, one missing -> add just the missing
+    """period_ns present, one metadata column present, one missing -> add just the missing
     one (exercises the independent per-column guards, not an all-or-nothing ALTER)."""
     with sdk.sql_handler.connection() as (conn, cursor):
         cursor.execute("ALTER TABLE measure DROP COLUMN value_type")  # keep signal_kind
@@ -123,13 +119,13 @@ def test_migration_adds_only_missing_column(sdk):
 
 
 def test_reopen_without_auto_upgrade_raises_clear_error(sdk):
-    """Opening a pre-P2 (column-less) dataset with the DEFAULT auto_upgrade=False and
+    """Opening a column-less dataset with the default auto_upgrade=False and
     then reading a measure must NOT surface a raw 'no such column' sqlite error; it
     should raise a clear ValueError pointing at auto_upgrade=True. (The message is
-    misattributed to 'period_ns' even when it is the P2 columns that are missing --
+    misattributed to 'period_ns' even when the metadata columns are missing --
     a minor UX nit, documented here.)"""
     sdk.insert_measure(measure_tag="hr", freq=1.0, freq_units="Hz", units="bpm")
-    drop_p2_columns(sdk)
+    drop_measure_metadata_columns(sdk)
     sdk.close()
     # The default-connect path eagerly primes get_all_measures in __init__, so the
     # clear ValueError surfaces at construction time (fail-fast), not on first read.
@@ -141,7 +137,7 @@ def test_reopen_with_auto_upgrade_migrates_and_reads(sdk):
     """auto_upgrade=True on a column-less dataset runs the ALTERs and reads default
     correctly to waveform/numeric."""
     m = sdk.insert_measure(measure_tag="hr", freq=1.0, freq_units="Hz", units="bpm")
-    drop_p2_columns(sdk)
+    drop_measure_metadata_columns(sdk)
     sdk.close()
     s2 = AtriumSDK(dataset_location=sdk._loc, metadata_connection_type="sqlite", auto_upgrade=True)
     try:
@@ -153,12 +149,12 @@ def test_reopen_with_auto_upgrade_migrates_and_reads(sdk):
 
 
 def test_auto_upgrade_backfills_string_measure_on_connect(sdk):
-    """A P1 string dataset (dict file present) that is missing the P2 columns should,
+    """A string dataset with a dictionary file and missing metadata columns should,
     on an auto_upgrade connect, migrate AND opportunistically backfill value_type."""
     m = sdk.insert_measure(measure_tag="ev", freq=1.0, freq_units="Hz", units="string")
     d = sdk.insert_device(device_tag="dev")
     sdk.write_time_value_pairs(m, d, times_for(3), STR(["a", "b", "c"]))
-    drop_p2_columns(sdk)  # now looks like a P1-only dataset with a dict file
+    drop_measure_metadata_columns(sdk)  # Dataset has only a dictionary file.
     sdk.close()
     s2 = AtriumSDK(dataset_location=sdk._loc, metadata_connection_type="sqlite", auto_upgrade=True)
     try:
@@ -178,7 +174,6 @@ def test_null_defaults_everywhere(sdk):
 
     info = sdk.get_measure_info(m)
     assert (info["signal_kind"], info["value_type"]) == ("waveform", "numeric")
-    assert sdk.get_measure_kind(m) == ("waveform", "numeric")
 
     all_m = sdk.get_all_measures()
     assert (all_m[m]["signal_kind"], all_m[m]["value_type"]) == ("waveform", "numeric")
@@ -189,7 +184,7 @@ def test_null_defaults_everywhere(sdk):
 
 
 def test_null_value_type_with_dict_file_reads_string(sdk):
-    """value_type NULL but a P1 dictionary file exists -> string, through every surface."""
+    """A NULL value_type with a dictionary file resolves as string data."""
     m = sdk.insert_measure(measure_tag="ev", freq=1.0, freq_units="Hz", units="string")
     d = sdk.insert_device(device_tag="dev")
     sdk.write_time_value_pairs(m, d, times_for(3), STR(["a", "b", "c"]))
@@ -197,12 +192,11 @@ def test_null_value_type_with_dict_file_reads_string(sdk):
     sdk._measures.pop(m, None)
 
     assert sdk.get_measure_info(m)["value_type"] == "string"
-    assert sdk.get_measure_kind(m)[1] == "string"
     assert sdk.get_all_measures()[m]["value_type"] == "string"
 
 
-def test_get_measure_kind_missing_measure_returns_none(sdk):
-    assert sdk.get_measure_kind(999999) is None
+def test_get_measure_info_missing_measure_returns_none(sdk):
+    assert sdk.get_measure_info(999999) is None
 
 
 # =========================================================================== #
@@ -286,7 +280,7 @@ def test_second_string_write_not_falsely_rejected(sdk):
 
 
 def test_explicit_numeric_measure_rejects_string_before_write(sdk):
-    """Reverse of the writer's declared-string test: an explicitly numeric measure
+    """An explicitly numeric measure
     rejects a string first write before any data/dict file is created."""
     m = sdk.insert_measure(measure_tag="declared_num", freq=1.0, freq_units="Hz",
                            units="x", value_type="numeric")
@@ -339,7 +333,6 @@ def test_cache_not_stale_after_first_write_establishes_type(sdk):
     sdk.write_time_value_pairs(m, d, times_for(3), STR(["a", "b", "c"]))
     # No manual cache pop here: the write path must have invalidated it.
     assert sdk.get_measure_info(m)["value_type"] == "string"
-    assert sdk.get_measure_kind(m)[1] == "string"
 
 
 # =========================================================================== #
@@ -348,11 +341,11 @@ def test_cache_not_stale_after_first_write_establishes_type(sdk):
 def test_column_string_but_no_dict_file_get_data_still_guards(sdk):
     """Inconsistent forced state: value_type='string' column on a measure that only
     ever had numeric data and no dict file. The get_data guard trusts the column and
-    rejects analog reads (documents that the column is authoritative over reality)."""
+    rejects the read rather than decoding numeric values as dictionary codes."""
     m, d = _numeric_measure(sdk, "inconsistent")
     set_raw_columns(sdk, m, None, "string")
     sdk._measures.pop(m, None)
-    with pytest.raises(ValueError, match="string measure"):
+    with pytest.raises(ValueError, match="String dictionary"):
         sdk.get_data(m, 0, 10_000 * SEC, device_id=d, analog=True)
 
 
@@ -369,10 +362,10 @@ def test_get_interval_array_unaffected_numeric_and_string(sdk):
 
 
 def test_transfer_measures_do_no_harm(sdk):
-    """Do-no-harm (spec section 19.6): transferring measures between two datasets must
+    """Transferring measures between two datasets must
     not CHOKE on the new columns.
 
-    Updated for Phase 6 (spec section 24.1#1): ``_transfer_measure`` now deliberately
+    ``_transfer_measure`` deliberately
     CARRIES signal_kind/value_type to the destination, so 'nibp' arrives as
     ``sample``/``numeric`` rather than falling back to the destination defaults. A
     measure that never stated them ('plain') still resolves to the defaults."""
@@ -380,7 +373,7 @@ def test_transfer_measures_do_no_harm(sdk):
     m1 = src.insert_measure(measure_tag="plain", freq=1.0, freq_units="Hz", units="x")
     m2 = src.insert_measure(measure_tag="nibp", freq=1.0, freq_units="Hz", units="mmHg",
                             signal_kind="sample", value_type="numeric")
-    dst_loc = tempfile.mkdtemp(prefix="atrium_p2audit_dst_")
+    dst_loc = tempfile.mkdtemp(prefix="atrium_measure_metadata_dst_")
     shutil.rmtree(dst_loc, ignore_errors=True)
     dst = AtriumSDK.create_dataset(dataset_location=dst_loc, database_type="sqlite")
     try:
@@ -388,7 +381,7 @@ def test_transfer_measures_do_no_harm(sdk):
         transfer_measures(src, dst, measure_id_list=[m1, m2])
         dst_measures = {mm["tag"]: mm for mm in dst.get_all_measures().values()}
         assert "plain" in dst_measures and "nibp" in dst_measures
-        # P6 carries the columns across the transfer.
+        # Transfer carries the columns to the destination.
         assert dst_measures["nibp"]["value_type"] == "numeric"
         assert dst_measures["nibp"]["signal_kind"] == "sample"
         # A measure that never stated them still resolves to the read-time defaults.
@@ -431,9 +424,9 @@ def test_concurrent_first_writes_converge_to_one_type(sdk):
 
 
 # =========================================================================== #
-# 9. REGRESSION: value_type-poisoning bug found by this audit, now FIXED.
+# 9. Value-type persistence
 #    value_type is established only AFTER a write commits, so a write that raises
-#    cannot leave a poisoning value_type. (These were xfail; they now pass.)
+#    cannot leave a poisoning value_type.
 # =========================================================================== #
 def test_failed_write_data_easy_string_must_not_poison_measure(sdk):
     m = sdk.insert_measure(measure_tag="poison", freq=1.0, freq_units="Hz", units="x")
@@ -460,8 +453,7 @@ def test_failed_write_data_conflicting_rawtype_must_not_poison_measure(sdk):
 
 
 # =========================================================================== #
-# 10. MARIADB (optional) -- the migration on a PRE-EXISTING column-less dataset,
-#     which the writer did NOT directly exercise.
+# 10. MariaDB schema upgrades on a column-less dataset.
 # =========================================================================== #
 def _maria_params():
     try:
@@ -487,8 +479,8 @@ def test_maria_migration_on_preexisting_columnless_dataset(_):
         pytest.skip("MariaDB connection not configured (.env / MARIA_DB_HOST)")
     from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 
-    db_name = "p2_audit_maria_migration"
-    dataset_path = Path(tempfile.mkdtemp(prefix="atrium_p2audit_maria_"))
+    db_name = "measure_metadata_maria"
+    dataset_path = Path(tempfile.mkdtemp(prefix="atrium_measure_metadata_maria_"))
     shutil.rmtree(dataset_path, ignore_errors=True)
     try:
         handler = MariaDBHandler(params["host"], params["user"], params["password"], db_name, params["port"])
@@ -502,7 +494,7 @@ def test_maria_migration_on_preexisting_columnless_dataset(_):
                                    connection_params=cp)
     try:
         m = sdk.insert_measure(measure_tag="hr", freq=1.0, freq_units="Hz", units="bpm")
-        # Simulate a pre-P2 Maria dataset: drop the two P2 columns.
+        # Simulate a MariaDB dataset without the two metadata columns.
         with sdk.sql_handler.connection() as (conn, cursor):
             cursor.execute("ALTER TABLE measure DROP COLUMN signal_kind")
             cursor.execute("ALTER TABLE measure DROP COLUMN value_type")

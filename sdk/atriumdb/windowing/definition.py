@@ -26,7 +26,7 @@ from atriumdb.adb_functions import time_unit_options
 from atriumdb.windowing.definition_builder import build_source_intervals
 from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.windowing_functions import get_signal_dictionary, get_label_dictionary, get_window_list, \
-    _load_patient_cache
+    _load_patient_cache, build_render_config
 from atriumdb.windowing.definition_combine import combine_definitions
 
 
@@ -194,10 +194,20 @@ class DatasetDefinition:
         :param measures: List of measures to build from, if applicable
         :param labels: List of label names for the definition (used to build by labels, if build_labels is not provided).
         :param build_labels: Optional alternative list of labels to use for building intervals when build_from_signal_type is "labels".
-        :param patient_id_list: List of patient IDs
-        :param mrn_list: List of medical record numbers
-        :param device_id_list: List of device IDs
-        :param device_tag_list: List of device tags
+        :param patient_id_list: List of patient IDs. **Exactly one** of ``patient_id_list``,
+            ``mrn_list``, ``device_id_list`` and ``device_tag_list`` must be given -- they are
+            four ways of naming the same cohort, not four independent filters. Supplying none
+            of them, or more than one, raises
+            ``ValueError: Exactly one of patient_id_list, mrn_list, device_id_list,
+            device_tag_list must be provided.``
+            To search the whole dataset, pass every id of one kind, e.g.
+            ``device_id_list=list(sdk.get_all_devices())``, and let ``merge_strategy`` narrow it.
+        :param mrn_list: List of medical record numbers. See ``patient_id_list``: exactly one
+            of the four cohort selectors is required.
+        :param device_id_list: List of device IDs. See ``patient_id_list``: exactly one of the
+            four cohort selectors is required.
+        :param device_tag_list: List of device tags. See ``patient_id_list``: exactly one of the
+            four cohort selectors is required.
         :param start_time: Start timestamp for filtering
         :param end_time: End timestamp for filtering
         :param int gap_tolerance: The maximum allowable gap size in the data such that the output considers a
@@ -306,6 +316,11 @@ class DatasetDefinition:
         :param patient_history_fields: (list, optional) Additional fields from patient history to include in the window object.
         :raises ValueError: If the definition is not validated or parameters are invalid.
 
+        Aperiodic and string measures use the same default per-kind rasterization
+        as the standard dataset iterator, so ``filter_fn`` receives their
+        carry-forward, occupancy, or string-code windows rather than the legacy
+        numeric grid.
+
         **Examples**:
 
         >>> my_sdk = AtriumSDK(dataset_location)
@@ -349,10 +364,12 @@ class DatasetDefinition:
                 f"({self.filtered_window_slide} ns). Refiltering will alter the window positions."
             )
 
-        highest_freq_nhz = max([measure['freq_nhz'] for measure in self.validated_data_dict['measures']])
-        row_size = int((highest_freq_nhz * window_duration) // (10 ** 18))
-        slide_size = int((highest_freq_nhz * window_slide) // (10 ** 18))
-        row_period_ns = int((10 ** 18) // highest_freq_nhz)
+        render_config = build_render_config(
+            self.validated_data_dict['measures'], window_duration, window_slide)
+        lowest_period_ns = min(config['period_ns'] for config in render_config.values())
+        row_size = int(window_duration // lowest_period_ns)
+        slide_size = int(window_slide // lowest_period_ns)
+        row_period_ns = lowest_period_ns
 
         filtered_sources = {}
         patient_info_cache = {}
@@ -393,7 +410,8 @@ class DatasetDefinition:
                     # Get data for each measure
                     data_dictionary = get_signal_dictionary(
                         sdk, device_id, None, window_duration, window_slide,
-                        self.validated_data_dict['measures'], start_time, end_time, num_windows, start_time, end_time)
+                        self.validated_data_dict['measures'], start_time, end_time, num_windows, start_time, end_time,
+                        render_config=render_config, definition_range_start_time=start_time)
 
                     sliced_labels, threshold_labels = get_label_dictionary(
                         sdk, device_id, None, start_time, end_time,
@@ -401,7 +419,7 @@ class DatasetDefinition:
                         label_threshold, num_windows, row_period_ns, row_size, slide_size)
 
                     batch_window_list = get_window_list(device_id, patient_id, self.validated_data_dict['measures'], data_dictionary,
-                                                        start_time, num_windows, window_slide,
+                                                        start_time, num_windows, window_duration, window_slide,
                                                         threshold_labels, sliced_labels, patient_history_cache,
                                                         patient_history_fields, patient_info_cache)
 

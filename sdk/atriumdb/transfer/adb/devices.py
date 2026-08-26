@@ -46,9 +46,9 @@ def transfer_devices(from_sdk, to_sdk, device_id_list=None):
                 else:
                     # The device_id is taken but its a different device so ask for a new
                     # id when inserting. Only the REQUESTED id becomes None here -- the
-                    # source id stays intact as the map key. Overwriting the loop variable
-                    # instead used to key this device's entry by None, so the real source
-                    # id was absent from the map and every later lookup for it resolved to
+                    # source id stays intact as the map key. The loop variable must not be
+                    # overwritten, or this device's entry would use None and later lookups
+                    # would resolve to
                     # None: its data was written to device_id=None and the label transfer
                     # raised KeyError.
                     requested_device_id = None

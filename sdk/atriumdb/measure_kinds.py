@@ -45,7 +45,7 @@ The axes really are orthogonal: a ``sample``/``numeric`` NIBP stream and a
 ``waveform``/``numeric`` ECG. Only ``waveform`` + ``string`` is a practical dead
 end -- the windowing layer has no NaN grid for text -- which is why measures
 auto-created by an ingest pipeline (always ``waveform`` by default) need
-:meth:`~atriumdb.atrium_sdk.AtriumSDK.set_measure_kind` before they can be
+:meth:`~atriumdb.atrium_sdk.AtriumSDK.update_measure` before they can be
 iterated.
 
 Both columns are nullable so existing datasets need no backfill; a ``NULL`` is
@@ -55,7 +55,6 @@ several consumers -- the SDK write/read guards, the windowing render config, the
 definition validator and the transfer layer -- can agree by construction instead
 of by repeating bare string literals.
 
-Background: ``docs/design/aperiodic-and-text-support.md``.
 """
 from __future__ import annotations
 
@@ -81,6 +80,19 @@ VALUE_TYPE_VALUES = (VALUE_TYPE_NUMERIC, VALUE_TYPE_STRING)
 # --- read-time defaults for the nullable columns -------------------------- #
 DEFAULT_SIGNAL_KIND = SIGNAL_KIND_WAVEFORM
 DEFAULT_VALUE_TYPE = VALUE_TYPE_NUMERIC
+
+
+def validate_measure_kind_values(signal_kind, value_type):
+    """Reject a measure-kind value outside the supported vocabulary.
+
+    ``None`` leaves an axis unspecified and is allowed for both values.
+    """
+    if signal_kind is not None and signal_kind not in SIGNAL_KIND_VALUES:
+        raise ValueError(
+            f"signal_kind must be one of {SIGNAL_KIND_VALUES} or None; got {signal_kind!r}.")
+    if value_type is not None and value_type not in VALUE_TYPE_VALUES:
+        raise ValueError(
+            f"value_type must be one of {VALUE_TYPE_VALUES} or None; got {value_type!r}.")
 
 
 def is_string_value_type(value_type) -> bool:
@@ -143,10 +155,10 @@ def invalid_kind_combination_message(measure_id, corrected_signal_kind=STRING_SI
 
     ``measure_exists=False`` is the ``insert_measure`` case, where there is no id to
     hand back yet, so the remedy is stated as the ``insert_measure`` argument rather
-    than as a :meth:`~atriumdb.atrium_sdk.AtriumSDK.set_measure_kind` call."""
+    than as a :meth:`~atriumdb.atrium_sdk.AtriumSDK.update_measure` call."""
     subject = f"Measure {measure_id}" if measure_exists else f"Measure {measure_id} (being created)"
     remedy = (
-        f"sdk.set_measure_kind({measure_id}, signal_kind='{SIGNAL_KIND_STATE}')"
+        f"sdk.update_measure({measure_id}, signal_kind='{SIGNAL_KIND_STATE}')"
         if measure_exists else
         f"insert_measure(..., signal_kind='{SIGNAL_KIND_STATE}', value_type='{VALUE_TYPE_STRING}')")
     return (
@@ -172,7 +184,6 @@ def changed_kind_fields(current_signal_kind, current_value_type, signal_kind, va
 
     Both callers -- :meth:`~atriumdb.atrium_sdk.AtriumSDK._apply_kind_to_existing_measure`
     and transfer's ``_carry_measure_kind`` -- reach the same "is this a real
-    change?" question by different routes and used to answer it with their own
-    copy of this comparison."""
+    change?" question by different routes through this shared comparison."""
     return (signal_kind if signal_kind is not None and signal_kind != current_signal_kind else None,
             value_type if value_type is not None and value_type != current_value_type else None)

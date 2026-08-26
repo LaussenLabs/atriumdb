@@ -15,20 +15,17 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-ADVERSARIAL audit of Phase 3 "rasterize into the Window contract"
-(design section 21). Written by an independent auditor: the goal is to *break*
-the aperiodic/string windowing path, not to re-confirm the happy path the
-writer's own ``test_aperiodic_windowing_p3.py`` already covers.
+Edge-case tests for aperiodic and string windowing. They cover failure modes beyond
+the primary ``test_aperiodic_windowing.py`` suite.
 
 Runs in SQLite mode only (no MariaDB / physionet needed). Synthetic data.
 
 Layout:
-  * ``test_pass_*`` -- probes the auditor ran that the code handles CORRECTLY.
-  * ``test_bug_*``  -- confirmed defects, captured as ``xfail(strict=True)`` so
-                       they fail loudly (become XPASS) the day they are fixed.
-                       Each carries a minimal repro + observed-vs-expected note.
+  * ``test_pass_*`` -- supported edge cases.
+  * ``test_unsupported_*`` -- reproducible unsupported cases, captured as
+                       ``xfail(strict=True)``.
 
-Headline defect (see ``test_bug_carry_forward_*``): carry-forward / left-censoring
+Carry-forward / left-censoring behavior (see ``test_unsupported_carry_forward_*``):
 is computed over the per-BATCH read grid, and the batch only reads data inside
 ``[range_start, batch_end]``. A reading that precedes a window's batch is never
 read, so a value that IS known (per carry-forward semantics: "most recent prior
@@ -52,7 +49,7 @@ BASE = 1_600_000_000 * SEC
 
 @pytest.fixture
 def sdk():
-    loc = tempfile.mkdtemp(prefix="atrium_p3_audit_")
+    loc = tempfile.mkdtemp(prefix="atrium_aperiodic_windowing_edges_")
     shutil.rmtree(loc, ignore_errors=True)
     s = AtriumSDK.create_dataset(dataset_location=loc, database_type="sqlite")
     try:
@@ -81,9 +78,9 @@ def _win_values(iterator):
 
 
 # =========================================================================== #
-# BUGS (confirmed) -- xfail(strict=True)
+# Expected-failure cases
 # =========================================================================== #
-def test_bug_carry_forward_sample_batch_boundary_inconsistent(sdk):
+def test_unsupported_carry_forward_sample_batch_boundary_inconsistent(sdk):
     m = sdk.insert_measure("nibp", freq=1.0, freq_units="Hz", units="mmHg", signal_kind="sample")
     dev = sdk.insert_device(device_tag="dev1")
     # single reading at t=2s; nothing afterwards.
@@ -98,7 +95,7 @@ def test_bug_carry_forward_sample_batch_boundary_inconsistent(sdk):
     np.testing.assert_array_equal(default_batch[1], one_per_batch[1])
 
 
-def test_bug_state_carry_forward_batch_boundary_inconsistent(sdk):
+def test_unsupported_state_carry_forward_batch_boundary_inconsistent(sdk):
     m = sdk.insert_measure("mode", freq=1.0, freq_units="Hz", units="code", signal_kind="state")
     dev = sdk.insert_device(device_tag="dev1")
     sdk.write_time_value_pairs(m, dev, BASE + np.array([2], dtype=np.int64) * SEC, np.array([7.0]))
@@ -110,7 +107,7 @@ def test_bug_state_carry_forward_batch_boundary_inconsistent(sdk):
     np.testing.assert_array_equal(default_batch[1], one_per_batch[1])
 
 
-def test_bug_string_state_sentinel_leaks_across_batch_boundary(sdk):
+def test_unsupported_string_state_sentinel_leaks_across_batch_boundary(sdk):
     m = sdk.insert_measure("anes", freq=1.0, freq_units="Hz", units="string",
                            signal_kind="state", value_type="string")
     dev = sdk.insert_device(device_tag="dev1")
@@ -131,14 +128,13 @@ def test_bug_string_state_sentinel_leaks_across_batch_boundary(sdk):
 # =========================================================================== #
 def test_pass_carry_forward_sees_reading_before_range_start(sdk):
     """A reading BEFORE the definition's range start IS the value in effect at
-    the range start, and carry-forward now seeds from it.
+    the range start, and carry-forward seeds from it.
 
-    This probe used to pin the opposite ("value known-before-range is dropped"),
-    on the reasoning that a hard floor at the range start was defensible as a
+    A hard floor at the range start is not valid because it would drop the
     range restriction. It is not: it made the same wall-clock window render
     differently depending on where the cohort's region happened to begin, so the
     flagship "N minutes either side of every event" recipe returned NaN for the
-    whole pre-anchor half of every window on any slow measure. Design 21.3 says a
+    whole pre-anchor half of every window on any slow measure. A
     `sample` cell holds "the most recent prior reading"; the unknown sentinel is
     for genuinely-unknown cells, and this cell is not one. The lookback is bounded
     (windowing_functions.CARRY_FORWARD_LOOKBACK_NS) and is a pure function of the
@@ -154,7 +150,7 @@ def test_pass_carry_forward_sees_reading_before_range_start(sdk):
 
 
 def test_pass_real_nan_reading_conflated_with_unknown(sdk):
-    """Design 21.2 #2(a): a genuine NaN reading is indistinguishable from an
+    """A genuine NaN reading is indistinguishable from an
     unknown/censored cell on a float channel. Confirm the conflation is EXACTLY
     that (value is NaN, and actual_count treats it as not-known) and nothing
     worse leaks."""
@@ -172,9 +168,8 @@ def test_pass_real_nan_reading_conflated_with_unknown(sdk):
 
 
 def test_pass_state_right_censoring_is_noop(sdk):
-    """Design note: right-censoring is a no-op in P3. A state that never closes
-    is carried forward to the end of the batch rather than marked unknown. Pinned
-    so a future P4 change is a deliberate, visible edit."""
+    """Right-censoring is a no-op. A state that never closes is carried forward to
+    the end of the batch rather than marked unknown."""
     m = sdk.insert_measure("mode", freq=1.0, freq_units="Hz", units="code", signal_kind="state")
     dev = sdk.insert_device(device_tag="dev1")
     sdk.write_time_value_pairs(m, dev, BASE + np.array([3], dtype=np.int64) * SEC, np.array([1.0]))
@@ -242,7 +237,7 @@ def test_pass_event_presence_and_count_never_sentinel(sdk):
 # AGGREGATE / FILL edge cases (these PASS)
 # =========================================================================== #
 def test_pass_sparse_is_batch_independent(sdk):
-    """Contrast with the carry-forward bug: sparse/aggregate touch only a
+    """In contrast, sparse/aggregate touch only a
     reading's own cell, so they are correctly batch-boundary independent."""
     m = sdk.insert_measure("nibp", freq=1.0, freq_units="Hz", units="mmHg", signal_kind="sample")
     dev = sdk.insert_device(device_tag="dev1")
@@ -334,7 +329,7 @@ def test_unknown_measure_override_is_rejected(sdk):
     """A fill_override / period_override keyed by a measure id NOT in the
     definition is rejected.
 
-    This previously *silently ignored* the key, so a typo (or a measure TAG,
+    This must reject an unknown key, so a typo (or a measure tag,
     which is how definitions identify measures everywhere else) produced a
     differently rasterized dataset with no error and no warning."""
     m = sdk.insert_measure("nibp", freq=1.0, freq_units="Hz", units="mmHg", signal_kind="sample")
@@ -409,11 +404,11 @@ def test_pass_mixed_waveform_aperiodic_no_row_size_distortion(sdk):
 
 
 # =========================================================================== #
-# REGRESSION: waveform-numeric path unchanged (independent of writer's test)
+# Waveform-numeric path remains unchanged.
 # =========================================================================== #
 def test_pass_waveform_numeric_byte_identical_dense_overlap(sdk):
     """Independent equivalence check with a DIFFERENT gap pattern and slide than
-    the writer's test: render_config=None vs the waveform 'grid' config must
+    the primary suite: render_config=None vs the waveform 'grid' config must
     produce byte-identical windows (equal_nan)."""
     wf = sdk.insert_measure("ecg", freq=8.0, freq_units="Hz", units="mV")
     dev = sdk.insert_device(device_tag="dev1")
@@ -431,9 +426,9 @@ def test_pass_waveform_numeric_byte_identical_dense_overlap(sdk):
                   batch_start_time=int(BASE), batch_end_time=int(BASE + 6 * SEC),
                   batch_num_windows=4, range_start_time=int(BASE), range_end_time=int(BASE + 6 * SEC))
     legacy = get_signal_dictionary(render_config=None, **common)
-    p3 = get_signal_dictionary(render_config=it.render_config, **common)
+    rendered = get_signal_dictionary(render_config=it.render_config, **common)
     lt, lv, lc = legacy[wf]
-    pt, pv, pc = p3[wf]
+    pt, pv, pc = rendered[wf]
     assert lc == pc
     assert np.array_equal(lt, pt)
     assert np.array_equal(lv, pv, equal_nan=True)
@@ -497,8 +492,8 @@ def test_pass_num_iterators_thread_fill_config(sdk):
 def test_lightmapped_warns_then_rejects_an_aperiodic_measure(sdk):
     """'lightmapped' is the numeric NaN-grid path only.
 
-    It still warns that the P3 fill config is not applied (never silently
-    pretends to honor it), and it now refuses an aperiodic/string measure at
+    It still warns that the fill config is not applied (never silently
+    pretends to honor it), and it refuses an aperiodic/string measure at
     construction with a measure-named error instead of failing deep inside
     iteration with an opaque block-codec message."""
     m = sdk.insert_measure("nibp", freq=1.0, freq_units="Hz", units="mmHg", signal_kind="sample")

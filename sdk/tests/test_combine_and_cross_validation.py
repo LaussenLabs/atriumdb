@@ -43,10 +43,7 @@ MAX_RECORDS = 10
 SEED = 42
 
 
-# The five SDK-dependent tests below each used to build an identical 10-record
-# MIT-BIH dataset (same seed, same everything) and are then strictly read-only. That was
-# 10 dataset builds -- 41 minutes, 81% of the 33-file baseline sweep. They now share one
-# module-scoped dataset per backend: 2 builds instead of 10, truncated.
+# SDK-dependent tests share one module-scoped dataset per backend.
 # Both backends still run; the parametrization just makes them separate test ids.
 @pytest.fixture(scope="module", params=parametrized_backends())
 def cv_sdk(request):

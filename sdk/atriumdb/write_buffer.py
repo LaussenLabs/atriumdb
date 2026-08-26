@@ -1,31 +1,18 @@
 import logging
 import time
 
-from atriumdb.adb_functions import time_unit_options
-
 _LOGGER = logging.getLogger(__name__)
 
 
 class WriteBuffer:
-    def __init__(self, sdk, max_values_per_measure_device=None, max_total_values_buffered=None, gap_tolerance=None,
-                 time_units=None, continuous=False, merge_blocks=True):
+    def __init__(self, sdk, max_values_per_measure_device=None, max_total_values_buffered=None,
+                 continuous=False, merge_blocks=True):
         self.sdk = sdk
         self.max_values_per_measure_device = max_values_per_measure_device \
             if max_values_per_measure_device is not None else sdk.block.block_size * 100
 
         self.max_total_values_buffered = max_total_values_buffered \
             if max_total_values_buffered is not None else sdk.block.block_size * 10_000
-
-        # A gap_tolerance of None means atriumdb will try to make the best decision it can for each data grouping.
-        if gap_tolerance is None:
-            self.gap_tolerance_nano = None
-        elif gap_tolerance > 0:
-            if time_units is None:
-                raise ValueError('If you are using a non-zero gap_tolerance you must specify time_units, '
-                                 'one of ["s", "ms", "us", "ns"]')
-            self.gap_tolerance_nano = int(gap_tolerance * time_unit_options[time_units])
-        else:
-            self.gap_tolerance_nano = 0
 
         # When True, every flushed batch is treated as a single continuous interval.
         self.continuous = continuous
@@ -59,12 +46,35 @@ class WriteBuffer:
                 'last_pushed_time': time.time(),
                 'continuous': self.continuous,
                 'merge_blocks': self.merge_blocks,
+                'gap_tolerance_is_explicit': None,
+                'interval_gap_tolerance_nano': None,
             }
         return self.sub_buffers[key]
+
+    @staticmethod
+    def _record_gap_tolerance(sub_buffer, gap_tolerance_is_explicit, interval_gap_tolerance_nano):
+        """Keep one interval-index policy per measure/device flush.
+
+        A buffered flush merges its pushes into one write, so silently choosing
+        one of two policies would make a caller's setting ineffective.  ``None``
+        is an automatic policy and is intentionally distinct from explicit zero.
+        """
+        current = (sub_buffer['gap_tolerance_is_explicit'], sub_buffer['interval_gap_tolerance_nano'])
+        requested = (gap_tolerance_is_explicit, interval_gap_tolerance_nano)
+        if current[0] is None:
+            sub_buffer['gap_tolerance_is_explicit'] = gap_tolerance_is_explicit
+            sub_buffer['interval_gap_tolerance_nano'] = interval_gap_tolerance_nano
+        elif current != requested:
+            raise ValueError(
+                "Buffered writes for one measure_id/device_id must use the same gap_tolerance. "
+                "Flush the buffer before changing the interval-index policy.")
 
     def push_segments(self, measure_id, device_id, message_list, continuous=False, merge_blocks=True):
         key = (measure_id, device_id)
         sub_buffer = self._get_sub_buffer(key)
+        first = message_list[0]
+        self._record_gap_tolerance(
+            sub_buffer, first['gap_tolerance_is_explicit'], first['interval_gap_tolerance_nano'])
         sub_buffer['buffered_messages'].extend(message_list)
         sub_buffer['continuous'] = sub_buffer['continuous'] or continuous
         sub_buffer['merge_blocks'] = sub_buffer['merge_blocks'] and merge_blocks
@@ -86,6 +96,8 @@ class WriteBuffer:
     def push_time_value_pairs(self, measure_id, device_id, data_dict, continuous=False, merge_blocks=True):
         key = (measure_id, device_id)
         sub_buffer = self._get_sub_buffer(key)
+        self._record_gap_tolerance(
+            sub_buffer, data_dict['gap_tolerance_is_explicit'], data_dict['interval_gap_tolerance_nano'])
         sub_buffer['buffered_time_value_pairs'].append(data_dict)
         sub_buffer['continuous'] = sub_buffer['continuous'] or continuous
         sub_buffer['merge_blocks'] = sub_buffer['merge_blocks'] and merge_blocks
@@ -119,13 +131,13 @@ class WriteBuffer:
             if sub_buffer['buffered_messages']:
                 self.sdk._write_segments_to_dataset(
                     measure_id, device_id, sub_buffer['buffered_messages'],
-                    interval_gap_tolerance_nano=self.gap_tolerance_nano, continuous=continuous,
+                    interval_gap_tolerance_nano=sub_buffer['interval_gap_tolerance_nano'], continuous=continuous,
                     merge_blocks=merge_blocks)
 
             if sub_buffer['buffered_time_value_pairs']:
                 self.sdk._write_time_value_pairs_to_dataset(
                     measure_id, device_id, sub_buffer['buffered_time_value_pairs'],
-                    interval_gap_tolerance_nano=self.gap_tolerance_nano, continuous=continuous,
+                    interval_gap_tolerance_nano=sub_buffer['interval_gap_tolerance_nano'], continuous=continuous,
                     merge_blocks=merge_blocks)
         finally:
             self.total_values_buffered -= sub_buffer['total_values_buffered']

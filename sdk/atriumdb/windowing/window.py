@@ -89,6 +89,9 @@ class Window:
         cannot be decoded -- see :func:`assert_decodable_string_signal`.
 
     :ivar int start_time: Window start in epoch nanoseconds.
+    :ivar int end_time: Exclusive logical end in epoch nanoseconds. This is always
+        ``start_time + window_duration``; a trailing partial window may have data
+        only through an earlier time.
     :ivar int device_id: Source device, or ``None`` for a patient source.
     :ivar int patient_id: Source patient, or ``None`` for a device source.
     :ivar np.ndarray label_time_series: ``(num_label_sets, row_size)`` int8 0/1
@@ -101,6 +104,7 @@ class Window:
 
     signals: dict
     start_time: int
+    end_time: int
     device_id: int
     patient_id: int
     label_time_series: np.ndarray

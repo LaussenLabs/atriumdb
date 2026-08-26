@@ -7,32 +7,30 @@
 #     the Free Software Foundation, either version 3 of the License, or
 #     (at your option) any later version.
 """
-Regression guards for the Wave-2 write / storage / transfer fixes on the
-aperiodic + text feature. One minimal test per defect that was actually fixed;
-every test here must PASS.
+Write, storage, and transfer behavior tests for aperiodic and text data.
 
-  W1  a string write that fails AFTER the dictionary encode must not establish a
+  * A string write that fails after dictionary encoding must not establish a
       value_type, must not retain the rejected batch's free text, and must leave
       the in-process cache agreeing with a fresh SDK.
-  W2  buffered string writes of differing unicode width must round-trip, and one
+  * Buffered string writes of differing unicode width must round-trip, and one
       failing batch must not discard the other measures in the same buffer.
-  W3  a de-identified transfer must not ship free-text vocabularies verbatim,
+  * A de-identified transfer must not ship free-text vocabularies verbatim,
       with a documented opt-in for controlled vocabularies.
-  W4  a string/numeric identity collision must abort BEFORE anything is written
+  * A string/numeric identity collision must abort before anything is written
       to the destination, naming the source measure.
-  W6  insert_measure(freq=0) must be rejected before any row is written, leaving
+  * insert_measure(freq=0) must be rejected before any row is written, leaving
       the dataset openable.
-  W7  insert_measure / transfer must apply signal_kind to an existing measure,
-      and set_measure_kind must exist to repair one.
-  W8  a truncated dictionary must raise an error naming the measure and a remedy.
-  W12 write_data_easy must reject strings with actionable advice.
-  D6  'waveform' + 'string' -- the one combination the design forbids -- must be
+  * insert_measure / transfer must apply signal_kind to an existing measure,
+      and update_measure must exist to repair one.
+  * A truncated dictionary must raise an error naming the measure and a remedy.
+  * write_data_easy must reject strings with actionable advice.
+  * 'waveform' + 'string' must be
       repaired where the measure is classified, not left to fail inside get_iterator.
 
 SQLite only (no backend difference is at stake in any of these):
     docker run --rm -v "<repo>:/atriumdb" -e PYTHONPATH=/atriumdb/sdk \
         atriumdb-test:latest python -m pytest \
-        /atriumdb/sdk/tests/test_aperiodic_write_fixes.py -q
+        /atriumdb/sdk/tests/test_aperiodic_write_behavior.py -q
 """
 import json
 import logging
@@ -51,6 +49,11 @@ BASE = 1_600_000_000 * SEC
 
 STR = lambda values: np.array(values, dtype=object)
 NUM = lambda values: np.array(values, dtype=np.float64)
+
+
+def _kind(sdk, measure_id):
+    info = sdk.get_measure_info(measure_id)
+    return None if info is None else (info["signal_kind"], info["value_type"])
 
 
 def _new_dataset(prefix):
@@ -108,7 +111,7 @@ def _fail_string_write_after_encode(sdk, measure_id, device_id, text="PATIENT_JO
 
 
 # =========================================================================== #
-# W1 -- a failed string write must establish and persist nothing
+# A failed string write must establish and persist nothing.
 # =========================================================================== #
 def test_failed_string_write_leaves_measure_numeric_and_writable(sdk):
     """The measure stays numeric-capable, the dictionary keeps no orphan free text,
@@ -131,7 +134,7 @@ def test_failed_string_write_leaves_measure_numeric_and_writable(sdk):
     # The cached view and a fresh SDK agree...
     fresh = AtriumSDK(dataset_location=sdk._loc, metadata_connection_type="sqlite")
     try:
-        assert sdk.get_measure_kind(measure_id) == fresh.get_measure_kind(measure_id)
+        assert _kind(sdk, measure_id) == _kind(fresh, measure_id)
     finally:
         fresh.close()
 
@@ -149,7 +152,7 @@ def test_successful_string_write_still_establishes_string(sdk):
     sdk.write_time_value_pairs(measure_id, device_id, _times(2), STR(["ASYSTOLE", "VTACH"]))
 
     assert sdk._established_value_type(measure_id) == "string"
-    assert sdk.get_measure_kind(measure_id)[1] == "string"
+    assert _kind(sdk, measure_id)[1] == "string"
     assert sdk.get_measure_string_vocabulary(measure_id) == ["ASYSTOLE", "VTACH"]
     with pytest.raises(ValueError, match="cannot write 'numeric' values"):
         sdk.write_time_value_pairs(measure_id, device_id, _times(2, start=BASE + 100 * SEC),
@@ -157,7 +160,7 @@ def test_successful_string_write_still_establishes_string(sdk):
 
 
 # =========================================================================== #
-# W2 -- buffered string writes
+# Buffered string writes
 # =========================================================================== #
 def test_buffered_string_writes_of_differing_widths_round_trip(sdk):
     """'OK' ('<U2') and 'ASYSTOLE' ('<U8') are one data type, not two."""
@@ -196,7 +199,7 @@ def test_buffered_failure_does_not_discard_other_measures(sdk):
 
 
 # =========================================================================== #
-# W6 / W11 -- insert_measure frequency validation
+# insert_measure frequency validation
 # =========================================================================== #
 def test_insert_measure_freq_zero_rejected_and_dataset_stays_openable():
     sdk, loc = _new_dataset("freq0")
@@ -230,38 +233,38 @@ def test_aperiodic_measure_has_a_working_supported_route(sdk):
                                         device_id=device_id)
     assert times.tolist() == irregular.tolist()
     assert list(map(str, values)) == ["A", "B", "A"]
-    assert sdk.get_measure_kind(measure_id) == ("event", "string")
+    assert _kind(sdk, measure_id) == ("event", "string")
 
 
 # =========================================================================== #
-# W7 -- signal_kind on an existing measure + the public setter
+# signal_kind on an existing measure and the public setter
 # =========================================================================== #
 def test_insert_measure_applies_kind_to_an_existing_measure(sdk):
     first = sdk.insert_measure(measure_tag="vent", freq=1, freq_units="Hz", units="string")
     again = sdk.insert_measure(measure_tag="vent", freq=1, freq_units="Hz", units="string",
                                signal_kind="state", value_type="string")
     assert again == first
-    assert sdk.get_measure_kind(again) == ("state", "string")
+    assert _kind(sdk, again) == ("state", "string")
 
 
-def test_set_measure_kind_repairs_and_refuses_to_relabel_written_data(sdk):
+def test_update_measure_repairs_and_refuses_to_relabel_written_data(sdk):
     measure_id = sdk.insert_measure(measure_tag="mode", freq=1, freq_units="Hz", units="string")
     device_id = sdk.insert_device(device_tag="mode_dev")
 
-    assert sdk.set_measure_kind(measure_id, signal_kind="state") == ("state", "numeric")
+    assert _kind(sdk, sdk.update_measure(measure_id, signal_kind="state")["id"]) == ("state", "numeric")
 
     sdk.write_time_value_pairs(measure_id, device_id, _times(2), STR(["SIMV", "PRVC"]))
-    assert sdk.get_measure_kind(measure_id) == ("state", "string")
+    assert _kind(sdk, measure_id) == ("state", "string")
 
     # Relabelling data that already exists is refused, not silently applied.
     with pytest.raises(ValueError, match="already holds 'string' data"):
-        sdk.set_measure_kind(measure_id, value_type="numeric")
+        sdk.update_measure(measure_id, value_type="numeric")
     with pytest.raises(ValueError):
-        sdk.set_measure_kind(measure_id, signal_kind="not_a_kind")
+        sdk.update_measure(measure_id, signal_kind="not_a_kind")
 
 
 # =========================================================================== #
-# W3 / W4 / W7 -- transfer
+# Transfer behavior
 # =========================================================================== #
 def _seed_transfer_source(src, string_values, string_tag="note", with_numeric=False):
     measure_id = _string_measure(src, string_tag)
@@ -367,17 +370,17 @@ def test_transfer_carries_signal_kind_into_an_existing_destination_measure(sdk_p
     _, device_id = _seed_transfer_source(src, ["SIMV", "PRVC"], string_tag="mode")
 
     existing = dst.insert_measure(measure_tag="mode", freq=1, freq_units="Hz", units="string")
-    assert dst.get_measure_kind(existing) == ("waveform", "numeric")
+    assert _kind(dst, existing) == ("waveform", "numeric")
 
     transfer_data(src, dst, definition=_definition(device_id, ["mode"]),
                   string_value_policy="transfer")
 
-    assert dst.get_measure_kind(existing) == src.get_measure_kind(
+    assert _kind(dst, existing) == _kind(src,
         src.get_measure_id("mode", freq=1, freq_units="Hz", units="string"))
 
 
 # =========================================================================== #
-# W8 / W12 -- actionable errors
+# Actionable errors
 # =========================================================================== #
 def test_truncated_dictionary_error_names_the_measure_and_a_remedy(sdk):
     measure_id = _string_measure(sdk, "trunc")
@@ -405,8 +408,20 @@ def test_write_data_easy_rejects_strings_with_actionable_advice(sdk):
                             freq_units="Hz")
 
 
+def test_write_data_easy_warns_that_it_is_deprecated(sdk):
+    """The legacy shortcut remains usable for old callers, but guides new code
+    to the explicit segment/time-value-pair write APIs before its removal."""
+    measure_id = _numeric_measure(sdk, "easy_deprecated")
+    device_id = sdk.insert_device(device_tag="easy_deprecated_dev")
+
+    with pytest.warns(DeprecationWarning,
+                      match="(?i)deprecated.*legacy compatibility.*removed.*write_segments.*write_time_value_pairs"):
+        sdk.write_data_easy(measure_id, device_id, _times(2), NUM([1, 2]), 1,
+                            freq_units="Hz")
+
+
 # =========================================================================== #
-# W1 (residual) -- the dictionary-file signal must mean the same thing to every
+# The dictionary-file signal must mean the same thing to every
 # consumer, or a killed write poisons the measure through the backfill instead
 # =========================================================================== #
 def _orphan_dictionary(sdk, measure_id, text="PATIENT_JOHN_DOE"):
@@ -424,27 +439,23 @@ def test_orphan_dictionary_does_not_establish_string_anywhere(sdk):
     """A dictionary with no committed blocks behind it is not evidence of anything.
 
     ``_established_value_type`` already required blocks, but ``_resolve_measure_kind``
-    (what ``get_measure_kind`` serves) did not, so the public API reported 'string' for a
+    (what ``get_measure_info`` serves) did not, so the public API reported 'string' for a
     measure the write path considered unestablished -- and happily accepted numeric data
-    for. All three consumers of the signal must now agree."""
+    for. All three consumers of the signal must agree."""
     measure_id = _numeric_measure(sdk, "orphan_kind")
     device_id = sdk.insert_device(device_tag="orphan_kind_dev")
     _orphan_dictionary(sdk, measure_id)
 
     assert sdk._established_value_type(measure_id) is None
-    assert sdk.get_measure_kind(measure_id) == ("sample", "numeric")
+    assert _kind(sdk, measure_id) == ("sample", "numeric")
 
     # And the measure is still usable for what it was created for.
     sdk.write_time_value_pairs(measure_id, device_id, _times(3), NUM([1.0, 2.0, 3.0]))
-    assert sdk.get_measure_kind(measure_id) == ("sample", "numeric")
+    assert _kind(sdk, measure_id) == ("sample", "numeric")
 
 
 def test_auto_upgrade_does_not_persist_an_orphan_dictionary_as_string(sdk):
-    """The severe half: ``_backfill_string_value_types`` used to WRITE
-    ``value_type='string'`` into the column for any measure with a dictionary file. A
-    killed write plus a routine ``AtriumSDK(auto_upgrade=True)`` therefore bricked a
-    numeric measure permanently -- exactly the poisoning W1 was meant to close, arriving
-    through the schema upgrade instead of through the write."""
+    """An orphan dictionary does not establish a measure's value type."""
     measure_id = _numeric_measure(sdk, "orphan_backfill")
     device_id = sdk.insert_device(device_tag="orphan_backfill_dev")
     _orphan_dictionary(sdk, measure_id)
@@ -454,7 +465,7 @@ def test_auto_upgrade_does_not_persist_an_orphan_dictionary_as_string(sdk):
                          auto_upgrade=True)
     try:
         assert upgraded.sql_handler.select_measure(measure_id=measure_id)[11] is None
-        assert upgraded.get_measure_kind(measure_id) == ("sample", "numeric")
+        assert _kind(upgraded, measure_id) == ("sample", "numeric")
         # Not bricked: the numeric write the measure exists for still succeeds.
         upgraded.write_time_value_pairs(measure_id, device_id, _times(3), NUM([1.0, 2.0, 3.0]))
         _, read_times, _ = upgraded.get_data(measure_id, BASE - SEC, BASE + 10 * SEC,
@@ -464,14 +475,15 @@ def test_auto_upgrade_does_not_persist_an_orphan_dictionary_as_string(sdk):
         upgraded.close()
 
 
-def test_auto_upgrade_still_backfills_a_real_p1_string_measure(sdk):
-    """Do-no-harm counterpart: a genuine P1 dictionary -- one with committed blocks
+def test_auto_upgrade_backfills_a_string_measure_with_dictionary_data(sdk):
+    """A dictionary with committed blocks
     behind it -- must still be backfilled to value_type='string'."""
     measure_id = sdk.insert_measure(measure_tag="alarm", freq=1, freq_units="Hz", units="string")
-    device_id = sdk.insert_device(device_tag="p1_dev")
+    device_id = sdk.insert_device(device_tag="string_dev")
     sdk.write_time_value_pairs(measure_id, device_id, _times(2), STR(["ALPHA", "BETA"]))
-    # Simulate the pre-P2 state: data and dictionary present, the column not yet set.
-    # update_measure_metadata only writes non-None fields, so clear it directly.
+    # Simulate a measure predating the value_type column: data and dictionary
+    # present, but the column not yet set. update_measure_metadata only writes
+    # non-None fields, so clear it directly.
     with sdk.sql_handler.sqlite_db_connection(begin=True) as (conn, cursor):
         cursor.execute("UPDATE measure SET value_type = NULL WHERE id = ?", (measure_id,))
     location = sdk._loc
@@ -488,13 +500,10 @@ def test_auto_upgrade_still_backfills_a_real_p1_string_measure(sdk):
 
 
 # =========================================================================== #
-# W8 -- a lost string dictionary must never be silently re-issued
+# A lost string dictionary must never be silently re-issued
 # =========================================================================== #
 def test_lost_dictionary_is_refused_instead_of_re_issuing_codes(sdk):
-    """Losing ``meta/string_dict/`` (a DB + tsc restore that omits ``meta/``) used to be
-    invisible: the next write took code 0 again, so every historical code silently began
-    decoding to a DIFFERENT string. The vocabulary size is now recorded in the metadata
-    database, which survives the loss, and a shorter dictionary is refused."""
+    """A missing string dictionary is rejected before codes can be re-issued."""
     measure_id = _string_measure(sdk, "lost_dict")
     device_id = sdk.insert_device(device_tag="lost_dict_dev")
     sdk.write_time_value_pairs(measure_id, device_id, _times(2), STR(["ALPHA", "BETA"]))
@@ -510,14 +519,14 @@ def test_lost_dictionary_is_refused_instead_of_re_issuing_codes(sdk):
     assert "lost data" in message and "2 were committed" in message
     assert "Restore meta/string_dict/" in message
 
-    # The historical code is now unreadable -- but LOUDLY so, not silently wrong.
-    with pytest.raises(ValueError, match="out of range"):
+    # The stored code is unreadable with a clear error rather than silently wrong.
+    with pytest.raises(ValueError, match="lost data"):
         sdk.get_string_data(measure_id, BASE, BASE + SEC, device_id=device_id)
 
 
 def test_truncated_dictionary_is_refused_before_re_issuing_tail_codes(sdk):
     """The subtler half: a dictionary truncated from 3 entries to 1 would re-issue codes
-    1 and 2, whose historical meaning still exists in the blocks."""
+    1 and 2, whose meanings still exist in the blocks."""
     measure_id = _string_measure(sdk, "trunc_reissue")
     device_id = sdk.insert_device(device_tag="trunc_reissue_dev")
     sdk.write_time_value_pairs(measure_id, device_id, _times(3), STR(["A", "B", "C"]))
@@ -546,7 +555,7 @@ def test_dictionary_loss_guard_does_not_fire_on_healthy_writes(sdk):
     assert sdk.sql_handler.get_string_dict_watermark(measure_id) == 8
 
     declared = sdk.insert_measure(measure_tag="declared", freq=1, freq_units="Hz", units="string")
-    sdk.set_measure_kind(declared, signal_kind="event", value_type="string")
+    sdk.update_measure(declared, signal_kind="event", value_type="string")
     sdk.write_time_value_pairs(declared, device_id, np.array([BASE], dtype=np.int64),
                                STR(["FIRST"]), period=SEC)
     _, values = sdk.get_string_data(declared, BASE - SEC, BASE + SEC, device_id=device_id)
@@ -554,29 +563,27 @@ def test_dictionary_loss_guard_does_not_fire_on_healthy_writes(sdk):
 
 
 # =========================================================================== #
-# D6 -- 'waveform' + 'string' must be impossible to create through the API
+# 'waveform' + 'string' must be impossible to create through the API
 # =========================================================================== #
-# Design section 4 / 21.3: a string measure needs a signal_kind of event/state/sample. A
+# A string measure needs a signal_kind of event/state/sample. A
 # 'waveform' string measure passed insert_measure, passed get_string_data and then died
 # deep inside get_iterator's fill path ("its values cannot be NaN-filled") hours after the
-# mistake was made. Every route that could classify a measure now repairs the combination
-# where it is created, loudly, naming signal_kind and set_measure_kind.
+# mistake was made. Every route that classifies a measure repairs the combination
+# where it is created, loudly, naming signal_kind and update_measure.
 def test_string_write_repairs_a_waveform_measure_it_would_have_stranded(sdk, caplog):
-    """The route the docs' own former string example took: insert_measure with no
-    signal_kind (so it defaults to waveform), then write text. The first write establishes
-    value_type='string' -- and used to leave the measure at waveform+string."""
-    device_id = sdk.insert_device(device_tag="d6_dev")
+    """Writing strings establishes a compatible signal kind when none is declared."""
+    device_id = sdk.insert_device(device_tag="invalid_kind_dev")
     measure_id = sdk.insert_measure(measure_tag="vent_mode_lazy", freq=1, freq_units="Hz",
                                     units="mode")
-    assert sdk.get_measure_kind(measure_id) == ("waveform", "numeric")
+    assert _kind(sdk, measure_id) == ("waveform", "numeric")
 
     with caplog.at_level(logging.WARNING, logger="atriumdb.atrium_sdk"):
         sdk.write_time_value_pairs(measure_id, device_id, _times(2), STR(["SIMV", "PRVC"]),
                                    period=SEC)
 
-    assert sdk.get_measure_kind(measure_id) == ("event", "string")
+    assert _kind(sdk, measure_id) == ("event", "string")
     assert "signal_kind" in caplog.text, "the report must name the field that was wrong"
-    assert "set_measure_kind" in caplog.text, "and the public method that repairs it"
+    assert "update_measure" in caplog.text, "and the public method that repairs it"
     # The data itself is untouched by the repair.
     _, values = sdk.get_string_data(measure_id, BASE - SEC, BASE + 100 * SEC, device_id=device_id)
     assert list(map(str, values)) == ["SIMV", "PRVC"]
@@ -587,38 +594,37 @@ def test_declaring_a_string_measure_without_a_signal_kind_is_repaired(sdk):
     dead end, because a NULL signal_kind read-time-defaults to waveform. It is also the
     shape a legacy dataset carries into transfer_measures -> insert_measure, which is why
     this repairs rather than raises: a transfer of an already-broken source measure must
-    fix it, not abort."""
+    correct it, not abort."""
     measure_id = sdk.insert_measure(measure_tag="explicit_str", freq=1, freq_units="Hz",
                                     units="string", value_type="string")
-    assert sdk.get_measure_kind(measure_id) == ("event", "string")
+    assert _kind(sdk, measure_id) == ("event", "string")
 
     # An explicitly stated waveform+string is repaired the same way.
     both = sdk.insert_measure(measure_tag="stated_waveform_str", freq=1, freq_units="Hz",
                               units="string", signal_kind="waveform", value_type="string")
-    assert sdk.get_measure_kind(both) == ("event", "string")
+    assert _kind(sdk, both) == ("event", "string")
 
 
-def test_set_measure_kind_cannot_recreate_the_combination_it_repairs(sdk):
-    """The setter exists to fix a stranded measure, so it must not be able to make one --
-    including via the half-stated call ``set_measure_kind(m, value_type='string')`` on a
+def test_update_measure_cannot_recreate_the_combination_it_repairs(sdk):
+    """The setter must not create an invalid measure --
+    including via the half-stated call ``update_measure(m, value_type='string')`` on a
     waveform measure, where the resulting combination is invalid even though neither
     argument is."""
     half = sdk.insert_measure(measure_tag="half_stated", freq=1, freq_units="Hz", units="s")
-    assert sdk.set_measure_kind(half, value_type="string") == ("event", "string")
+    assert _kind(sdk, sdk.update_measure(half, value_type="string")["id"]) == ("event", "string")
 
     # Pushing a real string measure back to waveform is refused the same way.
     real = _string_measure(sdk, "already_event")
-    assert sdk.set_measure_kind(real, signal_kind="waveform") == ("event", "string")
+    assert _kind(sdk, sdk.update_measure(real, signal_kind="waveform")["id"]) == ("event", "string")
 
     # Do no harm: a numeric measure may still be declared a waveform.
     numeric = _numeric_measure(sdk, "plain_numeric")
-    assert sdk.set_measure_kind(numeric, signal_kind="waveform") == ("waveform", "numeric")
+    assert _kind(sdk, sdk.update_measure(numeric, signal_kind="waveform")["id"]) == ("waveform", "numeric")
 
 
 def test_repaired_string_measure_is_iterable(sdk):
-    """The point of the repair: the failure used to surface in get_iterator, hours later.
-    The measure the lazy write produces must now iterate."""
-    device_id = sdk.insert_device(device_tag="d6_iter_dev")
+    """A measure established by a string write is iterable."""
+    device_id = sdk.insert_device(device_tag="invalid_kind_iterator_dev")
     measure_id = sdk.insert_measure(measure_tag="lazy_iter", freq=1, freq_units="Hz", units="mode")
     sdk.write_time_value_pairs(measure_id, device_id, _times(3), STR(["A", "B", "C"]), period=SEC)
 

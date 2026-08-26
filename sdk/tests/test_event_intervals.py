@@ -15,7 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-Phase 4 tests: event query surface + from->to pairing (design section 22).
+Event query and from->to pairing tests.
 
 Covers:
   * get_measure_string_vocabulary -- ALL values from the dict file (no data scan)
@@ -33,7 +33,7 @@ Covers:
 SQLite only:
     docker run --rm -v "<repo>:/atriumdb" -e PYTHONPATH=/atriumdb/sdk \
         atriumdb-test:latest python -m pytest \
-        /atriumdb/sdk/tests/test_event_intervals_p4.py -q
+        /atriumdb/sdk/tests/test_event_intervals.py -q
 """
 import shutil
 import tempfile
@@ -52,7 +52,7 @@ BASE = 1_600_000_000 * SEC
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def sdk():
-    loc = tempfile.mkdtemp(prefix="atrium_p4evt_")
+    loc = tempfile.mkdtemp(prefix="atrium_event_intervals_")
     shutil.rmtree(loc, ignore_errors=True)
     s = AtriumSDK.create_dataset(dataset_location=loc, database_type="sqlite")
     s._loc = loc
@@ -368,3 +368,67 @@ def test_vectorized_matches_brute_force_random(sdk):
         events = [(int(BASE + off * SEC), v) for off, v in zip(offsets.tolist(), vals)]
         expected = brute_force_pairs(events, start_n, end_n, "START", "STOP")
         assert got == expected, f"trial {trial}: {got} != {expected}"
+
+
+# --------------------------------------------------------------------------- #
+# 5. A measure TAG where a measure id belongs
+# --------------------------------------------------------------------------- #
+def test_measure_tag_instead_of_id_names_the_parameter_and_the_fix(sdk):
+    """A measure tag passed where an id is required must raise a clear error:
+    a bare `ValueError: invalid literal for int() with base 10` naming neither the
+    parameter, the method, nor how to get from a tag to an id."""
+    m, d = new_event_measure(sdk)
+    write_events(sdk, m, d, [(1, "START"), (4, "STOP")])
+
+    with pytest.raises(TypeError) as excinfo:
+        sdk.get_event_intervals(
+            "anesthesia_events", "START", "STOP", device_id=d, start_time=int(BASE),
+            end_time=int(BASE + 10 * SEC), within="none", time_units="ns")
+
+    message = str(excinfo.value)
+    assert "measure must be a measure id" in message
+    assert "'anesthesia_events'" in message
+    assert "get_measure_id" in message
+
+
+def test_measure_tag_rejected_by_the_other_string_query_entry_points(sdk):
+    """Same diagnostic from every entry point onto the string/event surface, so a caller
+    does not have to learn three different failure modes."""
+    m, _d = new_event_measure(sdk, tag="vent_mode")
+
+    with pytest.raises(TypeError, match="measure_id must be a measure id"):
+        sdk.get_measure_string_vocabulary("vent_mode")
+
+    with pytest.raises(TypeError, match="measure_id must be a measure id"):
+        sdk.get_string_values_present("vent_mode", start_time=int(BASE),
+                                      end_time=int(BASE + 10 * SEC), device_id=1)
+
+
+def test_measure_id_as_a_numeric_string_is_still_rejected(sdk):
+    """'3' is a tag-shaped argument that int() would have accepted silently. The
+    parameter is typed as an id; a str is a caller mistake either way."""
+    m, d = new_event_measure(sdk, tag="strnum")
+    write_events(sdk, m, d, [(1, "START"), (4, "STOP")])
+
+    with pytest.raises(TypeError, match="not the measure tag"):
+        sdk.get_event_intervals(
+            str(m), "START", "STOP", device_id=d, start_time=int(BASE),
+            end_time=int(BASE + 10 * SEC), within="none", time_units="ns")
+
+
+def test_non_int_non_str_measure_is_rejected_with_its_type(sdk):
+    with pytest.raises(TypeError, match="measure must be a measure id"):
+        sdk.get_event_intervals(
+            None, "START", "STOP", device_id=1, start_time=int(BASE),
+            end_time=int(BASE + 10 * SEC), within="none", time_units="ns")
+
+
+def test_numpy_integer_measure_id_still_works(sdk):
+    """The guard must not break the ordinary integer-like ids callers really pass."""
+    m, d = new_event_measure(sdk, tag="npint")
+    write_events(sdk, m, d, [(1, "START"), (4, "STOP")])
+
+    ivals = sdk.get_event_intervals(
+        np.int64(m), "START", "STOP", device_id=d, start_time=int(BASE),
+        end_time=int(BASE + 10 * SEC), within="none", time_units="ns")
+    assert [rel(i) for i in ivals] == [(1.0, 4.0, False, False)]

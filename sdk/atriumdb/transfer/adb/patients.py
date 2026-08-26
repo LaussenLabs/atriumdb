@@ -38,7 +38,8 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
    :param list mrn_list: (Optional) A list of medical record numbers (MRNs) corresponding to the patients to transfer.
     If `patient_id_list` is not provided, `mrn_list` will be used to determine patients to transfer.
    :param union[bool, str, Path] deidentify: If True, randomly assign new patient IDs. If a filename (str or Path)
-    is provided, use the deidentification table from the file. If False, keep the original patient IDs.
+    is provided, use the deidentification table from the file. If False, reuse a destination patient with the same
+    MRN; otherwise retain the source ID only when it is available in the destination.
    :param list patient_info_to_transfer: (Optional) A list of patient info keys to transfer.
     If None or "all", transfer all patient info.
    :param int start_time_nano: (Optional) The start time in nanoseconds for patient-device history records.
@@ -81,7 +82,8 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
     """
     patient_id_list = validate_patient_transfer_list(src_sdk, patient_id_list, mrn_list, deidentify)
 
-    patient_id_map = create_patient_id_map(patient_id_list, deidentify)
+    patient_id_map = create_patient_id_map(
+        patient_id_list, deidentify, src_sdk=src_sdk, dest_sdk=dest_sdk)
 
     transfer_patient_table(src_sdk, dest_sdk, patient_id_list, patient_id_map, patient_info_to_transfer,
                            deidentification_functions, time_shift_nano, deidentify)
@@ -143,10 +145,46 @@ def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list, deidenti
     return patient_id_list
 
 
-def create_patient_id_map(patient_id_list, deidentify, overwrite=False):
+def create_patient_id_map(patient_id_list, deidentify, overwrite=False, src_sdk=None, dest_sdk=None):
     if not deidentify:
-        # No de-identification needed; return a direct mapping
-        return {patient_id: patient_id for patient_id in patient_id_list}
+        # Patient ids are local database keys, not a cross-dataset identity. Reuse
+        # an existing destination patient only when its MRN agrees with the source;
+        # otherwise retain the source id when free or allocate a fresh destination id.
+        # The SDK arguments are optional to preserve this helper's standalone,
+        # direct-mapping behavior for callers that do not perform a transfer.
+        if src_sdk is None or dest_sdk is None:
+            return {patient_id: patient_id for patient_id in patient_id_list}
+
+        source_patients = src_sdk.get_all_patients()
+        destination_patients = dest_sdk.get_all_patients()
+        destination_mrn_to_id = {
+            str(info['mrn']): patient_id
+            for patient_id, info in destination_patients.items()
+            if info.get('mrn') is not None
+        }
+        occupied_destination_ids = set(destination_patients)
+        next_destination_id = max(occupied_destination_ids, default=0) + 1
+        patient_id_map = {}
+
+        for source_patient_id in patient_id_list:
+            source_info = source_patients.get(source_patient_id, {})
+            source_mrn = source_info.get('mrn')
+            if source_mrn is not None and str(source_mrn) in destination_mrn_to_id:
+                patient_id_map[source_patient_id] = destination_mrn_to_id[str(source_mrn)]
+                continue
+
+            if source_patient_id not in occupied_destination_ids:
+                destination_patient_id = source_patient_id
+            else:
+                while next_destination_id in occupied_destination_ids:
+                    next_destination_id += 1
+                destination_patient_id = next_destination_id
+                next_destination_id += 1
+
+            patient_id_map[source_patient_id] = destination_patient_id
+            occupied_destination_ids.add(destination_patient_id)
+
+        return patient_id_map
 
     if isinstance(deidentify, (str, Path)):
         # If deidentify is a file path

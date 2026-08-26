@@ -32,6 +32,12 @@ DB_NAME = 'atrium-mit-bih'
 MAX_RECORDS = 4
 SEED = 42
 
+
+def block_metadata_as_dict(header):
+    """A BlockMetadata's fields as a plain dict, so two headers can be compared by
+    value. The struct is a bare ctypes Structure, for which `==` is identity."""
+    return {name: getattr(header, name) for name, *_ in header._fields_}
+
 # Every mitdb record is 650,000 samples x 2 signals (30 minutes of ECG). Almost
 # every consumer of write_mit_bih_to_dataset needs the *structure* it builds (N devices,
 # N patients, device<->patient mappings, 10-100 labels per device, 2 measures per
@@ -44,9 +50,7 @@ SEED = 42
 # lowering the block-size sweep to match.
 TRUNCATED_SAMPLES_PER_RECORD = 20_000
 
-# Block size used to be re-drawn per measure from random.choice(2**11 .. 2**20),
-# which made the same test cost anywhere from 27s to 87s depending on the draw and made
-# a failure impossible to attribute to a block size. It is now an explicit deterministic
+# Block size is an explicit deterministic
 # sweep: each measure takes the next size in the cycle, so every listed size is
 # *guaranteed* to be covered rather than covered by luck.
 FULL_BLOCK_SIZE_SWEEP = tuple(2 ** exp for exp in range(11, 21))
@@ -82,8 +86,8 @@ LABEL_SET_LIST = [
 ]
 
 
-# This is the repo's numeric regression backbone and it keeps its data
-# volume EXACTLY (MAX_RECORDS = 4, full 650,000-sample records). It is excluded from the
+# This suite keeps its data volume exactly (MAX_RECORDS = 4, full 650,000-sample records).
+# It is excluded from the
 # default and fast runs by the `nightly` marker and scheduled nightly instead, which
 # changes zero coverage. Do not truncate it and do not lower MAX_RECORDS.
 @pytest.mark.nightly
@@ -247,9 +251,13 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
 
             assert np.array_equal(record.p_signal, read_values) and np.array_equal(time_arr, read_times)
 
-            # Test get_headers
+            # Test get_headers: the header-only read must agree with the headers the
+            # full decode produced. BlockMetadata is a bare ctypes Structure, so `==`
+            # on it is identity, not value -- compare the fields.
             just_headers = sdk.get_headers(measure_id, start_time_n, end_time_n, **query_args)
-            assert just_headers == headers
+            assert len(just_headers) == len(headers)
+            for just_header, header in zip(just_headers, headers):
+                assert block_metadata_as_dict(just_header) == block_metadata_as_dict(header)
 
 
 def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=None, use_numpy=False,

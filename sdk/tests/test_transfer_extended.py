@@ -40,8 +40,7 @@ SEED = 42
 # test_mit_bih.TRUNCATED_BLOCK_SIZE_SWEEP (max 2**14).
 
 
-# Still the heaviest surviving MIT-BIH test; `slow` keeps it out of
-# the sub-5-minute inner loop while it stays in every full run.
+# This suite is marked slow.
 @pytest.mark.slow
 @pytest.mark.mitbih
 def test_transfer():

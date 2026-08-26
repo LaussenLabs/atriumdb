@@ -19,6 +19,7 @@ from atriumdb import AtriumSDK
 import numpy as np
 from tests.test_transfer_info import insert_random_patients
 from typing import List, Tuple
+from atriumdb.helpers.block_constants import COMPRESSION_TYPES, TIME_TYPES, VALUE_TYPES
 
 from tests.testing_framework import _test_for_both
 
@@ -29,6 +30,10 @@ MAX_RECORDS = 1
 
 def test_get_interval_arr():
     _test_for_both(DB_NAME, _test_get_interval_arr)
+
+
+def test_get_interval_arr_exact():
+    _test_for_both(f"{DB_NAME}-exact", _test_get_interval_arr_exact)
 
 
 def _test_get_interval_arr(db_type, dataset_location, connection_params):
@@ -125,3 +130,58 @@ def _test_get_interval_arr(db_type, dataset_location, connection_params):
                           np.array([[start_time_nano, end_time_nano]], dtype=np.int64))
 
 
+def _test_get_interval_arr_exact(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    period_ns = 1_000_000_000
+    device_id = sdk.insert_device("exact_device")
+    measure_id = sdk.insert_measure("exact_waveform", 1, freq_units="Hz")
+
+    times = np.array([0, 1, 2, 10, 11, 12], dtype=np.int64) * period_ns
+    values = np.arange(times.size, dtype=np.float64)
+    sdk.write_time_value_pairs(
+        measure_id, device_id, times, values, period=period_ns, time_units="ns", continuous=True)
+
+    coarse = sdk.get_interval_array(measure_id=measure_id, device_id=device_id)
+    exact = sdk.get_interval_array(measure_id=measure_id, device_id=device_id, exact=True)
+
+    assert np.array_equal(coarse, np.array([[0, 13 * period_ns]], dtype=np.int64))
+    assert np.array_equal(exact, np.array([[0, 3 * period_ns], [10 * period_ns, 13 * period_ns]], dtype=np.int64))
+
+    merged_exact = sdk.get_interval_array(
+        measure_id=measure_id, device_id=device_id, exact=True, gap_tolerance_nano=7 * period_ns)
+    assert np.array_equal(merged_exact, np.array([[0, 13 * period_ns]], dtype=np.int64))
+
+    patient_id = sdk.insert_patient(mrn=123456)
+    sdk.insert_device_patient_data([(device_id, patient_id, period_ns, 11 * period_ns)])
+    patient_exact = sdk.get_interval_array(measure_id=measure_id, patient_id=patient_id, exact=True)
+    assert np.array_equal(patient_exact, np.array([[period_ns, 3 * period_ns],
+                                                  [10 * period_ns, 11 * period_ns]], dtype=np.int64))
+
+    sample_measure_id = sdk.insert_measure("exact_sample", 1, freq_units="Hz", signal_kind="sample")
+    sdk.write_time_value_pairs(
+        sample_measure_id, device_id, times, values, period=period_ns, time_units="ns", continuous=True)
+    sample_coarse = sdk.get_interval_array(measure_id=sample_measure_id, device_id=device_id)
+    sample_exact = sdk.get_interval_array(measure_id=sample_measure_id, device_id=device_id, exact=True)
+    assert np.array_equal(sample_exact, sample_coarse)
+
+    compressed_measure_id = sdk.insert_measure("exact_compressed_waveform", 1, freq_units="Hz")
+    sdk.write_data(
+        compressed_measure_id, device_id,
+        np.array([3, 7 * period_ns], dtype=np.int64),
+        np.arange(6, dtype=np.int64),
+        freq_nhz=1_000_000_000,
+        time_0=0,
+        raw_time_type=TIME_TYPES['GAP_ARRAY_INT64_INDEX_DURATION_NS'],
+        raw_value_type=VALUE_TYPES['INT64'],
+        encoded_time_type=TIME_TYPES['GAP_ARRAY_INT64_INDEX_DURATION_NS'],
+        encoded_value_type=VALUE_TYPES['DELTA_INT64'],
+        t_compression=COMPRESSION_TYPES['ZSTD'],
+        t_compression_level=3,
+        continuous=True,
+    )
+    compressed_exact = sdk.get_interval_array(
+        measure_id=compressed_measure_id, device_id=device_id, exact=True)
+    assert np.array_equal(compressed_exact, np.array([[0, 3 * period_ns],
+                                                     [10 * period_ns, 13 * period_ns]], dtype=np.int64))

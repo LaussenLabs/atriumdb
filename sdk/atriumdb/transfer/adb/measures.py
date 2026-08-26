@@ -170,7 +170,8 @@ def _carry_measure_kind(to_sdk, dest_measure_id, signal_kind, value_type):
     so it is skipped here rather than raising mid-transfer."""
     if signal_kind is None and value_type is None:
         return
-    current = to_sdk.get_measure_kind(dest_measure_id)
+    current_info = to_sdk.get_measure_info(dest_measure_id)
+    current = None if current_info is None else (current_info.get('signal_kind'), current_info.get('value_type'))
     if current is None:
         return
     current_signal_kind, current_value_type = current
@@ -181,4 +182,4 @@ def _carry_measure_kind(to_sdk, dest_measure_id, signal_kind, value_type):
         new_value_type = None
     if new_signal_kind is None and new_value_type is None:
         return
-    to_sdk.set_measure_kind(dest_measure_id, signal_kind=new_signal_kind, value_type=new_value_type)
+    to_sdk.update_measure(dest_measure_id, signal_kind=new_signal_kind, value_type=new_value_type)

@@ -39,7 +39,7 @@ def test_small_block():
     _test_for_both(DB_NAME, _test_small_block)
 
 
-def _test_small_block_experiment(db_type, dataset_location, connection_params):
+def _test_small_block_with_gaps(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params, no_pool=True)
 
@@ -247,4 +247,3 @@ def compare_arrays(arr1, arr2, sample=5):
             print(f"Difference at index {idx_tup}: {arr1[idx_tup]} vs {arr2[idx_tup]}.")
 
         return False
-

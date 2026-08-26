@@ -15,10 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Phase 6 transfer -- INDEPENDENT ADVERSARIAL AUDIT (design §24).
-
-This file is written by an auditor who does NOT trust the implementation. It re-derives the
-§24.2 obligations and tries to break them:
+"""Transfer edge-case tests.
 
   * string-dictionary MERGE with an OVERLAPPING vocabulary (codes must not collide/corrupt),
     plus many-distinct-values, interval-index presence at dest, and time-shift on string times;
@@ -31,10 +28,9 @@ This file is written by an auditor who does NOT trust the implementation. It re-
   * NULL end_time survives; negative and positive time shifts are complete;
   * bed dedup (two encounters sharing a bed -> one dest bed);
   * log_hl7_adt is never transferred (deidentify False AND True);
-  * numeric-only regression (encounters default-on must not break a dataset with none).
+  * Numeric-only transfer without encounters.
 
-Known pre-existing issue deliberately AVOIDED: transfer_devices keying the device map by
-None on a dest device-id collision -- fixtures avoid dest device-id collisions.
+Fixtures avoid destination device-id collisions.
 """
 import shutil
 from pathlib import Path
@@ -50,7 +46,7 @@ SEC = 10 ** 9
 
 # --------------------------------------------------------------------------- helpers
 def _fresh_sdk(name):
-    loc = Path(__file__).parent / "test_datasets" / f"sqlite_p6audit_{name}"
+    loc = Path(__file__).parent / "test_datasets" / f"sqlite_transfer_edges_{name}"
     shutil.rmtree(loc, ignore_errors=True)
     return AtriumSDK.create_dataset(dataset_location=loc, database_type="sqlite"), loc
 
@@ -474,7 +470,7 @@ def test_bed_dedup_two_encounters_share_bed():
 
 
 def test_numeric_only_transfer_unaffected_by_default_on_encounters():
-    """Regression: a device-scoped numeric-only dataset with NO encounters must transfer
+    """A device-scoped numeric-only dataset with no encounters must transfer
     cleanly even though include_encounters defaults to True."""
     src, _ = _fresh_sdk("numonly_src")
     dest, _ = _fresh_sdk("numonly_dest")

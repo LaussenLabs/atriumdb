@@ -7,14 +7,14 @@
 #     the Free Software Foundation, either version 3 of the License, or
 #     (at your option) any later version.
 """
-Phase 2 tests: measure metadata (signal_kind / value_type) columns, additive
-migration + backfill, read-time defaults, API plumbing, the get_data guard swap,
-and the numeric/string write invariant (design section 19).
+Measure metadata tests cover signal_kind / value_type columns, schema upgrades,
+read-time defaults, API plumbing, the get_data guard swap, and the numeric/string
+write invariant.
 
 SQLite only:
     docker run --rm -v "<repo>:/atriumdb" -e PYTHONPATH=/atriumdb/sdk \
         atriumdb-test:latest python -m pytest \
-        /atriumdb/sdk/tests/test_measure_metadata_p2.py -q
+        /atriumdb/sdk/tests/test_measure_metadata.py -q
 """
 import shutil
 import tempfile
@@ -29,7 +29,7 @@ SEC = 1_000_000_000
 
 @pytest.fixture
 def sdk():
-    loc = tempfile.mkdtemp(prefix="atrium_p2meta_")
+    loc = tempfile.mkdtemp(prefix="atrium_measure_metadata_")
     shutil.rmtree(loc, ignore_errors=True)
     s = AtriumSDK.create_dataset(dataset_location=loc, database_type="sqlite")
     s._loc = loc
@@ -116,7 +116,6 @@ def test_null_reads_as_waveform_numeric(sdk):
     info = sdk.get_measure_info(m)
     assert info["signal_kind"] == "waveform"
     assert info["value_type"] == "numeric"
-    assert sdk.get_measure_kind(m) == ("waveform", "numeric")
 
 
 def test_explicit_values_round_trip_through_get_measure_info(sdk):
@@ -168,7 +167,7 @@ def test_backfill_marks_string_measure(sdk):
     d = sdk.insert_device(device_tag="dev_ev2")
     sdk.write_time_value_pairs(m, d, times_for(3), np.array(["x", "y", "z"], dtype=object))
 
-    # Simulate an un-backfilled P1 dataset: dict file present, column NULL.
+    # Simulate a dataset with a dictionary file and a NULL metadata column.
     _set_raw_measure_columns(sdk, m, None, None)
     sdk._measures.pop(m, None)
 
@@ -189,9 +188,9 @@ def test_get_data_guard_uses_value_type_column(sdk):
     t = times_for(3)
     sdk.write_time_value_pairs(m, d, t, np.array(["a", "b", "c"], dtype=object))
 
-    # analog / nan-fill reads must be rejected for a string measure.
-    with pytest.raises(ValueError, match="string measure"):
-        sdk.get_data(m, int(t[0]), int(t[-1]) + SEC, device_id=d, analog=True)
+    # The generic reader decodes strings when callers use its normal default.
+    _, _, vals_from_get_data = sdk.get_data(m, int(t[0]), int(t[-1]) + SEC, device_id=d, analog=True)
+    assert list(vals_from_get_data) == ["a", "b", "c"]
 
     # get_string_data still works.
     _, vals = sdk.get_string_data(m, int(t[0]), int(t[-1]) + SEC, device_id=d)
@@ -208,12 +207,12 @@ def test_get_data_guard_falls_back_when_column_null(sdk):
     _set_raw_measure_columns(sdk, m, None, None)  # column NULL, dict file remains
     sdk._measures.pop(m, None)
 
-    with pytest.raises(ValueError, match="string measure"):
-        sdk.get_data(m, int(t[0]), int(t[-1]) + SEC, device_id=d, analog=True)
+    _, _, values = sdk.get_data(m, int(t[0]), int(t[-1]) + SEC, device_id=d, analog=True)
+    assert list(values) == ["a", "b", "c"]
 
 
 # --------------------------------------------------------------------------- #
-# Numeric/string write invariant (the P1 audit bug, fixed in P2)
+# Numeric/string write invariant
 # --------------------------------------------------------------------------- #
 def test_numeric_then_string_write_rejected(sdk):
     m = sdk.insert_measure(measure_tag="mix1", freq=1.0, freq_units="Hz", units="x")

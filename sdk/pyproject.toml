@@ -13,6 +13,7 @@ mypkg = ["*.so", "*.dll"]
 [project]
 name = "atriumdb"
 version = "2.6.0"
+requires-python = ">=3.10"
 description = "Timeseries Database"
 readme = "README.md"
 authors = [{name = "Robert Greer, William Dixon, Spencer Vecile"}, { name = "Robert Greer", email = "robert.greer@sickkids.ca"}, { name = "William Dixon", email = "will.dixon@sickkids.ca" }, { name = "Spencer Vecile", email = "spencer.vecile@sickkids.ca"}]
@@ -32,7 +33,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
-    "Development Status :: 5 - Production/Stable",
 ]
 keywords = ["atriumdb", "timeseries", "database", "waveform", "medical data", "machine learning", "data", "data science"]
 dependencies = [
@@ -96,23 +96,16 @@ testing = [
     "pytest >= 7.2.1",
     "fastapi >= 0.95.0, < 1"
 ]
-[dev-dependencies]
-requires-python = ">=3.10"
-
 [tool.pytest.ini_options]
-# The default run excludes the `nightly` full-fidelity numeric gate
-# (test_mit_bih.py / test_iterator.py). Those two keep their data volume exactly and
-# are scheduled nightly instead -- see sdk/tests/README.md.
-# A command-line `-m` replaces this, so the fast loop's
-# `-m "not slow and not mariadb"` must (and does) also exclude them via `slow`.
+# The default selection excludes the extended numeric suites.
 addopts = '-m "not nightly"'
 markers = [
   "slow: takes more than ~30s",
   "mariadb: requires a running MariaDB",
   "network: requires network access (there should be none)",
   "mitbih: requires the MIT-BIH wfdb cache",
-  "numeric_gate: protected numeric regression test - do not shrink its data",
-  "nightly: full-fidelity gate; excluded from the default run, scheduled nightly",
+  "numeric_gate: extended numeric validation",
+  "nightly: extended numeric validation",
 ]
 # log_cli streamed INFO logging for every test in the suite. Turn it on for a
 # single run with `--log-cli-level=INFO` instead of paying for it always.

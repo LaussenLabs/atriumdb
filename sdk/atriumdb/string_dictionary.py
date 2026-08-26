@@ -38,7 +38,6 @@ expectation already documented on ``AtriumSDK.write_data``'s block-merge path:
 the lock protects the dictionary specifically, but concurrent block writes for the
 same measure/device remain the caller's responsibility.
 
-Background: ``docs/design/aperiodic-and-text-support.md``.
 """
 from __future__ import annotations
 

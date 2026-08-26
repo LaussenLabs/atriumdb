@@ -85,12 +85,7 @@ def parse_csv_data(df):
 
 
 def get_source_identifiers(sdk, device_tag, measure_tag, freq_nhz, units):
-    measure_id = sdk.get_measure_id(measure_tag, freq_nhz, units)
-    if measure_id is None:
-        measure_id = sdk.insert_measure(measure_tag, freq_nhz, units)
-
-    device_id = sdk.get_device_id(device_tag)
-    if device_id is None:
-        device_id = sdk.insert_device(device_tag)
+    measure_id = sdk.get_or_insert_measure(measure_tag, freq_nhz, units)
+    device_id = sdk.get_or_insert_device(device_tag)
 
     return measure_id, device_id

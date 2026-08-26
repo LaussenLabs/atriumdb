@@ -44,7 +44,6 @@ everything.
 
 ``log_hl7_adt`` is **never** transferred — this module simply never touches it.
 
-Background: ``docs/design/aperiodic-and-text-support.md``.
 """
 
 import random

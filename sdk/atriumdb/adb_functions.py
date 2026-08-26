@@ -47,6 +47,175 @@ freq_unit_options = {
 }
 allowed_interval_index_modes = ["fast", "merge", "disable"]
 
+STRING_DTYPE_KINDS = ('U', 'S', 'O')
+FIXED_WIDTH_STRING_DTYPE_KINDS = ('U', 'S')
+
+
+def is_string_dtype(dtype) -> bool:
+    """Whether a NumPy dtype is encoded through a string dictionary."""
+    return dtype.kind in STRING_DTYPE_KINDS
+
+
+def is_fixed_width_string_dtype(dtype) -> bool:
+    """Whether a NumPy dtype has a width-specific string representation."""
+    return dtype.kind in FIXED_WIDTH_STRING_DTYPE_KINDS
+
+
+def same_write_value_kind(dtype_a, dtype_b) -> bool:
+    """Whether two dtypes represent the same kind of SDK write value."""
+    a_is_string = is_string_dtype(dtype_a)
+    b_is_string = is_string_dtype(dtype_b)
+    if a_is_string or b_is_string:
+        return a_is_string and b_is_string
+    return dtype_a == dtype_b
+
+
+def get_measure_period_ns(measure_info):
+    """Return a measure's declared period, or ``None`` when it is unusable."""
+    if measure_info is None:
+        return None
+    period_ns = measure_info.get('period_ns')
+    if period_ns is None:
+        freq_nhz = measure_info.get('freq_nhz')
+        if not freq_nhz or int(freq_nhz) <= 0:
+            return None
+        period_ns = 10 ** 18 // int(freq_nhz)
+    period_ns = int(period_ns)
+    return period_ns if period_ns > 0 else None
+
+
+def require_measure_id(measure, param_name='measure') -> int:
+    """Coerce a measure id and give a useful error for a measure tag."""
+    if isinstance(measure, str):
+        raise TypeError(
+            f"{param_name} must be a measure id (int), not the measure tag {measure!r}. "
+            "Resolve the tag first with sdk.get_measure_id(tag, freq=..., units=...).")
+    try:
+        return int(measure)
+    except (TypeError, ValueError) as error:
+        raise TypeError(
+            f"{param_name} must be a measure id (int); got {type(measure).__name__} {measure!r}.") from error
+
+
+def clip_patient_ranges(device_ranges, start=None, end=None, now=None):
+    """Group device-patient mappings after clipping them to a query range."""
+    now = time.time_ns() if now is None else int(now)
+    result = {}
+    for device_id, range_start, range_end in device_ranges:
+        range_start = max(int(range_start), int(start)) if start is not None else int(range_start)
+        range_end = now if range_end is None else int(range_end)
+        range_end = min(range_end, int(end)) if end is not None else range_end
+        if range_start < range_end:
+            result.setdefault(int(device_id), []).append((range_start, range_end))
+    return result
+
+
+def patient_sample_mask(times, headers, block_list, ranges_by_device):
+    """Return a mask containing only decoded samples inside patient mappings."""
+    times = np.asarray(times)
+    mask = np.zeros(times.size, dtype=bool)
+    offset = 0
+    for block, header in zip(block_list, headers):
+        block_end = offset + int(header.num_vals)
+        if block_end > times.size:
+            raise RuntimeError("Decoded block samples do not match their metadata.")
+        block_times = times[offset:block_end]
+        for range_start, range_end in ranges_by_device.get(int(block[2]), ()):
+            mask[offset:block_end] |= (block_times >= range_start) & (block_times < range_end)
+        offset = block_end
+    if offset != times.size:
+        raise RuntimeError("Decoded block samples do not match their metadata.")
+    return mask
+
+
+def append_block_cache(block_cache, start_cache, end_cache, measure_id, device_id,
+                       block_array, start_time, end_time):
+    """Append aligned block metadata to the SDK's in-memory caches."""
+    block_cache.setdefault(measure_id, {}).setdefault(device_id, []).append(block_array)
+    start_cache.setdefault(measure_id, {}).setdefault(device_id, []).append(start_time)
+    end_cache.setdefault(measure_id, {}).setdefault(device_id, []).append(end_time)
+
+
+def freeze_block_caches(block_cache, start_cache, end_cache):
+    """Convert cache lists to the arrays consumed by the read path."""
+    for measure_id, device_caches in block_cache.items():
+        for device_id, current_cache in device_caches.items():
+            if isinstance(current_cache, list):
+                block_cache[measure_id][device_id] = np.vstack(current_cache)
+                start_cache[measure_id][device_id] = np.asarray(start_cache[measure_id][device_id], dtype=np.int64)
+                end_cache[measure_id][device_id] = np.asarray(end_cache[measure_id][device_id], dtype=np.int64)
+
+
+def intervals_from_timestamps(times, period_ns):
+    """Build continuous half-open intervals from ordered sample timestamps."""
+    intervals = get_interval_list_from_ordered_timestamps(
+        np.asarray(times, dtype=np.int64), int(period_ns))
+    return np.asarray(intervals, dtype=np.int64).reshape((-1, 2))
+
+
+def intervals_from_gap_data(start_time, gap_data, num_values, period_ns):
+    """Build continuous half-open intervals from gap-array time data."""
+    num_values = int(num_values)
+    period_ns = int(period_ns)
+    if num_values <= 0:
+        return np.empty((0, 2), dtype=np.int64)
+
+    gap_data = np.asarray(gap_data, dtype=np.int64)
+    if gap_data.size == 0:
+        return np.array([[int(start_time), int(start_time) + (num_values * period_ns)]], dtype=np.int64)
+
+    gap_pairs = gap_data.reshape((-1, 2))
+    sample_edges = np.concatenate((
+        np.array([0], dtype=np.int64),
+        gap_pairs[:, 0].astype(np.int64, copy=False),
+        np.array([num_values], dtype=np.int64),
+    ))
+    sample_counts = np.diff(sample_edges)
+    durations = sample_counts * period_ns
+
+    starts = np.empty(sample_counts.size, dtype=np.int64)
+    starts[0] = int(start_time)
+    if starts.size > 1:
+        starts[1:] = int(start_time) + np.cumsum(durations[:-1] + gap_pairs[:, 1])
+    ends = starts + durations
+
+    valid = starts < ends
+    return np.column_stack((starts[valid], ends[valid])).astype(np.int64, copy=False)
+
+
+def clip_interval_array(intervals, start=None, end=None):
+    """Clip a two-column interval array to an optional half-open time range."""
+    intervals = np.asarray(intervals, dtype=np.int64)
+    if intervals.size == 0:
+        return np.empty((0, 2), dtype=np.int64)
+    intervals = intervals.reshape((-1, 2)).copy()
+    if start is not None:
+        intervals[:, 0] = np.maximum(intervals[:, 0], int(start))
+    if end is not None:
+        intervals[:, 1] = np.minimum(intervals[:, 1], int(end))
+    return intervals[intervals[:, 0] < intervals[:, 1]]
+
+
+def header_period_ns(header):
+    """Return a block header's sample period across supported TSC versions."""
+    tsc_version_combined = header.tsc_version_num * 10 + header.tsc_version_ext
+    if tsc_version_combined >= 24:
+        return int(header.freq_nhz)
+    return freq_nhz_to_period_ns(int(header.freq_nhz))
+
+
+def clip_intervals_to_source_ranges(intervals, source_id, start, end, ranges_by_source):
+    """Clip intervals to a query range and, optionally, source-specific ranges."""
+    intervals = clip_interval_array(intervals, start, end)
+    if intervals.size == 0 or ranges_by_source is None:
+        return intervals
+
+    clipped = [
+        clip_interval_array(intervals, range_start, range_end)
+        for range_start, range_end in ranges_by_source.get(int(source_id), ())
+    ]
+    return intervals_union_list(clipped) if clipped else np.empty((0, 2), dtype=np.int64)
+
 
 def get_block_and_interval_data(measure_id, device_id, metadata, start_bytes, intervals, interval_gap_tolerance=0):
     block_data = []
@@ -733,9 +902,6 @@ def convert_gap_data_to_timestamps(headers, r_times, r_values, start_time_n=None
     nothing if sort is false.
     :return: A tuple containing an array of timestamps and an array of values.
     """
-    # # Start performance benchmark
-    # start_bench = time.perf_counter()
-
     # Check if all times are integers
     is_int_times = all([(10 ** 18) % h.freq_nhz == 0 for h in headers])
 
@@ -777,10 +943,6 @@ def convert_gap_data_to_timestamps(headers, r_times, r_values, start_time_n=None
 
             # Update the current index
             cur_index += h.num_vals
-
-    # # End performance benchmark and log the time taken
-    # end_bench = time.perf_counter()
-    # _LOGGER.debug(f"Expand Gap Data {(end_bench - start_bench) * 1000} ms")
 
     # Sort the data based on the timestamps if sort is true
     if sort and start_time_n is not None and end_time_n is not None:

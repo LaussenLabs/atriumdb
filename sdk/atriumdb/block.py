@@ -15,6 +15,8 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import copy
+import ctypes
+import ctypes.util
 import time
 import warnings
 
@@ -26,6 +28,51 @@ from atriumdb.helpers.block_calculations import freq_nhz_to_period_ns, calc_gap_
 from atriumdb.helpers.type_helpers import *
 from atriumdb.helpers.block_constants import *
 import logging
+
+
+_COMPRESSION_LIBS = {}
+
+
+def _compression_lib(name):
+    if name not in _COMPRESSION_LIBS:
+        path = ctypes.util.find_library(name)
+        if path is None:
+            raise RuntimeError(f"Unable to find required compression library {name!r}.")
+        _COMPRESSION_LIBS[name] = ctypes.CDLL(path)
+    return _COMPRESSION_LIBS[name]
+
+
+def _decompress_encoded_time(encoded_time, raw_size, compression_type):
+    raw_size = int(raw_size)
+    if compression_type == COMPRESSION_TYPES['NONE']:
+        return encoded_time
+
+    output = np.zeros(raw_size, dtype=np.uint8)
+    if compression_type == COMPRESSION_TYPES['ZSTD']:
+        lib = _compression_lib('zstd')
+        lib.ZSTD_decompress.restype = c_size_t
+        lib.ZSTD_decompress.argtypes = [c_void_p, c_size_t, c_void_p, c_size_t]
+        lib.ZSTD_isError.restype = c_uint
+        lib.ZSTD_isError.argtypes = [c_size_t]
+        result = lib.ZSTD_decompress(
+            output.ctypes.data_as(c_void_p), c_size_t(raw_size),
+            encoded_time.ctypes.data_as(c_void_p), c_size_t(int(encoded_time.size)))
+        if lib.ZSTD_isError(result) or int(result) != raw_size:
+            raise RuntimeError("Failed to decompress zstd time data.")
+        return output
+
+    if compression_type in (COMPRESSION_TYPES['LZ4'], COMPRESSION_TYPES['LZ4HC']):
+        lib = _compression_lib('lz4')
+        lib.LZ4_decompress_safe.restype = c_int
+        lib.LZ4_decompress_safe.argtypes = [c_void_p, c_void_p, c_int, c_int]
+        result = lib.LZ4_decompress_safe(
+            encoded_time.ctypes.data_as(c_void_p), output.ctypes.data_as(c_void_p),
+            c_int(int(encoded_time.size)), c_int(raw_size))
+        if int(result) != raw_size:
+            raise RuntimeError("Failed to decompress lz4 time data.")
+        return output
+
+    raise ValueError(f"Unsupported time compression type {compression_type}.")
 
 
 class Block:
@@ -603,6 +650,49 @@ class Block:
 
         # Return the decoded time data, value data, and headers
         return time_data, value_data, headers
+
+    def decode_time_blocks(self, encoded_bytes, num_bytes_list, time_type='encoded'):
+        if time_type not in [1, 2, 'encoded']:
+            raise ValueError("Time type must be one of [1, 2, 'encoded']")
+
+        byte_start_array = np.cumsum(num_bytes_list, dtype=np.uint64)
+        byte_start_array = np.concatenate([np.array([0], dtype=np.uint64), byte_start_array[:-1]], axis=None)
+
+        for start_byte in byte_start_array:
+            header = BlockMetadata.from_buffer(encoded_bytes, start_byte)
+            if time_type == 'encoded':
+                header.t_raw_type = header.t_encoded_type
+            else:
+                header.t_raw_type = time_type
+
+            if header.t_raw_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+                header.t_raw_size = 8 * header.num_vals
+            elif header.t_raw_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
+                header.t_raw_size = 16 * header.num_gaps
+            else:
+                raise ValueError(f"Requested header.t_raw_type is {header.t_raw_type} but must be 1 or 2")
+
+            header.v_raw_size = 0
+            header.v_encoded_size = 0
+            header.v_num_bytes = 0
+            header.v_compression = COMPRESSION_TYPES['NONE']
+
+        headers = self.decode_headers(encoded_bytes, byte_start_array)
+
+        if all([h.t_raw_type == h.t_encoded_type for h in headers]):
+            time_parts = [
+                _decompress_encoded_time(
+                    encoded_bytes[int(start_byte + h.meta_num_bytes):int(start_byte + h.meta_num_bytes + h.t_num_bytes)],
+                    int(h.t_raw_size),
+                    int(h.t_compression))
+                for start_byte, h in zip(byte_start_array, headers)
+            ]
+            if not time_parts:
+                return np.array([], dtype=np.int64), headers
+            time_bytes = np.concatenate(time_parts) if len(time_parts) > 1 else time_parts[0]
+            return np.frombuffer(time_bytes, dtype=np.int64), headers
+
+        raise NotImplementedError("decode_time_blocks can decode stored time payloads, not convert time encodings.")
 
     def decode_headers(self, encoded_bytes, byte_start_array):
         return [BlockMetadata.from_buffer(encoded_bytes, start_byte) for start_byte in byte_start_array]

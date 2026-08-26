@@ -59,7 +59,7 @@ def pytest_addoption(parser):
         default="both",
         choices=["both", "sqlite", "mariadb"],
         help="Which metadata backend(s) to exercise. Default 'both'. "
-             "'sqlite' is the fast developer inner loop.",
+             "'sqlite' runs SQLite-only tests.",
     )
 
 
@@ -72,8 +72,8 @@ def pytest_configure(config):
         "mariadb: requires a running MariaDB",
         "network: requires network access (there should be none)",
         "mitbih: requires the MIT-BIH wfdb cache",
-        "numeric_gate: protected numeric regression test - do not shrink its data",
-        "nightly: full-fidelity gate; excluded from the default run, scheduled nightly",
+        "numeric_gate: extended numeric validation",
+        "nightly: extended numeric validation",
     ):
         config.addinivalue_line("markers", marker)
 
@@ -82,7 +82,7 @@ def pytest_configure(config):
     os.environ.setdefault("ATRIUMDB_WFDB_CACHE", str(DEFAULT_WFDB_CACHE))
 
     # Backend selection. An explicit --backend wins; otherwise a `-m` expression that
-    # deselects the mariadb marker (the fast loop) also switches the `_test_for_both`
+    # deselects the mariadb marker also switches the `_test_for_both`
     # shim to SQLite-only, so `-m "not mariadb"` means the same thing everywhere.
     requested = config.getoption("--backend")
     if requested != "both":

@@ -29,8 +29,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 from atriumdb.windowing.window import Window, assert_decodable_string_signal
 from atriumdb.windowing.windowing_functions import get_signal_dictionary, find_closest_measurement, \
     get_label_dictionary, _get_patient_info_from_cache, _load_patient_cache, get_window_list, \
-    resolve_fill_rule, resolve_nominal_period_ns
-from atriumdb.measure_kinds import SIGNAL_KIND_WAVEFORM, is_string_value_type, measure_kind_of
+    build_render_config
 
 
 class DatasetIterator:
@@ -198,75 +197,10 @@ class DatasetIterator:
         """Resolve, per measure, the nominal raster period and fill rule used by
         ``get_signal_dictionary``. Keeps the waveform-numeric case on the legacy
         ``grid`` path (byte-for-byte identical output)."""
-        # Both override dicts are keyed by measure ID. A key that matches no
-        # measure in this definition (a typo, a stale id, or -- easy to do, since
-        # definitions identify measures by tag everywhere else -- a measure TAG)
-        # used to be silently dropped, leaving the user with a differently
-        # rasterized dataset than they asked for. Reject it instead, and name the
-        # ids that would have worked.
-        known_ids = {measure['id'] for measure in self.measures}
-        id_hint = ", ".join(f"{measure['id']} ({measure['tag']})" for measure in self.measures)
-        for param_name, overrides in (('fill_overrides', self.fill_overrides),
-                                      ('period_overrides', self.period_overrides)):
-            unknown = [key for key in overrides if key not in known_ids]
-            if unknown:
-                raise ValueError(
-                    f"{param_name} contains key(s) {unknown} that match no measure in this "
-                    f"definition. Keys must be measure IDs (integers), not measure tags. "
-                    f"Measures in this definition: {id_hint}.")
-
-        config = {}
-        for measure in self.measures:
-            measure_id = measure['id']
-            signal_kind, value_type = measure_kind_of(measure)
-            period_override = self.period_overrides.get(measure_id)
-            # A period override on a waveform measure used to be accepted and then
-            # re-grid the legacy NaN-fill path while get_data still filled at the
-            # measure's real frequency -- surfacing as an opaque, measure-less
-            # "input array must be of size ..." from the block codec. period
-            # overrides are an aperiodic-raster concept only.
-            if period_override is not None and signal_kind == SIGNAL_KIND_WAVEFORM:
-                raise ValueError(
-                    f"Measure {measure_id} ('{measure['tag']}') is a 'waveform' measure; "
-                    f"period_overrides only applies to aperiodic measures "
-                    f"('sample'/'state'/'event'), whose nominal raster period is a "
-                    f"rendering choice. A waveform is always sampled on its own stored "
-                    f"period ({measure['period_ns']} ns). Remove measure {measure_id} from "
-                    f"period_overrides.")
-            period_ns = int(resolve_nominal_period_ns(
-                measure, period_override=period_override))
-            # A resolved nominal period larger than the window duration
-            # (or slide) makes window_duration // period == 0, which downstream
-            # surfaces as an opaque "slice step cannot be zero" from
-            # sliding_window_view. The early get_iterator sample-count guard only
-            # checks freq_nhz, not this resolved nominal period, so validate it
-            # here with a clear, measure-named error.
-            if period_ns > self.window_duration_ns:
-                raise ValueError(
-                    f"Measure {measure_id}: resolved nominal raster period "
-                    f"{period_ns} ns is larger than the window duration "
-                    f"{self.window_duration_ns} ns, so a window would contain zero "
-                    f"grid cells. Increase window_duration or lower this measure's "
-                    f"period via period_overrides.")
-            if period_ns > self.window_slide_ns:
-                raise ValueError(
-                    f"Measure {measure_id}: resolved nominal raster period "
-                    f"{period_ns} ns is larger than the window slide "
-                    f"{self.window_slide_ns} ns, so the slide would advance zero "
-                    f"grid cells. Increase window_slide or lower this measure's "
-                    f"period via period_overrides.")
-            fill_rule = resolve_fill_rule(
-                signal_kind, value_type,
-                override=self.fill_overrides.get(measure_id),
-                global_default=self.aperiodic_fill)
-            config[measure_id] = {
-                'signal_kind': signal_kind,
-                'value_type': value_type,
-                'period_ns': int(period_ns),
-                'fill_rule': fill_rule,
-                'is_string': is_string_value_type(value_type),
-            }
-        return config
+        return build_render_config(
+            self.measures, self.window_duration_ns, self.window_slide_ns,
+            aperiodic_fill=self.aperiodic_fill, fill_overrides=self.fill_overrides,
+            period_overrides=self.period_overrides)
 
     def decode_string_codes(self, measure_id, codes, unknown_value=None):
         """Decode a string measure's window codes (int64) back to strings.
@@ -456,7 +390,7 @@ class DatasetIterator:
             num_windows_for_batch = range_num_windows
 
             batch_window_list = get_window_list(device_id, patient_id, measures, source_batch_data_dictionary,
-                                                     source_batch_start_time, num_windows_for_batch, window_slide_ns,
+                                                     source_batch_start_time, num_windows_for_batch, self.window_duration_ns, window_slide_ns,
                                                      threshold_labels, sliced_labels, patient_history_cache,
                                                      patient_history_fields, patient_info_cache)
 

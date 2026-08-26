@@ -24,9 +24,14 @@ import threading
 from contextlib import ExitStack
 
 from atriumdb.intervals.intersection import intervals_intersect, list_intersection
+from atriumdb.intervals.union import intervals_union_list
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_interval_data, condense_byte_read_list, \
-    find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, reconstruct_messages, \
+    find_intervals, intervals_from_timestamps, intervals_from_gap_data, clip_intervals_to_source_ranges, \
+    header_period_ns, is_string_dtype, is_fixed_width_string_dtype, same_write_value_kind, get_measure_period_ns, \
+    require_measure_id, clip_patient_ranges, patient_sample_mask, append_block_cache, freeze_block_caches, \
+    sort_data, collapse_duplicate_times, \
+    yield_data, convert_to_nanoseconds, convert_to_nanohz, reconstruct_messages, \
     ALLOWED_TIME_TYPES, collect_all_descendant_ids, get_best_measure_id, _calc_end_time_from_gap_data, \
     merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns, time_unit_options, \
     create_gap_arr_from_variable_messages, sort_message_time_values, convert_from_nanoseconds, detect_period, \
@@ -41,7 +46,8 @@ from atriumdb.file_api import AtriumFileHandler
 from atriumdb.file_lock import make_file_lock
 from atriumdb.string_dictionary import MeasureStringDictionary
 from atriumdb.event_intervals import (
-    union_windows, pair_from_to, clip_intervals_to_containers, collapse_event_intervals)
+    union_windows, clip_spans_and_union, pair_from_to, clip_intervals_to_containers,
+    collapse_event_intervals)
 
 # The measure-metadata axes (signal_kind / value_type). These are stored as two
 # independent nullable columns on the measure table; a NULL is read-time
@@ -50,9 +56,9 @@ from atriumdb.event_intervals import (
 # :mod:`atriumdb.measure_kinds` so the SDK, the windowing layer and the transfer
 # layer describe the same model; re-exported here for backwards compatibility.
 from atriumdb.measure_kinds import (
-    SIGNAL_KIND_VALUES, VALUE_TYPE_VALUES, DEFAULT_SIGNAL_KIND, DEFAULT_VALUE_TYPE,
+    DEFAULT_SIGNAL_KIND, DEFAULT_VALUE_TYPE,
     SIGNAL_KIND_WAVEFORM, VALUE_TYPE_NUMERIC, VALUE_TYPE_STRING, is_string_value_type,
-    measure_kind_of, changed_kind_fields, is_invalid_kind_combination,
+    measure_kind_of, changed_kind_fields, is_invalid_kind_combination, validate_measure_kind_values,
     invalid_kind_combination_message, STRING_SIGNAL_KIND_FALLBACK)
 from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_macos, shared_lib_filename_linux, protected_mode_default_setting, \
     overwrite_default_setting
@@ -69,7 +75,10 @@ from typing import Union, List, Tuple, Optional
 import platform
 from ctypes import sizeof
 
-from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
+from atriumdb.sql_handler.sql_constants import (
+    SUPPORTED_DB_TYPES, MEASURE_ROW_ID, measure_row_signal_kind,
+    measure_row_value_type,
+)
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
@@ -104,51 +113,6 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_META_CONNECTION_TYPE = 'sqlite'
 
-# numpy dtype kinds that the write path treats as "string": fixed-width unicode,
-# fixed-width bytes and object. All three become int64 dictionary codes, so they
-# are one value kind even though numpy reports a different dtype per batch width.
-_STRING_DTYPE_KINDS = ('U', 'S', 'O')
-
-# The subset of the above whose width is baked into the dtype ('<U2' for ["OK"]
-# vs '<U8' for ["ASYSTOLE"]). Those are normalized to dtype=object before
-# buffering so two ordinary alarm strings are not mistaken for two different
-# data types; 'O' is deliberately absent because it is already the target.
-_FIXED_WIDTH_STRING_DTYPE_KINDS = ('U', 'S')
-
-# Column positions in a raw ``measure`` row as returned by
-# ``sql_handler.select_measure`` / ``select_all_measures``. The handlers select an
-# explicit column list (see ``sqlite_select_measure_from_id_query`` and its Maria
-# twin), so the order is fixed -- but a bare ``row[11]`` at four call sites is a
-# silent breakage waiting for the next column to be added in the middle. Name the
-# two measure-kind columns and read them through the accessors below.
-MEASURE_ROW_ID = 0
-MEASURE_ROW_SIGNAL_KIND = 10
-MEASURE_ROW_VALUE_TYPE = 11
-
-
-def measure_row_signal_kind(row):
-    """The raw (possibly ``None``) ``signal_kind`` column of a measure row."""
-    return row[MEASURE_ROW_SIGNAL_KIND]
-
-
-def measure_row_value_type(row):
-    """The raw (possibly ``None``) ``value_type`` column of a measure row.
-
-    ``None`` means "not established yet" -- it is NOT the same as ``'numeric'``;
-    see :meth:`AtriumSDK._established_value_type`."""
-    return row[MEASURE_ROW_VALUE_TYPE]
-
-
-def _same_write_value_kind(dtype_a, dtype_b) -> bool:
-    """True if two value dtypes are the same *kind* of write (both string-like, or
-    the identical numeric dtype). Used to validate a batched flush without
-    rejecting logically identical text of different widths ('<U2' vs '<U8')."""
-    a_is_string = dtype_a.kind in _STRING_DTYPE_KINDS
-    b_is_string = dtype_b.kind in _STRING_DTYPE_KINDS
-    if a_is_string or b_is_string:
-        return a_is_string and b_is_string
-    return dtype_a == dtype_b
-
 # _LOGGER.basicConfig(
 #     level=_LOGGER.debug,
 #     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -171,7 +135,7 @@ class AtriumSDK:
     * *Construction and dataset creation* -- ``__init__``, :meth:`create_dataset`.
     * *Measure value-type state machine* -- private; how a measure becomes numeric or
       string-typed, and the guards that keep it that way.
-    * *Measure kind: public accessors* -- :meth:`set_measure_kind`, :meth:`get_measure_kind`.
+    * *Measure metadata* -- :meth:`get_measure_info`, :meth:`update_measure`.
     * *Reading signal data* -- :meth:`get_data`, :meth:`get_string_data`.
     * *Event query surface* -- :meth:`get_measure_string_vocabulary`,
       :meth:`get_string_values_present`, :meth:`get_event_intervals`.
@@ -274,8 +238,7 @@ class AtriumSDK:
             if sys.platform == "win32":
                 shared_lib_filename = shared_lib_filename_windows
             elif platform.system() == "Darwin":
-                # macOS support is experimental: the dylib is not shipped with the
-                # package and must be built locally (see tsc-lib/build_mac.sh).
+                # macOS requires a locally built dylib; see tsc-lib/build_mac.sh.
                 shared_lib_filename = shared_lib_filename_macos
             else:
                 shared_lib_filename = shared_lib_filename_linux
@@ -320,21 +283,7 @@ class AtriumSDK:
 
             # Initialize the SQLiteHandler with the database file path
             self.sql_handler = SQLiteHandler(db_file)
-            self.mode = "local"
-            self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
-            if auto_upgrade:
-                self.sql_handler.update_measure_schema()
-                self.sql_handler.upgrade_mrn_schema()
-                # Mark legacy string measures (those with a dictionary file but no
-                # value_type column value) as value_type='string'. Idempotent.
-                self._backfill_string_value_types()
-            else:
-                if not self.sql_handler.check_mrn_column_is_text():
-                    raise ValueError(
-                        "The 'mrn' column in the patient table is using an INTEGER type, but TEXT is now required. "
-                        "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
-                    )
-            self.settings_dict = self._get_all_settings()
+            self._init_local_mode(tsc_file_location, storage_handler, auto_upgrade, "TEXT")
 
 
         # Handle MySQL or MariaDB connections
@@ -351,32 +300,10 @@ class AtriumSDK:
             if tsc_file_location is None:
                 tsc_file_location = dataset_location / 'tsc'
 
-            # Import the MariaDBHandler class and extract connection parameters
-            from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
-            host = connection_params['host']
-            user = connection_params['user']
-            password = connection_params['password']
-            database = connection_params['database']
-            port = connection_params['port']
-
             # Initialize the MariaDBHandler with the connection parameters
-            self.sql_handler = MariaDBHandler(host, user, password, database, port, no_pool=no_pool)
-            self.mode = "local"
-            self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
-
-            if auto_upgrade:
-                self.sql_handler.update_measure_schema()
-                self.sql_handler.upgrade_mrn_schema()
-                # Mark legacy string measures (those with a dictionary file but no
-                # value_type column value) as value_type='string'. Idempotent.
-                self._backfill_string_value_types()
-            else:
-                if not self.sql_handler.check_mrn_column_is_text():
-                    raise ValueError(
-                        "The 'mrn' column in the patient table is using an INTEGER type, but TEXT/VARCHAR is now required. "
-                        "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
-                    )
-            self.settings_dict = self._get_all_settings()
+            from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler, maria_connection_args
+            self.sql_handler = MariaDBHandler(*maria_connection_args(connection_params), no_pool=no_pool)
+            self._init_local_mode(tsc_file_location, storage_handler, auto_upgrade, "TEXT/VARCHAR")
 
 
         # Handle API connections
@@ -478,6 +405,49 @@ class AtriumSDK:
         # register an atexit hook to close any open connections properly
         atexit.register(self.close)
 
+    def _init_local_mode(self, tsc_file_location, storage_handler, auto_upgrade, mrn_column_type: str):
+        """Finish constructing a local-mode SDK once ``self.sql_handler`` exists.
+
+        Identical for both metadata backends apart from ``mrn_column_type``, which
+        only names the required column type in the "please upgrade" error."""
+        self.mode = "local"
+        self.file_api = storage_handler if storage_handler else AtriumFileHandler(tsc_file_location)
+
+        dataset_version = self.sql_handler.get_dataset_schema_version()
+        if dataset_version is not None and dataset_version > self.sql_handler.CURRENT_DATASET_SCHEMA_VERSION:
+            raise ValueError(
+                f"This dataset was written by a newer AtriumDB (schema version {dataset_version}) than this "
+                f"installed version understands (schema version {self.sql_handler.CURRENT_DATASET_SCHEMA_VERSION}). "
+                f"Downgrading a dataset is not supported; install a newer atriumdb package instead of opening it "
+                f"with this one."
+            )
+
+        if auto_upgrade:
+            self.sql_handler.update_measure_schema()
+            self.sql_handler.upgrade_mrn_schema()
+            for measure_id, tag, period_ns in self.sql_handler.repair_zero_freq_measures():
+                _LOGGER.info(
+                    "Converted legacy aperiodic measure %d (%s) from freq_nhz=0 to "
+                    "signal_kind='sample' with a nominal period of %d ns, observed from "
+                    "its own blocks.", measure_id, tag, period_ns)
+            self.sql_handler.ensure_interval_union_procedure()
+            self._backfill_string_value_types()
+            self.sql_handler.record_dataset_schema_version()
+        elif not self.sql_handler.check_mrn_column_is_text():
+            raise ValueError(
+                f"The 'mrn' column in the patient table is using an INTEGER type, but {mrn_column_type} is now "
+                f"required. Please run AtriumSDK(auto_upgrade=True) to update the database schema."
+            )
+        else:
+            pending = self.sql_handler.pending_schema_upgrades()
+            if pending:
+                _LOGGER.warning(
+                    "This dataset is missing %s. It will work, using a fallback, but "
+                    "AtriumSDK(auto_upgrade=True) will bring it up to date.",
+                    " and ".join(pending))
+
+        self.settings_dict = self._get_all_settings()
+
     @classmethod
     def create_dataset(cls, dataset_location: Union[str, PurePath], database_type: str = None, protected_mode: str = None,
                        overwrite: str = None, connection_params: dict = None, no_pool=False, auto_upgrade: bool = False):
@@ -550,13 +520,8 @@ class AtriumSDK:
             SQLiteHandler(db_file).create_schema()
 
         elif database_type == 'mysql' or database_type == "mariadb":
-            from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
-            host = connection_params['host']
-            user = connection_params['user']
-            password = connection_params['password']
-            database = connection_params['database']
-            port = connection_params['port']
-            MariaDBHandler(host, user, password, database, port).create_schema()
+            from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler, maria_connection_args
+            MariaDBHandler(*maria_connection_args(connection_params)).create_schema()
 
         sdk_object = cls(dataset_location=dataset_location, metadata_connection_type=database_type,
                          connection_params=connection_params, no_pool=no_pool, auto_upgrade=auto_upgrade)
@@ -600,7 +565,7 @@ class AtriumSDK:
 
         Every consumer of the dictionary-file signal (:meth:`_resolve_measure_kind`,
         :meth:`_established_value_type`, :meth:`_backfill_string_value_types`) must use
-        this one rule, or they disagree with each other -- e.g. ``get_measure_kind``
+        this one rule, or they disagree with each other -- e.g. ``get_measure_info``
         serving 'string' off a bare file while the write path resolves 'None' off the
         same measure and happily accepts numeric data.
 
@@ -850,10 +815,10 @@ class AtriumSDK:
         already written raises, exactly as a conflicting write would."""
         if signal_kind is None and value_type is None:
             return
-        current = self.get_measure_kind(measure_id)
-        if current is None:
+        current_info = self.get_measure_info(measure_id)
+        if current_info is None:
             return
-        current_signal_kind, current_value_type = current
+        current_signal_kind, current_value_type = measure_kind_of(current_info)
         new_signal_kind, new_value_type = changed_kind_fields(
             current_signal_kind, current_value_type, signal_kind, value_type)
         if new_signal_kind is None and new_value_type is None:
@@ -862,22 +827,23 @@ class AtriumSDK:
             f"insert_measure: measure {measure_id} already exists; applying the requested "
             f"metadata to it (signal_kind {current_signal_kind!r} -> {new_signal_kind or current_signal_kind!r}, "
             f"value_type {current_value_type!r} -> {new_value_type or current_value_type!r}). "
-            f"Use set_measure_kind() to change this explicitly.")
-        self.set_measure_kind(measure_id, signal_kind=new_signal_kind, value_type=new_value_type)
+            f"Use update_measure() to change this explicitly.")
+        self.update_measure(measure_id, signal_kind=new_signal_kind, value_type=new_value_type)
 
     # ------------------------------------------------------------------ #
-    # Measure kind: public accessors
+    # Measure metadata
     # ------------------------------------------------------------------ #
-    def set_measure_kind(self, measure_id: int, signal_kind: str = None, value_type: str = None):
+    def update_measure(self, measure_id: int, *, signal_kind: str = None, value_type: str = None):
         """Set (or correct) a measure's ``signal_kind`` / ``value_type`` after it
-        was created.
+        was created. It intentionally groups mutable metadata under one update
+        operation instead of adding a setter for each measure property.
 
         ``insert_measure`` is a get-or-insert, so a measure auto-created by an ingest
         pipeline (or by an earlier transfer) commonly ends up with the default
         ``waveform`` shape. ``value_type`` self-heals on the first write, but
         ``signal_kind`` never does, and ``waveform`` + ``string`` is precisely the
-        combination the windowing layer cannot iterate. This setter is the public way
-        to correct both.
+        combination the windowing layer cannot iterate. This update operation is the
+        public way to correct both.
 
         :param int measure_id: The measure to update.
         :param str signal_kind: New temporal shape, one of ``waveform | sample | event |
@@ -888,21 +854,16 @@ class AtriumSDK:
             written raises ``ValueError``: the stored blocks are either dictionary codes
             or numbers and re-labelling them would make the measure unreadable.
 
-        :return: ``(signal_kind, value_type)`` as resolved after the update.
-        :rtype: tuple
+        :return: The updated measure record, including resolved metadata.
+        :rtype: dict
 
         >>> measure_id = sdk.insert_measure("vent_mode", freq=1, freq_units="Hz", units="string")
-        >>> sdk.set_measure_kind(measure_id, signal_kind="state", value_type="string")
-        ('state', 'string')
+        >>> sdk.update_measure(measure_id, signal_kind="state", value_type="string")['signal_kind']
+        'state'
         """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for measure updates.")
-        if signal_kind is not None and signal_kind not in SIGNAL_KIND_VALUES:
-            raise ValueError(
-                f"signal_kind must be one of {SIGNAL_KIND_VALUES} or None; got {signal_kind!r}.")
-        if value_type is not None and value_type not in VALUE_TYPE_VALUES:
-            raise ValueError(
-                f"value_type must be one of {VALUE_TYPE_VALUES} or None; got {value_type!r}.")
+        validate_measure_kind_values(signal_kind, value_type)
 
         if self.sql_handler.select_measure(measure_id=int(measure_id)) is None:
             raise ValueError(f"measure_id {measure_id} not found in the dataset.")
@@ -915,11 +876,8 @@ class AtriumSDK:
                     f"relabelled as '{value_type}'. A measure is either numeric or string -- "
                     f"write '{value_type}' data to a separate measure.")
 
-        # The setter must not be able to *create* the un-iterable waveform+string
-        # measure it exists to repair. The resulting combination -- the requested
-        # fields laid over the stored ones -- is what matters: 'value_type=string'
-        # alone on a waveform measure produces it just as surely as stating both.
-        current_kind = self.get_measure_kind(int(measure_id)) or (None, None)
+        current_info = self.get_measure_info(int(measure_id))
+        current_kind = measure_kind_of(current_info) if current_info else (None, None)
         resulting_signal_kind = signal_kind if signal_kind is not None else current_kind[0]
         resulting_value_type = value_type if value_type is not None else current_kind[1]
         if is_invalid_kind_combination(resulting_signal_kind, resulting_value_type):
@@ -932,23 +890,96 @@ class AtriumSDK:
             # Never serve a cached view that predates the change.
             self._measures.pop(int(measure_id), None)
 
-        return self.get_measure_kind(int(measure_id))
-
-    def get_measure_kind(self, measure_id: int):
-        """Convenience: return ``(signal_kind, value_type)`` for a measure with the
-        read-time defaults applied (a ``NULL`` ``signal_kind`` reads as ``waveform``
-        and a ``NULL`` ``value_type`` as ``numeric``, unless the measure has a string
-        dictionary with committed blocks behind it).
-
-        Returns ``None`` if the measure does not exist."""
-        info = self.get_measure_info(measure_id)
-        if info is None:
-            return None
-        return info.get('signal_kind'), info.get('value_type')
+        return self.get_measure_info(int(measure_id))
 
     # ------------------------------------------------------------------ #
     # Reading signal data: numeric and string
     # ------------------------------------------------------------------ #
+    def _require_measure_and_device(self, measure_id, device_id):
+        """The measure and device rows for a write, or a ValueError naming whichever
+        one is missing and the call that creates it."""
+        measure_info = self.get_measure_info(measure_id)
+        device_info = self.get_device_info(device_id)
+
+        if measure_info is None:
+            raise ValueError(f"measure_id {measure_id} not found in the dataset. "
+                             f"Add it with AtriumSDK.insert_measure(tag, freq, units)")
+        if device_info is None:
+            raise ValueError(f"device_id {device_id} not found in the dataset. "
+                             f"Add it with AtriumSDK.insert_device(tag)")
+
+        return measure_info, device_info
+
+    def _resolve_read_range(self, start_time_n, end_time_n, time_units, device_id, device_tag,
+                            patient_id, mrn):
+        """Front half of a read query, shared by get_data and get_headers: validate
+        ``time_units``, convert the range into nanoseconds, and resolve
+        ``device_tag`` / ``mrn`` to ids.
+
+        Returns ``(time_units, start_time_n, end_time_n, device_id, patient_id)``."""
+        time_units = "ns" if time_units is None else time_units
+
+        if time_units not in time_unit_options.keys():
+            raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
+
+        start_time_n = int(start_time_n * time_unit_options[time_units])
+        end_time_n = int(end_time_n * time_unit_options[time_units])
+
+        if device_id is None and device_tag is not None:
+            device_id = self.get_device_id(device_tag)
+
+        if patient_id is None and mrn is not None:
+            patient_id = self.get_patient_id(mrn)
+
+        return time_units, start_time_n, end_time_n, device_id, patient_id
+
+    def _resolve_read_measure_id(self, measure_id, measure_tag, freq, units, freq_units):
+        """Resolve the signal half of a read query. API mode requires the full
+        (tag, freq, units) triple; local mode picks the best match from the tag and
+        coerces the result to an int."""
+        if self.mode == "api":
+            if measure_id is None:
+                assert measure_tag is not None and freq is not None and units is not None, \
+                    "Must provide measure_id or all of measure_tag, freq, units"
+                measure_id = self.get_measure_id(measure_tag, freq, units, freq_units)
+            return measure_id
+
+        if measure_id is None:
+            assert measure_tag is not None, "One of measure_id, measure_tag must be specified."
+            measure_id = get_best_measure_id(self, measure_tag, freq, units, freq_units)
+
+        return int(measure_id) if measure_id is not None else measure_id
+
+    def _select_read_blocks(self, measure_id, device_id, patient_id, start_time_n, end_time_n,
+                            block_info):
+        """Resolve the blocks a read must touch, from whichever of the three sources
+        applies: the in-memory block cache, a caller-supplied ``block_info``, or the
+        metadata table.
+
+        Returns ``(block_list, filename_dict, source)`` where ``source`` is one of
+        ``"cache" | "block_info" | "db"``. An empty ``block_list`` means the range
+        holds no data; callers decide what that means for their own return type --
+        which is why ``source`` comes back, since only the two non-``block_info``
+        sources nan-fill an empty numeric read."""
+        if device_id is not None and measure_id is not None and \
+                measure_id in self.block_cache and device_id in self.block_cache[measure_id]:
+            return self.find_blocks(measure_id, device_id, start_time_n, end_time_n), \
+                self.filename_dict, "cache"
+
+        if block_info is not None:
+            return block_info['block_list'], block_info['filename_dict'], "block_info"
+
+        block_list = self.sql_handler.select_blocks(
+            int(measure_id), int(start_time_n), int(end_time_n), device_id, patient_id
+        )
+
+        read_list = condense_byte_read_list(block_list)
+        if len(read_list) == 0:
+            return [], {}, "db"
+
+        file_id_list = [row[2] for row in read_list]
+        return block_list, self.get_filename_dict(file_id_list), "db"
+
     def get_data(self, measure_id: int = None, start_time_n: int = None, end_time_n: int = None,
                  device_id: int = None, patient_id=None, time_type=1, analog=True, block_info=None,
                  time_units: str = None, sort=True, allow_duplicates=True, measure_tag: str = None,
@@ -972,9 +1003,13 @@ class AtriumSDK:
         :param time_type: The type of time returned. Options are:
             - 1: Timestamps (default).
             - 2: Gap array (advanced users only).
+            Patient-scoped reads require timestamp output (``time_type=1``), so the
+            decoder can enforce each device-patient encounter boundary.
             - 'raw': Return as was originally stored.
             - 'encoded': Return in the format currently encoded (usually 2 for periodic signals).
-        :param bool analog: Convert value return type to analog signal.
+        :param bool analog: Convert numeric values to analog signal. For a string
+            measure, the default ``True`` returns decoded strings; ``False`` returns
+            raw dictionary codes for advanced callers.
         :param block_info: Custom block_info list to skip metadata table check.
         :param str time_units: Unit for the time array returned. Options: ["s", "ms", "us", "ns"].
         :param bool sort: Whether to sort the returned data by time. Sorting is only applied when time_type is 1.
@@ -1005,6 +1040,9 @@ class AtriumSDK:
         :param str device_tag: A string identifying the device. Exclusive with device_id.
         :param str mrn: Medical record number for the patient. Exclusive with patient_id. An int can be provided, but will be converted and stored as a string.
         :param bool | ndarray return_nan_filled: Whether or not to fill missing values from start to end with np.nan.
+            It is not available for string measures.
+            It is also unavailable for patient-scoped reads, whose data can span
+            multiple device-specific encounter windows.
             This can be floating point numpy array of shape (int(round((end_ns - start_ns) / period_ns),) which works
             like the `out` param in the numpy library, filling the result into the passed in array instead of creating
             a new array, which provides a modest performance increase if you already have a result array allocated.
@@ -1025,52 +1063,22 @@ class AtriumSDK:
         ...     measure_id, start, end, device_id=device_id, allow_duplicates=False)
         """
         # check that a correct unit type was entered
-        time_units = "ns" if time_units is None else time_units
-
-        if time_units not in time_unit_options.keys():
-            raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
-
         # make sure time type is either 1 or 2
         if time_type not in ALLOWED_TIME_TYPES:
             raise ValueError("Time type must be in [1, 2]")
 
-        # convert start and end time to nanoseconds
-        start_time_n = int(start_time_n * time_unit_options[time_units])
-        end_time_n = int(end_time_n * time_unit_options[time_units])
+        time_units, start_time_n, end_time_n, device_id, patient_id = self._resolve_read_range(
+            start_time_n, end_time_n, time_units, device_id, device_tag, patient_id, mrn)
 
-        if device_id is None and device_tag is not None:
-            device_id = self.get_device_id(device_tag)
-
-        if patient_id is None and mrn is not None:
-            patient_id = self.get_patient_id(mrn)
+        measure_id = self._resolve_read_measure_id(measure_id, measure_tag, freq, units, freq_units)
 
         # If the data is from the api.
         if self.mode == "api":
-            if measure_id is None:
-                assert measure_tag is not None and freq is not None and units is not None, \
-                    "Must provide measure_id or all of measure_tag, freq, units"
-                measure_id = self.get_measure_id(measure_tag, freq, units, freq_units)
             return self._get_data_api(measure_id, start_time_n, end_time_n, device_id=device_id, patient_id=patient_id,
                                       time_type=time_type, analog=analog, sort=sort, allow_duplicates=allow_duplicates)
 
-        # Check the measure
-        if measure_id is None:
-            assert measure_tag is not None, "One of measure_id, measure_tag must be specified."
-            measure_id = get_best_measure_id(self, measure_tag, freq, units, freq_units)
-
-        measure_id = int(measure_id) if measure_id is not None else measure_id
         device_id = int(device_id) if device_id is not None else device_id
 
-        # String-measure guard rails. Reads of a string measure must go through
-        # get_string_data, which calls this method with analog=False and no
-        # nan-fill. The numeric core here (analog scaling, the float nan-fill
-        # `out` buffer) cannot represent decoded strings, so reject those combos
-        # with a clear pointer. Detection reads the measure's value_type, which
-        # itself falls back to the MeasureStringDictionary.exists check when the
-        # column is NULL, so un-migrated datasets still work (see
-        # _resolve_measure_kind). String
-        # storage needs the meta/ dir, so skip the check when there is no
-        # dataset_location (a numeric-only mode) to avoid touching that path.
         is_string_measure = False
         if measure_id is not None and self.dataset_location is not None:
             _minfo = self.get_measure_info(measure_id)
@@ -1080,55 +1088,37 @@ class AtriumSDK:
                 raise ValueError(
                     f"Measure {measure_id} is a string measure; its values cannot be NaN-filled. "
                     f"Use AtriumSDK.get_string_data(...) to read string data.")
-            if analog:
-                raise ValueError(
-                    f"Measure {measure_id} is a string measure; its values cannot be analog-scaled. "
-                    f"Use AtriumSDK.get_string_data(...) to read string data.")
+        decode_string_values = is_string_measure and analog
+        string_dict = None
+        if decode_string_values:
+            # Dictionary codes are numeric storage detail, not analog values.
+            string_dict = MeasureStringDictionary.load(self._meta_dir, int(measure_id))
+            self._check_string_dictionary_not_lost(
+                int(measure_id), string_dict, self._established_value_type(int(measure_id)),
+                self.sql_handler.get_string_dict_watermark(int(measure_id)))
+            analog = False
 
-        # Determine if we can use the cache
-        use_cache = False
-        if device_id is not None and measure_id is not None:
-            if measure_id in self.block_cache and device_id in self.block_cache[measure_id]:
-                use_cache = True
+        block_list, filename_dict, block_source = self._select_read_blocks(
+            measure_id, device_id, patient_id, start_time_n, end_time_n, block_info)
 
-        if use_cache:
-            # Use cached blocks
-            block_list = self.find_blocks(measure_id, device_id, start_time_n, end_time_n)
-            filename_dict = self.filename_dict
+        if patient_id is not None and time_type != 1:
+            raise ValueError(
+                "patient-scoped reads require time_type=1 so each sample can be "
+                "clipped to its device-patient encounter.")
+        if patient_id is not None and (isinstance(return_nan_filled, np.ndarray) or return_nan_filled):
+            raise ValueError(
+                "patient-scoped reads do not support return_nan_filled because the "
+                "filled grid cannot retain per-device encounter provenance.")
 
-            if len(block_list) == 0:
-                if isinstance(return_nan_filled, np.ndarray) or return_nan_filled:
-                    period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
-                    expected_num_values = round((end_time_n - start_time_n) / period_ns)
-                    return [], np.full(expected_num_values, np.nan, dtype=np.float64)
+        # if no matching block ids
+        if len(block_list) == 0:
+            if block_source != "block_info" and \
+                    (isinstance(return_nan_filled, np.ndarray) or return_nan_filled):
+                period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
+                expected_num_values = round((end_time_n - start_time_n) / period_ns)
+                return [], np.full(expected_num_values, np.nan, dtype=np.float64)
 
-                return [], np.array([]), np.array([])
-
-        elif block_info is None:
-            # Fetch blocks from the database
-            block_list = self.sql_handler.select_blocks(
-                int(measure_id), int(start_time_n), int(end_time_n), device_id, patient_id
-            )
-
-            read_list = condense_byte_read_list(block_list)
-
-            # if no matching block ids
-            if len(read_list) == 0:
-                if isinstance(return_nan_filled, np.ndarray) or return_nan_filled:
-                    period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
-                    expected_num_values = round((end_time_n - start_time_n) / period_ns)
-                    return [], np.full(expected_num_values, np.nan, dtype=np.float64)
-                return [], np.array([]), np.array([])
-
-            file_id_list = [row[2] for row in read_list]
-            filename_dict = self.get_filename_dict(file_id_list)
-        else:
-            block_list = block_info['block_list']
-            filename_dict = block_info['filename_dict']
-
-            # if no matching block ids
-            if len(block_list) == 0:
-                return [], np.array([]), np.array([])
+            return [], np.array([]), np.array([])
 
         if isinstance(return_nan_filled, np.ndarray) or return_nan_filled:
             return self.get_data_from_blocks(block_list, filename_dict, start_time_n, end_time_n, analog, time_type,
@@ -1139,14 +1129,33 @@ class AtriumSDK:
                                                                end_time_n, analog, time_type, sort=False,
                                                                allow_duplicates=allow_duplicates)
 
+        if patient_id is not None:
+            ranges = self.sql_handler.get_device_time_ranges_by_patient(
+                patient_id, end_time_n, start_time_n)
+            patient_mask = patient_sample_mask(
+                r_times, headers, block_list, clip_patient_ranges(ranges, start_time_n, end_time_n))
+            r_times = r_times[patient_mask]
+            r_values = r_values[patient_mask]
+
         # Sort the data based on the timestamps if sort is true
         if sort and time_type == 1:
-            r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates,
-                                          duplicate_keep=self._duplicate_keep(duplicate_keep))
+            if patient_id is not None:
+                order = np.argsort(r_times, kind='stable')
+                r_times, r_values = r_times[order], r_values[order]
+                if not allow_duplicates:
+                    r_times, r_values = collapse_duplicate_times(
+                        r_times, r_values, keep=self._duplicate_keep(duplicate_keep))
+            else:
+                r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n,
+                                              allow_duplicates,
+                                              duplicate_keep=self._duplicate_keep(duplicate_keep))
 
         # Convert time data from nanoseconds to unit of choice
         if time_units != 'ns':
             r_times = r_times / time_unit_options[time_units]
+
+        if decode_string_values:
+            r_values = string_dict.decode(np.asarray(r_values).astype(np.int64))
 
         return headers, r_times, r_values
 
@@ -1160,7 +1169,9 @@ class AtriumSDK:
 
         Read string values from a string-typed measure.
 
-        This is the dedicated reader for string measures. Internally it reads the
+        This is the dedicated reader for string measures. ``get_data`` also returns
+        decoded strings by default; this two-value return form remains convenient
+        when block headers are not needed. Internally it reads the
         int64 dictionary codes via :meth:`get_data` (``analog=False``, no NaN-fill,
         which the numeric core can represent) and decodes them back to strings via
         the measure's :class:`MeasureStringDictionary`. String reads have their own
@@ -1214,9 +1225,8 @@ class AtriumSDK:
 
         .. note::
 
-            String measures cannot be read through :meth:`get_data` with ``analog=True`` (the default) or
-            with ``return_nan_filled`` - those combinations raise a ``ValueError`` pointing here. This is
-            the only method that returns decoded strings directly. :meth:`get_iterator` also supports
+            String measures are decoded by :meth:`get_data` with its default ``analog=True`` as well.
+            ``return_nan_filled`` still raises because no string grid has been defined. :meth:`get_iterator` also supports
             string measures, but a window carries the raw int64 dictionary codes; decode them with
             ``Window.decode_string_signal(...)``.
         """
@@ -1240,12 +1250,12 @@ class AtriumSDK:
             return times, np.array([], dtype=object)
 
         string_dict = MeasureStringDictionary.load(self._meta_dir, resolved_measure_id)
+        self._check_string_dictionary_not_lost(
+            resolved_measure_id, string_dict, self._established_value_type(resolved_measure_id),
+            self.sql_handler.get_string_dict_watermark(resolved_measure_id))
         values = string_dict.decode(np.asarray(codes).astype(np.int64))
         return times, values
 
-    # ------------------------------------------------------------------ #
-    # Event query surface + from->to interval pairing
-    # ------------------------------------------------------------------ #
     def _require_string_measure(self, measure_id: int) -> "MeasureStringDictionary":
         """Validate that ``measure_id`` is a string/event measure and return its
         loaded :class:`MeasureStringDictionary`. Raises a clear ``ValueError`` for a
@@ -1257,11 +1267,17 @@ class AtriumSDK:
         to do but pick another measure) versus one that holds text but was never
         classified -- ``value_type`` is nullable, and a measure created by an
         ingest pipeline reads as ``numeric`` until its first string write or an
-        explicit :meth:`set_measure_kind`."""
-        kind = self.get_measure_kind(measure_id)
-        if kind is None:
+        explicit :meth:`update_measure`.
+
+        The id is coerced through :func:`require_measure_id` first, so every entry point
+        onto this surface (:meth:`get_measure_string_vocabulary`,
+        :meth:`get_string_values_present`, :meth:`get_event_intervals`) rejects a measure
+        tag with the same message instead of one of them failing differently."""
+        measure_id = require_measure_id(measure_id, "measure_id")
+        info = self.get_measure_info(measure_id)
+        if info is None:
             raise ValueError(f"Measure {measure_id} does not exist.")
-        signal_kind, value_type = kind
+        signal_kind, value_type = measure_kind_of(info)
         if not is_string_value_type(value_type):
             info = self.get_measure_info(measure_id) or {}
             described = f"Measure {measure_id}"
@@ -1272,7 +1288,7 @@ class AtriumSDK:
                 # 'numeric' above is only the read-time default for a NULL column.
                 remedy = (f"This measure has no data yet, so {value_type!r} is only the default "
                           f"for an unset value_type. If it is meant to hold text, classify it "
-                          f"first with sdk.set_measure_kind({measure_id}, value_type='string') "
+                          f"first with sdk.update_measure({measure_id}, value_type='string') "
                           f"(and signal_kind='event' or 'state'), or just write string values to "
                           f"it -- the first string write establishes the type.")
             else:
@@ -1317,16 +1333,7 @@ class AtriumSDK:
             device_id_list=[device_id] if device_id is not None else None,
             patient_id_list=[patient_id] if patient_id is not None else None,
             start_time=start_n, end_time=end_n, time_units="ns")
-        windows = []
-        for row in rows:
-            s, e = row[2], row[3]
-            if s is None:
-                continue
-            s = max(int(s), start_n)
-            e = min(int(e), end_n) if e is not None else end_n
-            if s < e:
-                windows.append([s, e])
-        return self._union_windows(windows)
+        return clip_spans_and_union(((row[2], row[3]) for row in rows), start_n, end_n)
 
     def _collect_encounter_windows(self, device_id, patient_id, start_n, end_n):
         """Encounter (admission-level) spans for the source, clipped to [start,end].
@@ -1341,18 +1348,11 @@ class AtriumSDK:
                     device_id_list=[device_id], start_time=start_n, end_time=end_n,
                     time_units="ns"):
                 patient_ids.add(row[1])
-        windows = []
-        for pid in patient_ids:
-            for enc in self.get_encounters(patient_id=pid, start_time=start_n,
-                                           end_time=end_n, time_units="ns"):
-                s, e = enc[3], enc[4]
-                if s is None:
-                    continue
-                s = max(int(s), start_n)
-                e = min(int(e), end_n) if e is not None else end_n
-                if s < e:
-                    windows.append([s, e])
-        return self._union_windows(windows)
+        spans = [(enc[3], enc[4])
+                 for pid in patient_ids
+                 for enc in self.get_encounters(patient_id=pid, start_time=start_n,
+                                                end_time=end_n, time_units="ns")]
+        return clip_spans_and_union(spans, start_n, end_n)
 
     def _resolve_within_windows(self, within, device_id, patient_id, start_n, end_n):
         """Resolve the ``within`` container to a list of disjoint [start,end] ns
@@ -1518,7 +1518,8 @@ class AtriumSDK:
               'start_censored': False, 'end_censored': False}]
 
         :param int measure: The string measure id whose vocabulary ``from_value`` and
-            ``to_value`` belong to.
+            ``to_value`` belong to. An id, not a tag -- resolve a tag first with
+            :meth:`get_measure_id`.
         :param str from_value: The opening event string (must be in the vocabulary).
         :param str to_value: The closing event string (must be in the vocabulary).
         :param int device_id: Device source (or ``device_tag``).
@@ -1550,7 +1551,7 @@ class AtriumSDK:
         start_n = int(start_time * time_unit_options[time_units])
         end_n = int(end_time * time_unit_options[time_units])
 
-        measure_id = int(measure)
+        measure_id = require_measure_id(measure, "measure")
         string_dict = self._require_string_measure(measure_id)
 
         from_code = string_dict.code_for(from_value)
@@ -1746,11 +1747,11 @@ class AtriumSDK:
         This method makes it easy to write new data to the dataset by taking care of unit conversions and data type
         handling internally. It supports various time units and frequency units for user convenience.
 
-        .. note::
+        .. deprecated::
 
-            ``write_data_easy`` is a legacy, **numeric-only** convenience wrapper. It does not accept string
-            values; to store string data use :meth:`write_time_value_pairs` or :meth:`write_data` with a
-            ``list[str]`` / string array (see :ref:`String Values <string_values>`).
+            ``write_data_easy`` exists only for legacy compatibility and will be removed in a future
+            release. It is numeric-only; write new data with :meth:`write_segments` or
+            :meth:`write_time_value_pairs` instead.
 
         Example usage:
 
@@ -1788,13 +1789,18 @@ class AtriumSDK:
             interval index, regardless of internal gaps.
         """
 
+        warnings.warn(
+            "write_data_easy is deprecated and retained only for legacy compatibility; it will be removed "
+            "in a future release. Use write_segments(...) or write_time_value_pairs(...) instead.",
+            DeprecationWarning, stacklevel=2)
+
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for writing data.")
 
         # write_data_easy always chooses a numeric raw_value_type, so string values
         # would reach write_data's string guard and get advice the caller cannot act
         # on ("Omit raw_value_type" -- they never passed one). Reject them here.
-        if isinstance(value_data, np.ndarray) and value_data.dtype.kind in _STRING_DTYPE_KINDS:
+        if isinstance(value_data, np.ndarray) and is_string_dtype(value_data.dtype):
             raise ValueError(
                 "write_data_easy does not support string values: it is a fixed-frequency "
                 "convenience wrapper that always writes a numeric value type. Write string "
@@ -1943,7 +1949,7 @@ class AtriumSDK:
         # or numeric; a conflicting write is rejected instead of being silently
         # accepted and corrupting readability. The first write to an as-yet-empty
         # measure ESTABLISHES its value_type.
-        incoming_is_string = value_data.dtype.kind in _STRING_DTYPE_KINDS
+        incoming_is_string = is_string_dtype(value_data.dtype)
         established_value_type = None
         if self.dataset_location is not None:
             # Only CHECK for a conflict here (may raise); the value_type is
@@ -2436,7 +2442,7 @@ class AtriumSDK:
     def _write_end_time(raw_time_type, time_data, num_values, time_0, freq_nhz=None, period_ns=None):
         """Timestamp of a write's LAST sample, in the same inclusive convention the
         block index stores (``block_index.end_time_n``). Shared by the block-merge
-        candidate search and the D4 overlap check so the two cannot disagree about
+        candidate search and the overlap check so the two cannot disagree about
         where a write ends -- a half-period difference there turns a contiguous
         append into a false overlap report."""
         if raw_time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
@@ -2548,8 +2554,8 @@ class AtriumSDK:
     # ------------------------------------------------------------------ #
     # Writing signal data: buffered, segment and time-value-pair entry points
     # ------------------------------------------------------------------ #
-    def write_buffer(self, max_values_per_measure_device=None, max_total_values_buffered=None, gap_tolerance=None,
-                     time_units=None, continuous=False, merge_blocks=True):
+    def write_buffer(self, max_values_per_measure_device=None, max_total_values_buffered=None,
+                     continuous=False, merge_blocks=True):
         """
         Create a buffer Context Object to batch incoming segments/signals until they hit some threshold,
         are manually flushed to the dataset, or are automatically flushed by exiting the context opened by this object.
@@ -2558,11 +2564,6 @@ class AtriumSDK:
             the data will be automatically flushed to the dataset. Defaults to 100 blocks.
         :param int max_total_values_buffered: (Optional) If the total number of buffered values across all measure-device pairs
             exceeds this number, the oldest buffer that has values in it will be automatically flushed. Defaults to 10,000 blocks.
-        :param float gap_tolerance: (Optional) Merges sequential intervals from the AtriumSDK.get_interval_array method that have a duration between them
-            less than gap_tolerance, specified in `time_units` units (default "s"). If ``None`` (the default), a smart
-            generous default is chosen from the data at flush time, identical to the non-buffered write path; pass ``0``
-            to record every gap.
-        :param str time_units: (Optional) Unit for `gap_tolerance`, which can be one of ["s", "ms", "us", "ns"]. Must be specified if gap_tolerance is given.
         :param bool continuous: (Optional) If True, every flushed batch is treated as a single continuous interval in the
             interval index, regardless of internal gaps.
         :param bool merge_blocks: (Optional, default True) If a flush is smaller than one optimal block, merge it with
@@ -2582,14 +2583,15 @@ class AtriumSDK:
         **Notes:**
 
         - The buffer will manage sub-buffers for each measure-device combination used within its context.
+        - Interval-index settings such as ``gap_tolerance`` belong to ``write_segments`` or
+          ``write_time_value_pairs``. A sub-buffer rejects conflicting settings rather than
+          silently selecting one.
 
         """
         return WriteBuffer(
             self,
             max_values_per_measure_device=max_values_per_measure_device,
             max_total_values_buffered=max_total_values_buffered,
-            gap_tolerance=gap_tolerance,
-            time_units=time_units,
             continuous=continuous,
             merge_blocks=merge_blocks,
         )
@@ -2597,7 +2599,7 @@ class AtriumSDK:
     def write_segment(self, measure_id: int, device_id: int, segment_values: np.ndarray, start_time: float | int,
                       period: float = None, freq: float = None, time_units: str = None,
                       freq_units: str = None, scale_m: float = None, scale_b: float = None,
-                      continuous: bool = False, merge_blocks: bool = True):
+                      continuous: bool = False, merge_blocks: bool = True, gap_tolerance: float = None):
         """
         Write a single segment consisting of contiguous values starting at a specific time.
 
@@ -2617,6 +2619,8 @@ class AtriumSDK:
             interval index, regardless of internal gaps.
         :param bool merge_blocks: (Optional, default True) If the write is smaller than one optimal block, merge it
             with the closest existing block. Pass False to always create new blocks (see write_data).
+        :param float gap_tolerance: (Optional) Interval-index gap policy in ``time_units``. ``None`` chooses
+            the data-driven default; ``0`` records every gap.
 
         Example:
 
@@ -2654,14 +2658,15 @@ class AtriumSDK:
             scale_m=scale_m,
             scale_b=scale_b,
             continuous=continuous,
-            merge_blocks=merge_blocks
+            merge_blocks=merge_blocks,
+            gap_tolerance=gap_tolerance,
         )
 
     def write_segments(self, measure_id: int, device_id: int, segments: List[np.ndarray],
                        start_times: List[float | int],
                        period: float = None, freq: float = None, time_units: str = None,
                        freq_units: str = None, scale_m: float = None, scale_b: float = None,
-                       continuous: bool = False, merge_blocks: bool = True):
+                       continuous: bool = False, merge_blocks: bool = True, gap_tolerance: float = None):
         """
         Write multiple segments consisting of value arrays and corresponding start times.
 
@@ -2685,6 +2690,8 @@ class AtriumSDK:
             interval in the interval index, regardless of gaps between segments.
         :param bool merge_blocks: (Optional, default True) If the write is smaller than one optimal block, merge it
             with the closest existing block. Pass False to always create new blocks (see write_data).
+        :param float gap_tolerance: (Optional) Interval-index gap policy in ``time_units``. ``None`` chooses
+            the data-driven default; ``0`` records every gap.
 
         Example:
 
@@ -2709,21 +2716,15 @@ class AtriumSDK:
         # Set default time and frequency units if not provided
         time_units = "ns" if time_units is None else time_units
         freq_units = "Hz" if freq_units is None else freq_units
+        interval_gap_tolerance_nano = None if gap_tolerance is None else int(
+            gap_tolerance * time_unit_options[time_units])
 
         # Set default for scale factors
         scale_m = 1 if scale_m is None else scale_m
         scale_b = 0 if scale_b is None else scale_b
 
         # Confirm measure and device information
-        measure_info = self.get_measure_info(measure_id)
-        device_info = self.get_device_info(device_id)
-
-        if measure_info is None:
-            raise ValueError(f"measure_id {measure_id} not found in the dataset. "
-                             f"Add it with AtriumSDK.insert_measure(tag, freq, units)")
-        if device_info is None:
-            raise ValueError(f"device_id {device_id} not found in the dataset. "
-                             f"Add it with AtriumSDK.insert_device(tag)")
+        measure_info, device_info = self._require_measure_and_device(measure_id, device_id)
 
         # Figure out the frequency/period - handle mutually exclusive period/freq
         if period is not None and freq is not None:
@@ -2759,6 +2760,8 @@ class AtriumSDK:
                 'scale_b': b,
                 'freq_nhz': freq_nano,
                 'period_ns': period_ns,
+                'gap_tolerance_is_explicit': gap_tolerance is not None,
+                'interval_gap_tolerance_nano': interval_gap_tolerance_nano,
             }
 
             write_segments.append(message_dict)
@@ -2766,7 +2769,7 @@ class AtriumSDK:
         if self._active_buffer is None:
             # Write immediately to disk
             self._write_segments_to_dataset(measure_id, device_id, write_segments,
-                                            interval_gap_tolerance_nano=None, continuous=continuous,
+                                            interval_gap_tolerance_nano=interval_gap_tolerance_nano, continuous=continuous,
                                             merge_blocks=merge_blocks)
         else:
             # Push new segments to the buffer
@@ -2836,7 +2839,7 @@ class AtriumSDK:
     def write_time_value_pairs(self, measure_id: int, device_id: int, times: np.ndarray, values: np.ndarray,
                                period: float = None, freq: float = None, time_units: str = None, freq_units: str = None,
                                scale_m: float = None, scale_b: float = None, continuous: bool = False,
-                               merge_blocks: bool = True):
+                               merge_blocks: bool = True, gap_tolerance: float = None):
         """
         Write time-value pairs where each value corresponds to a specific timestamp.
 
@@ -2858,6 +2861,8 @@ class AtriumSDK:
             interval index, regardless of internal gaps.
         :param bool merge_blocks: (Optional, default True) If the write is smaller than one optimal block, merge it
             with the closest existing block. Pass False to always create new blocks (see write_data).
+        :param float gap_tolerance: (Optional) Interval-index gap policy in ``time_units``. ``None`` chooses
+            the data-driven default; ``0`` records every gap.
 
         Example:
 
@@ -2881,6 +2886,9 @@ class AtriumSDK:
         **Notes:**
 
         - If neither `freq` nor `period` is specified, the method will attempt to infer the sampling frequency from the most common difference between consecutive timestamps in `times`.
+        - A write of a SINGLE time-value pair has no consecutive timestamps to infer from, so the measure's own declared
+          period (``get_measure_info(measure_id)['period_ns']``) is used instead. Pass `freq` or `period` explicitly to
+          store something else.
         - Use this method when dealing with irregularly sampled data or if your data is already formatted in time-value pairs.
 
         """
@@ -2901,7 +2909,7 @@ class AtriumSDK:
         # flush's dtype-consistency check and abort the whole flush.
         # Every real event stream has variable-length text; object is the dtype the
         # string write path uses anyway.
-        if values.dtype.kind in _FIXED_WIDTH_STRING_DTYPE_KINDS:
+        if is_fixed_width_string_dtype(values.dtype):
             values = values.astype(object)
 
         if values.size == 0:
@@ -2913,21 +2921,15 @@ class AtriumSDK:
         # Set default time and frequency units if not provided
         time_units = "ns" if time_units is None else time_units
         freq_units = "Hz" if freq_units is None else freq_units
+        interval_gap_tolerance_nano = None if gap_tolerance is None else int(
+            gap_tolerance * time_unit_options[time_units])
 
         # Set default for scale factors
         scale_m = 1 if scale_m is None else scale_m
         scale_b = 0 if scale_b is None else scale_b
 
         # Confirm measure and device information
-        measure_info = self.get_measure_info(measure_id)
-        device_info = self.get_device_info(device_id)
-
-        if measure_info is None:
-            raise ValueError(f"measure_id {measure_id} not found in the dataset. "
-                             f"Add it with AtriumSDK.insert_measure(tag, freq, units)")
-        if device_info is None:
-            raise ValueError(f"device_id {device_id} not found in the dataset. "
-                             f"Add it with AtriumSDK.insert_device(tag)")
+        measure_info, device_info = self._require_measure_and_device(measure_id, device_id)
 
         # Convert times to nanoseconds
         if time_units != "ns":
@@ -2947,11 +2949,16 @@ class AtriumSDK:
                 freq_nano = None
                 period_ns = None
             else:
-                # Not buffering, detect now (detect_period always returns a best-effort value)
-                detected_period = detect_period(times)
-                period = detected_period
-                period_ns = convert_to_nanoseconds(period, time_units)
-                freq_nano = None
+                nominal_period_ns = get_measure_period_ns(measure_info) \
+                    if len(times) < 2 else None
+                if nominal_period_ns is not None:
+                    period_ns = nominal_period_ns
+                    freq_nano = None
+                else:
+                    detected_period = detect_period(times)
+                    period = detected_period
+                    period_ns = convert_to_nanoseconds(period, time_units)
+                    freq_nano = None
         elif freq is not None:
             freq_nano = convert_to_nanohz(freq, freq_units)
             period_ns = None
@@ -2968,12 +2975,14 @@ class AtriumSDK:
             'scale_b': scale_b,
             'freq_nhz': freq_nano,
             'period_ns': period_ns,
+            'gap_tolerance_is_explicit': gap_tolerance is not None,
+            'interval_gap_tolerance_nano': interval_gap_tolerance_nano,
         }
 
         if self._active_buffer is None:
             # Ingest Immediately
             self._write_time_value_pairs_to_dataset(measure_id, device_id, [data_dict],
-                                                    interval_gap_tolerance_nano=None, continuous=continuous,
+                                                    interval_gap_tolerance_nano=interval_gap_tolerance_nano, continuous=continuous,
                                                     merge_blocks=merge_blocks)
         else:
             # Push data to buffer
@@ -3002,7 +3011,7 @@ class AtriumSDK:
             # ('U'/'S'/'O') are one data type as far as the write path is concerned
             # (they all become dictionary codes), and numpy's per-array width for
             # unicode arrays is an artifact of the batch, not of the data.
-            if not _same_write_value_kind(data['values'].dtype, data_dtype):
+            if not same_write_value_kind(data['values'].dtype, data_dtype):
                 raise ValueError(
                     f"Data dictionaries have inconsistent data types "
                     f"({data['values'].dtype} vs {data_dtype}); string and numeric values "
@@ -3022,15 +3031,19 @@ class AtriumSDK:
 
         # If period/freq were deferred (both None), detect period now from the combined times
         if freq_nhz is None and period_ns is None:
-            detected_period = detect_period(times)
-            period_ns = int(detected_period) if not isinstance(detected_period, int) else detected_period
+            nominal_period_ns = get_measure_period_ns(self.get_measure_info(measure_id)) if len(times) < 2 else None
+            if nominal_period_ns is not None:
+                period_ns = nominal_period_ns
+            else:
+                detected_period = detect_period(times)
+                period_ns = int(detected_period) if not isinstance(detected_period, int) else detected_period
 
         time_0 = int(times[0])
 
         # Encode the block(s). String/object value arrays are left unforced so
         # write_data detects them and converts to int64 dictionary codes; forcing
         # a numeric raw_value_type here would trip write_data's string guard.
-        if values.dtype.kind in _STRING_DTYPE_KINDS:
+        if is_string_dtype(values.dtype):
             raw_v_t = None
             encoded_v_t = None
         elif np.issubdtype(values.dtype, np.integer):
@@ -3046,9 +3059,6 @@ class AtriumSDK:
                         scale_m=scale_m, scale_b=scale_b, interval_index_mode="merge",
                         gap_tolerance=interval_gap_tolerance_nano, merge_blocks=merge_blocks, continuous=continuous)
 
-    # ------------------------------------------------------------------ #
-    # In-process caches: preloading block, interval and label metadata
-    # ------------------------------------------------------------------ #
     def load_device(self, device_id: int, measure_id: int|List[int] = None):
         """
         Load block metadata into RAM for a given device.
@@ -3080,27 +3090,10 @@ class AtriumSDK:
             measure_id, device_id = int(measure_id), int(device_id)
             block = np.array([block_id, measure_id, device_id, file_id, start_byte, num_bytes, start_time, end_time, num_values], dtype=np.int64)
 
-            if measure_id not in self.block_cache:
-                self.block_cache[measure_id] = {}
-                self.start_cache[measure_id] = {}
-                self.end_cache[measure_id] = {}
+            append_block_cache(self.block_cache, self.start_cache, self.end_cache,
+                               measure_id, device_id, block, start_time, end_time)
 
-            if device_id not in self.block_cache[measure_id]:
-                self.block_cache[measure_id][device_id] = []
-                self.start_cache[measure_id][device_id] = []
-                self.end_cache[measure_id][device_id] = []
-
-            self.block_cache[measure_id][device_id].append(block)
-            self.start_cache[measure_id][device_id].append(start_time)
-            self.end_cache[measure_id][device_id].append(end_time)
-
-        for measure_id in self.block_cache:
-            for device_id in self.block_cache[measure_id]:
-                current_cache = self.block_cache[measure_id][device_id]
-                if isinstance(current_cache, list):
-                    self.block_cache[measure_id][device_id] = np.vstack(current_cache)
-                    self.start_cache[measure_id][device_id] = np.array(self.start_cache[measure_id][device_id], dtype=np.int64)
-                    self.end_cache[measure_id][device_id] = np.array(self.end_cache[measure_id][device_id], dtype=np.int64)
+        freeze_block_caches(self.block_cache, self.start_cache, self.end_cache)
 
         # Update filename dictionary
         self.filename_dict.update(filename_dict)
@@ -3128,23 +3121,26 @@ class AtriumSDK:
         :param str cache_dir: Directory to use for caching processed blocks if caching is enabled.
 
         Notes:
-        Supported `time_units` are nanoseconds ("ns"), microseconds ("us"), milliseconds ("ms"), and seconds ("s").
+            Supported `time_units` are nanoseconds ("ns"), microseconds ("us"), milliseconds
+            ("ms"), and seconds ("s").
 
-        Example:
-        sdk = AtriumSDK(dataset_location=local_dataset_location)
+        Example::
 
-        # Define measures, devices, and time ranges
-        definition = {
-            'measures': ["MLII"],
-            'devices': {
-                1: "all",
-                2: [{"start": 1682739250000000000, "end": 1682739350000000000}],
-            },
-            'labels': ["seizure", "artifact"]
-        }
+            sdk = AtriumSDK(dataset_location=local_dataset_location)
 
-        # Load the definition with time units in milliseconds
-        sdk.load_definition(definition, gap_tolerance=1000, start_time=0, end_time=60000, time_units="ms")
+            # Define measures, devices, and time ranges. load_definition takes a
+            # DatasetDefinition -- not a bare dict -- so build one first.
+            definition = DatasetDefinition(
+                measures=["MLII"],
+                device_ids={
+                    1: "all",
+                    2: [{"start": 1682739250000000000, "end": 1682739350000000000}],
+                },
+                labels=["seizure", "artifact"],
+            )
+
+            # Load the definition with time units in milliseconds
+            sdk.load_definition(definition, gap_tolerance=1000, start_time=0, end_time=60000, time_units="ms")
 
         """
         # Validate and convert time_units
@@ -3240,32 +3236,10 @@ class AtriumSDK:
                 num_bytes, block_start_time, block_end_time, num_values
             ], dtype=np.int64)
 
-            if measure_id not in self.block_cache:
-                self.block_cache[measure_id] = {}
-                self.start_cache[measure_id] = {}
-                self.end_cache[measure_id] = {}
+            append_block_cache(self.block_cache, self.start_cache, self.end_cache,
+                               measure_id, device_id, block_array, block_start_time, block_end_time)
 
-            if device_id not in self.block_cache[measure_id]:
-                self.block_cache[measure_id][device_id] = []
-                self.start_cache[measure_id][device_id] = []
-                self.end_cache[measure_id][device_id] = []
-
-            self.block_cache[measure_id][device_id].append(block_array)
-            self.start_cache[measure_id][device_id].append(block_start_time)
-            self.end_cache[measure_id][device_id].append(block_end_time)
-
-        # Convert lists to numpy arrays
-        for measure_id in self.block_cache:
-            for device_id in self.block_cache[measure_id]:
-                current_cache = self.block_cache[measure_id][device_id]
-                if isinstance(current_cache, list):
-                    self.block_cache[measure_id][device_id] = np.vstack(current_cache)
-                    self.start_cache[measure_id][device_id] = np.array(
-                        self.start_cache[measure_id][device_id], dtype=np.int64
-                    )
-                    self.end_cache[measure_id][device_id] = np.array(
-                        self.end_cache[measure_id][device_id], dtype=np.int64
-                    )
+        freeze_block_caches(self.block_cache, self.start_cache, self.end_cache)
 
         # Update filename dictionary
         self.filename_dict.update(filename_dict)
@@ -3556,9 +3530,6 @@ class AtriumSDK:
             'value_type': 'numeric'
         }
 
-        >>> # signal_kind / value_type can also be read on their own:
-        >>> sdk.get_measure_kind(measure_id)
-        ('waveform', 'numeric')
         """
         # Check if metadata connection type is API
         if self.metadata_connection_type == "api":
@@ -3648,6 +3619,25 @@ class AtriumSDK:
         :type time_units: str, optional
         :return: A dictionary containing information about each measure that matches the specified search criteria.
         :rtype: dict
+
+        Every criterion is independently optional and they combine with AND. Calling with no
+        arguments at all returns every measure::
+
+            sdk.search_measures(tag_match="heart-rate")        # by tag substring
+            sdk.search_measures(unit="mmHg")                   # by unit alone
+            sdk.search_measures(name_match="Arterial")         # by name substring
+            sdk.search_measures(freq=60, freq_units="Hz")      # by frequency
+            sdk.search_measures()                              # everything
+
+        .. note::
+
+            **This method cannot filter on** ``signal_kind`` **or** ``value_type``. To find,
+            say, every string measure, pull the lot and filter client-side::
+
+                strings = {mid: info for mid, info in sdk.get_all_measures().items()
+                           if info["value_type"] == "string"}
+
+            See :ref:`Measure Metadata <measure_metadata>` for what those two fields mean.
         """
         # Check for mutually exclusive parameters
         if freq is not None and period is not None:
@@ -3673,10 +3663,9 @@ class AtriumSDK:
             target_freq_nhz = convert_to_nanohz(freq, freq_units)
         elif freq is not None:
             target_freq_nhz = freq
-        else:
+        elif period is not None:
             period_ns = int(period * time_unit_options[time_units])
             target_freq_nhz = 10 ** 18 // period_ns
-
         # Get all measures from the database
         all_measures = self.get_all_measures()
 
@@ -3759,8 +3748,14 @@ class AtriumSDK:
             # Use stored period_ns if available, otherwise calculate from freq_nhz
             if stored_period_ns is not None:
                 measure_period_ns = stored_period_ns
-            else:
+            elif measure_freq_nhz:
                 measure_period_ns = 10 ** 18 // measure_freq_nhz
+            else:
+                measure_period_ns = None
+                _LOGGER.warning(
+                    "Measure %d (%s) has no usable frequency, the legacy marker for an "
+                    "aperiodic signal. Run AtriumSDK(auto_upgrade=True) to convert it to "
+                    "a declared aperiodic sample measure.", measure_id, measure_tag)
 
             signal_kind, value_type = self._resolve_measure_kind(
                 measure_id, stored_signal_kind, stored_value_type)
@@ -3897,8 +3892,13 @@ class AtriumSDK:
             When omitted it is inferred at first write from the value dtype
             (string/object -> ``string``, else ``numeric``); an explicit value wins.
 
-        :return: The measure_id of the inserted or existing measure.
+        :return: The measure_id of the inserted or existing measure. Always a real id
+            (>= 1) -- if a concurrent writer wins the race to create this measure, the
+            existing row's id is read back and returned rather than the driver's empty
+            ``lastrowid``.
         :rtype: int
+        :raises RuntimeError: If no id could be obtained -- the insert reported no new
+            row and no matching row could be read back.
 
         """
 
@@ -3906,12 +3906,7 @@ class AtriumSDK:
             raise NotImplementedError("API mode is not supported for insertion.")
 
         # Validate the measure-kind enums when explicitly provided.
-        if signal_kind is not None and signal_kind not in SIGNAL_KIND_VALUES:
-            raise ValueError(
-                f"signal_kind must be one of {SIGNAL_KIND_VALUES} or None; got {signal_kind!r}.")
-        if value_type is not None and value_type not in VALUE_TYPE_VALUES:
-            raise ValueError(
-                f"value_type must be one of {VALUE_TYPE_VALUES} or None; got {value_type!r}.")
+        validate_measure_kind_values(signal_kind, value_type)
 
         # Reject the one invalid combination at the point the mistake is made rather
         # than hours later inside get_iterator's fill path. A string measure whose
@@ -4026,8 +4021,23 @@ class AtriumSDK:
             unit_code=unit_code, source_id=source_id, period_ns=period_ns, signal_kind=signal_kind,
             value_type=value_type)
 
-        if inserted_measure_id is None:
-            return inserted_measure_id
+        if inserted_measure_id is None or int(inserted_measure_id) <= 0:
+            resolved_measure_id = self.get_measure_id(
+                measure_tag, freq=freq_nhz, freq_units="nHz", units=units)
+            if resolved_measure_id is None or int(resolved_measure_id) <= 0:
+                raise RuntimeError(
+                    f"insert_measure could not obtain a measure_id for "
+                    f"(tag={measure_tag!r}, freq_nhz={freq_nhz}, units={units!r}): the insert "
+                    f"reported no new row and no matching row could be read back. This is "
+                    f"normally a lost get-or-insert race whose winner is re-read on the next "
+                    f"line, so a failure here means the row is genuinely absent -- check that "
+                    f"the metadata database is reachable and writable, and that nothing rolled "
+                    f"the insert back.")
+            resolved_measure_id = int(resolved_measure_id)
+            self._apply_kind_to_existing_measure(resolved_measure_id, signal_kind, value_type)
+            return resolved_measure_id
+
+        inserted_measure_id = int(inserted_measure_id)
 
         # Calculate period_ns from freq_nhz for cache (if not already calculated)
         if period_ns is None:
@@ -4056,6 +4066,68 @@ class AtriumSDK:
         self._measures[inserted_measure_id] = measure_info
 
         return inserted_measure_id
+
+    def get_or_insert_measure(self, measure_tag: str, freq: Union[int, float] = None, units: str = None,
+                              freq_units: str = None, period: Union[int, float] = None, time_units: str = None,
+                              measure_name: str = None, code: str = None, unit_label: str = None,
+                              unit_code: str = None, source_id: int = None, source_name: str = None,
+                              signal_kind: str = None, value_type: str = None) -> int:
+        """
+        .. _get_or_insert_measure_label:
+
+        Return the measure_id for ``(measure_tag, freq, units)``, creating the measure if
+        it does not exist yet.
+
+        This is the idiom every ingest pipeline needs on its first sight of a signal, and
+        which is otherwise hand-rolled as a :meth:`get_measure_id` followed by an
+        :meth:`insert_measure` on the miss.
+        :meth:`insert_measure` has always been a get-or-insert; this is the name that says
+        so, so a caller does not have to read its body to find that out. The return value
+        is always a real measure_id -- never ``None``, never ``0`` -- including when a
+        concurrent process wins the race to create the same measure.
+
+        Parameters mean exactly what they mean on :meth:`insert_measure`, minus
+        ``measure_id``: requesting a specific id is an "insert this exact row" operation,
+        not a get-or-insert, so it is left on :meth:`insert_measure` where it belongs.
+
+        ``signal_kind`` / ``value_type``, when given, are also applied to a measure that
+        already exists (with a warning naming the change), so an ingest pipeline can
+        classify a measure that an earlier run created without that metadata.
+
+        >>> # Safe to call on every message; creates the measure once.
+        >>> measure_id = sdk.get_or_insert_measure(
+        ...     measure_tag="alarm_text", freq=1, freq_units="Hz", units="string",
+        ...     signal_kind="event", value_type="string")
+
+        :param str measure_tag: A short string identifying the signal.
+        :param freq: The sample frequency of the signal. Mutually exclusive with period.
+        :param str units: The units of the signal.
+        :param str freq_units: The unit used for the specified frequency, one of ["Hz",
+            "kHz", "MHz"]. Default is nano hertz.
+        :param period: The sample period of the signal. Mutually exclusive with freq.
+        :param str time_units: The unit used for the specified period, one of
+            ["s", "ms", "us", "ns"]. Default is nanoseconds.
+        :param str measure_name: A long form description of the signal (optional).
+        :param str code: A specific code identifying the signal (optional).
+        :param str unit_label: A label for the unit (optional).
+        :param str unit_code: A code for the unit (optional).
+        :param int source_id: An identifier for the data source (optional).
+        :param str source_name: The name of the data source, used if source_id is not
+            provided (optional).
+        :param str signal_kind: Optional temporal shape, one of
+            ``waveform | sample | event | state``. See :meth:`insert_measure`.
+        :param str value_type: Optional value encoding, one of ``numeric | string``.
+            See :meth:`insert_measure`.
+
+        :return: The measure_id of the existing or newly created measure.
+        :rtype: int
+        :raises RuntimeError: If no id could be obtained (see :meth:`insert_measure`).
+        """
+        return self.insert_measure(
+            measure_tag=measure_tag, freq=freq, units=units, freq_units=freq_units, period=period,
+            time_units=time_units, measure_name=measure_name, code=code, unit_label=unit_label,
+            unit_code=unit_code, source_id=source_id, source_name=source_name,
+            signal_kind=signal_kind, value_type=value_type)
 
     # ------------------------------------------------------------------ #
     # Devices
@@ -4317,12 +4389,17 @@ class AtriumSDK:
         :param int source_id: The ID of the data source associated with the device (optional).
         :param str source_name: The name of the data source associated with the device, used if source_id is not provided (optional).
 
-        :return: The device_id of the inserted or existing device.
+        :return: The device_id of the inserted or existing device. Always a real id
+            (>= 1) -- if a concurrent writer wins the race to create this device, the
+            existing row's id is read back and returned rather than the driver's empty
+            ``lastrowid``.
         :rtype: int
 
         Raises:
             ValueError: If specified device_id already exists with a different device_tag.
                         If bed_name or source_name is provided but does not match any existing records.
+            RuntimeError: If no id could be obtained -- the insert reported no new row and
+                        no matching row could be read back.
         """
         # Handle source_name to source_id conversion
         if source_name and not source_id:
@@ -4356,8 +4433,67 @@ class AtriumSDK:
             return check_device_id
 
         # If the device_tag does not exist, insert the new device using the sql_handler
-        return self.sql_handler.insert_device(device_tag, device_name, device_id, manufacturer, model, device_type,
-                                              bed_id, source_id)
+        inserted_device_id = self.sql_handler.insert_device(device_tag, device_name, device_id, manufacturer, model,
+                                                            device_type, bed_id, source_id)
+
+        if inserted_device_id is None or int(inserted_device_id) <= 0:
+            resolved_device_id = self.get_device_id(device_tag)
+            if resolved_device_id is None or int(resolved_device_id) <= 0:
+                raise RuntimeError(
+                    f"insert_device could not obtain a device_id for device_tag "
+                    f"{device_tag!r}: the insert reported no new row and no matching row "
+                    f"could be read back. This is normally a lost get-or-insert race whose "
+                    f"winner is re-read on the next line, so a failure here means the row is "
+                    f"genuinely absent -- check that the metadata database is reachable and "
+                    f"writable, and that nothing rolled the insert back.")
+            return int(resolved_device_id)
+
+        return int(inserted_device_id)
+
+    def get_or_insert_device(self, device_tag: str, device_name: str = None, manufacturer: str = None,
+                             model: str = None, device_type: str = None, bed_id: int = None,
+                             bed_name: str = None, source_id: int = None, source_name: str = None) -> int:
+        """
+        .. _get_or_insert_device_label:
+
+        Return the device_id for ``device_tag``, creating the device if it does not exist
+        yet.
+
+        The device twin of :meth:`get_or_insert_measure`: the call an ingest pipeline
+        makes on its first sight of a device, instead of hand-rolling a
+        :meth:`get_device_id` followed by an :meth:`insert_device` on the miss. The
+        return value is always a real
+        device_id -- never ``None``, never ``0`` -- including when a concurrent process
+        wins the race to create the same device.
+
+        Parameters mean exactly what they mean on :meth:`insert_device`, minus
+        ``device_id``: requesting a specific id is an "insert this exact row" operation,
+        not a get-or-insert. Metadata (``device_name``, ``manufacturer``, ...) is used
+        only when the device is actually created; an existing device is returned
+        unchanged.
+
+        >>> # Safe to call on every message; creates the device once.
+        >>> device_id = sdk.get_or_insert_device(device_tag="Monitor A3")
+
+        :param str device_tag: A unique string identifying the device (required).
+        :param str device_name: A long form description of the device (optional).
+        :param str manufacturer: The device's manufacturer (optional).
+        :param str model: The device's model (optional).
+        :param str device_type: The type of the device, 'static' or 'dynamic' (optional).
+        :param int bed_id: The ID of the bed associated with the device (optional).
+        :param str bed_name: The name of the bed, used if bed_id is not provided (optional).
+        :param int source_id: The ID of the data source (optional).
+        :param str source_name: The name of the data source, used if source_id is not
+            provided (optional).
+
+        :return: The device_id of the existing or newly created device.
+        :rtype: int
+        :raises RuntimeError: If no id could be obtained (see :meth:`insert_device`).
+        """
+        return self.insert_device(
+            device_tag=device_tag, device_name=device_name, manufacturer=manufacturer, model=model,
+            device_type=device_type, bed_id=bed_id, bed_name=bed_name, source_id=source_id,
+            source_name=source_name)
 
     # ------------------------------------------------------------------ #
     # Patients and patient history
@@ -5508,7 +5644,7 @@ class AtriumSDK:
         :param int limit: Maximum number of rows to return.
         :param int offset: Offset this number of rows before starting to return labels. Used in combination with limit.
         :param int measure_list: The list of measure_ids or measure tuples (measure_tag, freq_hz, measure_units) you
-        would like to restrict the search to. If you specify measures but also want all the labels that don't have a
+            would like to restrict the search to. If you specify measures but also want all the labels that don't have a
             specified measure_id (the labels for all signals at that time) add None to the list. Measures can also be
             None to get all labels for a specific source regardless of measure_id.
 
@@ -6699,7 +6835,7 @@ class AtriumSDK:
           channels. ``presence``/``count`` cells INSIDE the range are a meaningful ``0`` ("no event
           occurred"); only their out-of-range tail is ``NaN``, so ``actual_count`` reports true coverage.
           **Limitation:** the sentinel conflates "unknown/censored" with a genuine missing reading
-          -- there is no separate ``known`` mask yet (a planned enhancement).
+          -- there is no separate ``known`` mask.
 
           String measures carry int64 dictionary codes in the window; decode on demand with
           ``Window.decode_string_signal(sdk, measure_key)`` or
@@ -6708,10 +6844,11 @@ class AtriumSDK:
           codes, and decoding it would fabricate vocabulary strings, so it raises. Read the underlying
           strings with :meth:`get_string_data` / :meth:`get_event_intervals` instead.
 
-          This fill configuration is applied only by the default/mapped iterators; the
-          ``DatasetDefinition.filter`` path uses the numeric grid only and ignores it, and the
-          ``lightmapped`` iterator -- numeric grid only -- **rejects** a definition containing a string or
-          aperiodic measure with a measure-named error pointing at ``iterator_type='mapped'``. The
+          This fill configuration is applied by the default/mapped iterators. ``DatasetDefinition.filter``
+          uses the same default per-kind configuration (without these iterator-specific override
+          parameters), and the ``lightmapped`` iterator -- numeric grid only -- **rejects** a definition
+          containing a string or aperiodic measure with a measure-named error pointing at
+          ``iterator_type='mapped'``. The
           rasterizer does not right-censor a ``state`` after its last observation, and does not pair
           ``from``/``to`` events into intervals -- use :meth:`get_event_intervals` for the latter.
 
@@ -6868,8 +7005,7 @@ class AtriumSDK:
 
         # Reject an unsupported aperiodic_fill rule NAME up front, before any
         # measure-by-measure kind-compatibility resolution, so a typo such as
-        # "carry-forward" can never be silently swallowed (it used to fall
-        # through to the per-kind default with no error and no warning).
+        # "carry-forward" can never be silently swallowed by the per-kind default.
         validate_fill_rule_name(aperiodic_fill, param_name="aperiodic_fill")
 
         number_of_values_per_window_slide = self._preflight_window_sizing(
@@ -6911,7 +7047,7 @@ class AtriumSDK:
             # all and mis-sizes an aperiodic one (an opaque, measure-less
             # "input array must be of size ..." from the block codec, raised deep
             # inside iteration). Fail at construction with an actionable message
-            # instead. This is also the path AtriumDBMapDataset used to hard-code.
+            # instead. AtriumDBMapDataset follows this path as well.
             for measure_info in definition.validated_data_dict['measures']:
                 signal_kind, value_type = measure_kind_of(measure_info)
                 if is_string_value_type(value_type):
@@ -6956,12 +7092,87 @@ class AtriumSDK:
 
         return iterator
 
-    # ------------------------------------------------------------------ #
-    # Interval / coverage queries
-    # ------------------------------------------------------------------ #
+    def _get_exact_interval_array_from_blocks(self, measure_id, device_id, patient_id, start, end,
+                                              gap_tolerance_nano):
+        block_list = self.sql_handler.select_blocks(
+            int(measure_id), start_time_n=start, end_time_n=end, device_id=device_id, patient_id=patient_id)
+        if len(block_list) == 0:
+            return np.empty((0, 2), dtype=np.int64)
+
+        file_id_list = [row[2] for row in condense_byte_read_list(block_list)]
+        filename_dict = self.get_filename_dict(file_id_list)
+        header_list = self.get_headers_from_blocks(block_list, filename_dict)
+
+        partial_num_bytes_list = [int(header.meta_num_bytes + header.t_num_bytes) for header in header_list]
+        time_read_list = [
+            [row[1], row[2], row[3], row[4], partial_num_bytes]
+            for row, partial_num_bytes in zip(block_list, partial_num_bytes_list)
+        ]
+        encoded_time_bytes = self.file_api.read_file_list(time_read_list, filename_dict)
+
+        direct_time_decode = all(
+            int(header.t_compression) == COMPRESSION_TYPES['NONE']
+            and int(header.t_encoded_type) in (
+                T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
+                T_TYPE_TIMESTAMP_ARRAY_INT64_NANO,
+            )
+            for header in header_list
+        )
+        if direct_time_decode:
+            decoded_headers = header_list
+            time_arrays = []
+            byte_offset = 0
+            for header, partial_num_bytes in zip(decoded_headers, partial_num_bytes_list):
+                time_start = byte_offset + int(header.meta_num_bytes)
+                time_end = time_start + int(header.t_num_bytes)
+                time_arrays.append(np.frombuffer(encoded_time_bytes[time_start:time_end], dtype=np.int64))
+                byte_offset += partial_num_bytes
+            time_data = None
+        else:
+            time_data, decoded_headers = self.block.decode_time_blocks(
+                encoded_time_bytes, partial_num_bytes_list, time_type='encoded')
+            time_arrays = None
+
+        patient_ranges_by_device = clip_patient_ranges(
+            self.sql_handler.get_device_time_ranges_by_patient(patient_id, end, start), start, end
+        ) if patient_id is not None else None
+
+        intervals_by_block = []
+        time_offset = 0
+        for block_i, (block, header) in enumerate(zip(block_list, decoded_headers)):
+            period_ns = header_period_ns(header)
+            time_type = int(header.t_encoded_type) if direct_time_decode else int(header.t_raw_type)
+            if time_type == T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO:
+                num_time_values = int(header.num_gaps) * 2
+                if direct_time_decode:
+                    block_time_data = time_arrays[block_i]
+                else:
+                    block_time_data = time_data[time_offset:time_offset + num_time_values]
+                    time_offset += num_time_values
+                intervals = intervals_from_gap_data(
+                    int(header.start_n), block_time_data, int(header.num_vals), period_ns)
+            elif time_type == T_TYPE_TIMESTAMP_ARRAY_INT64_NANO:
+                num_time_values = int(header.num_vals)
+                if direct_time_decode:
+                    block_time_data = time_arrays[block_i]
+                else:
+                    block_time_data = time_data[time_offset:time_offset + num_time_values]
+                    time_offset += num_time_values
+                intervals = intervals_from_timestamps(block_time_data, period_ns)
+            else:
+                raise ValueError(f"Unsupported decoded time type {time_type}")
+
+            clipped = clip_intervals_to_source_ranges(
+                intervals, block[2], start, end, patient_ranges_by_device)
+            if clipped.size:
+                intervals_by_block.append(clipped)
+
+        return intervals_union_list(intervals_by_block, gap_tolerance_nano=gap_tolerance_nano)
+
     def get_interval_array(self, measure_id=None, device_id=None, patient_id=None,
                            gap_tolerance_nano: int = 0, start=None, end=None, measure_tag=None,
-                           freq=None, units=None, freq_units=None, device_tag=None, mrn: str=None):
+                           freq=None, units=None, freq_units=None, device_tag=None, mrn: str=None,
+                           exact: bool = False):
         """
         .. _get_interval_array_label:
 
@@ -6977,7 +7188,9 @@ class AtriumSDK:
         gap tolerance so irregular arrivals do not flood the index). For precise per-sample or per-event
         timing on those kinds, read the actual stored timestamps via
         :ref:`get_data <get_data_label>` / :ref:`get_string_data <get_string_data_label>` instead of relying
-        on this method. Pass ``gap_tolerance_nano`` to control how aggressively adjacent intervals are merged.
+        on this method. Pass ``exact=True`` for a waveform measure to reconstruct continuous coverage from the
+        stored block time payloads instead of the interval index. Pass ``gap_tolerance_nano`` to control how
+        aggressively adjacent intervals are merged.
 
         >>> measure_id = 21
         >>> device_id = 25
@@ -7011,6 +7224,9 @@ class AtriumSDK:
             "Hz", "kHz", "MHz"] default "nHz".
         :param str device_tag: A string identifying the device. Exclusive with device_id.
         :param str mrn: Medical record number for the patient. Exclusive with patient_id. An int can be provided, but will be converted and stored as a string.
+        :param bool exact: If True for a local waveform measure, reconstruct intervals from block time data rather
+            than using the interval index. Aperiodic measures still return the coarse presence index, because their
+            exact timing is represented as samples/events/states rather than continuous waveform coverage.
         :rtype: numpy.ndarray
         :returns: A 2D array representing the availability of a specified measure.
 
@@ -7024,6 +7240,8 @@ class AtriumSDK:
 
         # Check if the metadata connection type is API
         if self.metadata_connection_type == "api":
+            if exact:
+                raise NotImplementedError("exact interval reconstruction is only supported in local mode.")
             if measure_id is None:
                 assert measure_tag is not None and freq is not None and units is not None, \
                     "Must provide measure_id or all of measure_tag, freq, units"
@@ -7037,6 +7255,11 @@ class AtriumSDK:
         if measure_id is None:
             assert measure_tag is not None, "One of measure_id, measure_tag must be specified."
             measure_id = get_best_measure_id(self, measure_tag, freq, units, freq_units)
+
+        measure_info = self.get_measure_info(measure_id)
+        if exact and measure_info is not None and measure_info.get('signal_kind') == SIGNAL_KIND_WAVEFORM:
+            return self._get_exact_interval_array_from_blocks(
+                measure_id, device_id, patient_id, start, end, gap_tolerance_nano)
 
         # Query the database for intervals based on the given parameters
         interval_result = self.sql_handler.select_intervals(
@@ -7064,6 +7287,77 @@ class AtriumSDK:
 
         # Convert the final intervals list to a numpy array with int64 data type
         return np.array(arr, dtype=np.int64)
+
+    def optimize_interval_index(self, gap_tolerance: int = None, *, measure_id: int = None,
+                                device_id: int = None, batch_size: int = 10_000):
+        """Compact legacy interval-index rows using the current gap policy.
+
+        Older writers and ``interval_index_mode="fast"`` append one row for each
+        interval instead of merging adjacent rows. This online maintenance pass
+        coalesces those rows while keeping only one measure/device stream page in
+        memory. A page contains at most ``batch_size`` rows (10,000 by default),
+        and each page has its own transaction, so it is suitable for indexes with
+        hundreds of millions of rows.
+
+        When ``gap_tolerance`` is omitted, the optimizer uses the period-based
+        portion of the current smart default for each measure
+        (:func:`choose_interval_gap_tolerance`). Pass an integer number of
+        nanoseconds to apply an explicit policy exactly, including ``0`` to merge
+        only overlapping or touching rows. The write-time aperiodic widening is
+        intentionally not guessed retroactively: it depends on the median spacing
+        in each original write, information that a legacy interval row does not
+        preserve. Supply the intended explicit tolerance when that distinction
+        matters.
+
+        The operation is safe to run during ingestion. It only deletes row IDs
+        selected in its own short transaction; a concurrently inserted row is never
+        deleted. Rows inserted behind an already-scanned cursor are left for a
+        subsequent pass, making concurrent operation eventually convergent rather
+        than requiring an ingestion pause.
+
+        :param int gap_tolerance: Optional explicit gap tolerance in nanoseconds.
+        :param int measure_id: Optionally optimize just one measure.
+        :param int device_id: Optionally optimize just one device of ``measure_id``.
+        :param int batch_size: Maximum interval rows read and changed per transaction.
+        :return: A mapping with ``pairs_processed``, ``rows_examined`` and
+            ``rows_merged`` counters.
+        :rtype: dict
+        """
+        if self.metadata_connection_type == "api":
+            raise NotImplementedError("API mode is not supported for interval-index optimization.")
+        if device_id is not None and measure_id is None:
+            raise ValueError("device_id requires measure_id")
+        if not isinstance(batch_size, int) or isinstance(batch_size, bool) or batch_size < 1:
+            raise ValueError("batch_size must be a positive integer")
+        if gap_tolerance is not None:
+            try:
+                normalized_gap_tolerance = int(gap_tolerance)
+            except (TypeError, ValueError, OverflowError) as error:
+                raise ValueError("gap_tolerance must be a non-negative integer number of nanoseconds") from error
+            if isinstance(gap_tolerance, bool) or normalized_gap_tolerance != gap_tolerance or normalized_gap_tolerance < 0:
+                raise ValueError("gap_tolerance must be a non-negative integer number of nanoseconds")
+            gap_tolerance = normalized_gap_tolerance
+
+        # The metadata table is tiny compared with interval_index. Building this
+        # lookup once keeps the SQL handler generic while its actual scan stays
+        # bounded by batch_size even for very large interval tables.
+        tolerances = {}
+        for row in self.sql_handler.select_all_measures():
+            current_measure_id, _, _, freq_nhz, stored_period_ns = row[:5]
+            if measure_id is not None and int(current_measure_id) != int(measure_id):
+                continue
+            if gap_tolerance is None:
+                period_ns = stored_period_ns
+                if period_ns is None and freq_nhz is not None and int(freq_nhz) > 0:
+                    period_ns = 10 ** 18 // int(freq_nhz)
+                tolerances[int(current_measure_id)] = choose_interval_gap_tolerance(period_ns)
+            else:
+                tolerances[int(current_measure_id)] = int(gap_tolerance)
+
+        if measure_id is not None and int(measure_id) not in tolerances:
+            raise ValueError(f"Unknown measure_id={measure_id}")
+        return self.sql_handler.optimize_interval_index(
+            tolerances, measure_id=measure_id, device_id=device_id, batch_size=batch_size)
 
     # ------------------------------------------------------------------ #
     # Beds and sources
@@ -7436,154 +7730,101 @@ class AtriumSDK:
         self.sql_handler.insert_tsc_file_data(path, block_data, interval_data, None)
 
 
-def get_headers(self, measure_id: int = None, start_time_n: int = None, end_time_n: int = None,
-                device_id: int = None, patient_id=None, block_info=None,
-                time_units: str = None, measure_tag: str = None,
-                freq: Union[int, float] = None, units: str = None, freq_units: str = None,
-                device_tag: str = None, mrn: str = None):
-    """
-    Get block headers for querying metadata from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
-    time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
+    def get_headers(self, measure_id: int = None, start_time_n: int = None, end_time_n: int = None,
+                    device_id: int = None, patient_id=None, block_info=None,
+                    time_units: str = None, measure_tag: str = None,
+                    freq: Union[int, float] = None, units: str = None, freq_units: str = None,
+                    device_tag: str = None, mrn: str = None):
+        """
+        .. _get_headers_label:
 
-    This method returns only the block headers without the actual wave data, making it useful for
-    exploring data structure and metadata without the overhead of reading and decoding the actual values.
+        Read only the block headers for a query, without decoding the signal itself.
 
-    If measure_id is None, measure_tag along with freq and units must not be None, and vice versa.
-    Similarly, if device_id is None, device_tag must not be None, and if patient_id is None, mrn must not be None.
+        Takes the same signal / time / source arguments as :meth:`get_data` and returns
+        exactly the header list that call would have returned as its first element --
+        but reads only each block's fixed-size header off disk instead of the whole
+        block, so the cost does not scale with how many samples the range holds. Use it
+        to inspect the shape of stored data (block boundaries, per-block time ranges,
+        sample counts, encodings) when the values themselves are not needed.
 
-    :param int measure_id: The measure identifier. If None, measure_tag must be provided.
-    :param int start_time_n: The start epoch in nanoseconds of the data you would like to query.
-    :param int end_time_n: The end epoch in nanoseconds. The end time is not inclusive.
-    :param int device_id: The device identifier. If None, device_tag must be provided.
-    :param int patient_id: The patient identifier. If None, mrn must be provided.
-    :param block_info: Custom block_info list to skip metadata table check.
-    :param str time_units: Unit for the time array returned. Options: ["s", "ms", "us", "ns"].
-    :param str measure_tag: A short string identifying the signal. Required if measure_id is None.
-    :param freq: The sample frequency of the signal. Helpful with measure_tag.
-    :param str units: The units of the signal. Helpful with measure_tag.
-    :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz", "Hz", "kHz", "MHz"] default "nHz".
-    :param str device_tag: A string identifying the device. Exclusive with device_id.
-    :param str mrn: Medical record number for the patient. Exclusive with patient_id. An int can be provided, but will be converted and stored as a string.
+        If measure_id is None, measure_tag along with freq and units must not be None, and vice versa.
+        Similarly, if device_id is None, device_tag must not be None, and if patient_id is None, mrn must not be None.
 
-    :rtype: List[BlockMetadata]
-    :returns: List of Block header objects containing metadata information.
-    """
-    # check that a correct unit type was entered
-    time_units = "ns" if time_units is None else time_units
+        >>> headers = sdk.get_headers(measure_id, start_time_n, end_time_n, device_id=device_id)
+        >>> sum(header.num_vals for header in headers)   # samples in range, nothing decoded
+        20000
 
-    if time_units not in time_unit_options.keys():
-        raise ValueError("Invalid time units. Expected one of: %s" % time_unit_options)
+        ``BlockMetadata`` is a ``ctypes.Structure``, so ``==`` on it compares identity
+        rather than contents; compare the fields if you need value equality.
 
-    # convert start and end time to nanoseconds
-    start_time_n = int(start_time_n * time_unit_options[time_units])
-    end_time_n = int(end_time_n * time_unit_options[time_units])
+        :param int measure_id: The measure identifier. If None, measure_tag must be provided.
+        :param int start_time_n: The start epoch in nanoseconds of the data you would like to query.
+        :param int end_time_n: The end epoch in nanoseconds. The end time is not inclusive.
+        :param int device_id: The device identifier. If None, device_tag must be provided.
+        :param int patient_id: The patient identifier. If None, mrn must be provided.
+        :param block_info: A precomputed ``{'block_list': ..., 'filename_dict': ...}`` pair,
+            as returned by the block-lookup helpers, used to skip the metadata query when
+            the caller has already resolved the blocks.
+        :param str time_units: Unit that `start_time_n` and `end_time_n` are given in.
+            Options: ["s", "ms", "us", "ns"], default "ns".
+        :param str measure_tag: A short string identifying the signal. Required if measure_id is None.
+        :param freq: The sample frequency of the signal. Helpful with measure_tag.
+        :param str units: The units of the signal. Helpful with measure_tag.
+        :param str freq_units: Units for frequency. Options: ["nHz", "uHz", "mHz", "Hz", "kHz", "MHz"] default "nHz".
+        :param str device_tag: A string identifying the device. Exclusive with device_id.
+        :param str mrn: Medical record number for the patient. Exclusive with patient_id. An int can be provided, but will be converted and stored as a string.
 
-    if device_id is None and device_tag is not None:
-        device_id = self.get_device_id(device_tag)
+        :rtype: List[BlockMetadata]
+        :returns: One header per block overlapping the query, ordered by file and byte
+            offset. Empty if the range holds no blocks.
+        :raises NotImplementedError: In API mode -- this is a local-mode method.
+        :raises ValueError: If `time_units` is not one of the accepted units.
+        """
+        time_units, start_time_n, end_time_n, device_id, patient_id = self._resolve_read_range(
+            start_time_n, end_time_n, time_units, device_id, device_tag, patient_id, mrn)
 
-    if patient_id is None and mrn is not None:
-        patient_id = self.get_patient_id(mrn)
+        measure_id = self._resolve_read_measure_id(measure_id, measure_tag, freq, units, freq_units)
 
-    # If the data is from the api.
-    if self.mode == "api":
-        if measure_id is None:
-            assert measure_tag is not None and freq is not None and units is not None, \
-                "Must provide measure_id or all of measure_tag, freq, units"
-            measure_id = self.get_measure_id(measure_tag, freq, units, freq_units)
+        if self.mode == "api":
+            raise NotImplementedError("get_headers is unavailable for API mode")
 
-        # For API mode, we would need to call a modified version of _get_data_api
-        # that only returns headers. Since the original code doesn't show this implementation,
-        # we'll raise an exception for now.
-        raise NotImplementedError("get_headers is not yet implemented for API mode")
+        device_id = int(device_id) if device_id is not None else device_id
 
-    # Check the measure
-    if measure_id is None:
-        assert measure_tag is not None, "One of measure_id, measure_tag must be specified."
-        measure_id = get_best_measure_id(self, measure_tag, freq, units, freq_units)
-
-    measure_id = int(measure_id) if measure_id is not None else measure_id
-    device_id = int(device_id) if device_id is not None else device_id
-
-    # Determine if we can use the cache
-    use_cache = False
-    if device_id is not None and measure_id is not None:
-        if measure_id in self.block_cache and device_id in self.block_cache[measure_id]:
-            use_cache = True
-
-    if use_cache:
-        # Use cached blocks
-        block_list = self.find_blocks(measure_id, device_id, start_time_n, end_time_n)
-        filename_dict = self.filename_dict
-
-        if len(block_list) == 0:
-            return []
-
-    elif block_info is None:
-        # Fetch blocks from the database
-        block_list = self.sql_handler.select_blocks(
-            int(measure_id), int(start_time_n), int(end_time_n), device_id, patient_id
-        )
-
-        read_list = condense_byte_read_list(block_list)
-
-        # if no matching block ids
-        if len(read_list) == 0:
-            return []
-
-        file_id_list = [row[2] for row in read_list]
-        filename_dict = self.get_filename_dict(file_id_list)
-    else:
-        block_list = block_info['block_list']
-        filename_dict = block_info['filename_dict']
+        block_list, filename_dict, _ = self._select_read_blocks(
+            measure_id, device_id, patient_id, start_time_n, end_time_n, block_info)
 
         # if no matching block ids
         if len(block_list) == 0:
             return []
 
-    # Get headers from blocks without reading the actual data
-    headers = self.get_headers_from_blocks(block_list, filename_dict)
-
-    return headers
+        # Get headers from blocks without reading the actual data
+        return self.get_headers_from_blocks(block_list, filename_dict)
 
 
-def get_headers_from_blocks(self, block_list, filename_dict):
-    """
-    Retrieve only the headers from blocks without decoding the actual wave data.
+    def get_headers_from_blocks(self, block_list, filename_dict):
+        """
+        Retrieve only the headers from blocks without decoding the actual wave data.
 
-    This method reads only the header portion of the specified blocks, providing
-    metadata information without the overhead of decoding time and value data.
+        This method reads only the header portion of the specified blocks, providing
+        metadata information without the overhead of decoding time and value data.
 
-    :param list block_list: List of blocks to read headers from.
-    :param dict filename_dict: Dictionary containing file information.
-    :return: List of block headers.
-    :rtype: List[BlockMetadata]
-    """
-    if self.metadata_connection_type == "api":
-        raise ValueError("This function is only meant to work in local mode.")
+        :param list block_list: List of blocks to read headers from.
+        :param dict filename_dict: Dictionary containing file information.
+        :return: List of block headers.
+        :rtype: List[BlockMetadata]
+        """
+        if self.metadata_connection_type == "api":
+            raise ValueError("This function is only meant to work in local mode.")
 
-    # Condense the block list for optimized reading
-    read_list = condense_byte_read_list(block_list)
+        header_size = sizeof(BlockMetadata)
 
-    # Read only the header portions of the blocks
-    # We only need to read enough bytes to get the headers, not the entire blocks
-    header_size = sizeof(BlockMetadata)
+        header_read_list = [[row[1], row[2], row[3], row[4], header_size] for row in block_list]
 
-    # Create a modified read list that only reads the header portion of each block
-    header_read_list = []
-    for row in read_list:
-        # row format: [file_id, start_byte, end_byte, ...]
-        file_id, start_byte = row[0], row[1]
-        # Only read the header portion (first header_size bytes of each block)
-        header_read_list.append([file_id, start_byte, start_byte + header_size] + list(row[3:]))
+        encoded_header_bytes = self.file_api.read_file_list(header_read_list, filename_dict)
 
-    # Read the header data from the files
-    encoded_header_bytes = self.file_api.read_file_list(header_read_list, filename_dict)
+        num_headers = len(block_list)
+        byte_start_array = np.arange(0, num_headers * header_size, header_size, dtype=np.uint64)
 
-    # Calculate byte positions for each header
-    num_headers = len(block_list)
-    byte_start_array = np.arange(0, num_headers * header_size, header_size, dtype=np.uint64)
+        headers = self.block.decode_headers(encoded_header_bytes, byte_start_array)
 
-    # Decode only the headers
-    headers = self.block.decode_headers(encoded_header_bytes, byte_start_array)
-
-    return headers
+        return headers

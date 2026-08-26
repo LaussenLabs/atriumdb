@@ -33,8 +33,7 @@ SEED = 42
 # effective: the cost is serialisation, not encoding. MAX_RECORDS is unchanged.
 # See test_mit_bih.TRUNCATED_SAMPLES_PER_RECORD for why 20,000 is the floor.
 
-# The server used to bind a hard-coded port 8123 in a daemon thread with no readiness
-# wait -- a latent flake and a blocker for pytest-xdist. Bind an ephemeral port instead
+# Bind an ephemeral port and wait until the server is ready.
 # and wait until uvicorn reports it is actually serving.
 API_HOST = "127.0.0.1"
 
@@ -200,7 +199,7 @@ def _test_api_labels(db_type, dataset_location, connection_params, api_url):
     patient_id = sdk.insert_patient(mrn="1234567", first_name="Sterling", middle_name="Malory", last_name="Archer",
                                     dob=283901400000000, weight=83.461, weight_units='kg', height=188, height_units='cm')
 
-    # should raise not implemented error since there is no api mode for insertion
+    # API mode does not support insertion.
     with pytest.raises(NotImplementedError):
         api_sdk.insert_label(name=label_names[0], patient_id=patient_id, start_time=start_time, end_time=end_time,
                          time_units="ms", label_source='test')

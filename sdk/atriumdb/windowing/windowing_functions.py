@@ -22,7 +22,7 @@ from atriumdb.windowing.window import Window
 from atriumdb.string_dictionary import UNKNOWN_STRING_CODE
 from atriumdb.measure_kinds import (
     SIGNAL_KIND_WAVEFORM, SIGNAL_KIND_SAMPLE, SIGNAL_KIND_EVENT, SIGNAL_KIND_STATE,
-    DEFAULT_SIGNAL_KIND, is_string_value_type)
+    DEFAULT_SIGNAL_KIND, is_string_value_type, measure_kind_of)
 
 # 1 second nominal raster period, used when an aperiodic measure has no usable
 # grid period.
@@ -170,6 +170,70 @@ def resolve_nominal_period_ns(measure, period_override=None):
     if signal_kind == SIGNAL_KIND_WAVEFORM:
         return int(measure["period_ns"])
     return ONE_SECOND_NS
+
+
+def build_render_config(measures, window_duration_ns, window_slide_ns, aperiodic_fill=None,
+                        fill_overrides=None, period_overrides=None):
+    """Resolve the raster configuration shared by window-producing call sites.
+
+    ``DatasetIterator`` and ``DatasetDefinition.filter`` must render a measure
+    identically before they expose it to user code. Keeping the resolution and
+    zero-cell checks here prevents one path from silently falling back to the
+    legacy numeric grid.
+    """
+    fill_overrides = dict(fill_overrides) if fill_overrides else {}
+    period_overrides = dict(period_overrides) if period_overrides else {}
+
+    known_ids = {measure['id'] for measure in measures}
+    id_hint = ", ".join(f"{measure['id']} ({measure['tag']})" for measure in measures)
+    for param_name, overrides in (("fill_overrides", fill_overrides),
+                                  ("period_overrides", period_overrides)):
+        unknown = [key for key in overrides if key not in known_ids]
+        if unknown:
+            raise ValueError(
+                f"{param_name} contains key(s) {unknown} that match no measure in this "
+                f"definition. Keys must be measure IDs (integers), not measure tags. "
+                f"Measures in this definition: {id_hint}.")
+
+    config = {}
+    for measure in measures:
+        measure_id = measure['id']
+        measure_name = f"Measure {measure_id} ('{measure['tag']}')"
+        signal_kind, value_type = measure_kind_of(measure)
+        period_override = period_overrides.get(measure_id)
+        if period_override is not None and signal_kind == SIGNAL_KIND_WAVEFORM:
+            raise ValueError(
+                f"{measure_name} is a 'waveform' measure; period_overrides only applies to "
+                f"aperiodic measures ('sample'/'state'/'event'), whose nominal raster period "
+                f"is a rendering choice. A waveform is always sampled on its own stored "
+                f"period ({measure['period_ns']} ns). Remove measure {measure_id} from "
+                f"period_overrides.")
+
+        period_ns = int(resolve_nominal_period_ns(measure, period_override=period_override))
+        if period_ns > window_duration_ns:
+            raise ValueError(
+                f"{measure_name}: resolved nominal raster period {period_ns} ns is larger than "
+                f"the window duration {window_duration_ns} ns, so a window would contain zero "
+                f"grid cells. Increase window_duration or lower this measure's period via "
+                f"period_overrides.")
+        if period_ns > window_slide_ns:
+            raise ValueError(
+                f"{measure_name}: resolved nominal raster period {period_ns} ns is larger than "
+                f"the window slide {window_slide_ns} ns, so the slide would advance zero grid "
+                f"cells. Increase window_slide or lower this measure's period via "
+                f"period_overrides.")
+
+        fill_rule = resolve_fill_rule(
+            signal_kind, value_type, override=fill_overrides.get(measure_id),
+            global_default=aperiodic_fill)
+        config[measure_id] = {
+            'signal_kind': signal_kind,
+            'value_type': value_type,
+            'period_ns': period_ns,
+            'fill_rule': fill_rule,
+            'is_string': is_string_value_type(value_type),
+        }
+    return config
 
 
 def _rasterize_grid(grid_times, period_ns, sample_times, sample_values, rule, is_string,
@@ -655,7 +719,7 @@ def _get_patient_info_from_cache(patient_id, window_start_time, patient_info_cac
     return window_patient_info
 
 def get_window_list(device_id, patient_id, validated_measure_list, source_batch_data_dictionary,
-                    batch_start_time, num_windows, window_slide_ns, threshold_labels, sliced_labels,
+                    batch_start_time, num_windows, window_duration_ns, window_slide_ns, threshold_labels, sliced_labels,
                     patient_history_cache, patient_history_fields, patient_info_cache):
     batch_window_list = []
     window_start_time = batch_start_time
@@ -705,6 +769,7 @@ def get_window_list(device_id, patient_id, validated_measure_list, source_batch_
         result_window = Window(
             signals=signal_dictionary,
             start_time=int(window_start_time),
+            end_time=int(window_start_time + window_duration_ns),
             device_id=device_id,
             patient_id=patient_id,
             label_time_series=label_time_series,

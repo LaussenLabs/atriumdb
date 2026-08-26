@@ -15,12 +15,9 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-Regression guards for the READ / WINDOWING / ITERATOR / EXPORT defects found by
-the wave-2 adversarial review of the aperiodic + text feature (design sections
-21, 23). One minimal test per fixed defect.
+Read, windowing, iterator, and export behavior tests for aperiodic and text data.
 
-Every test here asserts the FIXED behaviour and must PASS. SQLite only; no
-MariaDB and no physionet download needed.
+SQLite only; no MariaDB or PhysioNet download is needed.
 """
 import os
 import shutil
@@ -38,7 +35,7 @@ BASE = 1_600_000_000 * SEC
 
 @pytest.fixture
 def sdk():
-    loc = tempfile.mkdtemp(prefix="atrium_read_fixes_")
+    loc = tempfile.mkdtemp(prefix="atrium_aperiodic_read_")
     shutil.rmtree(loc, ignore_errors=True)
     s = AtriumSDK.create_dataset(dataset_location=loc, database_type="sqlite")
     try:
@@ -72,6 +69,23 @@ def _one(window):
 
 def _signal(window, tag):
     return next(s for k, s in window.signals.items() if k[0] == tag)
+
+
+# --------------------------------------------------------------------------- #
+# 0. every emitted window exposes its logical end without inspecting signals
+# --------------------------------------------------------------------------- #
+def test_window_exposes_its_nominal_end_time(sdk):
+    """A window's end is part of its public geometry, including when callers
+    do not inspect a signal grid to derive it."""
+    dev = sdk.insert_device(device_tag="d1")
+    measure = sdk.insert_measure("ecg", freq=1.0, freq_units="Hz", units="mV")
+    times = BASE + np.arange(10, dtype=np.int64) * SEC
+    sdk.write_time_value_pairs(measure, dev, times, np.arange(times.size), period=SEC)
+
+    definition = _region_def(sdk, ["ecg"], dev, BASE, BASE + 10 * SEC)
+    window = _windows(sdk.get_iterator(definition, 10 * SEC, 10 * SEC))[0]
+
+    assert window.end_time == window.start_time + 10 * SEC
 
 
 # --------------------------------------------------------------------------- #
@@ -126,10 +140,7 @@ def test_decode_string_signal_still_decodes_a_real_code_channel(sdk):
 # 2. cached_windows_per_source is a RAM knob and must not change any value
 # --------------------------------------------------------------------------- #
 def test_carry_forward_is_independent_of_cached_windows_per_source(sdk):
-    """_split_time_ranges rewrites self.sources, so every split piece used to
-    become its own carry-forward seed floor -- a pure RAM/shuffle knob silently
-    turned carried-forward state into the unknown sentinel from the first split
-    onward. This is the shuffle-on ML training path."""
+    """Splitting time ranges must preserve carry-forward state across pieces."""
     dev = sdk.insert_device(device_tag="d1")
     m_state = sdk.insert_measure("mode", freq=1.0, freq_units="Hz", units="string",
                                  signal_kind="state")
@@ -199,9 +210,7 @@ def test_event_presence_does_not_fabricate_zeros_past_the_range_end(sdk):
 # 4. the pre-flight guard must use the resolved nominal period, not freq_nhz
 # --------------------------------------------------------------------------- #
 def test_iterator_accepts_an_honestly_declared_aperiodic_measure(sdk):
-    """An NIBP declared at its true 1/300 Hz used to be rejected outright by
-    get_iterator's freq-derived sample-count guard, and period_overrides could
-    not rescue it because the guard runs before the iterator is built."""
+    """An NIBP declared at 1/300 Hz is valid for the iterator."""
     dev = sdk.insert_device(device_tag="d1")
     m = sdk.insert_measure("nibp", freq=1 / 300, freq_units="Hz", units="mmHg",
                            signal_kind="sample")
@@ -216,7 +225,7 @@ def test_iterator_accepts_an_honestly_declared_aperiodic_measure(sdk):
 
 
 def test_period_larger_than_the_window_still_names_the_measure(sdk):
-    """The guard must not swallow the P3 audit's measure-named Bug-3 error."""
+    """The guard must not swallow a measure-named error."""
     dev = sdk.insert_device(device_tag="d1")
     m = sdk.insert_measure("lab", freq=1.0, freq_units="Hz", units="mmol/L",
                            signal_kind="sample")
@@ -252,8 +261,7 @@ def test_aperiodic_fill_rejects_an_unknown_rule_name(sdk):
 
 def test_overrides_reject_a_key_that_matches_no_definition_measure(sdk):
     """Override dicts are keyed by measure ID; an unknown key (typically a
-    measure TAG, which is how definitions identify measures everywhere else)
-    used to be a silent no-op."""
+    measure tag, which definitions commonly use) must raise an error."""
     dev = sdk.insert_device(device_tag="d1")
     m = sdk.insert_measure("lab", freq=1.0, freq_units="Hz", units="mmol/L",
                            signal_kind="sample")
@@ -272,9 +280,7 @@ def test_overrides_reject_a_key_that_matches_no_definition_measure(sdk):
 
 
 def test_period_override_on_a_waveform_measure_names_the_measure(sdk):
-    """period_overrides is an aperiodic-raster concept. On a waveform it used to
-    re-grid the legacy NaN-fill path while get_data still filled at the real
-    frequency, producing an opaque, measure-less block-codec error."""
+    """period_overrides applies only to aperiodic rasterization."""
     dev = sdk.insert_device(device_tag="d1")
     m = sdk.insert_measure("ecg", freq=4.0, freq_units="Hz", units="mV")
     sdk.write_time_value_pairs(m, dev, BASE + np.arange(40, dtype=np.int64) * (SEC // 4),
@@ -289,9 +295,7 @@ def test_period_override_on_a_waveform_measure_names_the_measure(sdk):
 # 6. the carry-forward seed lookback must be bounded
 # --------------------------------------------------------------------------- #
 def test_carry_forward_seed_lookback_is_bounded(sdk):
-    """The seed read used to span [definition_range_start, batch_start) on EVERY
-    batch and keep only the last element: O(N) per batch, O(N^2) overall, with a
-    code comment falsely claiming bounded RAM."""
+    """Carry-forward seed lookup remains bounded across batches."""
     dev = sdk.insert_device(device_tag="d1")
     m = sdk.insert_measure("mode", freq=1.0, freq_units="Hz", units="string",
                            signal_kind="state")
@@ -333,7 +337,7 @@ def test_carry_forward_seed_lookback_is_bounded(sdk):
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("kind,units,expect", [
     ("state", "string", "string measure"),      # AtriumDBMapDataset's documented path
-    ("sample", "mmHg", "aperiodic"),            # numeric aperiodic: used to be opaque
+    ("sample", "mmHg", "aperiodic"),
 ])
 def test_lightmapped_rejects_aperiodic_measures_actionably(sdk, kind, units, expect):
     """AtriumDBMapDataset hard-coded iterator_type='lightmapped', which is the
@@ -376,8 +380,7 @@ def test_lightmapped_still_works_for_waveform_measures(sdk):
 ])
 def test_event_region_rejects_silently_ignored_keys(extra):
     """_get_validated_entries branches on 'anchor'/'from' and never reads
-    'start'/'end'/'time0' in the same dict, so "anchor within this shift" used to
-    validate cleanly and silently return the whole range."""
+    'start'/'end'/'time0' in the same dict, so mixed forms are invalid."""
     region = {"anchor": "START", "measure": "anes", "pre": 10 * SEC, "post": 10 * SEC}
     region.update(extra)
     with pytest.raises(ValueError, match="cannot be combined"):
@@ -404,11 +407,7 @@ def test_event_region_rejects_max_duration_zero():
 def test_carry_forward_renders_a_reading_in_the_cell_it_falls_in(sdk):
     """A cell reports the value in effect DURING that cell.
 
-    carry_forward used to give a cell the most recent reading at or before the
-    cell's START (searchsorted side='right' on the grid), so a reading landing
-    mid-cell only surfaced from the NEXT cell -- and a reading in the FINAL cell of
-    the definition range had no next cell, so it vanished from every window: an
-    all-sentinel window with actual_count 0 despite a genuine in-range observation.
+    carry_forward assigns a reading to the cell in which it occurs.
     """
     dev = sdk.insert_device(device_tag="d1")
     m = sdk.insert_measure("lactate", freq=1.0, freq_units="Hz", units="mmol/L",
@@ -430,7 +429,7 @@ def test_carry_forward_mid_cell_reading_is_not_delayed_by_one_cell(sdk):
     """The same off-by-one, away from the range boundary, for a string state.
 
     Also pins the invariant that a reading landing exactly ON a cell boundary is
-    unaffected by the fix (that is what every pre-existing P3 test writes).
+    unaffected by the change (that is what existing tests write).
     """
     dev = sdk.insert_device(device_tag="d1")
     m = sdk.insert_measure("mode", freq=1.0, freq_units="Hz", units="string",
@@ -591,14 +590,7 @@ def _export_src(sdk):
 
 
 def test_csv_export_writes_string_measures_instead_of_dropping_them(sdk):
-    """CSV / Parquet / NPZ used to export only the numeric measure.
-
-    Requesting a numeric plus a string measure produced a bundle containing just
-    the numeric one -- no warning, no error -- while the bundle's own
-    meta/definition.yaml still listed the string measure under ``measures:``. A
-    user would ship that extract believing the events were in it. These formats
-    all have a text-capable value column, so the decoded strings are written.
-    """
+    """CSV, Parquet, and NPZ export decoded strings for string measures."""
     from atriumdb.transfer.adb.dataset import transfer_data
 
     dev = _export_src(sdk)

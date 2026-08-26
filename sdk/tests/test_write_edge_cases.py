@@ -7,24 +7,20 @@
 #     the Free Software Foundation, either version 3 of the License, or
 #     (at your option) any later version.
 """
-Regression guards for PRE-EXISTING write-path defects -- bugs that are present on
-``main`` and are not caused by the aperiodic + text feature, though that feature is what
-made two of them routine rather than exotic.
+Write-path edge-case tests.
 
-  W5  concurrent small writes to the same (measure, device) took an unserialized
+  * Concurrent small writes to the same (measure, device) take an unserialized
       read-modify-write through the block merge, losing writes and duplicating data.
-  --  ``transfer_devices`` keyed its returned map by ``None`` when the destination
+  * ``transfer_devices`` keys its returned map by ``None`` when the destination
       already held a different device at the source's device id.
-  D4  a replayed batch of ``block_size`` values or more skipped the block merge and so
+  * A replayed batch of ``block_size`` values or more skips the block merge and so
       silently DUPLICATED data that a smaller batch would have deduplicated.
-  D5  ``transfer_data`` died with ``KeyError: None`` on a label with no measure, and
+  * ``transfer_data`` handles labels with no measure and
       built its ``insert_labels`` tuples with the fields one position out of step.
-
-Every test here must PASS.
 
     docker run --rm -v "<repo>:/atriumdb" -e PYTHONPATH=/atriumdb/sdk \
         atriumdb-test:latest python -m pytest \
-        /atriumdb/sdk/tests/test_preexisting_write_fixes.py -q
+        /atriumdb/sdk/tests/test_write_edge_cases.py -q
 """
 import logging
 import multiprocessing
@@ -44,7 +40,7 @@ SEC = 1_000_000_000
 BASE = 1_600_000_000 * SEC
 
 # Small enough to stay fast in CI, large enough that the unserialized merge lost data on
-# every observed run (4 processes x 10 writes lost 20-35% before the fix).
+# every run (4 processes x 10 writes loses 20-35%).
 CONCURRENT_PROCS = 4
 CONCURRENT_WRITES = 10
 CONCURRENT_TOTAL = CONCURRENT_PROCS * CONCURRENT_WRITES
@@ -58,7 +54,7 @@ def _new_dataset(prefix):
 
 
 # =========================================================================== #
-# W5 -- the block-merge read-modify-write must be serialized
+# The block-merge read-modify-write must be serialized.
 # =========================================================================== #
 def _concurrent_worker(args):
     """One process drip-writing single events, INTERLEAVED with the others' timestamps so
@@ -84,12 +80,7 @@ def test_concurrent_event_writes_lose_no_values():
     SELECT of the closest block, a decode of its file, a merge, and a DELETE of the old
     block row -- with no isolation between those steps. Concurrent writers therefore
     merged into the SAME old block and the loser's transaction aborted with
-    ``TypeError: 'NoneType' object is not subscriptable``. Observed before the fix:
-    65-77 of 100 events readable across four trials, plus large-scale silent
-    DUPLICATION (6742 rows read back for 320 writes) from the surviving overlapping
-    merged blocks.
-
-    Pre-existing on main; events merely make the merge path certain instead of rare.
+    ``TypeError: 'NoneType' object is not subscriptable``.
     """
     sdk, location = _new_dataset("concurrent")
     try:
@@ -120,10 +111,9 @@ def test_concurrent_event_writes_lose_no_values():
 
 
 def test_concurrent_numeric_writes_lose_no_values():
-    """The same race with NUMERIC values, pinning that the fix is not string-specific:
+    """The same race with numeric values confirms that the behavior is not string-specific:
     any stream whose writes are smaller than one block (trickle ingest, per-reading
-    writes) was equally exposed. Observed before the fix: 33 raises and 287 of 320
-    distinct values across 8 processes."""
+    writes) is equally exposed."""
     sdk, location = _new_dataset("concurrent_num")
     try:
         sdk.insert_measure(measure_tag="hr", freq=1, freq_units="Hz", units="bpm",
@@ -196,7 +186,7 @@ def test_transfer_devices_keys_the_map_by_the_source_device_id():
     ``None`` (it reused the loop variable as the "which id to request" flag). Every later
     lookup for that source device then missed: ``extract_device_ids`` resolved it to
     ``dest_device_id=None`` and wrote the device's data under a null device, and the
-    label transfer raised ``KeyError``. Pre-existing on main."""
+    label transfer raises ``KeyError``."""
     src, src_location = _new_dataset("dev_src")
     dst, dst_location = _new_dataset("dev_dst")
     try:
@@ -239,7 +229,7 @@ def test_transfer_devices_reuses_a_matching_destination_device():
 
 
 # =========================================================================== #
-# D4 -- a replay too big to merge must not duplicate SILENTLY
+# A replay too large to merge must not duplicate silently.
 # =========================================================================== #
 # Deduplication in this SDK is a side effect of the small-write block merge, which
 # ``write_data`` only takes when the write is smaller than one optimal block. The
@@ -268,23 +258,20 @@ def _replay_dataset(prefix, **create_kwargs):
                                    **create_kwargs)
     sdk.block.block_size = SMALL_BLOCK
     measure_id = sdk.insert_measure(measure_tag="ecg", freq=FREQ_HZ, freq_units="Hz", units="mV")
-    device_id = sdk.insert_device(device_tag="d4_dev")
+    device_id = sdk.insert_device(device_tag="replay_dev")
     return sdk, location, measure_id, device_id
 
 
 def test_large_replay_duplication_is_quiet_and_resolved_on_read(caplog):
-    """RE-POINTED (was ``test_large_replay_reports_the_duplication_it_cannot_prevent``,
-    which asserted a WARNING on every such write).
-
-    A batch of one optimal block or more never merges, so replaying it stores both copies.
+    """A batch of one optimal block or more never merges, so replaying it stores both copies.
     That is accepted: write speed is the priority and duplicates are expected at live
     ingest. Warning on every large overlapping write is therefore noise on a normal
-    workload, so the report is now DEBUG-level and the resolution is the READ-side
+    workload, so the report is DEBUG-level and the resolution is the read-side
     ``allow_duplicates=False``.
 
     What this pins: no warning is emitted; the debug report, if you ask for it, is precise
     and points at the read-side parameter; and that parameter actually resolves the data."""
-    sdk, location, measure_id, device_id = _replay_dataset("d4_quiet")
+    sdk, location, measure_id, device_id = _replay_dataset("replay_quiet")
     try:
         _write_replay_segment(sdk, measure_id, device_id, REPLAY_START_S)
 
@@ -316,8 +303,8 @@ def test_large_replay_duplication_is_quiet_and_resolved_on_read(caplog):
 def test_large_replay_is_refused_under_the_error_overwrite_setting():
     """``overwrite='error'`` already refused an overlapping SMALL write via the merge
     conflict policy. It was unenforceable for a large one, because a large write never
-    reached the merge. The same setting now refuses both, before anything is written."""
-    sdk, location, measure_id, device_id = _replay_dataset("d4_error", overwrite="error")
+    reached the merge. The same setting refuses both before anything is written."""
+    sdk, location, measure_id, device_id = _replay_dataset("replay_error", overwrite="error")
     try:
         _write_replay_segment(sdk, measure_id, device_id, REPLAY_START_S)
         with pytest.raises(ValueError, match="overlaps data already stored"):
@@ -335,7 +322,7 @@ def test_contiguous_bulk_append_is_never_reported_as_an_overlap(caplog):
     """Do-no-harm counterpart, and the reason the check uses block-index bounds rather
     than the gap-tolerance-padded interval rows: ordinary bulk ingest appends batch after
     contiguous batch, and must stay both silent and complete."""
-    sdk, location, measure_id, device_id = _replay_dataset("d4_append")
+    sdk, location, measure_id, device_id = _replay_dataset("replay_append")
     try:
         with caplog.at_level(logging.WARNING, logger="atriumdb.atrium_sdk"):
             for batch in range(3):
@@ -351,9 +338,9 @@ def test_contiguous_bulk_append_is_never_reported_as_an_overlap(caplog):
 
 
 def test_small_replay_is_still_deduplicated_by_the_merge_path():
-    """Do-no-harm counterpart: the size-dependent behaviour is now REPORTED, not changed.
+    """The size-dependent behavior is reported, not changed.
     A replay below block_size must still deduplicate exactly as it did before."""
-    sdk, location, measure_id, device_id = _replay_dataset("d4_small")
+    sdk, location, measure_id, device_id = _replay_dataset("replay_small")
     try:
         for offset in (0.0, 1000.0):
             sdk.write_segment(measure_id, device_id,
@@ -369,7 +356,7 @@ def test_small_replay_is_still_deduplicated_by_the_merge_path():
 
 
 # =========================================================================== #
-# D5 -- labels must survive transfer_data intact, with or without a measure
+# Labels must survive transfer_data intact, with or without a measure.
 # =========================================================================== #
 def _seed_label_source(sdk):
     """A source dataset holding one alarm measure, one device/patient mapping and two
@@ -438,10 +425,8 @@ def test_transfer_carries_a_label_that_has_no_measure():
 
 
 def test_transfer_rejects_a_label_bound_to_an_excluded_measure_by_name():
-    """The other half of the same lookup: a label pointing at a measure the definition
-    does not include has no destination id to map to. It used to raise a bare
-    ``KeyError: 2``; it must now say which label and what to do, and it must never be
-    dropped quietly -- a label is data."""
+    """A label referencing a measure outside the definition has no destination id.
+    The error must identify the label and required action without dropping the label."""
     src, src_location = _new_dataset("lbl_ex_src")
     dst, dst_location = _new_dataset("lbl_ex_dst")
     try:
@@ -454,7 +439,7 @@ def test_transfer_rejects_a_label_bound_to_an_excluded_measure_by_name():
         message = str(excinfo.value)
         assert "'Artifact on HR'" in message, "the error must name the offending label"
         assert "does not include" in message
-        assert "measures" in message, "the error must say how to fix it"
+        assert "measures" in message, "the error must identify the required measures"
     finally:
         src.close()
         dst.close()
@@ -467,10 +452,8 @@ def test_transfer_rejects_a_label_bound_to_an_excluded_measure_by_name():
 #
 # De-identification covers patient-level PHI and time-shifting. It does NOT alter signal
 # or label content: a string measure's values and a label's name/text are DATA, and a
-# caller permitted to read a signal is permitted to read all of it. A previous change
-# defaulted `deidentify=True` to rewriting every string value to "<redacted>" and to
-# pseudonymizing bed/unit/institution names; both are reverted here, and the patient-level
-# scrub must be untouched by that revert.
+# caller permitted to read a signal is permitted to read all of it. Patient-level
+# de-identification does not alter signal values or location names.
 # =========================================================================== #
 
 

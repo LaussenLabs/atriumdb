@@ -402,8 +402,6 @@ def patient_ls(ctx, skip, limit, age_years_min, age_years_max, gender, source_id
     metadata_uri = ctx.obj["metadata_uri"]
     database_type = ctx.obj["database_type"]
 
-    print(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
-
     sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
 
     result = sdk.get_all_patients(skip=skip, limit=limit)

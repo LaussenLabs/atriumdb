@@ -32,8 +32,7 @@ TEST_DIR = Path(__file__).parent
 EXAMPLE_DATA_DIR = TEST_DIR / "example_data"
 
 
-# Together with test_mit_bih.py this is the repo's numeric regression
-# backbone, and it keeps its data volume EXACTLY (max_records=2, full 650,000-sample
+# This suite keeps its data volume exactly (max_records=2, full 650,000-sample
 # records, all 4 definition files x 4 iterator passes). It is excluded from the default
 # and fast runs by the `nightly` marker and scheduled nightly instead, which changes
 # zero coverage. Do not truncate it and do not thin the definition/iterator matrix.

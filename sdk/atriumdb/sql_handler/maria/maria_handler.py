@@ -26,13 +26,12 @@ from typing import List, Dict, Tuple
 
 from atriumdb.adb_functions import allowed_interval_index_modes
 from atriumdb.sql_handler.maria.maria_functions import maria_select_measure_from_triplet_query, \
-    maria_select_measure_from_id, maria_select_device_from_tag_query, \
-    maria_select_device_from_id_query, maria_insert_file_index_query, maria_insert_block_query, \
-    maria_select_file_by_id, maria_select_file_by_values, maria_select_block_by_id, \
-    maria_select_block_by_values, maria_select_interval_by_id, maria_select_interval_by_values, \
-    mariadb_setting_insert_query, mariadb_setting_select_query, maria_select_all_query, \
+    maria_select_measure_from_id, \
+    maria_insert_file_index_query, maria_insert_block_query, \
+    maria_select_block_by_id, maria_select_block_by_values, \
+    mariadb_setting_insert_query, \
     maria_insert_ignore_device_encounter_query, maria_insert_ignore_encounter_query, maria_insert_ignore_patient_query, \
-    maria_select_blocks_from_file, maria_delete_block_query, maria_insert_interval_index_query
+    maria_delete_block_query, maria_insert_interval_index_query
 from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query, \
     maria_file_index_create_query, maria_block_index_create_query, maria_interval_index_create_query, \
     maria_settings_create_query, maria_device_encounter_create_query, maria_source_create_query, \
@@ -44,13 +43,18 @@ from atriumdb.sql_handler.maria.maria_tables import mariadb_measure_create_query
     maria_patient_history_create_query, mariadb_label_set_create_query, \
     mariadb_label_create_query, mariadb_label_source_create_query
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
-from atriumdb.sql_handler.sql_handler import SQLHandler
-from atriumdb.sql_handler.sql_helper import join_sql_and_bools
+from atriumdb.sql_handler.sql_handler import SQLHandler, block_insert_tuples, interval_insert_tuples
 import logging
 
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_PORT = 3306
+
+
+def maria_connection_args(connection_params: dict):
+    """Return ``MariaDBHandler``'s positional connection arguments in order."""
+    return tuple(connection_params[key]
+                 for key in ('host', 'user', 'password', 'database', 'port'))
 
 
 class SingleConnectionManager:
@@ -107,6 +111,10 @@ class SingleConnectionManager:
 
 
 class MariaDBHandler(SQLHandler):
+    _MISSING_COLUMN_PHRASE = "unknown column"
+    _MISSING_TABLE_ERRORS = (ProgrammingError,)
+    _MISSING_TABLE_PHRASES = ("Table", "doesn't exist")
+
     def __init__(self, host: str, user: str, password: str, database: str, port: int = None, no_pool=False,
                  validation_interval=500):
         self.host = host
@@ -152,6 +160,15 @@ class MariaDBHandler(SQLHandler):
                     raise
                 self._interval_union_proc_available = False
         cursor.callproc("insert_interval", params)
+
+    def _interval_optimizer_lock_clause(self) -> str:
+        """Lock a maintenance page so merge-mode ingestion cannot rewrite it.
+
+        The optimizer commits after each bounded page, keeping these locks short
+        while still preventing it from deleting or overwriting a row a concurrent
+        ``insert_interval_union`` call is updating.
+        """
+        return " FOR UPDATE"
 
     def maria_connect(self):
         return mariadb.connect(**self.connection_params)
@@ -259,6 +276,11 @@ class MariaDBHandler(SQLHandler):
         cursor.close()
         conn.close()
 
+        # Stamp the dataset a brand-new schema produces as current, so opening it
+        # right after (even with the default auto_upgrade=False) never sees a
+        # pending upgrade -- see SQLHandler.pending_schema_upgrades.
+        self.record_dataset_schema_version()
+
     def _column_exists(self, cursor, table_name: str, column_name: str) -> bool:
         """Check if a column exists in a table."""
         cursor.execute("""
@@ -322,12 +344,6 @@ class MariaDBHandler(SQLHandler):
             conn.commit()
             return True
 
-    def select_all_devices(self):
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute("SELECT id, tag, name, manufacturer, model, type, bed_id, source_id FROM device")
-            rows = cursor.fetchall()
-        return rows
-
     def select_all_measures(self):
         try:
             with self.maria_db_connection() as (conn, cursor):
@@ -338,12 +354,7 @@ class MariaDBHandler(SQLHandler):
                 rows = cursor.fetchall()
             return rows
         except mariadb.Error as e:
-            if "period_ns" in str(e).lower() or "unknown column" in str(e).lower():
-                raise ValueError(
-                    "A required column is missing from the measure table (e.g. "
-                    "'period_ns', 'signal_kind' or 'value_type'). "
-                    "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
-                ) from e
+            self._reraise_missing_measure_column(e)
             raise
 
     def select_all_patients(self):
@@ -368,12 +379,7 @@ class MariaDBHandler(SQLHandler):
                 conn.commit()
                 return cursor.lastrowid
         except mariadb.Error as e:
-            if "period_ns" in str(e).lower() or "unknown column" in str(e).lower():
-                raise ValueError(
-                    "A required column is missing from the measure table (e.g. "
-                    "'period_ns', 'signal_kind' or 'value_type'). "
-                    "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
-                ) from e
+            self._reraise_missing_measure_column(e)
             raise
 
     def select_measure(self, measure_id: int = None, measure_tag: str = None, freq_nhz: int = None, units: str = None):
@@ -389,20 +395,8 @@ class MariaDBHandler(SQLHandler):
 
             return row
         except mariadb.Error as e:
-            if "period_ns" in str(e).lower() or "unknown column" in str(e).lower():
-                raise ValueError(
-                    "A required column is missing from the measure table (e.g. "
-                    "'period_ns', 'signal_kind' or 'value_type'). "
-                    "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
-                ) from e
+            self._reraise_missing_measure_column(e)
             raise
-
-    def measure_has_blocks(self, measure_id: int) -> bool:
-        """True if any block exists for this measure (used to detect an
-        already-established numeric measure when the value_type column is NULL)."""
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute("SELECT 1 FROM block_index WHERE measure_id = ? LIMIT 1", (int(measure_id),))
-            return cursor.fetchone() is not None
 
     def set_string_dict_watermark(self, measure_id: int, vocabulary_size: int):
         """Raise this measure's recorded string-vocabulary size (see
@@ -418,23 +412,43 @@ class MariaDBHandler(SQLHandler):
                 "GREATEST(CAST(setting.value AS UNSIGNED), CAST(VALUES(value) AS UNSIGNED))",
                 (name, value))
 
-    def update_measure_metadata(self, measure_id: int, signal_kind: str = None, value_type: str = None):
-        """Set the measure-kind columns for a measure. Only the provided
-        (non-None) fields are written; used to persist first-write value_type
-        inference and the opportunistic string backfill. Idempotent."""
-        sets, params = [], []
-        if signal_kind is not None:
-            sets.append("signal_kind = ?")
-            params.append(signal_kind)
-        if value_type is not None:
-            sets.append("value_type = ?")
-            params.append(value_type)
-        if not sets:
-            return
-        params.append(int(measure_id))
+    def _upsert_setting(self, name: str, value: str):
+        """Unconditional single-statement upsert for one `setting` row (see
+        ``SQLHandler._upsert_setting``) -- unlike ``set_string_dict_watermark``
+        above, there is no monotonic comparison; the new value always wins."""
+        with self.maria_db_connection(begin=True) as (conn, cursor):
+            cursor.execute(
+                "INSERT INTO setting (name, value) VALUES (?, ?) "
+                "ON DUPLICATE KEY UPDATE value = VALUES(value)",
+                (name, value))
+
+    def interval_union_procedure_current(self) -> bool:
+        """Read-only check for the insert_interval_union stored procedure, so a
+        caller can learn a dataset needs :meth:`ensure_interval_union_procedure`
+        without running it."""
         with self.connection() as (conn, cursor):
-            cursor.execute(f"UPDATE measure SET {', '.join(sets)} WHERE id = ?", params)
-            conn.commit()
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.ROUTINES "
+                "WHERE ROUTINE_SCHEMA = ? AND ROUTINE_TYPE = 'PROCEDURE' AND ROUTINE_NAME = ?",
+                (self.database, "insert_interval_union"))
+            return cursor.fetchone()[0] > 0
+
+    def ensure_interval_union_procedure(self) -> bool:
+        """Create insert_interval_union if this dataset predates it -- create_schema
+        only runs at dataset creation (see maria_tables.py), so an existing dataset
+        never gets the procedure added any other way. `CREATE PROCEDURE IF NOT
+        EXISTS` already makes this idempotent on its own; the check up front only
+        exists so the return value tells the caller whether anything changed.
+        Also marks the procedure available on THIS handler instance, in case an
+        earlier call on it had already flipped _interval_union_proc_available to
+        False after finding it missing."""
+        was_current = self.interval_union_procedure_current()
+        if not was_current:
+            with self.connection() as (conn, cursor):
+                cursor.execute(maria_insert_interval_union_stored_procedure)
+                conn.commit()
+        self._interval_union_proc_available = True
+        return not was_current
 
     def insert_device(self, device_tag: str, device_name: str = None, device_id=None, manufacturer: str = None,
                       model: str = None, device_type: str = None, bed_id: int = None, source_id: int = None):
@@ -449,14 +463,21 @@ class MariaDBHandler(SQLHandler):
 
             return cursor.lastrowid
 
-    def select_device(self, device_id: int = None, device_tag: str = None):
-        with self.maria_db_connection() as (conn, cursor):
-            if device_id is not None:
-                cursor.execute(maria_select_device_from_id_query, (device_id,))
-            else:
-                cursor.execute(maria_select_device_from_tag_query, (device_tag,))
-            row = cursor.fetchone()
-        return row
+    def _insert_intervals(self, cursor, interval_data: List[Dict], interval_index_mode, gap_tolerance: int = 0):
+        """Insert interval rows using the given interval_index_mode. "fast" appends raw
+        rows; "merge" defers to the insert-interval stored procedure, which unions each
+        new interval with the existing rows it bridges; "disable" does nothing."""
+        if interval_index_mode == "fast":
+            cursor.executemany(maria_insert_interval_index_query, interval_insert_tuples(interval_data))
+
+        elif interval_index_mode == "merge":
+            for interval in interval_data:
+                self._call_insert_interval(cursor, interval, gap_tolerance)
+        elif interval_index_mode == "disable":
+            # Do Nothing
+            pass
+        else:
+            raise ValueError(f"interval_index_mode must be one of {allowed_interval_index_modes}")
 
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
                              interval_index_mode, gap_tolerance: int = 0):
@@ -469,25 +490,10 @@ class MariaDBHandler(SQLHandler):
             file_id = cursor.lastrowid
 
             # insert into block_index
-            block_tuples = [(block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
-                             block["start_time_n"], block["end_time_n"], block["num_values"])
-                            for block in block_data]
-            cursor.executemany(maria_insert_block_query, block_tuples)
+            cursor.executemany(maria_insert_block_query, block_insert_tuples(block_data, file_id))
 
             # insert into interval_index
-            if interval_index_mode == "fast":
-                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"]) for interval in interval_data]
-                cursor.executemany(maria_insert_interval_index_query, interval_tuples)
-
-            elif interval_index_mode == "merge":
-                for interval in interval_data:
-                    self._call_insert_interval(cursor, interval, gap_tolerance)
-            elif interval_index_mode == "disable":
-                # Do Nothing
-                pass
-            else:
-                raise ValueError(f"interval_index_mode must be one of {allowed_interval_index_modes}")
+            self._insert_intervals(cursor, interval_data, interval_index_mode, gap_tolerance)
 
     def update_tsc_file_data(self, file_data: Dict[str, Tuple[List[Dict], List[Dict]]], block_ids_to_delete: List[int],
                              file_ids_to_delete: List[int], gap_tolerance: int = 0):
@@ -499,11 +505,7 @@ class MariaDBHandler(SQLHandler):
                 file_id = cursor.lastrowid
 
                 # insert into block_index
-                block_tuples = [
-                    (block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
-                     block["start_time_n"], block["end_time_n"], block["num_values"])
-                    for block in block_data]
-                cursor.executemany(maria_insert_block_query, block_tuples)
+                cursor.executemany(maria_insert_block_query, block_insert_tuples(block_data, file_id))
 
                 # insert into interval_index
                 for interval in interval_data:
@@ -526,83 +528,12 @@ class MariaDBHandler(SQLHandler):
             file_id = cursor.lastrowid
 
             # insert into block_index
-            block_tuples = [(block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
-                             block["start_time_n"], block["end_time_n"], block["num_values"])
-                            for block in block_data]
-            cursor.executemany(maria_insert_block_query, block_tuples)
+            cursor.executemany(maria_insert_block_query, block_insert_tuples(block_data, file_id))
 
             # insert into interval_index
-            if interval_index_mode == "fast":
-                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"]) for interval in interval_data]
-                cursor.executemany(maria_insert_interval_index_query, interval_tuples)
+            self._insert_intervals(cursor, interval_data, interval_index_mode, gap_tolerance)
 
-            elif interval_index_mode == "merge":
-                for interval in interval_data:
-                    self._call_insert_interval(cursor, interval, gap_tolerance)
-            elif interval_index_mode == "disable":
-                # Do Nothing
-                pass
-            else:
-                raise ValueError(f"interval_index_mode must be one of {allowed_interval_index_modes}")
-
-            # delete the old block data
-            cursor.execute("DELETE FROM block_index WHERE id = ?", (old_block[0],))
-
-            # check if the old tsc file only contains the old block
-            cursor.execute("SELECT 1 FROM block_index WHERE file_id = ? LIMIT 1", (old_block[3],))
-            block_exists = cursor.fetchone()
-
-            # if there are no blocks with that file_id then delete the file from the file index
-            if block_exists is None:
-                # get the tsc file name
-                cursor.execute("SELECT path FROM file_index WHERE id = ?", (old_block[3],))
-                file_name = cursor.fetchone()
-
-                # delete it from the file_index
-                cursor.execute("DELETE FROM file_index WHERE id = ?", (old_block[3],))
-                # A racing writer that merged into the same old block can have removed the
-                # file_index row already. The merge is serialized by a per-(measure,
-                # device) lock so this should be unreachable, but indexing an absent row
-                # would abort this transaction and lose the write entirely. The row
-                # genuinely being gone means only that someone else has already unlinked
-                # the file -- there is nothing left for the caller to remove, which is
-                # what None means.
-                return file_name[0] if file_name is not None else None
-
-            return None
-
-    def select_file(self, file_id: int = None, file_path: str = None):
-        with self.maria_db_connection() as (conn, cursor):
-            if file_id is not None:
-                cursor.execute(maria_select_file_by_id, (file_id,))
-            else:
-                cursor.execute(maria_select_file_by_values, (file_path,))
-            row = cursor.fetchone()
-        return row
-
-    def select_files(self, file_id_list: List[int]):
-        if not file_id_list:
-            return []
-        placeholders = ', '.join(['?'] * len(file_id_list))
-        maria_select_files_by_id_list = f"SELECT id, path FROM file_index WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_files_by_id_list, file_id_list)
-            rows = cursor.fetchall()
-
-            # check to see if any file_ids were not found in the file index by checking if the length of the two lists are different
-            if len(rows) != len(set(file_id_list)):
-                # find out which block_ids were part of the query but no results were found by subtracting the sets
-                set_diff = set(file_id_list) - set([row[0] for row in rows])
-                raise RuntimeError(f"Cannot find file_ids={set_diff} in AtriumDB.")
-
-        return rows
-
-    def select_blocks_from_file(self, file_id: int):
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_blocks_from_file, (file_id,))
-            rows = cursor.fetchall()
-        return rows
+            return self._delete_merged_block(cursor, old_block)
 
     def select_block(self, block_id: int = None, measure_id: int = None, device_id: int = None, file_id: int = None,
                      start_byte: int = None, num_bytes: int = None, start_time_n: int = None, end_time_n: int = None,
@@ -616,48 +547,9 @@ class MariaDBHandler(SQLHandler):
             row = cursor.fetchone()
         return row
 
-    def select_blocks_by_ids(self, block_id_list: List[int | str]):
-
-        placeholders = ', '.join(['?'] * len(block_id_list))
-        maria_select_files_by_id_list = f"SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values FROM block_index WHERE id IN ({placeholders}) ORDER BY file_id, start_byte ASC"
-
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_files_by_id_list, block_id_list)
-            rows = cursor.fetchall()
-
-        # check to see if any blocks were not found in the block index by checking if the length of the two lists are different
-        if len(rows) != len(block_id_list):
-            # find out which block_ids were part of the query but no results were found by subtracting the sets
-            set_diff = set([int(id) for id in block_id_list]) - set([row[0] for row in rows])
-            raise RuntimeError(f"Cannot find block_ids={set_diff} in AtriumDB.")
-
-        return rows
-
-    def select_interval(self, interval_id: int = None, measure_id: int = None, device_id: int = None,
-                        start_time_n: int = None, end_time_n: int = None):
-        with self.maria_db_connection() as (conn, cursor):
-            if interval_id is not None:
-                cursor.execute(maria_select_interval_by_id, (interval_id,))
-            else:
-                cursor.execute(maria_select_interval_by_values, (measure_id, device_id, start_time_n, end_time_n))
-            row = cursor.fetchone()
-        return row
-
     def insert_setting(self, setting_name: str, setting_value: str):
         with self.maria_db_connection() as (conn, cursor):
             cursor.execute(mariadb_setting_insert_query, (setting_name, setting_value))
-
-    def select_setting(self, setting_name: str):
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(mariadb_setting_select_query, (setting_name,))
-            setting = cursor.fetchone()
-        return setting
-
-    def select_all_settings(self):
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_all_query)
-            settings = cursor.fetchall()
-        return settings
 
     def insert_patient(self, patient_id=None, mrn=None, gender=None, dob=None, first_name=None, middle_name=None,
                        last_name=None, first_seen=None, last_updated=None, source_id=1, weight=None, height=None):
@@ -681,76 +573,16 @@ class MariaDBHandler(SQLHandler):
                            (device_id, encounter_id, start_time, end_time, source_id))
             return cursor.lastrowid
 
-    def select_blocks(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
-
-        assert device_id is not None or patient_id is not None, "Either device_id or patient_id must be provided"
-
-        # Query by patient.
-        if patient_id is not None:
-            device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
-
-            block_query = """
-                            SELECT
-                                id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
-                            FROM
-                                block_index
-                            WHERE
-                                measure_id = ? AND device_id = ? AND end_time_n >= ? AND start_time_n <= ?
-                            ORDER BY
-                                file_id, start_byte ASC"""
-
-            block_results = []
-
-            with self.maria_db_connection(begin=False) as (conn, cursor):
-                for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
-                    args = (measure_id, encounter_device_id, encounter_start_time, encounter_end_time)
-
-                    cursor.execute(block_query, args)
-                    block_results.extend(cursor.fetchall())
-
-            # Filter results based on start_time_n and end_time_n parameters
-            filtered_results = []
-            for row in block_results:
-                row_start_time = row[6]  # start_time_n
-                row_end_time = row[7]  # end_time_n
-
-                # Check for overlap with parameter time range
-                if start_time_n is not None and row_end_time < start_time_n:
-                    continue  # Row ends before parameter start - no overlap
-                if end_time_n is not None and row_start_time > end_time_n:
-                    continue  # Row starts after parameter end - no overlap
-
-                filtered_results.append(row)
-
-            return filtered_results
-
-        # Query by device.
-        block_query = """
-                        SELECT
-                            id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
-                        FROM
-                            block_index
-                        WHERE
-                            measure_id = ? AND device_id = ?"""
-
-        args = (measure_id, device_id)
-
-        if end_time_n is not None:
-            block_query += " AND start_time_n <= ?"
-            args += (end_time_n,)
-        if start_time_n is not None:
-            block_query += " AND end_time_n >= ?"
-            args += (start_time_n,)
-
-        block_query += " ORDER BY file_id, start_byte ASC"
-
-        with self.maria_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(block_query, args)
-            return cursor.fetchall()
-
     def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[str] = None, start_time: int = None,
                           end_time: int = None):
         assert (patient_id_list is None) != (mrn_list is None), "Either patient_id_list or mrn_list must be provided, but not both"
+        # An empty filter list names no patients, so no encounters. Building
+        # `IN ()` instead is a syntax error on MariaDB.
+        if patient_id_list is not None and len(patient_id_list) == 0:
+            return []
+        if mrn_list is not None and len(mrn_list) == 0:
+            return []
+
         arg_tuple = ()
         maria_select_encounter_query = \
             "SELECT encounter.id, encounter.patient_id, encounter.bed_id, encounter.start_time, encounter.end_time, " \
@@ -778,19 +610,19 @@ class MariaDBHandler(SQLHandler):
             cursor.execute(maria_select_encounter_query, arg_tuple)
             return cursor.fetchall()
 
-    def select_all_measures_in_list(self, measure_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(measure_id_list))
-        maria_select_measures_by_id_list = f"SELECT id, tag, name, freq_nhz, code, unit, unit_label, unit_code, source_id FROM measure WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_measures_by_id_list, measure_id_list)
-            rows = cursor.fetchall()
-        return rows
-
     def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[str] = None):
         if patient_id_list is not None:
+            # An empty filter list names no rows. Building `IN ()` instead is a
+            # syntax error on MariaDB and a silent "matches nothing" on SQLite.
+            if len(patient_id_list) == 0:
+                return []
             placeholders = ', '.join(['?'] * len(patient_id_list))
             maria_select_patients_by_id_list = f"SELECT id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, weight, height FROM patient WHERE id IN ({placeholders})"
         elif mrn_list is not None:
+            # An empty filter list names no rows. Building `IN ()` instead is a
+            # syntax error on MariaDB and a silent "matches nothing" on SQLite.
+            if len(mrn_list) == 0:
+                return []
             patient_id_list = mrn_list
             placeholders = ', '.join(['?'] * len(patient_id_list))
             maria_select_patients_by_id_list = f"SELECT id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, weight, height  FROM patient WHERE mrn IN ({placeholders})"
@@ -801,105 +633,3 @@ class MariaDBHandler(SQLHandler):
             cursor.execute(maria_select_patients_by_id_list, patient_id_list)
             rows = cursor.fetchall()
         return rows
-
-    def select_all_devices_in_list(self, device_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(device_id_list))
-        maria_select_devices_by_id_list = f"SELECT id, tag, name, manufacturer, model, type, bed_id, source_id FROM device WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_devices_by_id_list, device_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_beds_in_list(self, bed_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(bed_id_list))
-        maria_select_beds_by_id_list = f"SELECT id, unit_id, name FROM bed WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_beds_by_id_list, bed_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_units_in_list(self, unit_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(unit_id_list))
-        maria_select_units_by_id_list = f"SELECT id, institution_id, name, type FROM unit WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_units_by_id_list, unit_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_institutions_in_list(self, institution_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(institution_id_list))
-        maria_select_institutions_by_id_list = f"SELECT id, name FROM institution WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_institutions_by_id_list, institution_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_device_encounters_by_encounter_list(self, encounter_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(encounter_id_list))
-        maria_select_device_encounters_by_encounter_list = f"SELECT id, device_id, encounter_id, start_time, end_time, source_id FROM device_encounter WHERE encounter_id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_device_encounters_by_encounter_list, encounter_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_sources_in_list(self, source_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(source_id_list))
-        maria_select_sources_by_id_list = f"SELECT id, name, description FROM source WHERE id IN ({placeholders})"
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_sources_by_id_list, source_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
-        maria_insert_device_patient_query = \
-            "INSERT INTO device_patient (device_id, patient_id, start_time, end_time) VALUES (?, ?, ?, ?)"
-
-        with self.maria_db_connection() as (conn, cursor):
-            cursor.executemany(maria_insert_device_patient_query, device_patient_data)
-            conn.commit()
-
-    def select_label_sets(self, limit=None, offset=None):
-        # Retrieve all label types from the database.
-        query = "SELECT id, name, parent_id FROM label_set ORDER BY id ASC"
-
-        # if limit and offset are specified ent add them to query
-        if limit is not None and offset is not None:
-            query += f" LIMIT {limit} OFFSET {offset}"
-        # if only limit is supplied then only add it to the query
-        elif limit is not None and offset is None:
-            query += f" LIMIT {limit}"
-
-        try:
-            with self.maria_db_connection(begin=False) as (conn, cursor):
-                cursor.execute(query)
-                return cursor.fetchall()
-        except ProgrammingError as e:
-            if 'Table' in str(e) and 'doesn\'t exist' in str(e):
-                return []  # Table doesn't exist, return an empty list
-            else:
-                # An error occurred for a different reason, re-raise the exception
-                raise
-
-
-    def select_all_label_sources(self, limit=None, offset=None):
-        # Retrieve all label sources from the database.
-        query = "SELECT id, name FROM label_source ORDER BY id ASC"
-
-        # if limit and offset are specified ent add them to query
-        if limit is not None and offset is not None:
-            query += f" LIMIT {limit} OFFSET {offset}"
-        # if only limit is supplied then only add it to the query
-        elif limit is not None and offset is None:
-            query += f" LIMIT {limit}"
-
-        try:
-            with self.maria_db_connection(begin=False) as (conn, cursor):
-                cursor.execute(query)
-                return cursor.fetchall()
-        except ProgrammingError as e:
-            if 'Table' in str(e) and 'doesn\'t exist' in str(e):
-                return []  # Table doesn't exist, return an empty list
-            else:
-                # An error occurred for a different reason, re-raise the exception
-                raise e
-

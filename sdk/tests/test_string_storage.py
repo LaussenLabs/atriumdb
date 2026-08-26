@@ -15,9 +15,8 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-Phase 1 string storage acceptance tests (see docs/design/aperiodic-and-text-support.md
-section 17.6). String values are stored as int64 dictionary codes reusing the ordinary
-int64 write/read path -- no C changes, no block-format changes, no numeric regression.
+String storage tests. String values are stored as int64 dictionary codes reusing the ordinary
+int64 write/read path with no C or block-format changes.
 
 These run in SQLite mode only (no MariaDB/Docker needed). They exercise:
 
@@ -27,7 +26,7 @@ These run in SQLite mode only (no MariaDB/Docker needed). They exercise:
 4. sub-block-size writes that MERGE into one block still round-trip
 5. get_interval_array returns coarse presence for a string measure
 6. guard-rail errors (analog / return_nan_filled) raise
-7. a numeric round-trip still works unchanged (regression)
+7. a numeric round-trip works
 8. the MeasureStringDictionary class in isolation (encode/decode/append/errors/concurrency)
 """
 import json
@@ -62,7 +61,7 @@ def sdk():
 
 
 def new_string_measure(sdk, tag="strmeas"):
-    # unit is NOT NULL; a "string" sentinel marks intent (P1 adds no schema column).
+    # unit is NOT NULL; a "string" sentinel marks intent (there's no schema column for it).
     m = sdk.insert_measure(measure_tag=tag, freq=1.0, freq_units="Hz", units="string")
     d = sdk.insert_device(device_tag=f"dev_{tag}")
     return m, d
@@ -217,12 +216,17 @@ def test_interval_array_string_measure(sdk):
 # --------------------------------------------------------------------------- #
 # 6. Guard rails
 # --------------------------------------------------------------------------- #
-def test_guardrail_analog_raises(sdk):
+def test_get_data_decodes_string_measure_with_default_analog(sdk):
     m, d = new_string_measure(sdk, tag="guard_analog")
     t = times_for(3)
-    sdk.write_time_value_pairs(m, d, t, np.array(["a", "b", "c"], dtype=object))
-    with pytest.raises(ValueError, match="string measure"):
-        sdk.get_data(m, int(t[0]), int(t[-1]) + SEC, device_id=d)  # analog defaults True
+    values = ["a", "b", "c"]
+    sdk.write_time_value_pairs(m, d, t, np.array(values, dtype=object))
+
+    headers, read_times, read_values = sdk.get_data(m, int(t[0]), int(t[-1]) + SEC, device_id=d)
+
+    assert headers
+    assert np.array_equal(read_times.astype(np.int64), t)
+    assert list(read_values) == values
 
 
 def test_guardrail_nan_filled_raises(sdk):
@@ -243,7 +247,7 @@ def test_guardrail_explicit_numeric_raw_value_type_raises(sdk):
 
 
 # --------------------------------------------------------------------------- #
-# 7. Numeric regression: an ordinary numeric round-trip still works
+# 7. An ordinary numeric round-trip works
 # --------------------------------------------------------------------------- #
 def test_numeric_roundtrip_unchanged(sdk):
     m = sdk.insert_measure(measure_tag="hr_numeric", freq=1.0, freq_units="Hz", units="bpm")

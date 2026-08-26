@@ -7,22 +7,16 @@
 #     the Free Software Foundation, either version 3 of the License, or
 #     (at your option) any later version.
 """
-ADVERSARIAL / audit tests for Phase 1 string storage.
+String storage edge-case tests covering dictionary corner cases, block-merge and
+ordering semantics, cross-measure isolation, on-disk corruption resilience, read entry
+points, guard rails, and interactions with numeric writes and windowing.
 
-This file is an *independent audit* written to try to break the string-storage
-implementation (docs/design/aperiodic-and-text-support.md section 17). It probes
-edge cases and failure modes that the acceptance suite (test_string_storage.py)
-does not: dictionary corner cases, block-merge / ordering semantics, cross-measure
-isolation, on-disk corruption resilience, every read entry point + guard rail, and
-interactions with numeric writes / windowing.
-
-Tests marked ``xfail`` document confirmed defects or spec-vs-implementation gaps.
-No source under sdk/atriumdb/ is modified by this audit.
+Unsupported cases use expected-failure markers.
 
 Run (SQLite only, no MariaDB):
     docker run --rm -v "<repo>:/atriumdb" -e PYTHONPATH=/atriumdb/sdk \
         atriumdb-test:latest python -m pytest \
-        /atriumdb/sdk/tests/test_string_storage_audit.py -q
+        /atriumdb/sdk/tests/test_string_storage_edge_cases.py -q
 """
 import json
 import shutil
@@ -43,7 +37,7 @@ SEC = 1_000_000_000
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def sdk():
-    loc = tempfile.mkdtemp(prefix="atrium_straudit_")
+    loc = tempfile.mkdtemp(prefix="atrium_string_storage_edges_")
     shutil.rmtree(loc, ignore_errors=True)
     s = AtriumSDK.create_dataset(dataset_location=loc, database_type="sqlite")
     s._loc = loc
@@ -228,12 +222,12 @@ def test_newest_wins_across_separate_merged_writes(sdk):
     sdk.write_time_value_pairs(m, d, ts, np.array(["NEW"], dtype=object))
     _, rv = sdk.get_string_data(m, 100 * SEC, 300 * SEC, device_id=d)
     assert list(rv) == ["NEW"]
-    # both strings live in the dict (append-only); the OLD code is simply unused now
+    # Both strings remain in the append-only dictionary; the earlier code is unused.
     assert MeasureStringDictionary.load(sdk._meta_dir, m)._strings == ["OLD", "NEW"]
 
 
 def test_duplicate_timestamp_within_single_call_first_wins(sdk):
-    """DOCUMENTS ACTUAL BEHAVIOR: for duplicate timestamps inside ONE
+    """For duplicate timestamps inside one
     write_time_value_pairs call, np.unique keeps the FIRST array element -- so the
     *earliest listed* value wins, which is the opposite of the cross-write
     'newest-wins' merge policy. Callers who expect newest-wins within a single
@@ -388,11 +382,11 @@ def test_read_by_patient_id_and_mrn(sdk):
     m, d = new_string_measure(sdk, tag="ptread")
     t = times_for(4)
     sdk.write_time_value_pairs(m, d, t, np.array(["s1", "s2", "s3", "s4"], dtype=object))
-    pid = sdk.insert_patient(mrn="AUDIT_MRN")
+    pid = sdk.insert_patient(mrn="TEST_MRN")
     sdk.insert_device_patient_data([(d, pid, int(t[0]), int(t[-1]) + SEC)])
 
     _, rv_pid = sdk.get_string_data(m, int(t[0]), int(t[-1]) + SEC, patient_id=pid)
-    _, rv_mrn = sdk.get_string_data(m, int(t[0]), int(t[-1]) + SEC, mrn="AUDIT_MRN")
+    _, rv_mrn = sdk.get_string_data(m, int(t[0]), int(t[-1]) + SEC, mrn="TEST_MRN")
     assert list(rv_pid) == ["s1", "s2", "s3", "s4"]
     assert list(rv_mrn) == ["s1", "s2", "s3", "s4"]
 
@@ -431,12 +425,12 @@ def test_read_sort_false_and_empty_range(sdk):
 # =========================================================================== #
 # G. Guard rails (every entry point) + documented raw-code behavior
 # =========================================================================== #
-def test_guard_analog_default_raises(sdk):
+def test_get_data_default_decodes_strings(sdk):
     m, d = new_string_measure(sdk, tag="g_analog")
     t = times_for(3)
     sdk.write_time_value_pairs(m, d, t, np.array(["a", "b", "c"], dtype=object))
-    with pytest.raises(ValueError, match="string measure"):
-        sdk.get_data(m, int(t[0]), int(t[-1]) + SEC, device_id=d)
+    _, _, values = sdk.get_data(m, int(t[0]), int(t[-1]) + SEC, device_id=d)
+    assert list(values) == ["a", "b", "c"]
 
 
 def test_guard_nan_filled_bool_raises(sdk):
@@ -462,7 +456,7 @@ def test_guard_nan_filled_ndarray_raises_like_windowing(sdk):
 
 
 def test_get_data_analog_false_returns_raw_codes(sdk):
-    """DOCUMENTED behavior: get_data(analog=False) on a string measure returns the
+    """get_data(analog=False) on a string measure returns the
     raw int64 dictionary codes (this is exactly how get_string_data reads)."""
     m, d = new_string_measure(sdk, tag="rawcodes")
     t = times_for(3)
@@ -498,23 +492,22 @@ def test_get_interval_array_on_string_measure(sdk):
 
 
 # --------------------------------------------------------------------------- #
-# BUGS / spec gaps (xfail): mixing numeric and string data on ONE measure.
-# Spec section 17/13 treats a measure as either string-typed (has a dict file)
-# or numeric; the design says a measure must not mix the two. The implementation
+# Expected-failure cases: mixing numeric and string data on one measure.
+# A measure is either string-typed (has a dictionary file)
+# or numeric; a measure must not mix the two. The implementation
 # does NOT enforce this on write, and the result is silently unreadable data.
 # --------------------------------------------------------------------------- #
-def test_numeric_then_string_mixing_now_rejected_and_numeric_stays_readable(sdk):
-    """Phase 2 fix: the mixed write is now REJECTED on write (§19.3), so the
+def test_numeric_then_string_mixing_is_rejected_and_numeric_stays_readable(sdk):
+    """Mixed writes are rejected on write, so the
     earlier numeric data is never corrupted and stays fully readable.
 
-    (Formerly ``test_numeric_then_string_corrupts_readability_actual_behavior``,
-    which documented the P1 defect where the mixed write was silently accepted.)"""
+    Mixed values must not be accepted silently."""
     m = sdk.insert_measure(measure_tag="mix_ns", freq=1.0, freq_units="Hz", units="x")
     d = sdk.insert_device(device_tag="dev_mix_ns")
     t1 = times_for(4)
     sdk.write_time_value_pairs(m, d, t1, (np.arange(4) * 3).astype(np.int64))  # values 0,3,6,9
     t2 = times_for(3, start=int(t1[-1]) + SEC)
-    # The conflicting string write is now rejected instead of accepted.
+    # The conflicting string write is rejected.
     with pytest.raises(ValueError, match="numeric"):
         sdk.write_time_value_pairs(m, d, t2, np.array(["a", "b", "c"], dtype=object))
 

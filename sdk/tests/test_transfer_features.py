@@ -14,7 +14,7 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""Phase 6 transfer tests (design §24.3).
+"""Transfer feature tests.
 
 Covered:
   * transfer_measures carries signal_kind / value_type to the destination.
@@ -41,7 +41,7 @@ SEC = 10 ** 9
 
 # --------------------------------------------------------------------------- helpers
 def _fresh_sdk(name):
-    loc = Path(__file__).parent / "test_datasets" / f"sqlite_phase6_{name}"
+    loc = Path(__file__).parent / "test_datasets" / f"sqlite_transfer_{name}"
     shutil.rmtree(loc, ignore_errors=True)
     return AtriumSDK.create_dataset(dataset_location=loc, database_type="sqlite"), loc
 

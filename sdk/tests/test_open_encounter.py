@@ -28,8 +28,7 @@ DB_NAME = 'atrium-open-ended-mapping'
 SEED = 42
 
 
-# Measured at 176s SQLite-only. `slow` keeps it out of the inner loop only; it still
-# runs in every full run, unchanged.
+# This suite is marked slow.
 @pytest.mark.slow
 def test_open_ended_device_patient_mapping():
     _test_for_both(DB_NAME, _test_open_ended_mapping)
@@ -343,4 +342,3 @@ def _assert_device_query(sdk, device_id, measure_id, start_time, end_time, perio
             f"Expected no data for device {device_id}, but got data"
 
         print(f"Correctly returned no data (as expected)")
-

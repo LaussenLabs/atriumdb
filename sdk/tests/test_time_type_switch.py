@@ -9,9 +9,7 @@ from tests.testing_framework import _test_for_both
 DB_NAME = 'time_type_switch'
 
 
-# Measured at 224s SQLite-only -- the single most expensive surviving test in the
-# suite. `slow` keeps it out of the sub-5-minute inner loop; it still runs in every
-# full run, unchanged.
+# This suite is marked slow.
 @pytest.mark.slow
 def test_time_type_switch():
     _test_for_both(DB_NAME, _test_time_type_switch)

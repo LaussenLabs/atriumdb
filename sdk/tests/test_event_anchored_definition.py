@@ -15,7 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-Phase 5 tests: event-anchored DatasetDefinition regions (design section 23).
+Event-anchored DatasetDefinition region tests.
 
 Covers:
   * ``anchor`` regions emit ``[t - pre, t + post]`` per occurrence, merged with each
@@ -32,7 +32,7 @@ Covers:
 SQLite only:
     docker run --rm -v "<repo>:/atriumdb" -e PYTHONPATH=/atriumdb/sdk \
         atriumdb-test:latest python -m pytest \
-        /atriumdb/sdk/tests/test_event_anchored_definition_p5.py -q
+        /atriumdb/sdk/tests/test_event_anchored_definition.py -q
 """
 import shutil
 import tempfile
@@ -54,7 +54,7 @@ PERIOD_NS = (10 ** 18) // FREQ_NHZ  # 1 s
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def sdk():
-    loc = tempfile.mkdtemp(prefix="atrium_p5evt_")
+    loc = tempfile.mkdtemp(prefix="atrium_event_anchored_definition_")
     shutil.rmtree(loc, ignore_errors=True)
     s = AtriumSDK.create_dataset(dataset_location=loc, database_type="sqlite")
     s._loc = loc

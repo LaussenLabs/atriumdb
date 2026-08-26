@@ -43,7 +43,6 @@ set. A caller that cannot tolerate a guessed boundary filters on the flags; the
 timestamps themselves are always real boundaries of the *container*, never
 invented event times.
 
-Background: ``docs/design/aperiodic-and-text-support.md``.
 """
 from __future__ import annotations
 
@@ -67,6 +66,23 @@ def union_windows(windows):
         else:
             merged.append([s, e])
     return merged
+
+
+def clip_spans_and_union(spans, start_n, end_n):
+    """Clip ``(start, end)`` ns pairs to ``[start_n, end_n)`` and union the survivors.
+
+    A ``None`` start means the row carries no span and is skipped; a ``None`` end
+    means the span is still open and is clipped to ``end_n``. Spans that collapse to
+    nothing after clipping are dropped. Returns disjoint ``[start, end]`` windows."""
+    windows = []
+    for s, e in spans:
+        if s is None:
+            continue
+        s = max(int(s), start_n)
+        e = min(int(e), end_n) if e is not None else end_n
+        if s < e:
+            windows.append([s, e])
+    return union_windows(windows)
 
 
 def pair_from_to(from_times, to_times, container_start, container_end):

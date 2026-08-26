@@ -22,19 +22,16 @@ from contextlib import contextmanager
 import time
 
 from atriumdb.sql_handler.sql_constants import DEFAULT_UNITS
-from atriumdb.sql_handler.sql_handler import SQLHandler
-from atriumdb.sql_handler.sql_helper import join_sql_and_bools
-from atriumdb.sql_handler.sqlite.sqlite_functions import (sqlite_insert_ignore_measure_query, \
-    sqlite_select_measure_from_triplet_query, sqlite_select_measure_from_id_query, sqlite_insert_ignore_device_query, \
-    sqlite_select_device_from_tag_query, sqlite_select_device_from_id_query, sqlite_insert_file_index_query, \
-    sqlite_insert_block_query, sqlite_insert_interval_index_query, sqlite_select_file_by_id, \
-    sqlite_select_file_by_values, sqlite_select_block_by_id, sqlite_select_block_by_values, \
-    sqlite_select_interval_by_id, sqlite_select_interval_by_values, sqlite_setting_select_query, \
-    sqlite_setting_insert_query, sqlite_setting_select_all_query, sqlite_insert_ignore_source_query, \
-    sqlite_insert_ignore_institution_query, sqlite_insert_ignore_unit_query, sqlite_insert_ignore_bed_query, \
+from atriumdb.sql_handler.sql_handler import SQLHandler, block_insert_tuples, interval_insert_tuples
+from atriumdb.sql_handler.sqlite.sqlite_functions import (
+    sqlite_select_measure_from_triplet_query, sqlite_select_measure_from_id_query, \
+    sqlite_insert_file_index_query, \
+    sqlite_insert_block_query, sqlite_insert_interval_index_query, \
+    sqlite_select_block_by_id, sqlite_select_block_by_values, \
+    sqlite_setting_insert_query, \
     sqlite_insert_ignore_patient_query, sqlite_insert_ignore_encounter_query, \
-    sqlite_insert_ignore_device_encounter_query, sqlite_select_blocks_from_file, sqlite_delete_block_query, \
-    sqlite_delete_file_query, sqlite_interval_exists_query, sqlite_get_query_with_patient_id)
+    sqlite_insert_ignore_device_encounter_query, sqlite_delete_block_query, \
+    sqlite_interval_exists_query)
 from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_query, \
     sqlite_file_index_create_query, sqlite_block_index_create_query, \
     sqlite_interval_index_create_query, sqlite_settings_create_query, \
@@ -54,6 +51,10 @@ from atriumdb.sql_handler.sqlite.sqlite_tables import sqlite_measure_create_quer
 
 
 class SQLiteHandler(SQLHandler):
+    _MISSING_COLUMN_PHRASE = "no such column"
+    _MISSING_TABLE_ERRORS = (sqlite3.OperationalError,)
+    _MISSING_TABLE_PHRASES = ("no such table",)
+
     def __init__(self, db_file: Union[str, Path]):
         self.db_file = db_file
 
@@ -152,6 +153,11 @@ class SQLiteHandler(SQLHandler):
         cursor.close()
         conn.close()
 
+        # Stamp the dataset a brand-new schema produces as current, so opening it
+        # right after (even with the default auto_upgrade=False) never sees a
+        # pending upgrade -- see SQLHandler.pending_schema_upgrades.
+        self.record_dataset_schema_version()
+
     def _column_exists(self, cursor, table_name: str, column_name: str) -> bool:
         """Check if a column exists in a table."""
         cursor.execute(f"PRAGMA table_info({table_name})")
@@ -248,12 +254,6 @@ class SQLiteHandler(SQLHandler):
             result = cursor.fetchone()
         return result[0]
 
-    def select_all_devices(self):
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute("SELECT id, tag, name, manufacturer, model, type, bed_id, source_id FROM device")
-            rows = cursor.fetchall()
-        return rows
-
     def select_all_measures(self):
         try:
             with self.sqlite_db_connection() as (conn, cursor):
@@ -261,12 +261,7 @@ class SQLiteHandler(SQLHandler):
                 rows = cursor.fetchall()
             return rows
         except sqlite3.Error as e:
-            if "period_ns" in str(e).lower() or "no such column" in str(e).lower():
-                raise ValueError(
-                    "A required column is missing from the measure table (e.g. "
-                    "'period_ns', 'signal_kind' or 'value_type'). "
-                    "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
-                ) from e
+            self._reraise_missing_measure_column(e)
             raise
 
     def select_all_patients(self):
@@ -291,12 +286,7 @@ class SQLiteHandler(SQLHandler):
                 conn.commit()
                 return cursor.lastrowid
         except sqlite3.Error as e:
-            if "period_ns" in str(e).lower() or "no such column" in str(e).lower():
-                raise ValueError(
-                    "A required column is missing from the measure table (e.g. "
-                    "'period_ns', 'signal_kind' or 'value_type'). "
-                    "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
-                ) from e
+            self._reraise_missing_measure_column(e)
             raise
 
     def select_measure(self, measure_id: int = None, measure_tag: str = None, freq_nhz: int = None, units: str = None):
@@ -312,20 +302,8 @@ class SQLiteHandler(SQLHandler):
                 row = cursor.fetchone()
             return row
         except sqlite3.Error as e:
-            if "period_ns" in str(e).lower() or "no such column" in str(e).lower():
-                raise ValueError(
-                    "A required column is missing from the measure table (e.g. "
-                    "'period_ns', 'signal_kind' or 'value_type'). "
-                    "Please run AtriumSDK(auto_upgrade=True) to update the database schema."
-                ) from e
+            self._reraise_missing_measure_column(e)
             raise
-
-    def measure_has_blocks(self, measure_id: int) -> bool:
-        """True if any block exists for this measure (used to detect an
-        already-established numeric measure when the value_type column is NULL)."""
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute("SELECT 1 FROM block_index WHERE measure_id = ? LIMIT 1", (int(measure_id),))
-            return cursor.fetchone() is not None
 
     def set_string_dict_watermark(self, measure_id: int, vocabulary_size: int):
         """Raise this measure's recorded string-vocabulary size (see
@@ -341,23 +319,15 @@ class SQLiteHandler(SQLHandler):
                 "WHERE CAST(setting.value AS INTEGER) < CAST(excluded.value AS INTEGER)",
                 (name, value))
 
-    def update_measure_metadata(self, measure_id: int, signal_kind: str = None, value_type: str = None):
-        """Set the measure-kind columns for a measure. Only the provided
-        (non-None) fields are written; used to persist first-write value_type
-        inference and the opportunistic string backfill. Idempotent."""
-        sets, params = [], []
-        if signal_kind is not None:
-            sets.append("signal_kind = ?")
-            params.append(signal_kind)
-        if value_type is not None:
-            sets.append("value_type = ?")
-            params.append(value_type)
-        if not sets:
-            return
-        params.append(int(measure_id))
-        with self.connection() as (conn, cursor):
-            cursor.execute(f"UPDATE measure SET {', '.join(sets)} WHERE id = ?", params)
-            conn.commit()
+    def _upsert_setting(self, name: str, value: str):
+        """Unconditional single-statement upsert for one `setting` row (see
+        ``SQLHandler._upsert_setting``) -- unlike ``set_string_dict_watermark``
+        above, there is no monotonic comparison; the new value always wins."""
+        with self.sqlite_db_connection(begin=True) as (conn, cursor):
+            cursor.execute(
+                "INSERT INTO setting (name, value) VALUES (?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET value = excluded.value",
+                (name, value))
 
     def insert_device(self, device_tag: str, device_name: str = None, device_id=None, manufacturer: str = None,
                       model: str = None, device_type: str = None, bed_id: int = None, source_id: int = None):
@@ -371,15 +341,6 @@ class SQLiteHandler(SQLHandler):
             conn.commit()
 
             return cursor.lastrowid
-
-    def select_device(self, device_id: int = None, device_tag: str = None):
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            if device_id is not None:
-                cursor.execute(sqlite_select_device_from_id_query, (device_id,))
-            else:
-                cursor.execute(sqlite_select_device_from_tag_query, (device_tag,))
-            row = cursor.fetchone()
-        return row
 
     def _insert_intervals(self, cursor, interval_data: List[Dict], interval_index_mode, gap_tolerance: int = 0):
         """Insert interval rows using the given interval_index_mode. "fast" appends
@@ -415,9 +376,7 @@ class SQLiteHandler(SQLHandler):
             return
 
         # "fast" (and legacy None): append raw rows.
-        interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                            interval["end_time_n"]) for interval in interval_data]
-        cursor.executemany(sqlite_insert_interval_index_query, interval_tuples)
+        cursor.executemany(sqlite_insert_interval_index_query, interval_insert_tuples(interval_data))
 
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
                              interval_index_mode, gap_tolerance: int = 0):
@@ -430,9 +389,7 @@ class SQLiteHandler(SQLHandler):
             file_id = cursor.lastrowid
 
             # insert into block_index
-            block_tuples = [(block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
-                             block["start_time_n"], block["end_time_n"], block["num_values"]) for block in block_data]
-            cursor.executemany(sqlite_insert_block_query, block_tuples)
+            cursor.executemany(sqlite_insert_block_query, block_insert_tuples(block_data, file_id))
 
             # insert into interval_index
             self._insert_intervals(cursor, interval_data, interval_index_mode, gap_tolerance)
@@ -447,15 +404,10 @@ class SQLiteHandler(SQLHandler):
                 file_id = cursor.lastrowid
 
                 # insert into block_index
-                block_tuples = [
-                    (block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
-                     block["start_time_n"], block["end_time_n"], block["num_values"]) for block in block_data]
-                cursor.executemany(sqlite_insert_block_query, block_tuples)
+                cursor.executemany(sqlite_insert_block_query, block_insert_tuples(block_data, file_id))
 
                 # insert into interval_index
-                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"]) for interval in interval_data]
-                cursor.executemany(sqlite_insert_interval_index_query, interval_tuples)
+                cursor.executemany(sqlite_insert_interval_index_query, interval_insert_tuples(interval_data))
 
             # delete old block data (Don't need, triggered automatically)
             cursor.executemany(sqlite_delete_block_query, [(block_id,) for block_id in block_ids_to_delete])
@@ -474,70 +426,12 @@ class SQLiteHandler(SQLHandler):
             file_id = cursor.lastrowid
 
             # insert into block_index
-            block_tuples = [(block["measure_id"], block["device_id"], file_id, block["start_byte"], block["num_bytes"],
-                             block["start_time_n"], block["end_time_n"], block["num_values"]) for block in block_data]
-            cursor.executemany(sqlite_insert_block_query, block_tuples)
+            cursor.executemany(sqlite_insert_block_query, block_insert_tuples(block_data, file_id))
 
             # insert into interval_index
             self._insert_intervals(cursor, interval_data, interval_index_mode, gap_tolerance)
 
-            # delete the old block data
-            cursor.execute("DELETE FROM block_index WHERE id = ?", (old_block[0],))
-
-            # check if the old tsc file only contains the old block
-            cursor.execute("SELECT 1 FROM block_index WHERE file_id = ? LIMIT 1", (old_block[3],))
-            block_exists = cursor.fetchone()
-
-            # if there are no blocks with that file_id then delete the file from the file index
-            if block_exists is None:
-                # get the tsc file name
-                cursor.execute("SELECT path FROM file_index WHERE id = ?", (old_block[3],))
-                file_name = cursor.fetchone()
-
-                # delete it from the file_index
-                cursor.execute("DELETE FROM file_index WHERE id = ?", (old_block[3],))
-                # A racing writer that merged into the same old block can have removed the
-                # file_index row already. The merge is serialized by a per-(measure,
-                # device) lock so this should be unreachable, but indexing an absent row
-                # would abort this transaction and lose the write entirely. The row
-                # genuinely being gone means only that someone else has already unlinked
-                # the file -- there is nothing left for the caller to remove, which is
-                # what None means.
-                return file_name[0] if file_name is not None else None
-
-            return None
-
-    def select_file(self, file_id: int = None, file_path: str = None):
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            if file_id is not None:
-                cursor.execute(sqlite_select_file_by_id, (file_id,))
-            else:
-                cursor.execute(sqlite_select_file_by_values, (file_path,))
-            row = cursor.fetchone()
-        return row
-
-    def select_files(self, file_id_list: List[int]):
-        if not file_id_list:
-            return []
-        placeholders = ', '.join(['?'] * len(file_id_list))
-        sqlite_select_files_by_id_list = f"SELECT id, path FROM file_index WHERE id IN ({placeholders})"
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(sqlite_select_files_by_id_list, file_id_list)
-            rows = cursor.fetchall()
-
-            # check to see if any file_ids were not found in the file index by checking if the length of the two lists are different
-            if len(rows) != len(set(file_id_list)):
-                # find out which block_ids were part of the query but no results were found by subtracting the sets
-                set_diff = set(file_id_list) - set([row[0] for row in rows])
-                raise RuntimeError(f"Cannot find file_ids={set_diff} in AtriumDB.")
-
-        return rows
-
-    def select_blocks_from_file(self, file_id: int):
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(sqlite_select_blocks_from_file, (file_id,))
-            rows = cursor.fetchall()
-        return rows
+            return self._delete_merged_block(cursor, old_block)
 
     def select_block(self, block_id: int = None, measure_id: int = None, device_id: int = None, file_id: int = None,
                      start_byte: int = None, num_bytes: int = None, start_time_n: int = None, end_time_n: int = None,
@@ -551,49 +445,10 @@ class SQLiteHandler(SQLHandler):
             row = cursor.fetchone()
         return row
 
-    def select_blocks_by_ids(self, block_id_list: List[int | str]):
-
-        placeholders = ', '.join(['?'] * len(block_id_list))
-        maria_select_files_by_id_list = f"SELECT id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values FROM block_index WHERE id IN ({placeholders}) ORDER BY file_id, start_byte ASC"
-
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(maria_select_files_by_id_list, block_id_list)
-            rows = cursor.fetchall()
-
-        # check to see if any blocks were not found in the block index by checking if the length of the two lists are different
-        if len(rows) != len(block_id_list):
-            # find out which block_ids were part of the query but no results were found by subtracting the sets
-            set_diff = set([int(id) for id in block_id_list]) - set([row[0] for row in rows])
-            raise RuntimeError(f"Cannot find block_ids={set_diff} in AtriumDB.")
-
-        return rows
-
-    def select_interval(self, interval_id: int = None, measure_id: int = None, device_id: int = None,
-                        start_time_n: int = None, end_time_n: int = None):
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            if interval_id is not None:
-                cursor.execute(sqlite_select_interval_by_id, (interval_id,))
-            else:
-                cursor.execute(sqlite_select_interval_by_values, (measure_id, device_id, start_time_n, end_time_n))
-            row = cursor.fetchone()
-        return row
-
     def insert_setting(self, setting_name: str, setting_value: str):
         with self.sqlite_db_connection(begin=True) as (conn, cursor):
             cursor.execute(sqlite_setting_insert_query, (setting_name, setting_value))
             conn.commit()
-
-    def select_setting(self, setting_name: str):
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(sqlite_setting_select_query, (setting_name,))
-            setting = cursor.fetchone()
-        return setting
-
-    def select_all_settings(self):
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(sqlite_setting_select_all_query)
-            settings = cursor.fetchall()
-        return settings
 
     def insert_patient(self, patient_id=None, mrn=None, gender=None, dob=None, first_name=None, middle_name=None,
                        last_name=None, first_seen=None, last_updated=None, source_id=1, weight=None, height=None):
@@ -617,77 +472,17 @@ class SQLiteHandler(SQLHandler):
                            (device_id, encounter_id, start_time, end_time, source_id))
             return cursor.lastrowid
 
-    def select_blocks(self, measure_id, start_time_n=None, end_time_n=None, device_id=None, patient_id=None):
-        assert device_id is not None or patient_id is not None, "Either device_id or patient_id must be provided"
-
-        # Query by patient.
-        if patient_id is not None:
-            device_time_ranges = self.get_device_time_ranges_by_patient(patient_id, end_time_n, start_time_n)
-
-            block_query = """
-                            SELECT
-                                id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
-                            FROM
-                                block_index
-                            WHERE
-                                measure_id = ? AND device_id = ? AND end_time_n >= ? AND start_time_n <= ?
-                            ORDER BY
-                                file_id, start_byte ASC"""
-
-            block_results = []
-
-            with self.sqlite_db_connection(begin=False) as (conn, cursor):
-                for encounter_device_id, encounter_start_time, encounter_end_time in device_time_ranges:
-                    args = (measure_id, encounter_device_id, encounter_start_time, encounter_end_time)
-
-                    cursor.execute(block_query, args)
-                    block_results.extend(cursor.fetchall())
-
-            # Filter results based on start_time_n and end_time_n parameters
-            filtered_results = []
-            for row in block_results:
-                row_start_time = row[6]  # start_time_n
-                row_end_time = row[7]  # end_time_n
-
-                # Check for overlap with parameter time range
-                if start_time_n is not None and row_end_time < start_time_n:
-                    continue  # Row ends before parameter start - no overlap
-                if end_time_n is not None and row_start_time > end_time_n:
-                    continue  # Row starts after parameter end - no overlap
-
-                filtered_results.append(row)
-
-            return filtered_results
-
-        # Query by device.
-        block_query = """
-                        SELECT
-                            id, measure_id, device_id, file_id, start_byte, num_bytes, start_time_n, end_time_n, num_values
-                        FROM
-                            block_index
-                        WHERE
-                            measure_id = ? AND device_id = ?"""
-
-        args = (measure_id, device_id)
-
-        if end_time_n is not None:
-            block_query += " AND start_time_n <= ?"
-            args += (end_time_n,)
-
-        if start_time_n is not None:
-            block_query += " AND end_time_n >= ?"
-            args += (start_time_n,)
-
-        block_query += " ORDER BY file_id, start_byte ASC"
-
-        with self.sqlite_db_connection(begin=False) as (conn, cursor):
-            cursor.execute(block_query, args)
-            return cursor.fetchall()
-
     def select_encounters(self, patient_id_list: List[int] = None, mrn_list: List[str] = None, start_time: int = None,
                           end_time: int = None):
         assert (patient_id_list is None) != (
                 mrn_list is None), "Either patient_id_list or mrn_list must be provided, but not both"
+        # An empty filter list names no patients, so no encounters. Building
+        # `IN ()` instead is a syntax error on MariaDB.
+        if patient_id_list is not None and len(patient_id_list) == 0:
+            return []
+        if mrn_list is not None and len(mrn_list) == 0:
+            return []
+
         arg_tuple = ()
         sqlite_select_encounter_query = \
             "SELECT encounter.id, encounter.patient_id, encounter.bed_id, encounter.start_time, encounter.end_time, " \
@@ -714,19 +509,19 @@ class SQLiteHandler(SQLHandler):
             cursor.execute(sqlite_select_encounter_query, arg_tuple)
             return cursor.fetchall()
 
-    def select_all_measures_in_list(self, measure_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(measure_id_list))
-        sqlite_select_measures_by_id_list = f"SELECT id, tag, name, freq_nhz, code, unit, unit_label, unit_code, source_id FROM measure WHERE id IN ({placeholders})"
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(sqlite_select_measures_by_id_list, measure_id_list)
-            rows = cursor.fetchall()
-        return rows
-
     def select_all_patients_in_list(self, patient_id_list: List[int] = None, mrn_list: List[str] = None):
         if patient_id_list is not None:
+            # An empty filter list names no rows. Building `IN ()` instead is a
+            # syntax error on MariaDB and a silent "matches nothing" on SQLite.
+            if len(patient_id_list) == 0:
+                return []
             placeholders = ', '.join(['?'] * len(patient_id_list))
             sqlite_select_patients_by_id_list = f"SELECT id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, weight, height FROM patient WHERE id IN ({placeholders})"
         elif mrn_list is not None:
+            # An empty filter list names no rows. Building `IN ()` instead is a
+            # syntax error on MariaDB and a silent "matches nothing" on SQLite.
+            if len(mrn_list) == 0:
+                return []
             patient_id_list = mrn_list
             placeholders = ', '.join(['?'] * len(patient_id_list))
             sqlite_select_patients_by_id_list = f"SELECT id, mrn, gender, dob, first_name, middle_name, last_name, first_seen, last_updated, source_id, weight, height FROM patient WHERE mrn IN ({placeholders})"
@@ -739,100 +534,3 @@ class SQLiteHandler(SQLHandler):
             rows = cursor.fetchall()
         return rows
 
-    def select_all_devices_in_list(self, device_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(device_id_list))
-        sqlite_select_devices_by_id_list = f"SELECT id, tag, name, manufacturer, model, type, bed_id, source_id FROM device WHERE id IN ({placeholders})"
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(sqlite_select_devices_by_id_list, device_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_beds_in_list(self, bed_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(bed_id_list))
-        sqlite_select_beds_by_id_list = f"SELECT id, unit_id, name FROM bed WHERE id IN ({placeholders})"
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(sqlite_select_beds_by_id_list, bed_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_units_in_list(self, unit_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(unit_id_list))
-        sqlite_select_units_by_id_list = f"SELECT id, institution_id, name, type FROM unit WHERE id IN ({placeholders})"
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(sqlite_select_units_by_id_list, unit_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_institutions_in_list(self, institution_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(institution_id_list))
-        sqlite_select_institutions_by_id_list = f"SELECT id, name FROM institution WHERE id IN ({placeholders})"
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(sqlite_select_institutions_by_id_list, institution_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_device_encounters_by_encounter_list(self, encounter_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(encounter_id_list))
-        sqlite_select_device_encounters_by_encounter_list = f"SELECT id, device_id, encounter_id, start_time, end_time, source_id FROM device_encounter WHERE encounter_id IN ({placeholders})"
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(sqlite_select_device_encounters_by_encounter_list, encounter_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def select_all_sources_in_list(self, source_id_list: List[int]):
-        placeholders = ', '.join(['?'] * len(source_id_list))
-        sqlite_select_sources_by_id_list = f"SELECT id, name, description FROM source WHERE id IN ({placeholders})"
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.execute(sqlite_select_sources_by_id_list, source_id_list)
-            rows = cursor.fetchall()
-        return rows
-
-    def insert_device_patients(self, device_patient_data: List[Tuple[int, int, int, int]]):
-        sqlite_insert_device_patient_query = \
-            "INSERT INTO device_patient (device_id, patient_id, start_time, end_time) VALUES (?, ?, ?, ?)"
-
-        with self.sqlite_db_connection() as (conn, cursor):
-            cursor.executemany(sqlite_insert_device_patient_query, device_patient_data)
-            conn.commit()
-
-    def select_label_sets(self, limit=None, offset=None):
-        query = "SELECT id, name, parent_id FROM label_set ORDER BY id ASC"
-
-        # if limit and offset are specified ent add them to query
-        if limit is not None and offset is not None:
-            query += f" LIMIT {limit} OFFSET {offset}"
-        # if only limit is supplied then only add it to the query
-        elif limit is not None and offset is None:
-            query += f" LIMIT {limit}"
-
-        try:
-            with self.sqlite_db_connection(begin=False) as (conn, cursor):
-                cursor.execute(query)
-                return cursor.fetchall()
-        except sqlite3.OperationalError as e:
-            if 'no such table' in str(e):
-                return []  # Table doesn't exist, return an empty list
-            else:
-                # An error occurred for a different reason, re-raise the exception
-                raise
-
-    def select_all_label_sources(self, limit=None, offset=None):
-        query = "SELECT id, name FROM label_source ORDER BY id ASC"
-
-        # if limit and offset are specified ent add them to query
-        if limit is not None and offset is not None:
-            query += f" LIMIT {limit} OFFSET {offset}"
-        # if only limit is supplied then only add it to the query
-        elif limit is not None and offset is None:
-            query += f" LIMIT {limit}"
-
-        try:
-            with self.sqlite_db_connection(begin=False) as (conn, cursor):
-                cursor.execute(query)
-                return cursor.fetchall()
-        except sqlite3.OperationalError as e:
-            if 'no such table' in str(e):
-                return []  # Table doesn't exist, return an empty list
-            else:
-                # An error occurred for a different reason, re-raise the exception
-                raise e

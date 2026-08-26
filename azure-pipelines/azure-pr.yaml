@@ -13,7 +13,7 @@ variables:
 
 jobs: 
   - job: run_build_dev
-    displayName: Run build dev
+    displayName: Run build
     steps:
     - task: UsePythonVersion@0
       inputs:

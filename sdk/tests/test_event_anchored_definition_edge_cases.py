@@ -7,15 +7,9 @@
 #     the Free Software Foundation, either version 3 of the License, or
 #     (at your option) any later version.
 """
-ADVERSARIAL / independent audit of Phase 5 event-anchored DatasetDefinition regions
-(design section 23). This file was written by an auditor who did NOT write the feature
-and does not trust it. It probes edges the writer's own suite
-(test_event_anchored_definition_p5.py) does not, and pins observed behaviour so
-regressions are caught.
-
-Source under audit (uncommitted): sdk/atriumdb/windowing/verify_definition.py
-(_resolve_event_region, _merge_windows) and sdk/atriumdb/windowing/definition.py
-(_check_times_and_warn). NOTHING in sdk/atriumdb is modified here.
+Event-anchored DatasetDefinition edge-case tests. They cover boundaries not exercised
+by ``test_event_anchored_definition.py`` and preserve the expected behavior of
+``_resolve_event_region``, ``_merge_windows``, and ``_check_times_and_warn``.
 
 Tests grouped:
   A. _merge_windows unit tests (touching / nested / adjacent / reversed / dup)
@@ -24,12 +18,12 @@ Tests grouped:
   D. measure-reference hazards (int id, ambiguous tag, numeric-tag collision)
   E. shape / validation
   F. mixing event + classic regions; time_units interpretation
-  G. classic-definition regression vs a direct get_interval_array expectation
+  G. classic-definition behavior against a direct get_interval_array expectation
 
 Run (SQLite gate):
     docker run --rm -v "<repo>:/atriumdb" -e PYTHONPATH=/atriumdb/sdk \
         atriumdb-test:latest python -m pytest \
-        /atriumdb/sdk/tests/test_event_anchored_definition_p5_audit.py -q
+        /atriumdb/sdk/tests/test_event_anchored_definition_edge_cases.py -q
 """
 import shutil
 import tempfile
@@ -48,11 +42,11 @@ PERIOD_NS = (10 ** 18) // FREQ_NHZ  # 1 s
 
 
 # --------------------------------------------------------------------------- #
-# Fixtures / helpers (mirrors the writer's harness so comparisons are apples-to-apples)
+# Fixtures / helpers
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def sdk():
-    loc = tempfile.mkdtemp(prefix="atrium_p5audit_")
+    loc = tempfile.mkdtemp(prefix="atrium_event_anchored_definition_edges_")
     shutil.rmtree(loc, ignore_errors=True)
     s = AtriumSDK.create_dataset(dataset_location=loc, database_type="sqlite")
     s._loc = loc
@@ -256,7 +250,7 @@ def test_from_to_max_duration_longer_is_noop(sdk):
 
 
 def test_from_to_max_duration_measured_from_PADDED_start(sdk):
-    # AUDIT NOTE: max_duration caps AFTER pre-padding, measured from the padded start.
+    # max_duration caps after pre-padding, measured from the padded start.
     # [10,30] with pre=5 -> padded [5,30]; max_duration=10 -> [5,15], i.e. the cap
     # eats into the real event interval, not just the padding. Pinning observed behaviour.
     numeric_id, event_id, d = setup_source(sdk, numeric_span_s=(0, 60))
@@ -270,9 +264,8 @@ def test_from_to_max_duration_measured_from_PADDED_start(sdk):
 
 
 def test_from_to_max_duration_zero_is_rejected(sdk):
-    # max_duration=0 used to pass validation (it is not negative) and then
-    # collapse every interval to zero width -> the whole region silently
-    # dropped. It is now rejected when the definition is built.
+    # max_duration=0 would collapse every interval to zero width and silently
+    # dropped. It is rejected when the definition is built.
     numeric_id, event_id, d = setup_source(sdk, numeric_span_s=(0, 60))
     write_events(sdk, event_id, d, [(10, "START"), (30, "STOP")])
     with pytest.raises(ValueError, match="max_duration"):
@@ -297,7 +290,7 @@ def test_from_to_left_censored_start(sdk):
 
 
 def test_from_to_keep_equals_clip_for_ranges(sdk):
-    # AUDIT NOTE: get_event_intervals ALREADY clips censored ends to the container, so
+    # get_event_intervals already clips censored ends to the container, so
     # on_censored='keep' yields identical RANGES to 'clip' (only the warning differs).
     # 'keep' does not recover an un-clipped boundary because none is available.
     numeric_id, event_id, d = setup_source(sdk, numeric_span_s=(0, 60))
@@ -383,7 +376,7 @@ def test_ambiguous_tag_both_string_resolves(sdk):
 
 def test_tag_collision_numeric_and_string_prefers_string(sdk):
     # A numeric measure and a string measure share the tag "sig". Event-region
-    # resolution now PREFERS the string measure (P5 fix): the numeric measure no longer
+    # Resolution prefers the string measure; the numeric measure no longer
     # shadows it via the value_type-blind "best" rule, so the anchor resolves correctly
     # regardless of which id "best" would pick by block count.
     d = sdk.insert_device(device_tag="dev_coll")
@@ -472,8 +465,8 @@ def test_unknown_within_with_occurrences_raises(sdk):
 
 
 def test_unknown_within_raises_even_with_no_occurrences(sdk):
-    # P5 fix: `within` is validated up front, so a bogus value raises deterministically
-    # even when the source has zero occurrences (previously the anchor path returned
+    # `within` is validated up front, so a bogus value raises deterministically
+    # even when the source has zero occurrences (the anchor path returns
     # early before checking `within`, letting the bad value silently escape).
     numeric_id, event_id, d = setup_source(sdk)
     write_events(sdk, event_id, d, [(500, "MARK")])  # outside data union
@@ -503,7 +496,7 @@ def test_event_and_classic_region_in_same_list(sdk):
 
 
 def test_region_pre_post_are_NOT_scaled_by_validate_time_units(sdk):
-    # AUDIT NOTE: validate(time_units="s") scales the GLOBAL start/end only. Region
+    # validate(time_units="s") scales the global start/end only. Region
     # pre/post/max_duration are always raw nanoseconds (same as classic time0). Here
     # pre/post are given as whole nanoseconds (5*SEC) and stay 5 s regardless of the
     # time_units passed to validate -- i.e. units do NOT apply to region fields.
@@ -521,7 +514,7 @@ def test_region_pre_post_are_NOT_scaled_by_validate_time_units(sdk):
 
 
 # ========================================================================== #
-# G. classic-definition regression (must be byte-identical to pre-P5 behaviour)
+# G. Classic definitions remain byte-identical.
 # ========================================================================== #
 def _expected_all_ranges_from_interval_array(sdk, numeric_id, device_id):
     ia = sdk.get_interval_array(numeric_id, device_id=device_id, gap_tolerance_nano=0)

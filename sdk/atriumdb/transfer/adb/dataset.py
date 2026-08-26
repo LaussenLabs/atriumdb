@@ -153,6 +153,30 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         Label names, label text and label sources are likewise never altered by
         ``deidentify``; only their device/measure ids are remapped and their times shifted.
 
+    .. warning::
+
+        **A clean exit is not proof of a complete copy. Count what arrived.** A patient-scoped
+        definition covers the ``device_patient`` mapping windows, not the full extent of the
+        stored data. ``"all"`` for a patient resolves through
+          ``get_interval_array(patient_id=...)``, which truncates to the mapping window, while
+          ``get_data(patient_id=...)`` selects overlapping *blocks* and returns them whole.
+          A reading written to the device shortly before that patient was mapped to it is
+          therefore returned by ``get_data`` but not transferred.
+
+        Verify a transfer by counting, per measure and per source, rather than by trusting the
+        exit::
+
+            for measure_id, dest_measure_id in measure_pairs:
+                for pid in patient_ids:
+                    src_n = len(src_sdk.get_data(measure_id, 0, 2 ** 63 - 1, patient_id=pid)[1])
+                    dst_n = len(dest_sdk.get_data(dest_measure_id, 0, 2 ** 63 - 1, patient_id=pid)[1])
+                    if src_n != dst_n:
+                        print(f"measure {measure_id} patient {pid}: {src_n} -> {dst_n}")
+
+        A difference does not always mean data was lost -- the source count above can be
+        over-inclusive. Compare the gap against the mapping windows
+        from ``get_device_patient_data`` before concluding either way.
+
     Examples:
     ---------
     Create a dataset definition:
@@ -298,10 +322,11 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                             string_value_policy=string_value_policy)
                         continue
 
-                    seen_block_ids = set()
-                    blocks_to_transfer = []
-                    time_range_index_to_transfer = []
-                    re_encode_block_bool_list = []
+                    # A physical block may overlap more than one requested range. Keep
+                    # one entry per block and carry *all* of its ranges with it. Keeping
+                    # the block list and its bookkeeping in the same structure prevents
+                    # duplicate candidates from shifting the parallel arrays out of sync.
+                    block_entries_by_id = {}
                     measure_device_intervals = []
 
                     for time_range_i, (start_time_nano, end_time_nano) in enumerate(time_ranges):
@@ -320,31 +345,11 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                                 int(src_measure_id), int(start_time_nano), int(end_time_nano), int(src_device_id), None)
                             block_list.sort(key=lambda x: x[6])
 
-                        # Filter out duplicates
-                        filtered_blocks = []
                         for block in block_list:
                             block_id = block["id"] if src_sdk.mode == "api" else block[0]
-                            if block_id not in seen_block_ids:
-                                seen_block_ids.add(block_id)
-                                filtered_blocks.append(block)
-
-                        # Extend the main list with unique blocks
-                        blocks_to_transfer.extend(filtered_blocks)
-
-                        # Decide which blocks need to be reencoded.
-                        if not reencode_waveforms:
-                            for block in block_list:
-                                block_s = block["start_time_n"] if src_sdk.mode == "api" else block[6]
-                                block_e = block["end_time_n"] if src_sdk.mode == "api" else block[7]
-                                if start_time_nano <= block_s and block_e <= end_time_nano:
-                                    time_range_index_to_transfer.append(-1)
-                                    re_encode_block_bool_list.append(False)
-                                else:
-                                    re_encode_block_bool_list.append(True)
-                        else:
-                            re_encode_block_bool_list.extend([True] * len(block_list))
-
-                        time_range_index_to_transfer.extend([time_range_i] * len(block_list))
+                            entry = block_entries_by_id.setdefault(
+                                block_id, {'block': block, 'time_range_indices': []})
+                            entry['time_range_indices'].append(time_range_i)
 
                         # Grab the interval data for transferring into the new sdk.
                         write_intervals = src_sdk.get_interval_array(
@@ -353,8 +358,29 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
                         measure_device_intervals.append(write_intervals)
 
-                    if not blocks_to_transfer:
+                    if not block_entries_by_id:
                         continue
+
+                    block_entries = sorted(
+                        block_entries_by_id.values(),
+                        key=lambda entry: (entry['block']["start_time_n"] if src_sdk.mode == "api"
+                                           else entry['block'][6]))
+                    blocks_to_transfer = [entry['block'] for entry in block_entries]
+                    time_range_indices_to_transfer = [
+                        tuple(entry['time_range_indices']) for entry in block_entries]
+                    re_encode_block_bool_list = []
+                    for entry, time_range_indices in zip(block_entries, time_range_indices_to_transfer):
+                        block = entry['block']
+                        block_start = block["start_time_n"] if src_sdk.mode == "api" else block[6]
+                        block_end = block["end_time_n"] if src_sdk.mode == "api" else block[7]
+                        is_fully_contained = any(
+                            time_ranges[index][0] <= block_start and block_end <= time_ranges[index][1]
+                            for index in time_range_indices)
+                        # A block associated with several ranges must be decoded once and
+                        # clipped to their union; holding it verbatim would include samples
+                        # outside the definition ranges.
+                        re_encode_block_bool_list.append(
+                            reencode_waveforms or len(time_range_indices) > 1 or not is_fully_contained)
 
                     block_start_index = 0
                     # Break up  the list of total blocks to transfer into manageable block groups.
@@ -363,7 +389,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                             src_sdk_mode=src_sdk.mode):
 
                         group_re_encode_flags = re_encode_block_bool_list[block_start_index:block_start_index + len(block_group)]
-                        block_time_range_indices = time_range_index_to_transfer[
+                        block_time_range_indices = time_range_indices_to_transfer[
                             block_start_index:block_start_index + len(block_group)]
                         block_start_index += len(block_group)
                         if len(block_group) == 0:
@@ -383,7 +409,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
                         start_byte = 0
                         # Read the block headers and organize block information.
-                        for block_i, (time_range_i, block, re_encode_flag) in enumerate(
+                        for block_i, (time_range_indices, block, re_encode_flag) in enumerate(
                                 zip(block_time_range_indices, block_group, group_re_encode_flags)):
                             block_num_bytes = block["num_bytes"] if src_sdk.mode == "api" else block[5]
                             block_bytes = encoded_bytes[start_byte:start_byte + block_num_bytes]
@@ -407,7 +433,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                                 group_period_ns = None
 
                             key = (
-                            time_range_i, scale_m, scale_b, group_freq_nhz, group_period_ns, t_encoded_type, version)
+                                time_range_indices, scale_m, scale_b, group_freq_nhz,
+                                group_period_ns, t_encoded_type, version)
 
                             if not re_encode_flag and time_shift is not None and t_encoded_type == 1:
                                 re_encode_flag = True
@@ -434,8 +461,9 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                         # Process each group for reencoding
                         segments = []
                         for key, group_data in groups_to_reencode.items():
-                            time_range_i, scale_m, scale_b, group_freq_nhz, group_period_ns, t_encoded_type, version = key
-                            encode_group_lower_bound, encode_group_upper_bound = time_ranges[time_range_i]
+                            (encode_time_range_indices, scale_m, scale_b, group_freq_nhz,
+                             group_period_ns, t_encoded_type, version) = key
+                            encode_ranges = [time_ranges[index] for index in encode_time_range_indices]
 
                             block_bytes_list = group_data['block_bytes_list']
                             block_num_bytes_list = group_data['block_num_bytes_list']
@@ -462,11 +490,18 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                                                                                     return_index=True)
                                 encode_group_values = encode_group_values[sorted_time_indices]
 
-                                # Truncate data
-                                left = np.searchsorted(encode_group_times, encode_group_lower_bound, side='left')
-                                right = np.searchsorted(encode_group_times, encode_group_upper_bound, side='left')
-                                encode_group_times = encode_group_times[left:right]
-                                encode_group_values = encode_group_values[left:right]
+                                # Truncate to the union of every definition range this
+                                # block intersects. A sparse aperiodic block can span
+                                # several ranges even though it is only stored once.
+                                selected = np.zeros(encode_group_times.size, dtype=bool)
+                                for encode_group_lower_bound, encode_group_upper_bound in encode_ranges:
+                                    left = np.searchsorted(
+                                        encode_group_times, encode_group_lower_bound, side='left')
+                                    right = np.searchsorted(
+                                        encode_group_times, encode_group_upper_bound, side='left')
+                                    selected[left:right] = True
+                                encode_group_times = encode_group_times[selected]
+                                encode_group_values = encode_group_values[selected]
                                 if encode_group_times.size == 0:
                                     continue
 
@@ -481,24 +516,40 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                                     period_ns=group_period_ns)
                                 sort_message_time_values(message_starts, message_sizes, encode_group_values)
 
-                                # Truncate the message data
-                                encode_group_values, message_starts, message_sizes = truncate_messages(
-                                    encode_group_values, message_starts, message_sizes, freq_nhz=group_freq_nhz,
-                                    period_ns=group_period_ns, trunc_start_nano=encode_group_lower_bound,
-                                    trunc_end_nano=encode_group_upper_bound)
+                                # A gap-array block can span several disjoint ranges as
+                                # well. Encode one segment per selected range so no values
+                                # between those ranges slip into the destination.
+                                for encode_group_lower_bound, encode_group_upper_bound in encode_ranges:
+                                    range_values, range_starts, range_sizes = truncate_messages(
+                                        encode_group_values, message_starts, message_sizes,
+                                        freq_nhz=group_freq_nhz, period_ns=group_period_ns,
+                                        trunc_start_nano=encode_group_lower_bound,
+                                        trunc_end_nano=encode_group_upper_bound)
+                                    if len(range_starts) == 0:
+                                        continue
 
-                                if len(message_starts) == 0:
-                                    continue
-
-                                # Revert back to gap array
-                                gap_data = create_gap_arr_from_variable_messages(
-                                    message_starts, message_sizes, freq_nhz=group_freq_nhz, period_ns=group_period_ns)
-                                encode_group_times = gap_data
-
-                                encode_group_start_time = int(message_starts[0])
-
-                                if time_shift is not None:
-                                    encode_group_start_time += time_shift
+                                    range_gap_data = create_gap_arr_from_variable_messages(
+                                        range_starts, range_sizes, freq_nhz=group_freq_nhz,
+                                        period_ns=group_period_ns)
+                                    range_start_time = int(range_starts[0])
+                                    if time_shift is not None:
+                                        range_start_time += time_shift
+                                    segments.append({
+                                        'times': range_gap_data,
+                                        'values': range_values,
+                                        'freq_nhz': group_freq_nhz,
+                                        'period_ns': group_period_ns,
+                                        'start_ns': range_start_time,
+                                        'raw_time_type': t_encoded_type,
+                                        'encoded_time_type': t_encoded_type,
+                                        'raw_value_type': raw_value_type,
+                                        'encoded_value_type': encoded_value_type,
+                                        'scale_m': scale_m,
+                                        'scale_b': scale_b,
+                                        't_compression': group_headers[0].t_compression,
+                                        't_compression_level': group_headers[0].t_compression_level
+                                    })
+                                continue
                             else:
                                 raise ValueError("time_type must be 1 or 2")
 
@@ -516,8 +567,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                                 'scale_b': scale_b,
                                 # Preserve the source time compression; a group mixing settings
                                 # is normalized (losslessly) to its first block's.
-                                't_compression': header.t_compression,
-                                't_compression_level': header.t_compression_level
+                                't_compression': group_headers[0].t_compression,
+                                't_compression_level': group_headers[0].t_compression_level
                             }
                             segments.append(segment)
 
@@ -665,12 +716,12 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                 # Make the list of label tuples to insert to the other dataset.
                 #
                 # insert_labels takes (name, source_id, measure, LABEL_SOURCE, start, end) --
-                # the label source sits in position 4, BEFORE the two times. This list used to
-                # build (name, device, measure, start, end, source_id), so every transferred
+                # the label source sits in position 4, before the two times. The tuple uses
+                # this order so every transferred
                 # label was unpacked one field out of step: the start time was read as the
                 # label_source_id, the end time became the start, and end_time collapsed to the
                 # source id (typically 1). Labels survived the transfer with corrupt times and a
-                # bogus source, silently -- only the KeyError of D5 stopped it being noticed.
+                # bogus source, silently.
                 #
                 # The source is carried by NAME rather than by id: label sources are not part of
                 # transfer_label_sets (which only maps label *names*), so a raw source id from

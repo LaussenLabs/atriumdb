@@ -337,7 +337,7 @@ def _observed_data_end(sdk, measure_interval_arrays, device_id, patient_id, inde
             continue
         m_start, m_end = int(arr[0][0]), int(arr[-1][1])
 
-        kind = sdk.get_measure_kind(measure_info['id'])
+        kind = (measure_info.get('signal_kind'), measure_info.get('value_type'))
         if kind is not None and kind[0] == SIGNAL_KIND_EVENT:
             try:
                 _headers, times, _values = sdk.get_data(
@@ -422,7 +422,7 @@ def _resolve_event_region(region_data, sdk, device_id, patient_id, start_time_n,
                          get_measure_id_from_generic_measure(sdk, measure_ref, measure_tag_match_rule="all")
                          if mid is not None]
         string_ids = [mid for mid in candidate_ids
-                      if is_string_value_type(sdk.get_measure_kind(mid)[1])]
+                      if is_string_value_type((sdk.get_measure_info(mid) or {}).get('value_type'))]
         if string_ids:
             best_id = int(get_measure_id_from_generic_measure(sdk, measure_ref, measure_tag_match_rule="best")[0])
             event_measure_id = best_id if best_id in string_ids else string_ids[0]
@@ -437,7 +437,7 @@ def _resolve_event_region(region_data, sdk, device_id, patient_id, start_time_n,
 
     within = region_data.get('within', None)
     # Validate `within` up front so a bogus value raises deterministically -- even when a
-    # source has zero occurrences (the anchor path used to return early before checking).
+    # source has zero occurrences.
     if within is not None and within not in ("device_patient", "encounter", "none"):
         raise ValueError(
             f"Unknown within option {within!r}; expected None (cascade), "

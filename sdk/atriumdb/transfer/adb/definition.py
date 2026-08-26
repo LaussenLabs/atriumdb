@@ -14,6 +14,8 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import warnings
+
 from atriumdb.windowing.definition import DatasetDefinition
 
 
@@ -76,7 +78,12 @@ def create_dataset_definition_from_verified_data(sdk, validated_measure_list, va
 
         device_info = sdk.get_device_info(device_id)
         if device_info is None:
-            raise ValueError(f"device id {device_id} not found in dataset.")
+            # The device_patient table can reference devices missing from the device table. No data
+            # was transferred for such devices, so omit them from the definition rather than failing
+            # after the transfer has already completed.
+            warnings.warn(f"device id {device_id} not found in dataset. "
+                          f"Omitting its device-patient mappings from the exported definition.")
+            continue
         device_tag = device_info['tag']
 
         # Choose to preferentially save data by patient or device based on the prefer_patient flag
@@ -105,7 +112,9 @@ def create_dataset_definition_from_verified_data(sdk, validated_measure_list, va
 
         device_info = sdk.get_device_info(device_id)
         if device_info is None:
-            raise ValueError(f"Unmatched device id {device_id} not found in dataset.")
+            warnings.warn(f"Unmatched device id {device_id} not found in dataset. "
+                          f"Omitting it from the exported definition.")
+            continue
         device_tag = device_info['tag']
         if device_tag not in device_tags:
             device_tags[device_tag] = []

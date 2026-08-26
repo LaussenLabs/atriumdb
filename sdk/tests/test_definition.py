@@ -82,7 +82,7 @@ def _test_advanced_definition(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    # This used to be 10_000 x 20 = 200,000 samples at 1 Hz, windowed into 10,000
+    # The fixture contains a bounded number of samples and windows.
     # windows and iterated twice (once in definition.filter, once in get_iterator), per
     # backend. The assertion is only "odd numbers survive the filter"; 500 gives 10,000
     # samples / 500 windows and walks byte-for-byte the same code path ~20x faster.

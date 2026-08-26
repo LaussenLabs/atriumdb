@@ -16,6 +16,7 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import bisect
+import warnings
 from typing import List, Tuple
 
 from atriumdb.intervals.difference import list_difference
@@ -30,6 +31,17 @@ def map_validated_sources(sources: dict, sdk) -> dict:
     # Extract patient_ids and device_ids dictionaries from the sources dictionary
     patient_ids = sources.get('patient_ids', {})
     device_ids = sources.get('device_ids', {})
+
+    # The device_patient table may reference devices that don't exist in the device table (orphaned
+    # mappings), so mapped devices must be checked against the device table before being trusted.
+    known_device_ids = None
+    warned_device_ids = set()
+
+    def device_exists(device_id):
+        nonlocal known_device_ids
+        if known_device_ids is None:
+            known_device_ids = {int(dev_id) for dev_id in sdk.get_all_devices().keys()}
+        return int(device_id) in known_device_ids
 
     # Function to process ids (either patient_ids or device_ids) and update the mapped_sources dictionary
     def process_ids(ids_dict, id_type):
@@ -54,6 +66,13 @@ def map_validated_sources(sources: dict, sdk) -> dict:
                 # Aggregate the time ranges based on the device and patient IDs
                 aggregated_ranges = aggregate_time_ranges(matching_device_patient_data)
                 for (device_id, patient_id), ranges in aggregated_ranges.items():
+                    if not device_exists(device_id):
+                        if device_id not in warned_device_ids:
+                            warned_device_ids.add(device_id)
+                            warnings.warn(
+                                f"device_patient mapping references device id {device_id} which does not "
+                                f"exist in the dataset. Ignoring its device-patient mappings.")
+                        continue
                     intersected_ranges = list_intersection(ranges, [time_range])
                     if intersected_ranges:
                         key = (device_id, patient_id)
@@ -111,17 +130,10 @@ def aggregate_time_ranges(device_patient_data: List[Tuple[int, int, int, int]]):
 
 
 def find_device_patient_data(sorted_device_patient_data, starts, ends, start_time, end_time):
-    start_idx = bisect.bisect_left(ends, start_time)
-    end_idx = bisect.bisect_left(ends, end_time)
-
-    if start_idx == end_idx:
-        if start_idx >= len(starts):
-            return []
-        if (not (starts[start_idx] <= start_time <= ends[start_idx])
-                and not (starts[end_idx] <= end_time <= ends[end_idx])):
-            return []
-
-    if end_idx < len(starts) and end_time < starts[end_idx]:
-        end_idx = max(0, end_idx - 1)
-
-    return sorted_device_patient_data[start_idx:end_idx + 1]
+    # Rows are sorted by start time only; when mappings overlap (e.g. two devices
+    # concurrently mapped to the same patient) the ends are not guaranteed to be
+    # in ascending order, so bisecting on ends is invalid. Bisect on starts to cut
+    # off rows starting after end_time, then keep every row whose end reaches
+    # start_time.
+    end_idx = bisect.bisect_right(starts, end_time)
+    return [row for row in sorted_device_patient_data[:end_idx] if row[3] >= start_time]

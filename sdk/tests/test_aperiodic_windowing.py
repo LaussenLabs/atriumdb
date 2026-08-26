@@ -15,13 +15,13 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-Phase 3 aperiodic / string rasterization tests (design section 21.6).
+Aperiodic and string rasterization tests.
 
 Runs in SQLite mode only (no MariaDB/Docker DB needed). Covers per-kind
 rasterization into the Window contract with the correct unknown-sentinel
 placement, the 1 s default raster period, mixed-rate batching, and the string
-int64-code + decode accessor path. The critical numeric-path regression is
-guarded by the existing sdk/tests/test_iterator.py (byte-for-byte grid path).
+int64-code + decode accessor path. The existing sdk/tests/test_iterator.py guards
+the byte-for-byte numeric grid path.
 """
 import shutil
 import tempfile
@@ -39,7 +39,7 @@ BASE = 1_600_000_000 * SEC
 
 @pytest.fixture
 def sdk():
-    loc = tempfile.mkdtemp(prefix="atrium_p3_")
+    loc = tempfile.mkdtemp(prefix="atrium_aperiodic_windowing_")
     shutil.rmtree(loc, ignore_errors=True)
     s = AtriumSDK.create_dataset(dataset_location=loc, database_type="sqlite")
     try:
@@ -229,6 +229,54 @@ def test_string_sample_carry_forward(sdk):
     assert list(decoded[4:6]) == ["B"] * 2
 
 
+def test_definition_filter_rasterizes_aperiodic_and_string_measures(sdk):
+    """Filtering must expose the same rasterized signal contract as iteration."""
+    sample = sdk.insert_measure("nibp", freq=1.0, freq_units="Hz", units="mmHg",
+                                signal_kind="sample")
+    state = sdk.insert_measure("mode", freq=1.0, freq_units="Hz", units="string",
+                               signal_kind="state", value_type="string")
+    dev = sdk.insert_device(device_tag="dev1")
+    sdk.write_time_value_pairs(
+        sample, dev, BASE + np.array([2, 4], dtype=np.int64) * SEC,
+        np.array([100.0, 110.0]))
+    sdk.write_time_value_pairs(
+        state, dev, BASE + np.array([1, 4], dtype=np.int64) * SEC,
+        np.array(["A", "B"], dtype=object))
+
+    defn = DatasetDefinition(
+        measures=["nibp", "mode"],
+        device_ids={dev: [{"start": int(BASE), "end": int(BASE + 6 * SEC)}]},
+    )
+    defn.validate(sdk)
+
+    def accept_b_mode(window):
+        signals = {key[0]: value for key, value in window.signals.items()}
+        assert signals["nibp"]["values"].dtype == np.float64
+        assert signals["mode"]["values"].dtype == np.int64
+        mode_key = next(key for key in window.signals if key[0] == "mode")
+        return (
+            signals["nibp"]["values"][0] == 110.0
+            and window.decode_string_signal(sdk, mode_key)[0] == "B"
+        )
+
+    defn.filter(sdk, accept_b_mode, 2, 2, time_units="s")
+    assert defn.validated_data_dict["sources"]["device_ids"][dev] == [
+        [BASE + 4 * SEC, BASE + 6 * SEC]
+    ]
+
+
+def test_definition_filter_names_aperiodic_measure_for_zero_cell_window(sdk):
+    m = sdk.insert_measure("nibp", freq=1.0, freq_units="Hz", units="mmHg",
+                           signal_kind="sample")
+    dev = sdk.insert_device(device_tag="dev1")
+    sdk.write_time_value_pairs(m, dev, BASE + np.array([1], dtype=np.int64) * SEC,
+                               np.array([100.0]))
+    defn = _region_def(sdk, "nibp", dev, BASE, BASE + 2 * SEC)
+
+    with pytest.raises(ValueError, match=rf"Measure {m} \('nibp'\).*window duration"):
+        defn.filter(sdk, lambda window: True, 500, 500, time_units="ms")
+
+
 # --------------------------------------------------------------------------- #
 # mixed-rate window: a waveform + an aperiodic measure in one definition
 # --------------------------------------------------------------------------- #
@@ -265,7 +313,7 @@ def test_mixed_rate_window_batches(sdk):
 
 
 # --------------------------------------------------------------------------- #
-# waveform numeric path stays a plain NaN grid (local regression sanity)
+# Waveform numeric path stays a plain NaN grid.
 # --------------------------------------------------------------------------- #
 def test_waveform_numeric_unchanged(sdk):
     wf = sdk.insert_measure("ecg", freq=1.0, freq_units="Hz", units="mV")
@@ -286,7 +334,7 @@ def test_waveform_numeric_unchanged(sdk):
 
 # --------------------------------------------------------------------------- #
 # CRITICAL: the waveform-numeric grid path is byte-for-byte identical whether or
-# not a render_config is supplied (proves the P3 refactor did not touch it, with
+# not a render_config is supplied (with
 # no physionet download needed).
 # --------------------------------------------------------------------------- #
 def test_waveform_grid_byte_for_byte_identical(sdk):
@@ -308,10 +356,10 @@ def test_waveform_grid_byte_for_byte_identical(sdk):
                   batch_start_time=int(BASE), batch_end_time=int(BASE + 8 * SEC),
                   batch_num_windows=3, range_start_time=int(BASE), range_end_time=int(BASE + 8 * SEC))
     legacy = get_signal_dictionary(render_config=None, **common)
-    p3 = get_signal_dictionary(render_config=wcfg, **common)
+    rendered = get_signal_dictionary(render_config=wcfg, **common)
 
     lt, lv, lc = legacy[wf]
-    pt, pv, pc = p3[wf]
+    pt, pv, pc = rendered[wf]
     assert lc == pc
     assert np.array_equal(lt, pt)
     # equal_nan so NaN gap cells compare equal position-for-position
@@ -331,7 +379,7 @@ def test_incompatible_override_raises(sdk):
 
 
 def test_period_larger_than_window_clear_error(sdk):
-    # Bug 3: a nominal period larger than the window duration must raise a clear,
+    # A nominal period larger than the window duration must raise a clear,
     # measure-named error (not an opaque "slice step cannot be zero").
     m = sdk.insert_measure("nibp", freq=1.0, freq_units="Hz", units="mmHg", signal_kind="sample")
     dev = sdk.insert_device(device_tag="dev1")
@@ -344,7 +392,7 @@ def test_period_larger_than_window_clear_error(sdk):
 
 
 def test_carry_forward_batch_independent(sdk):
-    # Bug 1 regression (writer-side): carry-forward is deterministic regardless of
+    # Carry-forward is deterministic regardless of
     # num_windows_prefetch. Reading at 2s carries into a later window's batch.
     m = sdk.insert_measure("nibp", freq=1.0, freq_units="Hz", units="mmHg", signal_kind="sample")
     dev = sdk.insert_device(device_tag="dev1")

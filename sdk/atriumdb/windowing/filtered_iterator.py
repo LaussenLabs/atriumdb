@@ -82,7 +82,7 @@ class FilteredDatasetIterator(DatasetIterator):
             num_windows_for_batch = range_num_windows
 
             batch_window_list = get_window_list(device_id, patient_id, measures, source_batch_data_dictionary,
-                                                     source_batch_start_time, num_windows_for_batch, window_slide_ns,
+                                                     source_batch_start_time, num_windows_for_batch, self.window_duration_ns, window_slide_ns,
                                                      threshold_labels, sliced_labels, patient_history_cache,
                                                      patient_history_fields, patient_info_cache)
             if self.window_filter_fn:

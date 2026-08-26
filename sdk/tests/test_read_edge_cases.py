@@ -15,13 +15,8 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-Regression guards for GENERAL (non-feature, pre-existing) read-side defects found
-while reviewing the aperiodic + text feature. Each of these reproduces identically
-on ``main`` with plain numeric waveform measures -- they are NOT regressions of the
-aperiodic feature, and the tests below are written with waveform measures only so
-they keep their meaning independent of that feature.
-
-Every test asserts the FIXED behaviour and must PASS. SQLite only.
+Read-side edge-case tests that use plain numeric waveform measures and are independent
+of aperiodic and text support. SQLite only.
 """
 import shutil
 import tempfile
@@ -38,7 +33,7 @@ BASE = 1_600_000_000 * SEC
 
 @pytest.fixture
 def sdk():
-    loc = tempfile.mkdtemp(prefix="atrium_preexisting_read_")
+    loc = tempfile.mkdtemp(prefix="atrium_read_edges_")
     shutil.rmtree(loc, ignore_errors=True)
     s = AtriumSDK.create_dataset(dataset_location=loc, database_type="sqlite")
     try:

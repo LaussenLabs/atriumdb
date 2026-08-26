@@ -30,7 +30,6 @@ DB_NAME = 'gap_data_merge'
 # and it was paying the full 4 x 650,000-sample price for that. One truncated record
 # gives the same array shapes (gaps, a clean split, a split on a gap, a middle chunk and
 # a riffle shuffle) at 1/130th the cost. Every assertion below still runs.
-# (`_test_for_both` used to be imported here and never called; removed.)
 MAX_RECORDS = 1
 
 
