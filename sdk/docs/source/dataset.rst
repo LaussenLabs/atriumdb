@@ -10,14 +10,14 @@ Iterator Usage
 Often we are interested in working with relatively small windows of data at a time. For visualizing, pre-processing
 small amounts of data at once, or when we are training a model.
 
-However the primary way of querying data, `AtriumSDK.get_data  <contents.html#atriumdb.AtriumSDK.get_data>`_ incurs an
+However the primary way of querying data, `AtriumSDK.get_data  <api_reference.html#atriumdb.AtriumSDK.get_data>`_ incurs an
 overhead cost everytime it is called. This makes it an inefficient means of collecting a large amount of small windows
 of data.
 
-For this reason, AtriumDB has a `AtriumSDK.get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_ method, that
+For this reason, AtriumDB has a `AtriumSDK.get_iterator  <api_reference.html#atriumdb.AtriumSDK.get_iterator>`_ method, that
 preloads large amounts of data in your RAM, and feeds it to you piece by piece in an iterable Class.
 
-`AtriumSDK.get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_ also does the job of windowing and indexing
+`AtriumSDK.get_iterator  <api_reference.html#atriumdb.AtriumSDK.get_iterator>`_ also does the job of windowing and indexing
 your data for you, which makes tasks like training a model much simpler.
 
 Dataset Iterator Example
@@ -61,7 +61,7 @@ Dataset Iterator Example
    definition = DatasetDefinition(measures=measures, device_ids=device_ids)
 
 You can also use mrns or device tags to device your sources. See the
-`DatasetDefinition Class <contents.html#atriumdb.DatasetDefinition>`_ for more options.
+`DatasetDefinition Class <api_reference.html#atriumdb.DatasetDefinition>`_ for more options.
 
 3. Set your desired parameters: **window_duration** and **window_slide** (durations in nanoseconds by default,
 changeable using ``time_units`` param, output times with conform to ``time_units`` units):
@@ -83,7 +83,7 @@ ensures true randomness, but at great cost to the speed in which the windows are
 **time_units** defines the time units of ``window_duration``, ``window_slide`` and ``gap_tolerance`` options are
 ``["s", "ms", "us", "ns"]``, default ``"ns"``.
 
-Check the `AtriumSDK.get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_ documentation for a complete list of parameters
+Check the `AtriumSDK.get_iterator  <api_reference.html#atriumdb.AtriumSDK.get_iterator>`_ documentation for a complete list of parameters
 
 .. code-block:: python
 
@@ -122,7 +122,7 @@ Window Format
 #####################
 
 The ``Window`` class represents a data structure for windowed data output by the
-`DatasetIterator Class <contents.html#atriumdb.DatasetIterator>`_, it includes the raw
+`DatasetIterator Class <api_reference.html#atriumdb.DatasetIterator>`_, it includes the raw
 data organized into signal dictionaries, along with associated metadata, and additional
 information related to patient and analysis results.
 
@@ -245,7 +245,10 @@ Each measure's ``signal_kind`` determines its default fill rule:
 - ``state`` — **``carry_forward``** with **left-censoring**: cells before the first observed state
   transition in the window are marked unknown (the true prior state is not known from within the window).
   A ``state`` value *is* carried across window boundaries within a region, so a long-running state stays
-  populated in every window after the transition that set it.
+  populated in every window after the transition that set it — but a region belongs to **one
+  ``(device, patient)`` source**, and one patient usually has several. See
+  :ref:`Sources are resolved per device <sources_are_per_device>` before concluding that a state
+  channel is losing its value.
 - ``event`` — **``presence``** (default): each cell is ``1.0`` if any event occurred in it, else ``0.0``.
   Alternative: ``count`` (the number of events in the cell). Event cells are always "known" — absence is a
   meaningful ``0``, so there is no unknown sentinel for events.
@@ -296,13 +299,13 @@ array**, not with a separate mask:
 
    A sentinel **conflates "unknown / censored" with a genuine missing reading** — a ``NaN`` in a window
    could mean "no data here" or "the recorded value was itself NaN". There is no separate ``known`` mask
-   yet; a dedicated per-signal mask is a planned future enhancement. If your downstream logic must
+   yet. If your downstream logic must
    distinguish the two, keep this in mind.
 
 Configuring fill on ``get_iterator``
 ####################################
 
-Three `AtriumSDK.get_iterator <contents.html#atriumdb.AtriumSDK.get_iterator>`_ parameters control this
+Three `AtriumSDK.get_iterator <api_reference.html#atriumdb.AtriumSDK.get_iterator>`_ parameters control this
 behaviour:
 
 - ``aperiodic_fill`` — a **global default** fill rule applied to every aperiodic measure whose ``signal_kind``
@@ -317,7 +320,7 @@ behaviour:
 
    ``fill_overrides`` and ``period_overrides`` are keyed by **measure id (int)**, while a
    ``DatasetDefinition`` is normally written in measure *tags*. Resolve the ids first with
-   `AtriumSDK.get_measure_id <contents.html#atriumdb.AtriumSDK.get_measure_id>`_::
+   `AtriumSDK.get_measure_id <api_reference.html#atriumdb.AtriumSDK.get_measure_id>`_::
 
        nibp_id = sdk.get_measure_id(measure_tag="NIBP_SYS", freq=1.0, freq_units="Hz", units="mmHg")
        iterator = sdk.get_iterator(definition, 60, 60, time_units="s",
@@ -357,7 +360,7 @@ depends entirely on its ``signal_kind``:
 
   There is no fill configuration that makes an ``event`` measure decodable; ``sparse`` and
   ``carry_forward`` are rejected for that kind. To read the text of an ``event`` measure, use
-  `AtriumSDK.get_string_data <contents.html#atriumdb.AtriumSDK.get_string_data>`_ outside the iterator, or
+  `AtriumSDK.get_string_data <api_reference.html#atriumdb.AtriumSDK.get_string_data>`_ outside the iterator, or
   declare the measure ``state``/``sample`` in the first place (see
   :ref:`Choosing a signal_kind <choosing_signal_kind>`).
 
@@ -431,7 +434,7 @@ Current limitations
   the first observed transition as unknown, but it does not itself bound the state on its *right* edge:
   the last observed value is carried to the end of the region. If you need an explicitly right-bounded
   state, derive it from
-  `AtriumSDK.get_event_intervals <contents.html#atriumdb.AtriumSDK.get_event_intervals>`_, whose
+  `AtriumSDK.get_event_intervals <api_reference.html#atriumdb.AtriumSDK.get_event_intervals>`_, whose
   ``end_censored`` flag tells you when the closing marker was never seen — see
   :ref:`Building an "in state" channel <in_state_channel>`.
 - **``carry_forward`` looks back a bounded distance, not an unbounded one** — at a region's start
@@ -448,13 +451,62 @@ Current limitations
   ``start_time``; see :ref:`Recovering the anchor <event_anchored_regions>` for the recipe to map a window
   back to the event that produced it.
 
+.. _sources_are_per_device:
+
+Sources are resolved per device, even when you asked by patient
+################################################################
+
+A definition written as ``patient_ids={pid: "all"}`` does **not** produce one stream of windows
+for that patient. Validation resolves it against the ``device_patient`` mapping into a list of
+``(device_id, patient_id)`` sources, and the iterator then reads **every measure scoped to that
+device**. Two consequences catch people out, and both look like rasterization bugs:
+
+**1. A measure that lives on a different device reads back entirely unknown.** Signals from
+different feeds routinely sit on disjoint device sets for the same patient — an ADT/admin feed
+supplying ``careunit-state``, a bedside monitor supplying heart rate, with **no device in
+common**. Ask for both in one iterator and each window comes from one device or the other, so
+one of the two channels is always unknown:
+
+.. code-block:: text
+
+    window start          device   careunit-state
+    4896325400000000000      259   ['Cardiac Vascular Intensive Care Unit (CVICU)']
+    4896325400000000000      386   ['<unknown>']        <- device 386 has 0 careunit-state rows
+
+This is not left-censoring and not a carry-forward failure; ``carry_forward`` is working
+perfectly on device 259. There is simply no data for that measure on device 386, and the
+unknown sentinel cannot distinguish "not recorded on this source" from "state genuinely
+unknown here". Check before you build::
+
+    for dev in {r[0] for r in sdk.get_device_patient_data(patient_id_list=[pid])}:
+        print(dev, len(sdk.get_interval_array(measure_id=state_id, device_id=dev)),
+                   len(sdk.get_interval_array(measure_id=hr_id, device_id=dev)))
+
+If the two columns never have a nonzero entry on the same row, the iterator cannot join those
+measures for that patient, and you want the point-read path instead —
+:ref:`Getting data into pandas <to_pandas>` with ``pandas.merge_asof(..., direction="backward")``
+carries the state forward across an ordinary ``get_string_data`` / ``get_data`` pair and is the
+right tool for an ad-hoc cross-device comparison.
+
+**2. Windows are not emitted in global chronological order.** They arrive grouped by source, so
+two devices covering overlapping time produce two interleaved streams. Sorting the whole run by
+``start_time`` therefore interleaves them, and a state channel that is correct on one device and
+unknown on the other reads as though it were *oscillating* on the window period. It is not
+oscillating; it is two sources. Always keep ``window.device_id`` alongside ``window.start_time``
+when you flatten a run:
+
+.. code-block:: python
+
+    rows = [(w.start_time, w.device_id, w.signals[key]['values']) for w in iterator]
+    rows.sort(key=lambda r: (r[1], r[0]))      # by source, THEN by time
+
 .. _in_state_channel:
 
 Recipe: a 0/1 "in state A → B" channel
 #######################################
 
 Event pairing **is** implemented — see
-`AtriumSDK.get_event_intervals <contents.html#atriumdb.AtriumSDK.get_event_intervals>`_ and
+`AtriumSDK.get_event_intervals <api_reference.html#atriumdb.AtriumSDK.get_event_intervals>`_ and
 :ref:`Event Queries <event_queries>`. There is no API that turns a ``from → to`` pair directly into a
 per-cell channel, but the iterator already gives you the grid times, so building one is a few lines. This
 is the usual way to get an "is the patient in anesthesia right now" mask aligned with the waveform grid:
@@ -483,7 +535,7 @@ directly as decodable ``int64`` codes with no extra work — see
 Iterator Types
 ------------------------
 
-The `AtriumSDK.get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_ method supports three different types of iterators: default, filtered, and mapped. Each type serves different purposes and offers unique functionalities to handle your dataset windows as per your needs.
+The `AtriumSDK.get_iterator  <api_reference.html#atriumdb.AtriumSDK.get_iterator>`_ method supports three different types of iterators: default, filtered, and mapped. Each type serves different purposes and offers unique functionalities to handle your dataset windows as per your needs.
 
 Default Iterator
 ####################
@@ -536,7 +588,7 @@ Recommendations
 - Use the filtered iterator when you need to filter or preprocess windows on-the-fly.
 - Use the mapped iterator for tasks that require random access to specific windows by their indices. However, note that it may be slower due to the lack of sequential access optimizations.
 
-For further information and options on the `get_iterator` method, `check its section in the API Reference  <contents.html#atriumdb.AtriumSDK.get_iterator>`_.
+For further information and options on the `get_iterator` method, `check its section in the API Reference  <api_reference.html#atriumdb.AtriumSDK.get_iterator>`_.
 
 .. _definition_file_format:
 
@@ -624,7 +676,7 @@ Dataset Definitions
 Creating a DatasetDefinition object
 ###################################
 
-You can create a `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ object in several ways:
+You can create a `DatasetDefinition <api_reference.html#atriumdb.DatasetDefinition>`_ object in several ways:
 
 1. Reading from an existing YAML file:
 
@@ -680,7 +732,7 @@ For each occurrence of the ``anchor`` value in the event measure, a window
 
 **(b)** ``from``/``to`` **— a region between an opening and a closing event.**
 Each interval between a ``from`` event and the next ``to`` event (using the same *collapse*
-pairing as `AtriumSDK.get_event_intervals <contents.html#atriumdb.AtriumSDK.get_event_intervals>`_)
+pairing as `AtriumSDK.get_event_intervals <api_reference.html#atriumdb.AtriumSDK.get_event_intervals>`_)
 becomes a region:
 
 - ``from`` / ``to``: the opening and closing event values (both required; both must be in the
@@ -745,7 +797,7 @@ stretch where the ECG you requested has no data, and those windows come back all
 
 **The** ``within`` **cascade.** When given, ``within`` scopes the emitted ranges to a
 container. It follows the same cascade as
-`AtriumSDK.get_event_intervals <contents.html#atriumdb.AtriumSDK.get_event_intervals>`_:
+`AtriumSDK.get_event_intervals <api_reference.html#atriumdb.AtriumSDK.get_event_intervals>`_:
 ``"device_patient"`` → ``"encounter"`` → ``"none"`` (whole-stream). Omit ``within`` to leave
 the ranges unscoped.
 
@@ -766,7 +818,7 @@ If you are wrapping definition construction in error handling, wrap the construc
 .. note::
 
    The ``measure`` key of an event-anchored region accepts a **tag or an id**.
-   `AtriumSDK.get_event_intervals <contents.html#atriumdb.AtriumSDK.get_event_intervals>`_, the
+   `AtriumSDK.get_event_intervals <api_reference.html#atriumdb.AtriumSDK.get_event_intervals>`_, the
    standalone query behind it, accepts a **measure id only** — passing a tag raises
    ``ValueError: invalid literal for int() with base 10: '...'``. Resolve it with
    ``sdk.get_measure_id(...)`` first.
@@ -1587,7 +1639,7 @@ the same directory scheme with their own extensions.
 
 .. warning::
 
-   **A CSV export does not round-trip nanosecond timestamps exactly (known defect).** The CSV
+   **A CSV export does not round-trip nanosecond timestamps exactly.** The CSV
    writer divides the ``int64`` nanosecond times by the unit conversion factor before writing —
    which for the default ``ns`` format is a division by 1, and still converts the array to
    ``float64``. A modern nanosecond epoch is around ``1.77e18``, well past the ``2**53`` integer
@@ -1601,4 +1653,3 @@ the same directory scheme with their own extensions.
    ordinary waveform rate — but a CSV export is not a lossless archive, and a round-trip back
    into AtriumDB will not reproduce the original timestamps bit for bit. Use the native ``tsc``
    format (or ``npz`` / ``parquet``, which keep the ``int64`` column) when exact times matter.
-

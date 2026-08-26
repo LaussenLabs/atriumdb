@@ -117,10 +117,10 @@ The runtime docstrings are the most detailed reference
 -------------------------------------------------------
 
 Several methods have runtime docstrings that go into considerably more detail than these pages —
-notably `get_iterator <contents.html#atriumdb.AtriumSDK.get_iterator>`_ (fill rules,
+notably `get_iterator <api_reference.html#atriumdb.AtriumSDK.get_iterator>`_ (fill rules,
 ``signal_kind`` interactions, string-code caveats),
-`insert_measure <contents.html#atriumdb.AtriumSDK.insert_measure>`_ and
-`transfer_data <contents.html#atriumdb.transfer_data>`_ (every de-identification parameter). When
+`insert_measure <api_reference.html#atriumdb.AtriumSDK.insert_measure>`_ and
+`transfer_data <api_reference.html#atriumdb.transfer_data>`_ (every de-identification parameter). When
 a page here is ambiguous, check:
 
 .. code-block:: python

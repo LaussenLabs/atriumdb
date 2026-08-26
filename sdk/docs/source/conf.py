@@ -28,6 +28,8 @@ exclude_patterns = []
 
 # html_theme = 'alabaster'
 html_theme = 'sphinx_rtd_theme'
-html_static_path = ['_static', 'scripts']
+# 'scripts' only -- there is no _static directory in this tree, and listing one that does
+# not exist makes every build emit "html_static_path entry '_static' does not exist".
+html_static_path = ['scripts']
 
 smartquotes = False

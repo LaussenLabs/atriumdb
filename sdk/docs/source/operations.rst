@@ -13,7 +13,7 @@ What a dataset is, on disk
 --------------------------
 
 A dataset created with
-`AtriumSDK.create_dataset <contents.html#atriumdb.AtriumSDK.create_dataset>`_ is a directory
+`AtriumSDK.create_dataset <api_reference.html#atriumdb.AtriumSDK.create_dataset>`_ is a directory
 with this shape::
 
     <dataset_location>/
@@ -63,7 +63,7 @@ All of the following are required. A restore missing any of them is not a workin
    These are small files that backup tools and rsync filters are exactly the kind of thing to
    skip. A dataset that has lost them looks healthy. Verify after every restore by reading a
    known string measure with
-   `AtriumSDK.get_measure_string_vocabulary <contents.html#atriumdb.AtriumSDK.get_measure_string_vocabulary>`_.
+   `AtriumSDK.get_measure_string_vocabulary <api_reference.html#atriumdb.AtriumSDK.get_measure_string_vocabulary>`_.
 
 **Capture the components consistently.** The block files and the metadata database reference each
 other; a snapshot that catches ``tsc/`` after a write and the database before it will have blocks
@@ -93,7 +93,7 @@ If you need a stronger guarantee than "the OS has it", enforce it at the storage
 .. note::
 
    Nothing in the API surfaces a "flush to stable storage" call.
-   `AtriumSDK.write_buffer <contents.html#atriumdb.AtriumSDK.write_buffer>`_'s ``flush_all()``
+   `AtriumSDK.write_buffer <api_reference.html#atriumdb.AtriumSDK.write_buffer>`_'s ``flush_all()``
    flushes the *in-memory buffer* into the ordinary write path; it is not an fsync.
 
 .. _idempotency_and_replay:
@@ -249,7 +249,7 @@ do not have to buffer and sort an HL7 feed yourself.
 **Small appends self-compact.** 600 consecutive 1-second appends of a 250 Hz waveform (150 000
 values) leave **2** ``.tsc`` files and **one** interval, not 600 of each — that is
 ``merge_blocks=True`` doing its job. Un-buffered small writes are therefore safe for a live feed;
-`write_buffer <contents.html#atriumdb.AtriumSDK.write_buffer>`_ is an optimisation that reduces
+`write_buffer <api_reference.html#atriumdb.AtriumSDK.write_buffer>`_ is an optimisation that reduces
 write amplification further, not a requirement. The buffer works for **strings and aperiodic
 time-value pairs** as well as waveform segments, which its examples do not show.
 
@@ -270,10 +270,10 @@ Called out so you do not spend time looking:
   already holds string data as ``numeric`` (or vice versa) raises. ``signal_kind``, by contrast,
   *is* repairable — an ingest pipeline that auto-created a measure with the default ``waveform``
   shape can be corrected in place with
-  `AtriumSDK.set_measure_kind <contents.html#atriumdb.AtriumSDK.set_measure_kind>`_, which
+  `AtriumSDK.update_measure <api_reference.html#atriumdb.AtriumSDK.update_measure>`_, which
   rewrites no data::
 
-      sdk.set_measure_kind(measure_id, signal_kind="state")
+      sdk.update_measure(measure_id, signal_kind="state")
 
   This is the supported fix for the ``waveform`` + ``string`` measure that
   ``insert_measure`` produces when ``signal_kind`` is omitted. See

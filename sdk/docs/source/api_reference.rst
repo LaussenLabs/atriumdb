@@ -1,7 +1,4 @@
-.. atriumdb documentation master file, created by
-   sphinx-quickstart on Wed Jan 25 14:44:18 2023.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+.. _api_reference:
 
 API Reference
 ====================================
@@ -10,9 +7,19 @@ API Reference
    :maxdepth: 2
    :caption: Contents:
 
+.. Every class and function below is documented exactly ONCE. The curated
+   ``autoclass``/``automethod`` listing that follows groups the API by topic, so
+   ``automodule`` must not document those same objects a second time: a docstring
+   rendered twice defines each of its ``.. _..._label:`` targets twice, docutils
+   discards duplicate explicit targets, and every ``:ref:`` to them then fails with
+   "undefined label". The exclusions below leave ``automodule`` responsible only for
+   the module-level members the curated list does not cover -- the gap-array helpers,
+   the ``T_TYPE_*``/``V_TYPE_*`` constants, ``WindowConfig`` and ``UNKNOWN_STRING_CODE``.
+
 .. automodule:: atriumdb
    :members:
-   :special-members:
+   :exclude-members: AtriumSDK, DatasetDefinition, DatasetIterator, Window,
+      partition_dataset, combine_definitions, cross_validate_dataset, transfer_data
 
 .. autoclass:: atriumdb.AtriumSDK
 
@@ -21,6 +28,7 @@ API Reference
 
    .. automethod:: get_data
    .. automethod:: get_string_data
+   .. automethod:: get_headers
    .. automethod:: write_data_easy
    .. automethod:: write_data
    .. automethod:: write_buffer
@@ -33,18 +41,19 @@ API Reference
 
    .. automethod:: get_measure_id
    .. automethod:: get_measure_info
-   .. automethod:: get_measure_kind
-   .. automethod:: set_measure_kind
+   .. automethod:: update_measure
    .. automethod:: get_measure_id_list_from_tag
    .. automethod:: search_measures
    .. automethod:: get_all_measures
    .. automethod:: insert_measure
+   .. automethod:: get_or_insert_measure
 
    .. automethod:: get_device_id
    .. automethod:: get_device_info
    .. automethod:: search_devices
    .. automethod:: get_all_devices
    .. automethod:: insert_device
+   .. automethod:: get_or_insert_device
 
    .. automethod:: insert_patient
    .. automethod:: get_patient_info

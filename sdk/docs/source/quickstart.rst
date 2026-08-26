@@ -104,7 +104,7 @@ Time information from WFDB and many medical monitors are provided as a start tim
 `sequential signal values <https://en.wikipedia.org/wiki/Sampling_(signal_processing)/>`_  seperated by a constant
 sample period defined by the sample frequency.
 
-In that case we use the `AtriumSDK.write_segment  <contents.html#atriumdb.AtriumSDK.write_segment>`_ method.
+In that case we use the `AtriumSDK.write_segment  <api_reference.html#atriumdb.AtriumSDK.write_segment>`_ method.
 For inserting data of alternate time formats (for example, time-value pairs), see :ref:`methods_of_inserting_data`.
 
 .. code-block:: python

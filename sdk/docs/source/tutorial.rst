@@ -80,12 +80,9 @@ for each record and handle multiple signals in a single record.
         # Pull record with digital values
         record = wfdb.rdrecord(n, pn_dir=pn_dir, return_res=64, physical=False)
 
-        # For each record, create a new device in our dataset with the record name as the device tag
-        # Check if a device with the given tag already exists using the `get_device_id` function
-        # If it doesn't exist, create a new device using the `insert_device` function
-        device_id = sdk.get_device_id(device_tag=record.record_name)
-        if device_id is None:
-            device_id = sdk.insert_device(device_tag=record.record_name)
+        # For each record, create a new device in our dataset with the record name as the device tag.
+        # get_or_insert_device looks it up by tag and creates it only if it isn't there yet.
+        device_id = sdk.get_or_insert_device(device_tag=record.record_name)
 
         # Similarly we'll create a new patient_id for each record.
         patient_id = sdk.insert_patient()
@@ -123,11 +120,8 @@ for each record and handle multiple signals in a single record.
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
 
-                # Check if a measure with the given tag and frequency already exists in the dataset using the `get_measure_id` function
-                # If it doesn't exist, create a new measure using the `insert_measure` function
-                measure_id = sdk.get_measure_id(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i], freq_units="nHz")
-                if measure_id is None:
-                    measure_id = sdk.insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i], freq_units="nHz")
+                # Look the measure up by tag/frequency/units and create it if it isn't there yet.
+                measure_id = sdk.get_or_insert_measure(measure_tag=record.sig_name[i], freq=freq_nano, units=record.units[i], freq_units="nHz")
 
                 # Calculate the digital to analog scale factors.
                 gain = record.adc_gain[i]
@@ -144,11 +138,8 @@ for each record and handle multiple signals in a single record.
 
         # If there is only one signal in the input file, insert it in the same way as for multiple signals
         else:
-            # Check if a measure with the given tag and frequency already exists in the dataset using the `get_measure_id` function
-            # If it doesn't exist, create a new measure using the `insert_measure` function
-            measure_id = sdk.get_measure_id(measure_tag=record.sig_name[0], freq=freq_nano, units=record.units[0], freq_units="nHz")
-            if measure_id is None:
-                measure_id = sdk.insert_measure(measure_tag=record.sig_name[0], freq=freq_nano, units=record.units[0], freq_units="nHz")
+            # Look the measure up by tag/frequency/units and create it if it isn't there yet.
+            measure_id = sdk.get_or_insert_measure(measure_tag=record.sig_name[0], freq=freq_nano, units=record.units[0], freq_units="nHz")
 
             # Calculate the digital to analog scale factors.
             gain = record.adc_gain[0]
@@ -170,8 +161,8 @@ for each record and handle multiple signals in a single record.
 .. note::
 
    **Keyword names matter.**
-   `AtriumSDK.insert_measure <contents.html#atriumdb.AtriumSDK.insert_measure>`_ and
-   `AtriumSDK.get_measure_id <contents.html#atriumdb.AtriumSDK.get_measure_id>`_
+   `AtriumSDK.insert_measure <api_reference.html#atriumdb.AtriumSDK.insert_measure>`_ and
+   `AtriumSDK.get_measure_id <api_reference.html#atriumdb.AtriumSDK.get_measure_id>`_
    take ``units=`` (plural). ``AtriumSDK.search_measures`` takes ``unit=`` (singular). Passing the
    wrong one raises ``TypeError: ... got an unexpected keyword argument``.
 
@@ -206,8 +197,8 @@ Segments are often used for high-frequency waveforms or signals.
 
 **Note**: `freq` and `period` are mutually exclusive - specify one or the other, not both.
 
-Segments can be inserted one at a time using `AtriumSDK.write_segment <contents.html#atriumdb.AtriumSDK.write_segment>`_
-or in batches using `AtriumSDK.write_segments <contents.html#atriumdb.AtriumSDK.write_segments>`_.
+Segments can be inserted one at a time using `AtriumSDK.write_segment <api_reference.html#atriumdb.AtriumSDK.write_segment>`_
+or in batches using `AtriumSDK.write_segments <api_reference.html#atriumdb.AtriumSDK.write_segments>`_.
 
 Segments can also be batched piece by piece using :ref:`buffered_inserts`.
 
@@ -240,7 +231,7 @@ Time-Value Pairs
 Time-value pairs allow you to insert irregularly sampled data, where each value has its own specific timestamp.
 This format is common for low-frequency signals, such as metrics or aperiodic signals.
 
-The method `AtriumSDK.write_time_value_pairs <contents.html#atriumdb.AtriumSDK.write_time_value_pairs>`_
+The method `AtriumSDK.write_time_value_pairs <api_reference.html#atriumdb.AtriumSDK.write_time_value_pairs>`_
 can be used for inserting time-value pairs, with arrays of values and corresponding timestamps passed as arguments.
 
 .. code-block:: python
@@ -315,7 +306,7 @@ For genuinely irregular data there is no good period, so this fires on essential
 write. The inferred period is **not** applied to your timestamps — those are stored exactly as
 supplied — but it *is* used to size the gap tolerance behind the availability index, which is
 why an aperiodic measure's
-`interval array <contents.html#atriumdb.AtriumSDK.get_interval_array>`_ can extend past its
+`interval array <api_reference.html#atriumdb.AtriumSDK.get_interval_array>`_ can extend past its
 last observation by roughly one inferred period. Passing the measure's nominal
 ``freq``/``period`` on each write both silences the warning and makes the availability index
 predictable:
@@ -348,7 +339,7 @@ These two axes are independent: a string signal can be an ``event``, a ``state``
 numeric signal can be any shape too.
 
 Both are **optional** on
-`AtriumSDK.insert_measure <contents.html#atriumdb.AtriumSDK.insert_measure>`_, but for anything that is
+`AtriumSDK.insert_measure <api_reference.html#atriumdb.AtriumSDK.insert_measure>`_, but for anything that is
 not a regularly sampled waveform you should always pass them. When you omit them,
 read-time defaults apply: a measure with no stored ``signal_kind`` reads back as ``waveform``, and a
 measure with no stored ``value_type`` defaults to ``numeric`` — unless string data is written to it, in
@@ -371,7 +362,7 @@ aperiodic numeric data.
     been written against it, this is expensive to discover late. Every string measure should be
     declared ``signal_kind="event"``, ``"state"`` or ``"sample"``. If you inherit a measure in
     this state, repair it with
-    `AtriumSDK.set_measure_kind <contents.html#atriumdb.AtriumSDK.set_measure_kind>`_ — no data
+    `AtriumSDK.update_measure <api_reference.html#atriumdb.AtriumSDK.update_measure>`_ — no data
     is rewritten.
 
 .. _choosing_signal_kind:
@@ -420,19 +411,18 @@ and therefore what a downstream researcher can ever get out of it:
     generally want ``state``.
 
     ``signal_kind`` is normally set at ``insert_measure`` time. If you get it wrong,
-    `AtriumSDK.set_measure_kind <contents.html#atriumdb.AtriumSDK.set_measure_kind>`_ can correct
+    `AtriumSDK.update_measure <api_reference.html#atriumdb.AtriumSDK.update_measure>`_ can correct
     it afterwards — ``signal_kind`` is descriptive metadata and is safe to change at any time,
     including after data has been written::
 
-        sdk.set_measure_kind(measure_id, signal_kind="state")   # ('state', 'string')
+        sdk.update_measure(measure_id, signal_kind="state")
 
     ``value_type`` is **not** repairable in the same way: relabelling a measure that already
     holds string data as ``numeric`` (or vice versa) raises. See
     :ref:`Reading string windows <reading_string_windows>` for the full rasterization rules.
 
-You can read the metadata back either as part of the full measure record via
-`AtriumSDK.get_measure_info <contents.html#atriumdb.AtriumSDK.get_measure_info>`_, or as just the two
-axes via `AtriumSDK.get_measure_kind <contents.html#atriumdb.AtriumSDK.get_measure_kind>`_.
+Read metadata from the full measure record via
+`AtriumSDK.get_measure_info <api_reference.html#atriumdb.AtriumSDK.get_measure_info>`_.
 
 .. code-block:: python
 
@@ -451,13 +441,10 @@ axes via `AtriumSDK.get_measure_kind <contents.html#atriumdb.AtriumSDK.get_measu
     info = sdk.get_measure_info(alarm_id)
     print(info['signal_kind'], info['value_type'])   # event string
 
-    # Or fetch just the two axes as a tuple.
-    signal_kind, value_type = sdk.get_measure_kind(mode_id)
-    print(signal_kind, value_type)                   # state string
-
     # A measure created without the new fields defaults to waveform / numeric.
     numeric_id = sdk.insert_measure(measure_tag="heart_rate", freq=1.0, freq_units="Hz")
-    print(sdk.get_measure_kind(numeric_id))          # ('waveform', 'numeric')
+    numeric_info = sdk.get_measure_info(numeric_id)
+    print(numeric_info['signal_kind'], numeric_info['value_type'])  # waveform numeric
 
 .. note::
 
@@ -470,7 +457,7 @@ axes via `AtriumSDK.get_measure_kind <contents.html#atriumdb.AtriumSDK.get_measu
     There is no method to filter measures by ``signal_kind`` / ``value_type``
     (``AtriumSDK.search_measures`` matches on tag, frequency, unit and name only). Use a
     comprehension over
-    `AtriumSDK.get_all_measures <contents.html#atriumdb.AtriumSDK.get_all_measures>`_::
+    `AtriumSDK.get_all_measures <api_reference.html#atriumdb.AtriumSDK.get_all_measures>`_::
 
         text_measures = [m for m in sdk.get_all_measures().values()
                          if m['value_type'] == 'string']
@@ -484,8 +471,8 @@ AtriumDB can store dynamically-sized **string** values for a measure, alongside 
 This is useful for aperiodic textual signals such as alarm messages, device status strings, or annotations.
 
 You write strings with the **same methods used for numbers** -
-`AtriumSDK.write_time_value_pairs <contents.html#atriumdb.AtriumSDK.write_time_value_pairs>`_ or
-`AtriumSDK.write_data <contents.html#atriumdb.AtriumSDK.write_data>`_ -
+`AtriumSDK.write_time_value_pairs <api_reference.html#atriumdb.AtriumSDK.write_time_value_pairs>`_ or
+`AtriumSDK.write_data <api_reference.html#atriumdb.AtriumSDK.write_data>`_ -
 simply by passing a ``list[str]`` (or a string/object numpy array) as the values. Under the hood, each
 unique string is assigned an ``int64`` dictionary code and stored using the ordinary integer write path,
 so no special block format is involved. The per-measure dictionary is an append-only JSON Lines file at
@@ -500,10 +487,10 @@ historical blocks stay valid as new strings are appended.
     metadata database — see :ref:`Operations <operations>`.
 
 To read string values back, use the dedicated
-`AtriumSDK.get_string_data <contents.html#atriumdb.AtriumSDK.get_string_data>`_ method, which returns a
+`AtriumSDK.get_string_data <api_reference.html#atriumdb.AtriumSDK.get_string_data>`_ method, which returns a
 ``(times, values)`` tuple where ``values`` is a 1D object numpy array of ``str``. It accepts the same
 selectors (``measure_id`` or ``measure_tag``/``freq``/``units``, plus device/patient selectors) as
-`AtriumSDK.get_data <contents.html#atriumdb.AtriumSDK.get_data>`_.
+`AtriumSDK.get_data <api_reference.html#atriumdb.AtriumSDK.get_data>`_.
 
 .. code-block:: python
 
@@ -537,7 +524,7 @@ selectors (``measure_id`` or ``measure_tag``/``freq``/``units``, plus device/pat
 .. note::
 
     String measures cannot be analog-scaled or NaN-filled. Calling
-    `AtriumSDK.get_data <contents.html#atriumdb.AtriumSDK.get_data>`_ on a string measure with the default
+    `AtriumSDK.get_data <api_reference.html#atriumdb.AtriumSDK.get_data>`_ on a string measure with the default
     ``analog=True``, or with ``return_nan_filled``, raises a ``ValueError`` pointing you to
     ``get_string_data``:
 
@@ -569,7 +556,8 @@ values and tally them:
 
     from collections import Counter
 
-    times, values = sdk.get_string_data(alarm_id, start_time_n=0, end_time_n=10 ** 18,
+    MAX_TIME_NS = 2 ** 63 - 1   # not 10 ** 18, which stops at 2001 -- see the warning below
+    times, values = sdk.get_string_data(alarm_id, start_time_n=0, end_time_n=MAX_TIME_NS,
                                         device_id=device_id)
     counts = Counter(values.tolist())
     for value, n in counts.most_common():
@@ -585,7 +573,7 @@ When using the buffer, data is accumulated until a threshold is met (e.g., the n
 at which point the buffer is automatically flushed. The buffer can also be flushed manually and automatically upon exiting the buffer's context.
 This method is optimal for live ingesting segments as they come from a device or back loading an archive of many small segments.
 
-You can buffer both **segments** and **time-value pairs** using the `AtriumSDK.write_buffer <contents.html#atriumdb.AtriumSDK.write_buffer>`_ method.
+You can buffer both **segments** and **time-value pairs** using the `AtriumSDK.write_buffer <api_reference.html#atriumdb.AtriumSDK.write_buffer>`_ method.
 The buffer organized data by their measure-device pair, and data is automatically written once the buffer fills or the context is closed.
 
 .. code-block:: python
@@ -635,7 +623,7 @@ The information includes:
 - `unit_code`: A code (usually CF_CODE10) representing the unit (can be None if not defined).
 - `period_ns`: The sampling period in nanoseconds, derived from ``freq_nhz`` (``10**18 // freq_nhz``).
 - `source_id`: The identifier of the ingest source that registered the measure. It is ``None`` for
-  measures created with `AtriumSDK.insert_measure <contents.html#atriumdb.AtriumSDK.insert_measure>`_ and is not a device or patient id.
+  measures created with `AtriumSDK.insert_measure <api_reference.html#atriumdb.AtriumSDK.insert_measure>`_ and is not a device or patient id.
 - `signal_kind`: The temporal shape of the signal, one of ``waveform``, ``sample``, ``event`` or ``state`` (defaults to ``waveform``). See :ref:`Measure Metadata <measure_metadata>`.
 - `value_type`: The value encoding of the signal, either ``numeric`` or ``string`` (defaults to ``numeric``). See :ref:`Measure Metadata <measure_metadata>`.
 
@@ -690,7 +678,7 @@ Example output:
 In this example, the dataset contains two measures: ECG Lead MLII and ECG Lead V5,
 both with a sample frequency of 360000000000 nanohertz (360 Hz) and units in millivolts (mV).
 Both default to ``signal_kind='waveform'`` / ``value_type='numeric'`` because
-`AtriumSDK.insert_measure <contents.html#atriumdb.AtriumSDK.insert_measure>`_ was called without them.
+`AtriumSDK.insert_measure <api_reference.html#atriumdb.AtriumSDK.insert_measure>`_ was called without them.
 
 Retrieving All Devices
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -794,9 +782,10 @@ starting at epoch 0 and ending at epoch 1805555050000. This is because there are
     deliberately *coarse presence* map: it answers "are there readings roughly in this window", because
     the underlying writes use a widened gap tolerance so that irregular arrivals do not flood the index.
     For precise per-sample or per-event timing on those kinds, read the actual stored timestamps with
-    :ref:`get_data <get_data_label>` / `get_string_data <contents.html#atriumdb.AtriumSDK.get_string_data>`_
+    :ref:`get_data <get_data_label>` / `get_string_data <api_reference.html#atriumdb.AtriumSDK.get_string_data>`_
     rather than relying on ``get_interval_array``. Pass ``gap_tolerance_nano`` to control how aggressively
-    adjacent intervals are merged.
+    adjacent intervals are merged. For local ``waveform`` measures, pass ``exact=True`` to reconstruct
+    continuous coverage from the stored block time data instead of using the interval index.
 
 .. warning::
 
@@ -815,6 +804,42 @@ starting at epoch 0 and ending at epoch 1805555050000. This is because there are
 
     Always pass ``freq``/``period`` to ``write_time_value_pairs``, and pass an explicit
     ``end_time`` when validating a definition, if you care where availability ends.
+
+.. tip::
+
+    **To total how much data a source actually has, sum the interval durations — do not
+    subtract the first timestamp from the last.** The obvious move,
+    ``(times.max() - times.min())`` on what ``get_data`` returned, measures *elapsed calendar
+    time between the first and last reading*, which is a different quantity the moment a
+    source has any gap in it. A patient with two ICU admissions six months apart yields a
+    "duration" spanning both stays **and the half-year between them** — one real case in a
+    MIMIC-derived dataset produced 49,590 hours from 36 readings. Sum the rows instead::
+
+        intervals = sdk.get_interval_array(measure_id=measure_id, patient_id=patient_id)
+        coverage_hours = (intervals[:, 1] - intervals[:, 0]).sum() / 3.6e12
+        n_admissions = len(intervals)          # separate stretches of coverage
+
+    The two numbers agreeing is what tells you the source is gap-free; when they disagree,
+    the interval sum is the one that answers "how much data do I have".
+
+.. important::
+
+    **A patient-scoped interval array is clipped to the** ``device_patient`` **mapping;
+    a patient-scoped** ``get_data`` **is not.** ``get_interval_array(patient_id=...)``
+    truncates every row to the window during which that patient was mapped to the device,
+    while ``get_data``/``get_string_data`` with ``patient_id=`` select *blocks* that overlap
+    that window and return them **whole**. A reading written to the device shortly before the
+    patient was mapped to it therefore appears in ``get_data`` but lies outside
+    ``get_interval_array``.
+
+    This matters beyond the two calls disagreeing, because
+    :ref:`DatasetDefinition <definition_file_format>` resolves ``"all"`` through
+    ``get_interval_array``. A cohort or a
+    `transfer_data <api_reference.html#atriumdb.transfer_data>`_ export built from
+    ``patient_ids={pid: "all"}`` covers the mapping windows, so it can legitimately contain
+    **fewer** samples than a ``get_data(patient_id=...)`` count over the same patient. If you
+    are reconciling the two, compare against the mapping windows from
+    ``get_device_patient_data`` before concluding that data was lost.
 
 These methods allow you to survey the data in your dataset and obtain information about the measures, devices, and data availability.
 By understanding the data availability, you can make informed decisions about how to process, analyze, or visualize the data in your dataset.
@@ -942,6 +967,50 @@ Querying Data from the Dataset
 
 Now that we have inserted and surveyed the data into our dataset, let's query the data and verify that the data has been correctly inserted.
 We will iterate through the records in the MIT-BIH Arrhythmia Database and compare the data in our dataset to the original data.
+
+.. warning::
+
+    **A time range that misses your data returns empty — it does not raise.** ``get_data``
+    and ``get_string_data`` return ``(array([]), array([]))`` for a window with no data in it,
+    and that is indistinguishable from a source that has no data at all. The usual way to get
+    burned is the "just make the end time big" idiom:
+
+    .. list-table::
+       :header-rows: 1
+       :widths: 22 20 58
+
+       * - ``end_time_n``
+         - Latest date covered
+         - Result
+       * - ``10 ** 18``
+         - **2001-09-09**
+         - Silently empty for any dataset with later timestamps.
+       * - ``10 ** 19``
+         - —
+         - ``OverflowError: Python int too large to convert to SQLite INTEGER``.
+       * - ``2 ** 63 - 1``
+         - 2262-04-11
+         - Correct. The largest nanosecond timestamp an ``int64`` column holds.
+
+    ``10 ** 18`` is fine for the MIT-BIH data used in this chapter, which starts at epoch 0 —
+    but it is **not** a general "everything" bound, and de-identified clinical datasets
+    routinely shift timestamps decades into the future (MIMIC-IV shifts to ~2110–2200, i.e.
+    around ``7.1e18`` ns). Reaching for ``10 ** 19`` instead does not work either: it exceeds
+    ``int64`` and the query raises from inside the SQL layer.
+
+    Use the ``int64`` maximum, and give it a name so the intent is legible::
+
+        MAX_TIME_NS = 2 ** 63 - 1          # 2262-04-11, the end of int64 nanoseconds
+        times, values = sdk.get_data(measure_id, 0, MAX_TIME_NS, device_id=device_id)[1:]
+
+    Better still, ask what is actually there first — ``get_interval_array`` bounds the query
+    for you and, unlike an empty read, tells "no data in this window" apart from "no data
+    ever"::
+
+        intervals = sdk.get_interval_array(measure_id=measure_id, device_id=device_id)
+        if len(intervals):
+            times, values = sdk.get_data(measure_id, int(intervals[0][0]),
+                                         int(intervals[-1][1]), device_id=device_id)[1:]
 
 .. code-block:: python
 
@@ -1072,7 +1141,7 @@ status, or start/stop markers for a clinical state. On top of the raw
 :ref:`string values <string_values>` you write, AtriumDB provides three standalone query
 methods for inspecting the event vocabulary and for turning ``from → to`` event pairs into
 state intervals. These are read-only query helpers; to build a
-`DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ *around* these events
+`DatasetDefinition <api_reference.html#atriumdb.DatasetDefinition>`_ *around* these events
 (cohorts anchored on an event value, or spanning ``from → to`` pairs), see
 :ref:`Event-Anchored Regions <event_anchored_regions>`.
 
@@ -1081,11 +1150,11 @@ Enumerating event values
 
 Two methods answer "what event strings exist?", at two different scopes:
 
-- `AtriumSDK.get_measure_string_vocabulary <contents.html#atriumdb.AtriumSDK.get_measure_string_vocabulary>`_
+- `AtriumSDK.get_measure_string_vocabulary <api_reference.html#atriumdb.AtriumSDK.get_measure_string_vocabulary>`_
   returns **every** string value ever written to a string measure, read cheaply from that
   measure's dictionary file — no data scan, so its cost is bounded by the vocabulary size
   rather than the number of samples.
-- `AtriumSDK.get_string_values_present <contents.html#atriumdb.AtriumSDK.get_string_values_present>`_
+- `AtriumSDK.get_string_values_present <api_reference.html#atriumdb.AtriumSDK.get_string_values_present>`_
   returns the sorted **distinct** string values actually present for a particular source
   (device or patient) over a time window — "which of those events actually occurred for
   device X last week".
@@ -1110,7 +1179,7 @@ Both raise a ``ValueError`` if you pass a numeric measure (events are string mea
 Deriving event intervals
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-`AtriumSDK.get_event_intervals <contents.html#atriumdb.AtriumSDK.get_event_intervals>`_
+`AtriumSDK.get_event_intervals <api_reference.html#atriumdb.AtriumSDK.get_event_intervals>`_
 pairs a ``from_value`` event with the next ``to_value`` event in the **same** string
 measure and returns the spans between them as a list of dicts::
 
@@ -1273,13 +1342,13 @@ Reading Dataset With Iterators
 ************************************************
 
 Working with large datasets often requires efficient access to smaller windows of data, particularly for tasks such
-as data visualization, pre-processing, or model training. The AtriumSDK provides a convenient method, `get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterator>`_,
+as data visualization, pre-processing, or model training. The AtriumSDK provides a convenient method, `get_iterator  <api_reference.html#atriumdb.AtriumSDK.get_iterator>`_,
 to handle these cases effectively.
 
 Creating a Dataset Definition
 -----------------------------
 
-The `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ object specifies the measures, patients and/or devices, and the time intervals we are interested in querying.
+The `DatasetDefinition <api_reference.html#atriumdb.DatasetDefinition>`_ object specifies the measures, patients and/or devices, and the time intervals we are interested in querying.
 This definition can be provided in two different ways: by reading from a YAML file or by creating the object in your Python script.
 
 **Option 1: Using a YAML file**
@@ -1298,7 +1367,7 @@ Suppose you have the following in your `definition.yaml  <dataset.html#definitio
         freq_hz: 360.0
         units: 'mV'
 
-You can load this into a `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ object as follows:
+You can load this into a `DatasetDefinition <api_reference.html#atriumdb.DatasetDefinition>`_ object as follows:
 
 .. code-block:: python
 
@@ -1349,7 +1418,7 @@ If you wanted to create a dataset of all patients born after a certain date, you
 Iterating Over Windows
 ----------------------
 
-Now that we've setup the `DatasetDefinition <contents.html#atriumdb.DatasetDefinition>`_ object, we can use it to iterate over our dataset.
+Now that we've setup the `DatasetDefinition <api_reference.html#atriumdb.DatasetDefinition>`_ object, we can use it to iterate over our dataset.
 
 .. code-block:: python
 

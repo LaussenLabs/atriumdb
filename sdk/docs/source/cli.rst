@@ -214,24 +214,26 @@ To filter devices by a specific tag or manufacturer, use the `--tag-match` or `-
     2          monitor   HeartMonitor  Philips       IntelliVue MP50  monitor  102     1
 
 ========================================================
-Import / Export
+Exporting Data
 ========================================================
 
-The AtriumDB CLI provides the ability to export data between different AtriumDB datasets and various popular formats such as CSV, TSC, Numpy, and WFDB.
+The AtriumDB CLI can export data from an AtriumDB dataset into another AtriumDB dataset or
+into various popular formats such as CSV, TSC, Numpy, Parquet and WFDB.
 
-Import
-------------
+.. important::
 
-The ``import`` command enables you to transfer data into an AtriumDB dataset from various file formats.
+   **There is no** ``atriumdb import`` **command.** The CLI exposes exactly seven commands --
+   ``config``, ``device``, ``export``, ``login``, ``measure``, ``patient`` and
+   ``refresh-token`` -- and ``atriumdb import ...`` fails with
+   ``Error: No such command 'import'. Did you mean 'export'?``
 
-The basic syntax for the ``import`` command is as follows:
+   To bring data *into* a dataset, use the Python API rather than the CLI:
 
-.. code-block:: bash
-
-    atriumdb import path/to/dataset/ [OPTIONS]
-
-For a complete list of options available for the ``import`` command, refer to the :ref:`Import Command <import_header>` section under "List of Commands and Options."
-
+   * from another AtriumDB dataset -- `transfer_data <api_reference.html#atriumdb.transfer_data>`_,
+     which is what ``atriumdb export`` calls internally and which also accepts a destination
+     ``AtriumSDK``; see :ref:`Exporting Datasets <export_formats>`.
+   * from your own arrays or files -- :ref:`Inserting Data into the Dataset <inserting_data_into_the_dataset>`
+     (``write_data_easy``, ``write_time_value_pairs``, ``write_segments``).
 
 Export
 ------------
