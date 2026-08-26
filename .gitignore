@@ -185,3 +185,8 @@ cython_debug/
 /sdk/tests/wfdb_data/
 
 tsc-lib/cmake-build-*/
+
+# Test-run dataset artifacts
+sdk/tests/blocks/
+sdk/tests/settings/
+sdk/tests/tsc_insert/
