@@ -13,10 +13,10 @@ cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAK
 cmake --build cmake-build-release --target Block;
 
 #make the directory if it doesnt exist
-mkdir -p ../sdk/bin
+mkdir -p ../sdk/atriumdb/bin
 
 #copy windows binary to output directory
-cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll;
+cp cmake-build-release/src/Block/libTSC.dll ../sdk/atriumdb/bin/libTSC.dll;
 
 #****linux binary****
 rm -rf cmake-build-release/**;
@@ -26,6 +26,6 @@ cmake -Bcmake-build-release -H. -DCMAKE_BUILD_TYPE='Release';
 cmake --build cmake-build-release --target Block;
 
 #copy linux binary to output directory
-cp cmake-build-release/src/Block/libTSC.so ../sdk/bin/libTSC.so;
+cp cmake-build-release/src/Block/libTSC.so ../sdk/atriumdb/bin/libTSC.so;
 
 
