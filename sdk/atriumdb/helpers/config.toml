@@ -1,6 +1,6 @@
 [resources]
-shared_lib_filename_linux = "bin/libTSC.so"
-shared_lib_filename_windows = "bin/libTSC.dll"
+shared_lib_filename_linux = "libTSC.so"
+shared_lib_filename_windows = "libTSC.dll"
 
 [settings]
 protected_mode = "True"
