@@ -1,7 +1,7 @@
 # pyproject.toml
 
 [build-system]
-requires      = ["setuptools>=78.1.1", "wheel"]
+requires      = ["setuptools>=78.1.1"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -14,17 +14,18 @@ atriumdb = ["bin/*.so", "bin/*.dll"]
 [project]
 name = "atriumdb"
 version = "2.6.0"
+requires-python = ">=3.10"
 description = "Timeseries Database"
 readme = "README.md"
 authors = [{name = "Robert Greer, William Dixon, Spencer Vecile"}, { name = "Robert Greer", email = "robert.greer@sickkids.ca"}, { name = "William Dixon", email = "will.dixon@sickkids.ca" }, { name = "Spencer Vecile", email = "spencer.vecile@sickkids.ca"}]
 maintainers = [{name = "William Dixon, Spencer Vecile", email = "laussen.labs@sickkids.ca"}, { name = "William Dixon", email = "will.dixon@sickkids.ca" }, { name = "Spencer Vecile", email = "spencer.vecile@sickkids.ca"}]
-license = { file = "LICENSE" }
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Operating System :: POSIX :: Linux",
     "Operating System :: Microsoft :: Windows",
     "Intended Audience :: Healthcare Industry",
@@ -97,9 +98,6 @@ testing = [
     "pytest >= 7.2.1",
     "fastapi >= 0.95.0, < 1"
 ]
-[dev-dependencies]
-requires-python = ">=3.10"
-
 [tool.pytest.ini_options]
 log_cli = true
 log_cli_level = "INFO"
