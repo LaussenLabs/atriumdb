@@ -174,7 +174,7 @@ class AtriumSDK:
                 shared_lib_filename = shared_lib_filename_linux
 
             this_file_path = Path(__file__)
-            atriumdb_lib_path = this_file_path.parent.parent / shared_lib_filename
+            atriumdb_lib_path = this_file_path.parent / shared_lib_filename
 
         # Initialize the block object with the C DLL path and number of threads
         self.block = Block(atriumdb_lib_path, num_threads)

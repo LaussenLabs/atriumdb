@@ -1,3 +1,2 @@
-recursive-include bin *
 include pyproject.toml
 include atriumdb/helpers/config.toml

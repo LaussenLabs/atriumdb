@@ -5,10 +5,10 @@ requires      = ["setuptools>=78.1.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ['.', "bin"]
+include = ["atriumdb*"]
 
 [tool.setuptools.package-data]
-mypkg = ["*.so", "*.dll"]
+atriumdb = ["bin/*.so", "bin/*.dll"]
 
 [project]
 name = "atriumdb"
