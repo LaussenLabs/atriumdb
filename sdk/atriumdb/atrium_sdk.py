@@ -15,6 +15,8 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import json
+import socket
 import warnings
 from collections import defaultdict
 import numpy as np
@@ -36,7 +38,7 @@ from atriumdb.file_api import AtriumFileHandler
 from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_linux, protected_mode_default_setting, \
     overwrite_default_setting
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME, \
-    ALLOWABLE_PROTECTED_MODE_SETTINGS
+    ALLOWABLE_PROTECTED_MODE_SETTINGS, TSC_LOCATION_SETTING_NAME
 from atriumdb.helpers.block_constants import TIME_TYPES_STR, VALUE_TYPES_STR
 from atriumdb.block_wrapper import BlockMetadata
 from atriumdb.intervals.intervals import Intervals
@@ -111,7 +113,7 @@ class AtriumSDK:
     :param str atriumdb_lib_path: A file path pointing to the shared library (CDLL) that powers the compression and decompression. Not required for most users.
     :param bool no_pool: If true disables Mariadb connection pooling, instead using a new connection for each query.
     :param AtriumFileHandler storage_handler: Advanced feature. If you implement your own atriumdb file handler you can set it here.
-    :param bool auto_upgrade: If True, automatically upgrade the database schema if needed (e.g., adding new columns). This allows the SDK to initialize successfully even if the database schema is outdated. Default is False.
+    :param bool auto_upgrade: If True, automatically upgrade the database schema if needed (e.g., adding new columns), and record the locations of the metadata database and TSC files if they are missing. This allows the SDK to initialize successfully even if the database schema is outdated. Default is False.
 
     Examples:
     -----------
@@ -251,6 +253,7 @@ class AtriumSDK:
             if auto_upgrade:
                 self.sql_handler.update_measure_schema()
                 self.sql_handler.upgrade_mrn_schema()
+                self.sql_handler.upgrade_setting_schema()
             else:
                 if not self.sql_handler.check_mrn_column_is_text():
                     raise ValueError(
@@ -321,6 +324,10 @@ class AtriumSDK:
 
         # Initialize measures and devices if not in API mode
         if metadata_connection_type != "api":
+            if dataset_location is not None:
+                self._link_dataset(self.sql_handler, metadata_connection_type, dataset_location, tsc_file_location,
+                                   auto_upgrade)
+
             self._measures = self.get_all_measures()
             self._devices = self.get_all_devices()
             self._label_sets = self.get_all_label_names()
@@ -373,7 +380,9 @@ class AtriumSDK:
         :param str overwrite: Specifies the behavior to take when new data being inserted overlaps in time with existing data. Allowed values are "error", "ignore", or "overwrite". Upon triggered overwrite: if "error", an error will be raised. If "ignore", the new data will not be inserted. If "overwrite", the old data will be overwritten with the new data. The default behavior can be changed in the `sdk/atriumdb/helpers/config.toml` file.
         :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" database type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
         :param bool no_pool: If true disables Mariadb connection pooling, instead using a new connection for each query.
-        :param bool auto_upgrade: If True, automatically upgrade the database schema if needed (e.g., adding new columns). This allows the SDK to initialize successfully even if the database schema is outdated. Default is False.
+        :param bool auto_upgrade: If True, automatically upgrade the database schema if needed (e.g., adding new columns), and record the locations of the metadata database and TSC files if they are missing. This allows the SDK to initialize successfully even if the database schema is outdated. Default is False.
+
+        The dataset records where its parts live: `meta/database.json` describes the metadata database, and the database's `setting` table holds the TSC location as `tsc_location` (`hostname:/path/to/tsc`).
 
         :return: An initialized AtriumSDK object.
         :rtype: AtriumSDK
@@ -420,7 +429,7 @@ class AtriumSDK:
                 raise ValueError("dataset location must be specified for sqlite mode")
             db_file = Path(dataset_location) / 'meta' / 'index.db'
             db_file.parent.mkdir(parents=True, exist_ok=True)
-            SQLiteHandler(db_file).create_schema()
+            sql_handler = SQLiteHandler(db_file)
 
         elif database_type == 'mysql' or database_type == "mariadb":
             from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
@@ -429,7 +438,10 @@ class AtriumSDK:
             password = connection_params['password']
             database = connection_params['database']
             port = connection_params['port']
-            MariaDBHandler(host, user, password, database, port).create_schema()
+            sql_handler = MariaDBHandler(host, user, password, database, port, no_pool=True)
+
+        sql_handler.create_schema()
+        cls._link_dataset(sql_handler, database_type, dataset_location, dataset_location / 'tsc', auto_upgrade=True)
 
         sdk_object = cls(dataset_location=dataset_location, metadata_connection_type=database_type,
                          connection_params=connection_params, no_pool=no_pool, auto_upgrade=auto_upgrade)
@@ -5414,6 +5426,33 @@ of DatasetIterator objects depending on the value of num_iterators.
     def _get_all_settings(self):
         settings = self.sql_handler.select_all_settings()
         return {setting[0]: setting[1] for setting in settings}
+
+    @staticmethod
+    def _link_dataset(sql_handler, database_type, dataset_location, tsc_file_location, auto_upgrade):
+        """
+        Ensure the metadata database and the TSC files each record where the other lives, adding any missing
+        record if auto_upgrade is set and warning otherwise.
+        """
+        database_file = Path(dataset_location) / 'meta' / 'database.json'
+        settings = dict(sql_handler.select_all_settings())
+        if TSC_LOCATION_SETTING_NAME in settings and database_file.exists():
+            return
+        if not auto_upgrade:
+            warnings.warn(f"The dataset at {dataset_location} and its metadata database do not record each other's "
+                          f"location. Run AtriumSDK(..., auto_upgrade=True) once to add them.")
+            return
+
+        if TSC_LOCATION_SETTING_NAME not in settings:
+            tsc_location = f"{socket.gethostname()}:{Path(tsc_file_location).resolve()}"
+            sql_handler.insert_setting(TSC_LOCATION_SETTING_NAME, tsc_location)
+        if not database_file.exists():
+            if database_type == 'sqlite':
+                database_info = {'type': 'sqlite', 'database': 'index.db'}
+            else:
+                database_info = {'type': database_type, 'host': sql_handler.host, 'port': sql_handler.port,
+                                 'database': sql_handler.database}
+            database_file.parent.mkdir(parents=True, exist_ok=True)
+            database_file.write_text(json.dumps(database_info, indent=4) + "\n")
 
     def _overwrite_delete_data(self, measure_id, device_id, new_time_data, time_0, raw_time_type, values_size,
                                freq_nhz=None, period_ns=None):

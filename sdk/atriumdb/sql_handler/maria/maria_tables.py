@@ -68,7 +68,7 @@ maria_interval_index_create_query = """CREATE TABLE IF NOT EXISTS interval_index
 
 maria_settings_create_query = """CREATE TABLE IF NOT EXISTS setting(
     name VARCHAR(64) PRIMARY KEY,
-    value VARCHAR(64) NOT NULL
+    value TEXT NOT NULL
 );"""
 
 maria_source_create_query = """
