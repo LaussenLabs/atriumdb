@@ -23,7 +23,7 @@ DEFAULT_WFDB_DATA_DIR = Path(__file__).parent / 'wfdb_data'
 DEFAULT_DATASET_NAME = 'mitdb'
 
 
-def get_records(dataset_name=None, physical=True):
+def get_records(dataset_name=None, physical=True, sampto=None, annotations=False):
     dataset_name = DEFAULT_DATASET_NAME if dataset_name is None else dataset_name
     dataset_dir_path = DEFAULT_WFDB_DATA_DIR / dataset_name
 
@@ -31,7 +31,10 @@ def get_records(dataset_name=None, physical=True):
         dataset_dir_path.mkdir(parents=True, exist_ok=True)
         wfdb.dl_database(dataset_name, str(dataset_dir_path))
 
-    for record_name in wfdb.get_record_list(dataset_name):
-        record = wfdb.rdrecord(str(dataset_dir_path / record_name), physical=physical)
-        annotation = wfdb.rdann(str(dataset_dir_path / record_name), 'atr', summarize_labels=True, return_label_elements=['description'])
+    for record_name in sorted(path.stem for path in dataset_dir_path.glob('*.hea')):
+        record = wfdb.rdrecord(str(dataset_dir_path / record_name), physical=physical, sampto=sampto)
+        annotation = None
+        if annotations:
+            annotation = wfdb.rdann(str(dataset_dir_path / record_name), 'atr', summarize_labels=True,
+                                    return_label_elements=['description'])
         yield (record, annotation)

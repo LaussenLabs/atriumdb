@@ -20,11 +20,16 @@ import numpy as np
 import time
 
 from tests.test_transfer_info import insert_random_patients
-from tests.testing_framework import _test_for_both, create_sibling_sdk
+from tests.testing_framework import _test_for_both, create_sibling_sdk, scaled
 
 DB_NAME = 'atrium-open-ended-mapping'
 
 SEED = 42
+
+# The assertions depend on which time ranges a mapping covers, not on the sample rate. The lean
+# volume writes 1/100 of the samples in blocks 1/100 of the size: the same blocks per write.
+FREQ_HZ = scaled(lean=1, full=100)
+BLOCK_SIZE = scaled(lean=1_310, full=131_072)
 
 
 def test_open_ended_device_patient_mapping():
@@ -36,6 +41,7 @@ def _test_open_ended_mapping(db_type, dataset_location, connection_params):
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     sdk = AtriumSDK(dataset_location, db_type, connection_params, num_threads=40)
+    sdk.block.block_size = BLOCK_SIZE
 
     np.random.seed(SEED)
 
@@ -49,7 +55,7 @@ def _test_open_ended_mapping(db_type, dataset_location, connection_params):
     patient_id_3 = insert_random_patients(sdk, 1)[0]
 
     # Define time periods
-    freq_hz = 100
+    freq_hz = FREQ_HZ
     freq_nano = freq_hz * 1_000_000_000
     period_nano = int(10 ** 18 // freq_nano)
 
@@ -184,6 +190,7 @@ def _test_overlapping_mappings(db_type, dataset_location, connection_params):
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     sdk = AtriumSDK(dataset_location, db_type, connection_params, num_threads=40)
+    sdk.block.block_size = BLOCK_SIZE
 
     np.random.seed(SEED)
 
@@ -191,7 +198,7 @@ def _test_overlapping_mappings(db_type, dataset_location, connection_params):
     patient_id_1 = insert_random_patients(sdk, 1)[0]
     patient_id_2 = insert_random_patients(sdk, 1)[0]
 
-    freq_hz = 100
+    freq_hz = FREQ_HZ
     freq_nano = freq_hz * 1_000_000_000
     period_nano = int(10 ** 18 // freq_nano)
 

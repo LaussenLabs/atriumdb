@@ -21,7 +21,7 @@ import os
 from pathlib import Path
 
 from atriumdb import AtriumSDK, DatasetDefinition
-from tests.testing_framework import _test_for_both
+from tests.testing_framework import _test_for_both, scaled
 
 DB_NAME = 'definition'
 
@@ -78,7 +78,7 @@ def _test_advanced_definition(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    highest_number = 10_000
+    highest_number = scaled(lean=1_001, full=10_000)
     repetitions_per_number = 20
     repeated_data = np.repeat(np.arange(highest_number), repetitions_per_number)
 
