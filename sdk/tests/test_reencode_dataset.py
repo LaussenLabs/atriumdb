@@ -24,12 +24,15 @@ from atriumdb.adb_functions import convert_gap_data_to_timestamps, create_timest
 from tests.generate_wfdb import get_records
 from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset
 from tests.test_transfer_info import insert_random_patients
-from tests.testing_framework import _test_for_both
+from tests.testing_framework import _test_for_both, scaled
 
 DB_NAME = 'atrium-reencode'
 
 MAX_RECORDS = 4
 SEED = 42
+
+# The lean records are 1/32 of the full length, so the re-encoded blocks shrink to match.
+VALUES_PER_BLOCK = scaled(lean=4_096, full=131_072)
 
 
 def test_reencode_dataset():
@@ -42,7 +45,7 @@ def _test_reencode_dataset(db_type, dataset_location, connection_params):
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
-    reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interval_gap_tolerance_nano=0)
+    reencode_dataset(sdk, values_per_block=VALUES_PER_BLOCK, blocks_per_file=2048, interval_gap_tolerance_nano=0)
     assert_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED)
 
 
@@ -51,5 +54,5 @@ def _test_reencode_dataset_period(db_type, dataset_location, connection_params):
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     write_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED, use_period=True)
-    reencode_dataset(sdk, values_per_block=131072, blocks_per_file=2048, interval_gap_tolerance_nano=0)
+    reencode_dataset(sdk, values_per_block=VALUES_PER_BLOCK, blocks_per_file=2048, interval_gap_tolerance_nano=0)
     assert_mit_bih_to_dataset(sdk, max_records=MAX_RECORDS, seed=SEED, use_period=True)

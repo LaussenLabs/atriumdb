@@ -23,12 +23,18 @@ import random
 from atriumdb.adb_functions import convert_gap_data_to_timestamps, create_timestamps_from_gap_data
 from tests.generate_wfdb import get_records
 from tests.test_transfer_info import insert_random_patients
-from tests.testing_framework import _test_for_both, create_sibling_sdk
+from tests.testing_framework import _test_for_both, create_sibling_sdk, scaled
 
 DB_NAME = 'atrium-mit-bih'
 
 MAX_RECORDS = 4
 SEED = 42
+
+# Consumers need the structure of the dataset, not 30 minutes of waveform per device. Blocks shrink
+# with the records, except those longer than a whole record (650,000 samples), so writes keep
+# splitting into the same kinds of blocks.
+MAX_SAMPLES_PER_RECORD = scaled(lean=20_000, full=None)
+MAX_BLOCK_SIZE = scaled(lean=2 ** 13, full=2 ** 20)
 LABEL_SET_LIST = [
     "Normal Sinus Rhythm",
     "Atrial Fibrillation",
@@ -98,7 +104,7 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
         np.random.seed(seed)
         random.seed(seed)
     num_records = 0
-    for (record, annotation) in get_records(dataset_name='mitdb'):
+    for (record, annotation) in get_records(dataset_name='mitdb', sampto=MAX_SAMPLES_PER_RECORD):
         if max_records and num_records >= max_records:
             return
         num_records += 1
@@ -208,8 +214,9 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
     num_records = 0
 
     device_patient_dict = {}
-    for (record, annotation), (d_record, d_annotation) in zip(get_records(dataset_name='mitdb'),
-                                                              get_records(dataset_name='mitdb', physical=False)):
+    for (record, annotation), (d_record, d_annotation) in zip(
+            get_records(dataset_name='mitdb', sampto=MAX_SAMPLES_PER_RECORD),
+            get_records(dataset_name='mitdb', physical=False, sampto=MAX_SAMPLES_PER_RECORD)):
         if max_records and num_records >= max_records:
             return
         num_records += 1
@@ -261,6 +268,7 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
         # Divide the waveform into random segments and assign random labels
         num_segments = random.randint(10, 100)
         segment_duration = (end_time - start_time) // num_segments
+        labels = []
         for segment in range(num_segments):
             segment_start = start_time + segment * segment_duration
             segment_end = segment_start + segment_duration
@@ -270,8 +278,14 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
                 segment_end = np.int64(segment_start + segment_duration)
 
             label = random.choice(label_set_list)
-            sdk.insert_label(name=label, device=device_id, start_time=segment_start, end_time=segment_end,
-                             time_units='ns')
+            # numpy-scalar ids go through insert_label; everything else is inserted as one batch.
+            if use_numpy:
+                sdk.insert_label(name=label, device=device_id, start_time=segment_start, end_time=segment_end,
+                                 time_units='ns')
+            else:
+                labels.append((label, device_id, None, None, segment_start, segment_end))
+        if labels:
+            sdk.insert_labels(labels, time_units='ns', source_type='device_id')
 
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):
@@ -295,7 +309,8 @@ def write_to_sdk(freq_nano, period_nano, device_id, gap_data_2d, time_arr, start
                                     units=units)
 
     # Create random block_size
-    sdk.block.block_size = random.choice([2 ** exp for exp in range(11, 21)])
+    block_size = random.choice([2 ** exp for exp in range(11, 21)])
+    sdk.block.block_size = block_size if block_size > 650_000 else min(block_size, MAX_BLOCK_SIZE)
     # sdk.block.block_size = 2 ** 11
 
     # gap tolerance

@@ -20,7 +20,7 @@ import random
 from atriumdb import AtriumSDK, create_gap_arr, merge_gap_data
 from atriumdb.adb_functions import create_timestamps_from_gap_data
 from tests.generate_wfdb import get_records
-from tests.test_mit_bih import create_gaps, get_record_data_for_ingest
+from tests.test_mit_bih import create_gaps, get_record_data_for_ingest, MAX_SAMPLES_PER_RECORD
 from tests.test_transfer_info import insert_random_patients
 from tests.testing_framework import _test_for_both
 
@@ -36,8 +36,9 @@ def test_gap_data_merge():
 
     num_records = 0
 
-    for (record, annotation), (d_record, d_annotation) in zip(get_records(dataset_name='mitdb'),
-                                                              get_records(dataset_name='mitdb', physical=False)):
+    for (record, annotation), (d_record, d_annotation) in zip(
+            get_records(dataset_name='mitdb', sampto=MAX_SAMPLES_PER_RECORD),
+            get_records(dataset_name='mitdb', physical=False, sampto=MAX_SAMPLES_PER_RECORD)):
         if max_records and num_records >= max_records:
             return
         num_records += 1

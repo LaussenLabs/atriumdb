@@ -18,7 +18,7 @@
 import numpy as np
 
 from atriumdb import AtriumSDK
-from tests.testing_framework import _test_for_both
+from tests.testing_framework import _test_for_both, scaled
 
 DB_NAME = 'oversized_block'
 
@@ -250,8 +250,10 @@ def make_gap_data(gap_data, start_time_nano, num_values, period_ns):
 
         timestamp_arr[index:] += gap
 
-    # Create values
-    values = (1000 * np.sin(timestamp_arr)).astype(np.int64)
+    # Create values. The assertions do not depend on their shape, and a short repeating ramp
+    # encodes far faster than noise.
+    values = scaled(lean=np.arange(num_values, dtype=np.int64) % 1000,
+                    full=(1000 * np.sin(timestamp_arr)).astype(np.int64))
 
     end_time_nano = int(timestamp_arr[-1]) + period_ns
 
