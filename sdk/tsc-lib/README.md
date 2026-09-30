@@ -22,15 +22,15 @@ Installing it places the library in `sdk/atriumdb/bin`, where the SDK loads it f
 $ cmake --install cmake-build-release --prefix ..
 ```
 
-### macOS
-`build_mac.sh` builds `libTSC.dylib` into `sdk/atriumdb/bin`. `build_mac_deps.sh <prefix>` builds the lz4, zstd and
-libomp the wheels are linked against.
-
 You can clean the project build files using:
 
 ```shell
 $ cmake --build cmake-build-release --target clean
 ```
+
+### macOS
+`build_mac.sh` builds `libTSC.dylib` into `sdk/atriumdb/bin`. `build_mac_deps.sh <prefix>` builds the lz4, zstd and
+libomp the wheels are linked against.
 
 ### Docker
 If you build using docker it will cross compile both for Linux and Windows.

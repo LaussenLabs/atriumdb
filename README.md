@@ -29,7 +29,7 @@ $ pip install build && python -m build
 ```
 
 #### Atriumdb SDK C Library
-The C library can be built on its own and placed in `sdk/atriumdb/bin`, where the SDK loads it from a source checkout.
+From the repository root, the C library can be built on its own with CMake 3.15 or newer and placed in `sdk/atriumdb/bin`, where the SDK loads it from a source checkout.
 ```shell
 $ cmake -S sdk/tsc-lib -B build
 $ cmake --build build
