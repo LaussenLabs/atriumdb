@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cd /atriumdb/tsc-lib
+cd /atriumdb/sdk/tsc-lib
 
 #****windows binary****
 #remove old build files from build dir
@@ -13,10 +13,10 @@ cmake -Bcmake-build-debug -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_
 cmake --build cmake-build-debug --target Block;
 
 #make the directory if it doesnt exist
-mkdir -p ../sdk/atriumdb/bin
+mkdir -p ../atriumdb/bin
 
 #copy windows binary to output directory
-cp cmake-build-debug/src/Block/libTSC.dll ../sdk/atriumdb/bin/libTSC_debug.dll;
+cp cmake-build-debug/src/Block/libTSC.dll ../atriumdb/bin/libTSC_debug.dll;
 
 #****linux binary****
 rm -rf cmake-build-debug/**;
@@ -26,6 +26,6 @@ cmake -Bcmake-build-debug -H. -DCMAKE_BUILD_TYPE='Debug';
 cmake --build cmake-build-debug --target Block;
 
 #copy linux binary to output directory
-cp cmake-build-debug/src/Block/libTSC.so ../sdk/atriumdb/bin/libTSC_debug.so;
+cp cmake-build-debug/src/Block/libTSC.so ../atriumdb/bin/libTSC_debug.so;
 
 

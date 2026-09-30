@@ -2,26 +2,14 @@ add_library(Compression include/compression.h src/compressor.c src/my_lz4.c src/
 
 target_include_directories(Compression PUBLIC include)
 target_include_directories(Compression PRIVATE src)
-target_include_directories(Compression PRIVATE /usr/local/include)
 
-if(APPLE)
+#[[Search the system paths and CMAKE_PREFIX_PATH. The Windows build links the static archives in bin]]
+find_library(LZ4_LIBRARY NAMES lz4 liblz4 lz4_static NAMES_PER_DIR HINTS ${PROJECT_SOURCE_DIR}/bin)
+find_library(ZSTD_LIBRARY NAMES zstd libzstd zstd_static NAMES_PER_DIR HINTS ${PROJECT_SOURCE_DIR}/bin)
 
-    find_library(LZ4_LIBRARY NAMES lz4 liblz4 HINTS "/usr/local/lib")
-    find_library(ZSTD_LIBRARY NAMES zstd libzstd HINTS "/usr/local/lib")
-
-    target_link_directories(Compression PRIVATE /usr/local/lib)
-    target_link_libraries(Compression PRIVATE ${LZ4_LIBRARY} ${ZSTD_LIBRARY})
-
-elseif(CYGWIN OR WIN32 OR MINGW OR (CMAKE_SYSTEM MATCHES Windows))
-
-    find_library(LZ4_LIBRARY NAMES lz4 liblz4 HINTS ${PROJECT_SOURCE_DIR}/bin)
-    find_library(ZSTD_LIBRARY NAMES zstd libzstd HINTS ${PROJECT_SOURCE_DIR}/bin)
-
-    target_link_directories(Compression PRIVATE ${PROJECT_SOURCE_DIR}/bin)
-    target_link_libraries(Compression PRIVATE ${LZ4_LIBRARY} ${ZSTD_LIBRARY})
-
-else()
-    target_link_libraries(Compression PRIVATE lz4 zstd)
-
+if(NOT LZ4_LIBRARY OR NOT ZSTD_LIBRARY)
+    message(FATAL_ERROR "The lz4 and zstd libraries are required "
+            "(Debian: liblz4-dev libzstd-dev, RHEL: lz4-devel libzstd-devel, macOS: brew install lz4 zstd).")
 endif()
 
+target_link_libraries(Compression PRIVATE ${LZ4_LIBRARY} ${ZSTD_LIBRARY})

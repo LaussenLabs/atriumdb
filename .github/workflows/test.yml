@@ -1,11 +1,24 @@
 name: atriumdb_test
 'on':
   workflow_dispatch:
-        
+    inputs:
+      runTests:
+        description: Run the test suite against the Linux wheel
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
 jobs:
-  build-release:
+  build:
+    uses: ./.github/workflows/build-wheels.yml
+
+  test:
+    if: ${{ inputs.runTests }}
+    needs: build
     runs-on: ubuntu-22.04
-    
+
     services:
       mariadb:
         image: mariadb:11.4
@@ -30,37 +43,16 @@ jobs:
       with:
         python-version: '3.10'
     - name: Install dependencies
-      run: |
-        sudo apt-get update && sudo apt-get install -y tzdata cmake build-essential gdb libzstd-dev liblz4-dev python3.10 mingw-w64 libmariadb-dev
-        pip install build pytest
-    - name: Build C libraries
-      run: |
-        cd tsc-lib
-        cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_BUILD_TYPE='Release'
-        cmake --build cmake-build-release --target Block
-        mkdir -p ../sdk/atriumdb/bin
-        cp cmake-build-release/src/Block/libTSC.dll ../sdk/atriumdb/bin/libTSC.dll
-        rm -rf cmake-build-release/**
-        cmake -Bcmake-build-release -H. -DCMAKE_BUILD_TYPE='Release'
-        cmake --build cmake-build-release --target Block
-        cp cmake-build-release/src/Block/libTSC.so ../sdk/atriumdb/bin/libTSC.so
-        cd ..
-    - name: Build SDK package
-      run: cd sdk && python -m build
-    
-    # - name: Upload distributions
-    #   uses: actions/upload-artifact@v4
-    #   with:
-    #     name: release-dists
-    #     path: |
-    #         sdk/dist/*.whl
-    #         sdk/dist/*.gz
-    #         sdk/atriumdb/bin/*.dll
-    #         sdk/atriumdb/bin/*.so
-        
+      run: sudo apt-get update && sudo apt-get install -y tzdata libmariadb-dev
+    - name: Retrieve the Linux wheel
+      uses: actions/download-artifact@v5
+      with:
+        name: dist-wheel-linux-x86_64
+        path: dist
+
     - name: Install atriumdb test dependencies
-      run: cd sdk && pip install .[testing]
-      
+      run: pip install "atriumdb[testing] @ file://$(ls "$PWD"/dist/*.whl)"
+
     - name: Run tests
       env:
         MARIA_DB_HOST: 127.0.0.1
@@ -68,5 +60,8 @@ jobs:
         MARIA_DB_USER: root
         MARIA_DB_PASSWORD: rootpass
       run: |
-        cd sdk
-        pytest
+        # Run from a copy so the tests import the installed wheel rather than the source tree.
+        mkdir /tmp/wheel-tests
+        cp -r sdk/tests sdk/pyproject.toml /tmp/wheel-tests/
+        cd /tmp/wheel-tests
+        python -m pytest tests
