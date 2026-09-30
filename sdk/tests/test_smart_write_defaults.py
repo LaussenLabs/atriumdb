@@ -48,6 +48,7 @@ from atriumdb.adb_functions import (
     ENCODE_RAW_GAP_FLOOR,
 )
 from atriumdb.helpers.block_constants import TIME_TYPES, COMPRESSION_TYPES
+from tests.testing_framework import scaled
 
 SEC = 1_000_000_000
 GAP = TIME_TYPES['GAP_ARRAY_INT64_INDEX_DURATION_NS']  # 2
@@ -133,6 +134,19 @@ def to_segments(times, values, period_ns):
     segs = [values[c].copy() for c in chunks]
     starts = [int(times[c[0]]) for c in chunks]
     return segs, starts
+
+
+# An unbuffered write_segment call is a complete write, so a scenario that splits into thousands
+# of one-point segments takes minutes yet exercises the same path as its first few. Unbuffered
+# segment tests write at most this many leading segments (all of them under --full).
+MAX_SEGMENT_WRITES = scaled(lean=20, full=float("inf"))
+
+
+def leading_segments(times, values, period_ns):
+    """The leading part of a scenario that forms at most ``MAX_SEGMENT_WRITES`` contiguous runs."""
+    breaks = np.nonzero(np.diff(times) != period_ns)[0] + 1
+    end = breaks[MAX_SEGMENT_WRITES - 1] if breaks.size >= MAX_SEGMENT_WRITES else times.size
+    return times[:end], values[:end]
 
 
 # --------------------------------------------------------------------------- #
@@ -392,14 +406,13 @@ def _freq_for(period_ns):
     return (10 ** 18) / period_ns / SEC  # in Hz
 
 
-# ~200s SQLite-only for the full scenario x method x buffered matrix -- `slow` keeps
-# it out of the sub-5-minute inner loop. It still runs in every full run, unchanged.
-@pytest.mark.slow
 @pytest.mark.parametrize("scenario", list(ALL_SCENARIOS))
 @pytest.mark.parametrize("method", ["time_value_pairs", "segments"])
 @pytest.mark.parametrize("buffered", [False, True])
 def test_roundtrip_all(sdk, scenario, method, buffered):
     times, values, period = ALL_SCENARIOS[scenario]()
+    if method == "segments" and not buffered:
+        times, values = leading_segments(times, values, period)
     m, d = new_md(sdk, _freq_for(period))
 
     def do_writes():
@@ -499,6 +512,7 @@ def test_bounded_random_midrate_prefers_gap_via_measurement(sdk):
 def test_segments_never_uses_timestamp_encoding(sdk):
     # Segment data is a gap array; even aperiodic data should stay gap-encoded.
     times, values, period = sc_metric_aperiodic()
+    times, values = leading_segments(times, values, period)
     m, d = new_md(sdk, _freq_for(period))
     segs, starts = to_segments(times, values, period)
     with warnings.catch_warnings():

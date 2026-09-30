@@ -28,6 +28,27 @@ def test_labels():
     _test_for_both(DB_NAME, _test_labels)
 
 
+def test_insert_label_by_device_id():
+    _test_for_both(DB_NAME + '_by_device_id', _test_insert_label_by_device_id)
+
+
+def _test_insert_label_by_device_id(db_type, dataset_location, connection_params):
+    # A device given by integer or numpy id, an existing label source by name, and a known label name.
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    device_id = sdk.insert_device(device_tag="Monitor B1")
+    source_id = sdk.insert_label_source(name="Manual")
+
+    sdk.insert_label(name="Sleeping", device=device_id, start_time=0, end_time=10)
+    sdk.insert_label(name="Sleeping", device=np.int64(device_id), start_time=10, end_time=20, label_source="Manual")
+
+    labels = sdk.get_labels(name_list=["Sleeping"], device_list=["Monitor B1"])
+    assert [(label['start_time_n'], label['end_time_n']) for label in labels] == [(0, 10), (10, 20)]
+    assert [label['label_source_id'] for label in labels] == [None, source_id]
+    assert len(sdk.get_all_label_names()) == 1
+
+
 def _test_labels(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)

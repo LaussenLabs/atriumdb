@@ -24,7 +24,8 @@ Responsibilities:
   to pass it and no run ever reaches out to PhysioNet,
 * provide backend selection (``--backend``) that is honoured both by the real
   ``@pytest.mark.parametrize`` tests and by the legacy ``_test_for_both`` shim,
-* expose the ``backend`` fixture used by parametrized tests.
+* expose the ``backend`` fixture used by parametrized tests,
+* provide ``--full`` (full data volumes and the nightly gates instead of the lean defaults).
 
 See ``sdk/tests/README.md`` for the documented invocations.
 """
@@ -61,6 +62,11 @@ def pytest_addoption(parser):
         help="Which metadata backend(s) to exercise. Default 'both'. "
              "'sqlite' runs SQLite-only tests.",
     )
+    parser.addoption(
+        "--full",
+        action="store_true",
+        help="Full data volumes, plus the nightly gates that the default run excludes.",
+    )
 
 
 def pytest_configure(config):
@@ -76,6 +82,11 @@ def pytest_configure(config):
         "nightly: extended numeric validation",
     ):
         config.addinivalue_line("markers", marker)
+
+    if config.getoption("--full"):
+        _testing_framework.FULL_RUN = True
+        if config.option.markexpr == "not nightly":
+            config.option.markexpr = ""
 
     # Point the wfdb helpers at the in-tree cache unless the caller redirected it.
     # generate_wfdb re-reads this on every call, so setting it here is sufficient.

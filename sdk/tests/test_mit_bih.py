@@ -155,7 +155,7 @@ def assert_mit_bih_to_dataset(sdk, device_patient_map=None, max_records=None, de
         np.random.seed(seed)
         random.seed(seed)
     num_records = 0
-    for (record, annotation) in get_records(dataset_name='mitdb'):
+    for (record, annotation) in get_records(dataset_name='mitdb', sampto=max_samples_per_record):
         if max_records and num_records >= max_records:
             return
         num_records += 1
@@ -279,8 +279,9 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
     num_records = 0
 
     device_patient_dict = {}
-    for (record, annotation), (d_record, d_annotation) in zip(get_records(dataset_name='mitdb'),
-                                                              get_records(dataset_name='mitdb', physical=False)):
+    for (record, annotation), (d_record, d_annotation) in zip(
+            get_records(dataset_name='mitdb', sampto=max_samples_per_record),
+            get_records(dataset_name='mitdb', physical=False, sampto=max_samples_per_record)):
         if max_records and num_records >= max_records:
             return
         num_records += 1
@@ -334,6 +335,7 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
         # Divide the waveform into random segments and assign random labels
         num_segments = random.randint(10, 100)
         segment_duration = (end_time - start_time) // num_segments
+        labels = []
         for segment in range(num_segments):
             segment_start = start_time + segment * segment_duration
             segment_end = segment_start + segment_duration
@@ -343,8 +345,14 @@ def write_mit_bih_to_dataset(sdk, max_records=None, seed=None, label_set_list=No
                 segment_end = np.int64(segment_start + segment_duration)
 
             label = random.choice(label_set_list)
-            sdk.insert_label(name=label, device=device_id, start_time=segment_start, end_time=segment_end,
-                             time_units='ns')
+            # numpy-scalar ids go through insert_label; everything else is inserted as one batch.
+            if use_numpy:
+                sdk.insert_label(name=label, device=device_id, start_time=segment_start, end_time=segment_end,
+                                 time_units='ns')
+            else:
+                labels.append((label, device_id, None, None, segment_start, segment_end))
+        if labels:
+            sdk.insert_labels(labels, time_units='ns', source_type='device_id')
 
         if record.n_sig > 1:
             for i in range(len(record.sig_name)):

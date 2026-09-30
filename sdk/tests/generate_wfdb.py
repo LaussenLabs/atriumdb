@@ -107,11 +107,16 @@ def get_record_names(dataset_name=None):
     return _download_dataset(dataset_name, dataset_dir_path)
 
 
-def get_records(dataset_name=None, physical=True):
+def get_records(dataset_name=None, physical=True, annotations=False, sampto=None):
+    """Yield ``(record, annotation)``. The (slow) annotation is read only if ``annotations``
+    is true; ``sampto`` stops decoding after that many samples."""
     dataset_name = DEFAULT_DATASET_NAME if dataset_name is None else dataset_name
     dataset_dir_path = get_wfdb_cache_dir() / dataset_name
 
     for record_name in get_record_names(dataset_name):
-        record = wfdb.rdrecord(str(dataset_dir_path / record_name), physical=physical)
-        annotation = wfdb.rdann(str(dataset_dir_path / record_name), 'atr', summarize_labels=True, return_label_elements=['description'])
+        record = wfdb.rdrecord(str(dataset_dir_path / record_name), physical=physical, sampto=sampto)
+        annotation = None
+        if annotations:
+            annotation = wfdb.rdann(str(dataset_dir_path / record_name), 'atr', summarize_labels=True,
+                                    return_label_elements=['description'])
         yield (record, annotation)

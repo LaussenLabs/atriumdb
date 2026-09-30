@@ -66,7 +66,6 @@ def api_url():
         api_thread.join(timeout=10)
 
 
-@pytest.mark.slow
 @pytest.mark.mitbih
 def test_api(api_url):
     # using MITBIH test for normal operation of the sdk
@@ -211,16 +210,11 @@ def _test_api_labels(db_type, dataset_location, connection_params, api_url):
         labels = api_sdk.get_labels(patient_id_list=[patient_id])
     print("passed 5")
 
-    label_ids, offset = [], 0
-    # insert a bunch of labels
-    for label_name in label_names:
-        for i in range(150):
-            label_id = sdk.insert_label(name=label_name, device=device_tag, start_time=start_time+offset, end_time=end_time+offset, time_units="ms", label_source='test')
-            label_ids.append(label_id)
-            offset += 1000
-        offset = 0
-
-    assert len(label_ids) == 1500
+    # insert a bunch of labels, more than one page (1000) of the API's default limit
+    label_batch = [
+        (label_name, device_tag, None, 'test', start_time + i * 1000, end_time + i * 1000)
+        for label_name in label_names for i in range(150)]
+    sdk.insert_labels(labels=label_batch, time_units="ms", source_type="device_tag")
     print("passed 6")
 
     local_labels = sdk.get_labels(name_list=label_names)

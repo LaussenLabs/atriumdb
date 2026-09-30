@@ -38,6 +38,14 @@ DEFAULT_MARIA_DB_PORT = 3306
 ALL_BACKENDS = ("mariadb", "sqlite")
 _ENABLED_BACKENDS = list(ALL_BACKENDS)
 
+#: Set by ``pytest --full``; ``scaled`` then returns the full-size value.
+FULL_RUN = False
+
+
+def scaled(lean, full):
+    """``lean`` normally, ``full`` under ``pytest --full``."""
+    return full if FULL_RUN else lean
+
 
 def set_enabled_backends(backends):
     """Restrict which backends `_test_for_both` / `parametrized_backends` will run."""
