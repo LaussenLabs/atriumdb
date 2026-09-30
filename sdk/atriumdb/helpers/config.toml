@@ -1,6 +1,7 @@
 [resources]
 shared_lib_filename_linux = "bin/libTSC.so"
 shared_lib_filename_windows = "bin/libTSC.dll"
+shared_lib_filename_macos = "bin/libTSC.dylib"
 
 [settings]
 protected_mode = "True"
