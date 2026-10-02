@@ -281,11 +281,6 @@ class MariaDBHandler(SQLHandler):
             conn.commit()
             return True
 
-    def upgrade_setting_schema(self):
-        """Widen the setting table's value column to TEXT so it can hold file paths."""
-        with self.connection() as (conn, cursor):
-            cursor.execute("ALTER TABLE setting MODIFY COLUMN value TEXT NOT NULL")
-
     def select_all_devices(self):
         with self.maria_db_connection() as (conn, cursor):
             cursor.execute("SELECT id, tag, name, manufacturer, model, type, bed_id, source_id FROM device")
