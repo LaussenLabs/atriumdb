@@ -26,6 +26,10 @@ DB_NAME_BUFFER = 'test_write_buffer'
 DB_NAME_TVP_BUFFER = 'test_write_tvp_buffer'
 DB_NAME_COMPREHENSIVE = 'test_comprehensive'
 DB_NAME_MULTI_BUFFER = 'test_multi_buffer'
+DB_NAME_VARYING_SCALE = 'test_varying_scale_buffer'
+DB_NAME_VARYING_SCALE_TVP = 'test_varying_scale_tvp_buffer'
+DB_NAME_VARYING_DTYPE = 'test_varying_dtype_buffer'
+DB_NAME_DIRECT_VARYING_SCALE = 'test_direct_varying_scale'
 
 
 def get_all_blocks(sdk, measure_id, device_id):
@@ -498,3 +502,267 @@ def _test_multi_buffer(db_type, dataset_location, connection_params):
             expected_values = np.concatenate(message_values_list)
             assert np.array_equal(value_data, expected_values), \
                 f"Data read does not match data written.\nActual:   {value_data}\nExpected: {expected_values}"
+
+
+def test_write_buffer_varying_scale_factors():
+    """Buffered segments with differing scale_m / scale_b flush correctly."""
+    _test_for_both(DB_NAME_VARYING_SCALE, _test_write_buffer_varying_scale_factors)
+
+
+def _test_write_buffer_varying_scale_factors(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    freq = 1.0  # 1 Hz
+    one_second_ns = 1_000_000_000
+    measure_id = sdk.insert_measure(measure_tag='test_measure', freq=freq, freq_units='Hz')
+    device_id = sdk.insert_device(device_tag='test_device')
+
+    # Three segments at non-overlapping times. Segments A and C share scale
+    # factors; B uses a different pair. The flush must produce digital
+    # readback that matches the digital input, and analog readback that
+    # applies each segment's own (scale_m * digital + scale_b).
+    segment_a = np.arange(0, 10, dtype=np.int64)
+    segment_b = np.arange(100, 110, dtype=np.int64)
+    segment_c = np.arange(200, 210, dtype=np.int64)
+
+    start_a_s, start_b_s, start_c_s = 0.0, 100.0, 200.0
+    seg_len_s = 10  # one value per second, 10 values per segment
+
+    scale_a = (2.0, 10.0)        # (scale_m, scale_b)
+    scale_b_pair = (3.0, -5.0)
+    scale_c = (2.0, 10.0)        # matches A so the partitioner co-locates them
+
+    with sdk.write_buffer() as buffer:
+        sdk.write_segment(measure_id, device_id, segment_a, start_a_s,
+                          freq=freq, freq_units='Hz', time_units='s',
+                          scale_m=scale_a[0], scale_b=scale_a[1])
+        sdk.write_segment(measure_id, device_id, segment_b, start_b_s,
+                          freq=freq, freq_units='Hz', time_units='s',
+                          scale_m=scale_b_pair[0], scale_b=scale_b_pair[1])
+        sdk.write_segment(measure_id, device_id, segment_c, start_c_s,
+                          freq=freq, freq_units='Hz', time_units='s',
+                          scale_m=scale_c[0], scale_b=scale_c[1])
+
+    # All 30 values should be present.
+    blocks = get_all_blocks(sdk, measure_id, device_id)
+    total_values = sum(block[8] for block in blocks)
+    assert total_values == 30, f"Expected 30 values total, found {total_values}"
+
+    # Pull every value in one query (covering the union of all three writes),
+    # then slice by timestamp. We can't query a single segment by range
+    # because segments A and C live in the same block group (same scale
+    # factors, same partition), and that block group spans 0 s to 210 s.
+    full_start_ns = 0
+    full_end_ns = (int(start_c_s) + seg_len_s) * one_second_ns
+
+    # Digital readback (analog=False) should round-trip each segment.
+    _, dig_times, dig_vals = sdk.get_data(
+        measure_id=measure_id, device_id=device_id,
+        start_time_n=full_start_ns, end_time_n=full_end_ns, analog=False)
+    order = np.argsort(dig_times)
+    dig_times, dig_vals = dig_times[order], dig_vals[order]
+
+    def slice_by_start(times, vals, start_s):
+        start_ns = int(start_s) * one_second_ns
+        end_ns = start_ns + seg_len_s * one_second_ns
+        mask = (times >= start_ns) & (times < end_ns)
+        return vals[mask]
+
+    assert np.array_equal(slice_by_start(dig_times, dig_vals, start_a_s), segment_a)
+    assert np.array_equal(slice_by_start(dig_times, dig_vals, start_b_s), segment_b)
+    assert np.array_equal(slice_by_start(dig_times, dig_vals, start_c_s), segment_c)
+
+    # Analog readback should apply each segment's own scale_m / scale_b.
+    _, an_times, an_vals = sdk.get_data(
+        measure_id=measure_id, device_id=device_id,
+        start_time_n=full_start_ns, end_time_n=full_end_ns, analog=True)
+    order = np.argsort(an_times)
+    an_times, an_vals = an_times[order], an_vals[order]
+
+    expected_a = segment_a * scale_a[0] + scale_a[1]
+    expected_b = segment_b * scale_b_pair[0] + scale_b_pair[1]
+    expected_c = segment_c * scale_c[0] + scale_c[1]
+
+    assert np.allclose(slice_by_start(an_times, an_vals, start_a_s), expected_a), \
+        f"Analog A mismatch."
+    assert np.allclose(slice_by_start(an_times, an_vals, start_b_s), expected_b), \
+        f"Analog B mismatch."
+    assert np.allclose(slice_by_start(an_times, an_vals, start_c_s), expected_c), \
+        f"Analog C mismatch."
+
+
+def test_write_buffer_varying_scale_tvp():
+    """Buffered time-value pairs with differing scale_m / scale_b flush correctly."""
+    _test_for_both(DB_NAME_VARYING_SCALE_TVP, _test_write_buffer_varying_scale_tvp)
+
+
+def _test_write_buffer_varying_scale_tvp(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    freq = 1.0  # 1 Hz
+    period_ns = 1_000_000_000
+    measure_id = sdk.insert_measure(measure_tag='test_measure', freq=freq, freq_units='Hz')
+    device_id = sdk.insert_device(device_tag='test_device')
+
+    # Two batches of time-value pairs at disjoint time ranges, each with its
+    # own scale_m / scale_b. Both pushed during a single buffer context, so
+    # flush sees them as one heterogeneous data_dicts list.
+    times_a_ns = np.array([0, 1, 2, 3, 4], dtype=np.int64) * period_ns
+    values_a = np.array([1, 2, 3, 4, 5], dtype=np.int64)
+    scale_a = (0.5, 1.0)
+
+    times_b_ns = np.array([100, 101, 102, 103, 104], dtype=np.int64) * period_ns
+    values_b = np.array([10, 20, 30, 40, 50], dtype=np.int64)
+    scale_b_pair = (4.0, -2.0)
+
+    with sdk.write_buffer() as buffer:
+        sdk.write_time_value_pairs(measure_id, device_id, times=times_a_ns, values=values_a,
+                                   freq=freq, freq_units='Hz', time_units='ns',
+                                   scale_m=scale_a[0], scale_b=scale_a[1])
+        sdk.write_time_value_pairs(measure_id, device_id, times=times_b_ns, values=values_b,
+                                   freq=freq, freq_units='Hz', time_units='ns',
+                                   scale_m=scale_b_pair[0], scale_b=scale_b_pair[1])
+
+    # All 10 values present after flush.
+    blocks = get_all_blocks(sdk, measure_id, device_id)
+    total_values = sum(block[8] for block in blocks)
+    assert total_values == 10, f"Expected 10 values total, found {total_values}"
+
+    # Read everything once and split by timestamp. A and B live in different
+    # partitions (different scale factors), so each forms its own block
+    # group; reading by full range and splitting client-side is the
+    # consistent pattern across these tests.
+    full_start_ns = int(times_a_ns[0])
+    full_end_ns = int(times_b_ns[-1]) + period_ns
+
+    _, an_times, an_vals = sdk.get_data(
+        measure_id=measure_id, device_id=device_id,
+        start_time_n=full_start_ns, end_time_n=full_end_ns, analog=True)
+    order = np.argsort(an_times)
+    an_times, an_vals = an_times[order], an_vals[order]
+
+    a_lo, a_hi = int(times_a_ns[0]), int(times_a_ns[-1]) + period_ns
+    b_lo, b_hi = int(times_b_ns[0]), int(times_b_ns[-1]) + period_ns
+
+    a_mask = (an_times >= a_lo) & (an_times < a_hi)
+    b_mask = (an_times >= b_lo) & (an_times < b_hi)
+
+    expected_a = values_a * scale_a[0] + scale_a[1]
+    expected_b = values_b * scale_b_pair[0] + scale_b_pair[1]
+
+    assert np.allclose(an_vals[a_mask], expected_a), \
+        f"Analog A mismatch.\nGot: {an_vals[a_mask]}\nExpected: {expected_a}"
+    assert np.allclose(an_vals[b_mask], expected_b), \
+        f"Analog B mismatch.\nGot: {an_vals[b_mask]}\nExpected: {expected_b}"
+
+
+def test_write_buffer_varying_dtype():
+    """Buffered segments with mixed integer and float dtypes flush correctly."""
+    _test_for_both(DB_NAME_VARYING_DTYPE, _test_write_buffer_varying_dtype)
+
+
+def _test_write_buffer_varying_dtype(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    freq = 1.0  # 1 Hz
+    one_second_ns = 1_000_000_000
+    measure_id = sdk.insert_measure(measure_tag='test_measure', freq=freq, freq_units='Hz')
+    device_id = sdk.insert_device(device_tag='test_device')
+
+    int_values = np.arange(0, 10, dtype=np.int64)
+    float_values = np.arange(50, 60, dtype=np.float64) + 0.25
+
+    int_start_s = 0.0
+    float_start_s = 100.0
+    seg_len_s = 10
+
+    with sdk.write_buffer() as buffer:
+        sdk.write_segment(measure_id, device_id, int_values, int_start_s,
+                          freq=freq, freq_units='Hz', time_units='s')
+        sdk.write_segment(measure_id, device_id, float_values, float_start_s,
+                          freq=freq, freq_units='Hz', time_units='s')
+
+    blocks = get_all_blocks(sdk, measure_id, device_id)
+    total_values = sum(block[8] for block in blocks)
+    assert total_values == 20, f"Expected 20 values total, found {total_values}"
+
+    # Pull everything in one go and slice by timestamp.
+    full_start_ns = 0
+    full_end_ns = (int(float_start_s) + seg_len_s) * one_second_ns
+    _, times_back, vals_back = sdk.get_data(
+        measure_id=measure_id, device_id=device_id,
+        start_time_n=full_start_ns, end_time_n=full_end_ns, analog=False)
+
+    order = np.argsort(times_back)
+    times_back, vals_back = times_back[order], vals_back[order]
+
+    int_lo = int(int_start_s) * one_second_ns
+    int_hi = int_lo + seg_len_s * one_second_ns
+    float_lo = int(float_start_s) * one_second_ns
+    float_hi = float_lo + seg_len_s * one_second_ns
+
+    int_back = vals_back[(times_back >= int_lo) & (times_back < int_hi)]
+    float_back = vals_back[(times_back >= float_lo) & (times_back < float_hi)]
+
+    # The decoded array is float64 across both partitions because at least
+    # one block is float-encoded; the integer values come back as exact whole
+    # numbers and convert losslessly back to int64.
+    assert np.array_equal(int_back.astype(np.int64), int_values)
+    assert np.allclose(float_back, float_values)
+
+
+def test_direct_write_segments_varying_scale():
+    """`write_segments` accepts per-segment scale_m / scale_b lists in the direct (non-buffered) path."""
+    _test_for_both(DB_NAME_DIRECT_VARYING_SCALE, _test_direct_write_segments_varying_scale)
+
+
+def _test_direct_write_segments_varying_scale(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    freq = 1.0  # 1 Hz
+    one_second_ns = 1_000_000_000
+    measure_id = sdk.insert_measure(measure_tag='test_measure', freq=freq, freq_units='Hz')
+    device_id = sdk.insert_device(device_tag='test_device')
+
+    segments = [
+        np.arange(0, 5, dtype=np.int64),
+        np.arange(20, 25, dtype=np.int64),
+        np.arange(40, 45, dtype=np.int64),
+    ]
+    start_times = [0.0, 100.0, 200.0]
+    scale_m_list = [2.0, 3.0, 2.0]
+    scale_b_list = [1.0, -1.0, 1.0]
+    seg_len_s = 5
+
+    sdk.write_segments(measure_id, device_id, segments, start_times,
+                       freq=freq, freq_units='Hz', time_units='s',
+                       scale_m=scale_m_list, scale_b=scale_b_list)
+
+    blocks = get_all_blocks(sdk, measure_id, device_id)
+    total_values = sum(block[8] for block in blocks)
+    assert total_values == 15, f"Expected 15 values total, found {total_values}"
+
+    # Read all values once across the full span and split by timestamp.
+    # Segments 0 and 2 share scale (2.0, 1.0) and end up in the same block
+    # group spanning 0 s to 205 s; a per-segment range query would return
+    # both of them.
+    full_start_ns = 0
+    full_end_ns = (int(start_times[-1]) + seg_len_s) * one_second_ns
+
+    _, times_back, vals_back = sdk.get_data(
+        measure_id=measure_id, device_id=device_id,
+        start_time_n=full_start_ns, end_time_n=full_end_ns, analog=True)
+    order = np.argsort(times_back)
+    times_back, vals_back = times_back[order], vals_back[order]
+
+    for segment, start_s, m, b in zip(segments, start_times, scale_m_list, scale_b_list):
+        lo = int(start_s) * one_second_ns
+        hi = lo + seg_len_s * one_second_ns
+        slice_vals = vals_back[(times_back >= lo) & (times_back < hi)]
+        expected = segment * m + b
+        assert np.allclose(slice_vals, expected), \
+            f"Analog mismatch for segment starting at {start_s}s.\nGot: {slice_vals}\nExpected: {expected}"
