@@ -3,9 +3,12 @@ import time
 import numpy as np
 
 from atriumdb import AtriumSDK
-from tests.testing_framework import _test_for_both
+from tests.testing_framework import _test_for_both, scaled
 
 DB_NAME = 'time_type_switch'
+
+# Every gap sits within the first block (131,072 values); the lean volume spans three blocks.
+NUM_VALUES = scaled(lean=400_000, full=10_000_000)
 
 
 def test_time_type_switch():
@@ -25,14 +28,16 @@ def _test_time_type_switch(db_type, dataset_location, connection_params):
 
     period_ns = (10 ** 18) // freq_nhz
 
-    num_values = 10_000_000
+    num_values = NUM_VALUES
 
     gap_data = [10_000, 24_000_000, 12_000, 138_000_000, 54_403, 34_560_000_000, 104_903, 56_530_000_000]
     gap_data = np.array(gap_data, dtype=np.int64)
     timestamp_arr = convert_gap_data_to_timestamp_arr(gap_data, num_values, period_ns, start_time_nano)
 
-    # Create values
-    values = (1000 * np.sin(timestamp_arr)).astype(np.int64)
+    # Create values. The assertions do not depend on their shape, and a short repeating ramp
+    # encodes far faster than noise.
+    values = scaled(lean=np.arange(num_values, dtype=np.int64) % 1000,
+                    full=(1000 * np.sin(timestamp_arr)).astype(np.int64))
 
     end_time_nano = int(timestamp_arr[-1]) + period_ns
 

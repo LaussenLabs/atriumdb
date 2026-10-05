@@ -3,6 +3,7 @@ import numpy as np
 import random
 
 from atriumdb.windowing.definition_splitter import stratified_partition_by_labels
+from tests.testing_framework import scaled
 
 
 def test_stratified_partition_basic_functionality():
@@ -22,7 +23,7 @@ def test_stratified_partition_large_dataset():
     """
     Test the partitioning on a large dataset and check if ratios are correct within a 10% margin.
     """
-    data_list = generate_data_list(100000)
+    data_list = generate_data_list(scaled(lean=20_000, full=100_000))
     partition_ratios = [50, 50]
     partitions, label_totals, partition_source_counts = stratified_partition_by_labels(data_list, partition_ratios, random_state=22)
 

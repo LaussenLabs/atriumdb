@@ -24,6 +24,14 @@ import numpy as np
 from atriumdb import AtriumSDK
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 
+#: ATRIUMDB_TEST_FULL=1 selects the full-size variants of the scaled tests.
+FULL_RUN = os.environ.get("ATRIUMDB_TEST_FULL") == "1"
+
+
+def scaled(lean, full):
+    """``lean`` normally, ``full`` when ATRIUMDB_TEST_FULL=1."""
+    return full if FULL_RUN else lean
+
 
 def _test_for_both(db_name, test_function, *args):
     load_dotenv()
