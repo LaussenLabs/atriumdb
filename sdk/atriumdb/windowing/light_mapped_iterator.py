@@ -240,6 +240,7 @@ class LightMappedIterator(DatasetIterator):
         window = Window(
             signals=signals,
             start_time=int(window_start_time),
+            end_time=int(window_start_time + self.window_duration_ns),
             device_id=device_id,
             patient_id=patient_id,
             label_time_series=label_time_series,
