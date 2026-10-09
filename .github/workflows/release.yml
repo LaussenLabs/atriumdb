@@ -134,51 +134,51 @@ jobs:
           else
             echo "url=https://test.pypi.org/legacy/" >> $GITHUB_OUTPUT
           fi
-      - name: Publish release distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
-        with:
-          repository-url: ${{ steps.set-url.outputs.url }}
+#      - name: Publish release distributions to PyPI
+#        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+#        with:
+#          repository-url: ${{ steps.set-url.outputs.url }}
 
-  update-atriumdb-server:
-    if: ${{ github.event.inputs.pypiReleaseFeed == 'pypi' }}
-    needs:
-      - pypi-publish
-    runs-on: ubuntu-22.04
-    steps:
-      # Check out the target repo into a subfolder using the PAT
-      - name: Checkout atriumdb-server
-        uses: actions/checkout@v4
-        with:
-          repository: LaussenLabs/atriumdb-server
-          path: atriumdb-server
-          token: ${{ secrets.RELEASE_PAT }}
-          fetch-depth: 0  # safer for creating branches
-
-
-      - name: Create new branch and update version
-        run: |
-          set -euo pipefail
-          cd atriumdb-server
-          git checkout -b update-atriumdb-version
-          sed -i "s/atriumdb\[mariadb\]==[0-9.]*/atriumdb[mariadb]==${{ github.event.inputs.releaseVersion }}/" requirements.txt
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add requirements.txt
-          git commit -m "Update atriumdb to version ${{ github.event.inputs.releaseVersion }}"
-          git remote set-url origin https://x-access-token:${{ secrets.RELEASE_PAT }}@github.com/LaussenLabs/atriumdb-server.git
-          git push origin update-atriumdb-version
-
-
-      - name: Create Pull Request
-        run: |
-          gh auth login --with-token <<< "${{ secrets.RELEASE_PAT }}"
-          gh pr create \
-            --repo LaussenLabs/atriumdb-server \
-            --title "Update atriumdb to version ${{ github.event.inputs.releaseVersion }}" \
-            --body "This PR updates atriumdb to version ${{ github.event.inputs.releaseVersion }}." \
-            --base main \
-            --head update-atriumdb-version \
-            --reviewer bgreer101,WilliamDixon
-
-      
-          
+#  update-atriumdb-server:
+#    if: ${{ github.event.inputs.pypiReleaseFeed == 'pypi' }}
+#    needs:
+#      - pypi-publish
+#    runs-on: ubuntu-22.04
+#    steps:
+#      # Check out the target repo into a subfolder using the PAT
+#      - name: Checkout atriumdb-server
+#        uses: actions/checkout@v4
+#        with:
+#          repository: LaussenLabs/atriumdb-server
+#          path: atriumdb-server
+#          token: ${{ secrets.RELEASE_PAT }}
+#          fetch-depth: 0  # safer for creating branches
+#
+#
+#      - name: Create new branch and update version
+#        run: |
+#          set -euo pipefail
+#          cd atriumdb-server
+#          git checkout -b update-atriumdb-version
+#          sed -i "s/atriumdb\[mariadb\]==[0-9.]*/atriumdb[mariadb]==${{ github.event.inputs.releaseVersion }}/" requirements.txt
+#          git config user.name "github-actions"
+#          git config user.email "github-actions@github.com"
+#          git add requirements.txt
+#          git commit -m "Update atriumdb to version ${{ github.event.inputs.releaseVersion }}"
+#          git remote set-url origin https://x-access-token:${{ secrets.RELEASE_PAT }}@github.com/LaussenLabs/atriumdb-server.git
+#          git push origin update-atriumdb-version
+#
+#
+#      - name: Create Pull Request
+#        run: |
+#          gh auth login --with-token <<< "${{ secrets.RELEASE_PAT }}"
+#          gh pr create \
+#            --repo LaussenLabs/atriumdb-server \
+#            --title "Update atriumdb to version ${{ github.event.inputs.releaseVersion }}" \
+#            --body "This PR updates atriumdb to version ${{ github.event.inputs.releaseVersion }}." \
+#            --base main \
+#            --head update-atriumdb-version \
+#            --reviewer bgreer101,WilliamDixon
+#
+#      
+#          
