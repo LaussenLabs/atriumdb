@@ -15,6 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import json
 import warnings
 from collections import defaultdict
 import numpy as np
@@ -99,7 +100,7 @@ class AtriumSDK:
     The Core SDK Object that represents a single dataset and provides methods to interact with it. If you are using API
     mode then once you are finished with the object call the close method to clean up all connections.
 
-    :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
+    :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written. For "mysql" or "mariadb" it may be omitted, together with tsc_file_location, to use only the metadata; reading or writing TSC files then raises an error.
     :param str metadata_connection_type: Specifies the type of connection to use for metadata. Options are "sqlite", "mysql", "mariadb", or "api". Default "sqlite".
     :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" connection type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
     :param int num_threads: Specifies the number of threads to use when processing data.
@@ -223,16 +224,12 @@ class AtriumSDK:
 
         # Handle MySQL or MariaDB connections
         elif metadata_connection_type == 'mysql' or metadata_connection_type == 'mariadb':
-            # Ensure at least one of the required parameters is provided
-            if dataset_location is None and tsc_file_location is None:
-                raise ValueError("One of dataset_location, tsc_file_location must be specified.")
-
             # Convert dataset_location to a Path object if it's a string
             if isinstance(dataset_location, str):
                 dataset_location = Path(dataset_location)
 
             # Set the default tsc_file_location if not provided
-            if tsc_file_location is None:
+            if tsc_file_location is None and dataset_location is not None:
                 tsc_file_location = dataset_location / 'tsc'
 
             # Import the MariaDBHandler class and extract connection parameters
@@ -365,7 +362,8 @@ class AtriumSDK:
         """
         .. _create_dataset_label:
 
-        A class method to create a new dataset.
+        A class method to create a new dataset. The metadata database is described in `meta/database.json` inside
+        the dataset directory: its type and, for mysql and mariadb, the host, port and database name.
 
         :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
         :param str database_type: Specifies the type of metadata database to use. Options are "sqlite", "mysql", or "mariadb".
@@ -439,6 +437,16 @@ class AtriumSDK:
         sdk_object.sql_handler.insert_setting(OVERWRITE_SETTING_NAME, str(overwrite))
 
         sdk_object.settings_dict = sdk_object._get_all_settings()
+
+        # Record which metadata database this dataset directory belongs to.
+        if database_type == 'sqlite':
+            database_info = {'type': 'sqlite', 'database': 'index.db'}
+        else:
+            database_info = {'type': database_type, 'host': connection_params['host'],
+                             'port': connection_params['port'], 'database': connection_params['database']}
+        database_file = dataset_location / 'meta' / 'database.json'
+        database_file.parent.mkdir(parents=True, exist_ok=True)
+        database_file.write_text(json.dumps(database_info, indent=4) + "\n")
 
         return sdk_object
 
