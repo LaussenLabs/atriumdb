@@ -105,6 +105,7 @@ Check the `AtriumSDK.get_iterator  <contents.html#atriumdb.AtriumSDK.get_iterato
     for window_i, window in enumerate(iterator):
         print()
         print(window.start_time)
+        print(window.end_time)
         print(window.device_id)
         print(window.patient_id)
         for (measure_tag, measure_freq_hz, measure_units), signal_dict in window.signals.items():
@@ -150,6 +151,10 @@ information related to patient and analysis results.
 
 - ``start_time`` : ``int``
     The starting time, as a nanosecond epoch, of the window.
+
+- ``end_time`` : ``int``
+    The exclusive end time, as a nanosecond epoch, of the window: ``start_time`` plus the window duration.
+    Values derived from a window should be timestamped at ``end_time``, the first time all of its data is available.
 
 - ``device_id`` : ``int``
     An identifier representing the device from which the data was captured.

@@ -69,6 +69,7 @@ def _run_iterator_test(db_type, dataset_location, connection_params, use_period)
 
         for window_i, window in enumerate(iterator):
             assert isinstance(window.start_time, int) or isinstance(window.start_time, float)
+            assert window.end_time == window.start_time + window_size_nano
             assert isinstance(window.device_id, expected_device_id_type)
             assert isinstance(window.patient_id, expected_patient_id_type)
 
@@ -84,6 +85,7 @@ def _run_iterator_test(db_type, dataset_location, connection_params, use_period)
         iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, iterator_type="lightmapped")
         for window_i, window in enumerate(iterator):
             assert isinstance(window.start_time, int) or isinstance(window.start_time, float)
+            assert window.end_time == window.start_time + window_size_nano
             assert isinstance(window.device_id, expected_device_id_type)
             assert isinstance(window.patient_id, expected_patient_id_type)
 

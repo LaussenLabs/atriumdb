@@ -816,6 +816,7 @@ Now that we've setup the `DatasetDefinition <contents.html#atriumdb.DatasetDefin
     for window_i, window in enumerate(iterator):
         print(f"Window: {window_i}")
         print(f"Start Time: {window.start_time}")
+        print(f"End Time: {window.end_time}")
         print(f"Device ID: {window.device_id}")
         print(f"Patient ID: {window.patient_id}")
 
