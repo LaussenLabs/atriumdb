@@ -43,6 +43,9 @@ def test_api():
     # test labels functionality of the api
     _test_for_both(DB_NAME, _test_api_labels)
 
+    # test the device-patient-mapping endpoint
+    _test_for_both(DB_NAME, _test_api_device_patient_mapping)
+
 
 # testing normal operation of the api, getting devices, patients, blocks ect
 def _test_api(db_type, dataset_location, connection_params):
@@ -357,3 +360,118 @@ def _create_label_hierarchy(sdk: AtriumSDK, hierarchy: dict, parent_id=None):
             # Iterate over the list of child labels
             for child_label in children:
                 sdk.insert_label_name(name=child_label, parent=label_id)
+
+# test the device-patient-mapping endpoint of the api
+def _test_api_device_patient_mapping(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    # set up the local sdk instance for the api to use
+    app.dependency_overrides[get_sdk_instance] = lambda: sdk
+
+    # set up remote mode sdk to connect to the api
+    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="http://127.0.0.1:8123", validate_token=False)
+    api_sdk.token_expiry = time.time() + 1_000_000
+
+    # insert three devices and three patients with three back-to-back encounters
+    device_id_1 = sdk.insert_device(device_tag='dpm_monitor1')
+    device_id_2 = sdk.insert_device(device_tag='dpm_monitor2')
+    device_id_3 = sdk.insert_device(device_tag='dpm_monitor3')
+
+    patient_id_1 = sdk.insert_patient(mrn='dpm-1001')
+    patient_id_2 = sdk.insert_patient(mrn='dpm-1002')
+    patient_id_3 = sdk.insert_patient(mrn='dpm-1003')
+
+    # times in seconds; insert in seconds and assert in nanoseconds (the api returns raw ns)
+    T1, T2, T3, T4 = 1647084000, 1647094800, 1647105600, 1647116400
+    T1_ns, T2_ns, T3_ns, T4_ns = (t * 1_000_000_000 for t in (T1, T2, T3, T4))
+
+    sdk.insert_device_patient_data([
+        (device_id_1, patient_id_1, T1, T2),
+        (device_id_2, patient_id_2, T2, T3),
+        (device_id_3, patient_id_3, T3, T4),
+    ], time_units='s')
+
+    print('Testing device-patient-mapping with no filters...')
+    all_mappings = api_sdk._api_get_device_patient_data()
+    expected = {
+        (device_id_1, patient_id_1, T1_ns, T2_ns),
+        (device_id_2, patient_id_2, T2_ns, T3_ns),
+        (device_id_3, patient_id_3, T3_ns, T4_ns),
+    }
+    assert set(all_mappings) == expected
+
+    print('Testing device-patient-mapping with device_id filter...')
+    device_1_mappings = api_sdk._api_get_device_patient_data(device_id_list=[device_id_1])
+    assert device_1_mappings == [(device_id_1, patient_id_1, T1_ns, T2_ns)]
+
+    # multiple device ids should be encoded as repeated query params and OR'd together
+    multi_device_mappings = api_sdk._api_get_device_patient_data(device_id_list=[device_id_1, device_id_3])
+    assert set(multi_device_mappings) == {
+        (device_id_1, patient_id_1, T1_ns, T2_ns),
+        (device_id_3, patient_id_3, T3_ns, T4_ns),
+    }
+
+    print('Testing device-patient-mapping with patient_id filter...')
+    patient_2_mappings = api_sdk._api_get_device_patient_data(patient_id_list=[patient_id_2])
+    assert patient_2_mappings == [(device_id_2, patient_id_2, T2_ns, T3_ns)]
+
+    print('Testing device-patient-mapping with start_time and end_time filters...')
+    # a window strictly inside the second encounter selects only that mapping
+    range_mappings = api_sdk._api_get_device_patient_data(start_time=T2_ns + 1, end_time=T3_ns - 1)
+    assert range_mappings == [(device_id_2, patient_id_2, T2_ns, T3_ns)]
+
+    # a window covering only the first two encounters
+    range_mappings_two = api_sdk._api_get_device_patient_data(start_time=T1_ns, end_time=T3_ns - 1)
+    assert set(range_mappings_two) == {
+        (device_id_1, patient_id_1, T1_ns, T2_ns),
+        (device_id_2, patient_id_2, T2_ns, T3_ns),
+    }
+
+    print('Testing device-patient-mapping with timestamp filter...')
+    encounter_at_T2 = api_sdk._api_get_device_patient_data(timestamp=T2_ns + 100)
+    assert encounter_at_T2 == [(device_id_2, patient_id_2, T2_ns, T3_ns)]
+
+    # a timestamp outside any encounter window returns nothing
+    no_encounter = api_sdk._api_get_device_patient_data(timestamp=T4_ns + 1_000_000_000)
+    assert no_encounter == []
+
+    print('Testing combined timestamp and device_id filter...')
+    combined = api_sdk._api_get_device_patient_data(timestamp=T2_ns + 100, device_id_list=[device_id_2])
+    assert combined == [(device_id_2, patient_id_2, T2_ns, T3_ns)]
+
+    # filtering by a device that wasn't active at the timestamp returns nothing
+    combined_none = api_sdk._api_get_device_patient_data(timestamp=T2_ns + 100, device_id_list=[device_id_1])
+    assert combined_none == []
+
+    print('Testing mutual exclusion of timestamp and start_time/end_time...')
+    # the api raises a 400 when timestamp is combined with a time range, which the sdk surfaces as ValueError
+    with pytest.raises(ValueError):
+        api_sdk._request("GET", "device-patient-mapping",
+                         params={'timestamp': T2_ns, 'start_time': T1_ns, 'end_time': T3_ns})
+    with pytest.raises(ValueError):
+        api_sdk._request("GET", "device-patient-mapping",
+                         params={'timestamp': T2_ns, 'start_time': T1_ns})
+    with pytest.raises(ValueError):
+        api_sdk._request("GET", "device-patient-mapping",
+                         params={'timestamp': T2_ns, 'end_time': T3_ns})
+
+    print('Testing the high-level get_device_patient_data wrapper through the api...')
+    api_data = api_sdk.get_device_patient_data(time_units='s')
+    expected_data = {
+        (device_id_1, patient_id_1, float(T1), float(T2)),
+        (device_id_2, patient_id_2, float(T2), float(T3)),
+        (device_id_3, patient_id_3, float(T3), float(T4)),
+    }
+    assert set(api_data) == expected_data
+
+    print('Testing the high-level get_device_patient_encounters wrapper through the api...')
+    encounter = api_sdk.get_device_patient_encounters(timestamp=T2 + 100, device_id=device_id_2, time_units='s')
+    assert encounter == [(device_id_2, patient_id_2, float(T2), float(T3))]
+
+    no_encounter_high_level = api_sdk.get_device_patient_encounters(
+        timestamp=T4 + 1, device_id=device_id_3, time_units='s')
+    assert no_encounter_high_level == []
+
+    # close api connection
+    api_sdk.close()

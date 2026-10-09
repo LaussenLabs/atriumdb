@@ -248,9 +248,9 @@ def test_group_headers_by_scale_factor_time_type():
 
 def test_truncate_messages():
     # Sample data
-    value_data = np.arange(40)
-    message_starts = np.array([10_000_000_000, 50_000_000_000])
-    message_sizes = np.array([20, 20])
+    value_data = np.arange(60)
+    message_starts = np.array([10_000_000_000, 50_000_000_000, 100_000_000_000])
+    message_sizes = np.array([20, 20, 20])
     freq_nhz = 10 ** 9 # (1 Hz)
     trunc_start_nano = 20_000_000_000
     trunc_end_nano = 60_000_000_000

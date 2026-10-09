@@ -563,6 +563,58 @@ over the ``(start, end)`` pairs.
        duration_s = (end - start) / 1e9
        print(f"Segment: {start} → {end}  ({duration_s:.2f} s)")
 
+**Restricting a patient cohort to a custom time window**
+
+A common research pattern is to define a cohort by MRN and then restrict each
+patient's monitoring data to a specific study window — for example, only data
+collected after a project start date.  Use
+:py:meth:`~atriumdb.AtriumSDK.get_device_patient_mapping` to retrieve the raw
+device–patient associations by MRN, wrap each one in an
+:py:class:`~atriumdb.intervals.Intervals` object, and intersect with a
+cohort-level cutoff interval.
+
+.. code-block:: python
+
+   from atriumdb.intervals import Intervals
+
+   # Define the study window — only data on or after the cohort start date.
+   # Timestamps are nanosecond Unix epoch; here we use a fixed cutoff.
+   cohort_start_ns = 1_700_000_000_000_000_000   # ~2023-11-14
+   cohort_end_ns   = 1_720_000_000_000_000_000   # ~2024-07-03
+   study_window    = Intervals([[cohort_start_ns, cohort_end_ns]])
+
+   cohort_mrns = ["10045", "10182", "10715"]
+
+   for mrn in cohort_mrns:
+       # get_device_patient_mapping accepts an mrn_list and returns
+       # (device_id, patient_id, start_ns, end_ns) tuples.
+       mappings = sdk.get_device_patient_mapping(
+           mrn_list=[mrn],
+           time_units="ns",
+       )
+
+       if not mappings:
+           print(f"MRN {mrn}: no device mapping found")
+           continue
+
+       # Union all device sessions for this patient into one availability set.
+       patient_monitoring = Intervals([])
+       for _device_id, _patient_id, start, end in mappings:
+           patient_monitoring = patient_monitoring | Intervals([[int(start), int(end)]])
+
+       # Clip to the study window.
+       within_study = patient_monitoring & study_window
+
+       if within_study.is_empty():
+           print(f"MRN {mrn}: monitored outside the study window — excluded")
+       else:
+           hours = within_study.duration() / 1e9 / 3600
+           print(f"MRN {mrn}: {hours:.1f} h of monitoring within the study window "
+                 f"across {len(within_study)} segment(s)")
+
+For the full list of methods and their signatures, see the
+`Intervals API Reference <contents.html#atriumdb.intervals.Intervals>`_.
+
 Querying Data from the Dataset
 -------------------------------
 

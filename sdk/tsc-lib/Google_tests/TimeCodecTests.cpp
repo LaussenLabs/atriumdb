@@ -103,7 +103,10 @@ void test_time_codec_d64_d64(int64_t *time_data, uint64_t num_vals, int64_t *gap
                              size_t gap_array_size)
 {
     // Init Header Struct
-    block_metadata_t header;
+    block_metadata_t header = {};
+    // From version 2.4 freq_nhz holds the period in nanoseconds, as the test data assumes.
+    header.tsc_version_num = 2;
+    header.tsc_version_ext = 4;
     header.t_raw_type = t_raw_type;
     header.t_encoded_type = t_encoded_type;
 
