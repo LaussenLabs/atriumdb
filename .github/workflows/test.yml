@@ -21,6 +21,7 @@ jobs:
     needs: build
     if: ${{ !cancelled() && needs.build.result != 'failure' }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -42,6 +43,8 @@ jobs:
       MARIA_DB_PORT: 3306
       MARIA_DB_USER: ${{ startsWith(matrix.os, 'windows') && 'runneradmin' || 'runner' }}
       MARIA_DB_PASSWORD: ''
+      PYTHONUNBUFFERED: '1'
+      PYTHONFAULTHANDLER: '1'
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-python@v5
@@ -73,8 +76,10 @@ jobs:
         mkdir "$RUNNER_TEMP/wheel-tests"
         cp -r sdk/tests sdk/pyproject.toml "$RUNNER_TEMP/wheel-tests/"
         cd "$RUNNER_TEMP/wheel-tests"
-        python -c "import atriumdb, sys; print(atriumdb.__file__); assert 'site-packages' in atriumdb.__file__"
-        python -m pytest tests -ra
+        echo "importing atriumdb"
+        timeout 300 python -X importtime -c "import atriumdb, sys; print(atriumdb.__file__); assert 'site-packages' in atriumdb.__file__" 2> importtime.txt || { echo "import failed or timed out; last modules imported:"; tail -30 importtime.txt; exit 1; }
+        sort -t'|' -k2 -n importtime.txt | tail -5
+        python -m pytest tests -ra -v -o faulthandler_timeout=600
 
   # Core install (no test extras) on the newest Python and on minimal or older Linux systems.
   smoke:
