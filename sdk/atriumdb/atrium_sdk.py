@@ -5498,7 +5498,7 @@ of DatasetIterator objects depending on the value of num_iterators.
             old_times = old_times.astype(np.int64)
 
             # Get the mask for the difference between old and new times
-            diff_mask = np.in1d(old_times, new_time_data, assume_unique=False, invert=True)
+            diff_mask = np.isin(old_times, new_time_data, assume_unique=False, invert=True)
 
             # If there is any difference, process it
             if np.any(diff_mask):
