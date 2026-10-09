@@ -2,66 +2,126 @@ name: atriumdb_test
 'on':
   workflow_dispatch:
     inputs:
-      runTests:
-        description: Run the test suite against the Linux wheel
-        type: boolean
-        default: true
+      testpypiVersion:
+        description: Install this version from TestPyPI instead of building the wheels
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: ${{ inputs.testpypiVersion == '' }}
     uses: ./.github/workflows/build-wheels.yml
 
+  # Full test suite (MariaDB and SQLite) against the wheel pip picks on each native runner.
   test:
-    if: ${{ inputs.runTests }}
+    name: test (${{ matrix.wheel }}, py${{ matrix.python }})
     needs: build
-    runs-on: ubuntu-22.04
-
-    services:
-      mariadb:
-        image: mariadb:11.4
-        env:
-          MARIADB_ROOT_PASSWORD: rootpass
-          MARIADB_DATABASE: testdb
-          MARIADB_USER: testuser
-          MARIADB_PASSWORD: testpass
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="/usr/local/bin/healthcheck.sh --su mysql --connect"
-          --health-interval=15s
-          --health-timeout=10s
-          --health-retries=10
-
+    if: ${{ !cancelled() && needs.build.result != 'failure' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.13']
+        wheel: [linux-x86_64, linux-aarch64, macos-x86_64, macos-arm64, windows-amd64]
+        include:
+        - {wheel: linux-x86_64, os: ubuntu-24.04}
+        - {wheel: linux-aarch64, os: ubuntu-24.04-arm}
+        - {wheel: macos-x86_64, os: macos-15-intel}
+        - {wheel: macos-arm64, os: macos-15}
+        - {wheel: windows-amd64, os: windows-2025}
+        - {wheel: linux-x86_64, os: ubuntu-22.04, python: '3.11'}
+        - {wheel: linux-x86_64, os: ubuntu-24.04, python: '3.12'}
+    defaults:
+      run:
+        shell: bash
+    env:
+      MARIA_DB_HOST: localhost
+      MARIA_DB_PORT: 3306
+      MARIA_DB_USER: ${{ startsWith(matrix.os, 'windows') && 'runneradmin' || 'runner' }}
+      MARIA_DB_PASSWORD: ''
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v5
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
-    - name: Install dependencies
-      run: sudo apt-get update && sudo apt-get install -y tzdata libmariadb-dev
-    - name: Retrieve the Linux wheel
+        python-version: ${{ matrix.python }}
+    - uses: ankane/setup-mariadb@e34d4859081a8192918ea2302b7c9a71475a0d73  # v1
+      with:
+        mariadb-version: '11.4'
+    - name: MariaDB client library
+      if: runner.os == 'Linux'
+      run: sudo apt-get install -y libmariadb-dev
+    - name: Retrieve the wheel from the build
+      if: ${{ inputs.testpypiVersion == '' }}
       uses: actions/download-artifact@v5
       with:
-        name: dist-wheel-linux-x86_64
+        name: dist-wheel-${{ matrix.wheel }}
         path: dist
-
-    - name: Install atriumdb test dependencies
-      run: pip install "atriumdb[testing] @ file://$(ls "$PWD"/dist/*.whl)"
-
-    - name: Run tests
-      env:
-        MARIA_DB_HOST: 127.0.0.1
-        MARIA_DB_PORT: 3306
-        MARIA_DB_USER: root
-        MARIA_DB_PASSWORD: rootpass
+    - name: Retrieve the wheel from TestPyPI
+      if: ${{ inputs.testpypiVersion != '' }}
+      run: pip download "atriumdb==${{ inputs.testpypiVersion }}" --no-deps --only-binary=atriumdb --index-url https://test.pypi.org/simple/ -d dist
+    - name: Install
       run: |
-        # Run from a copy so the tests import the installed wheel rather than the source tree.
-        mkdir /tmp/wheel-tests
-        cp -r sdk/tests sdk/pyproject.toml /tmp/wheel-tests/
-        cd /tmp/wheel-tests
-        python -m pytest tests
+        ls dist
+        test "$(ls dist/*.whl | wc -l)" -eq 1
+        pip install "$(ls dist/*.whl)[testing]"
+        pip show atriumdb
+    - name: Run tests
+      run: |
+        mkdir "$RUNNER_TEMP/wheel-tests"
+        cp -r sdk/tests sdk/pyproject.toml "$RUNNER_TEMP/wheel-tests/"
+        cd "$RUNNER_TEMP/wheel-tests"
+        python -c "import atriumdb, sys; print(atriumdb.__file__); assert 'site-packages' in atriumdb.__file__"
+        python -m pytest tests -ra
+
+  # Core install (no test extras) on the newest Python and on minimal or older Linux systems.
+  smoke:
+    name: smoke (${{ matrix.name }})
+    needs: build
+    if: ${{ !cancelled() && needs.build.result != 'failure' }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - {name: py3.14 linux-x86_64, wheel: linux-x86_64, os: ubuntu-24.04, python: '3.14'}
+        - {name: py3.14 linux-aarch64, wheel: linux-aarch64, os: ubuntu-24.04-arm, python: '3.14'}
+        - {name: py3.14 macos-x86_64, wheel: macos-x86_64, os: macos-15-intel, python: '3.14'}
+        - {name: py3.14 macos-arm64, wheel: macos-arm64, os: macos-15, python: '3.14'}
+        - {name: py3.14 windows-amd64, wheel: windows-amd64, os: windows-2025, python: '3.14'}
+        - {name: python-slim x86_64, wheel: linux-x86_64, os: ubuntu-24.04, container: 'python:3.12-slim'}
+        - {name: python-slim aarch64, wheel: linux-aarch64, os: ubuntu-24.04-arm, container: 'python:3.12-slim'}
+        - {name: rocky8 x86_64, wheel: linux-x86_64, os: ubuntu-24.04, container: 'rockylinux:8'}
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      if: ${{ !matrix.container }}
+      with:
+        python-version: ${{ matrix.python }}
+    - name: Python on Rocky 8
+      if: ${{ matrix.container == 'rockylinux:8' }}
+      run: |
+        dnf install -y python3.12 python3.12-pip
+        ln -s /usr/bin/python3.12 /usr/local/bin/python
+        python -m pip install -U pip
+    - name: Retrieve the wheel from the build
+      if: ${{ inputs.testpypiVersion == '' }}
+      uses: actions/download-artifact@v5
+      with:
+        name: dist-wheel-${{ matrix.wheel }}
+        path: dist
+    - name: Retrieve the wheel from TestPyPI
+      if: ${{ inputs.testpypiVersion != '' }}
+      run: python -m pip download "atriumdb==${{ inputs.testpypiVersion }}" --no-deps --only-binary=atriumdb --index-url https://test.pypi.org/simple/ -d dist
+    - name: Install and smoke test
+      run: |
+        ls dist
+        python -m pip install dist/*.whl
+        cd "$RUNNER_TEMP" 2>/dev/null || cd /tmp
+        python "$GITHUB_WORKSPACE/sdk/tests/test_wheel_smoke.py"
