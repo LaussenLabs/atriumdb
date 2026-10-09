@@ -28,10 +28,10 @@ def combine_definitions(definitions):
     Combine multiple :class:`DatasetDefinition` objects into a single definition.
 
     Measures and labels are deduplicated across all inputs. Source dictionaries
-    (``patient_ids``, ``mrns``, ``device_ids``, ``device_tags``) are merged by
-    taking the union of time ranges for each source. When a source appears in
-    multiple definitions, its time regions are merged via interval union so that
-    overlapping or adjacent regions are consolidated.
+    (``patient_ids``, ``mrns``, ``device_ids``, ``device_tags``) are merged per source:
+    if any input gives ``"all"`` the result is ``"all"``, otherwise the region lists are
+    concatenated. When all inputs are validated, the validated time ranges are merged by
+    interval union.
 
     If all input definitions are validated, the validated data is merged as
     well and the combined result is also validated. If the definitions have

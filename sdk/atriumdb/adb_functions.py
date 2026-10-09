@@ -590,6 +590,23 @@ def collect_all_descendant_ids(label_set_ids, sql_handler):
 
 def merge_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, start_time_2, freq_nhz=None, *,
                    period_ns=None):
+    """
+    Merge two sets of gap-array data into one, in time order. Where they overlap, values from the second
+    set replace those from the first.
+
+    :param numpy.ndarray values_1: Values of the first set.
+    :param numpy.ndarray gap_array_1: Flat gap array of the first set.
+    :param int start_time_1: Start time of the first set in nanoseconds.
+    :param numpy.ndarray values_2: Values of the second set (same dtype as ``values_1``).
+    :param numpy.ndarray gap_array_2: Flat gap array of the second set.
+    :param int start_time_2: Start time of the second set in nanoseconds.
+    :param int freq_nhz: Sample frequency in nanohertz. Give exactly one of ``freq_nhz`` and ``period_ns``.
+    :param int period_ns: Keyword-only. Sample period in nanoseconds.
+    :return: Tuple ``(values, gap_array, start_time)`` of the merged data.
+    :rtype: tuple
+    :raises ValueError: If an input array is not a numpy array, the value dtypes differ, or not exactly one
+        of ``freq_nhz`` and ``period_ns`` is given.
+    """
     _validate_freq_period_params(freq_nhz, period_ns)
 
     if not all(isinstance(arr, np.ndarray) for arr in [values_1, gap_array_1, values_2, gap_array_2]):

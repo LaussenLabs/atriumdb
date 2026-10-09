@@ -52,6 +52,19 @@ class CommonWindowFormat:
 
 @dataclass
 class Window:
+    """
+    One window of data yielded by the dataset iterators. See :ref:`window_format`.
+
+    :ivar dict signals: Maps ``(measure_tag, freq_hz, units)`` to a dict with ``times``, ``values``,
+        ``expected_count``, ``actual_count`` and ``measure_id``.
+    :ivar int start_time: Window start, nanosecond epoch.
+    :ivar int end_time: Exclusive window end, nanosecond epoch (start_time plus the window duration).
+    :ivar int device_id: Device id, or None for a patient source with no device mapping.
+    :ivar int patient_id: Patient id, or None for a device source with no patient mapping.
+    :ivar numpy.ndarray label_time_series: Shape (num_labels, num_samples) of 0/1 values, or None without labels.
+    :ivar numpy.ndarray label: Shape (num_labels,) of 0/1 values, or None without labels.
+    :ivar dict patient_info: Patient info plus any requested patient history fields.
+    """
     signals: dict
     start_time: int
     end_time: int

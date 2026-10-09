@@ -68,7 +68,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     :param end_time: A global end time for the transfer, units specified in `time_units`.
     :param Optional[int] gap_tolerance: A tolerance period for gaps in data, units specified in `time_units` (defaults to 5 minutes if not specified).
         Helps to optimize the waveform transfer by transferring large chunks at a time.
-    :param bool deidentify: If True or a filename, scrambles patient_ids during the transfer. patient IDs are replaced with randomly generated IDs or according to provided de-identification csv
+    :param bool | str deidentify: If True or a filename, scrambles patient_ids during the transfer. patient IDs are replaced with randomly generated IDs or according to provided de-identification csv
         with source ids as column 1 and destination ids as column 2. If the file doesn't exist, then a new one is created with randomly assigned ids. Exported datasets will remain identified with full patient info by default.
     :param Optional[list] patient_info_to_transfer: Specific patient information fields to transfer. If not provided or set to None, all available information will be considered.
     :param bool include_labels: Specifies whether labels should be included in the transfer process.
@@ -106,7 +106,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
     Transfer data with a specific gap tolerance of one day and without including labels:
 
-    >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,include_labels=False)
+    >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,gap_tolerance=24*60*60,time_units='s',include_labels=False)
 
     Transfer data with a two-hour time shift applied to the entire dataset, and use custom de-identification functions:
 

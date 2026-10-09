@@ -772,6 +772,17 @@ def concat_encoded_arrays(encoded_bytes, encoded_headers, encoded_bytes_1, encod
 
 
 def create_gap_arr(message_time_arr, samples_per_message, freq_nhz=None, period_ns=None):
+    """
+    Build a gap array from the start times of fixed-size messages.
+
+    :param numpy.ndarray message_time_arr: Start time of each message in nanoseconds, in time order.
+    :param int samples_per_message: Number of samples in every message.
+    :param int freq_nhz: Sample frequency in nanohertz. Give exactly one of ``freq_nhz`` and ``period_ns``.
+    :param int period_ns: Sample period in nanoseconds.
+    :return: Flat int64 array of ``[sample_index, gap_ns, ...]`` pairs, where ``sample_index`` is the index of the
+        first sample after the gap and ``gap_ns`` is the time beyond one message period (negative for overlap).
+    :rtype: numpy.ndarray
+    """
     # Check if the product of samples_per_message and 10^18 is divisible by freq_nhz
     assert (freq_nhz is None) ^ (period_ns is None)
 
@@ -823,6 +834,18 @@ def interpret_gap_arr(gap_array, start_time_ns, num_messages,
 
 def convert_gap_array_to_intervals(start_time, gap_arr: np.ndarray,
                                    num_values, freq_nhz=None, period_ns=None):
+    """
+    Convert gap data into continuous intervals.
+
+    :param int start_time: Time of the first sample in nanoseconds.
+    :param numpy.ndarray gap_arr: Gap array of ``[sample_index, gap_ns]`` pairs, flat or 2-D.
+    :param int num_values: Total number of samples.
+    :param int freq_nhz: Sample frequency in nanohertz. Give exactly one of ``freq_nhz`` and ``period_ns``.
+    :param int period_ns: Sample period in nanoseconds.
+    :return: int64 array of shape (n, 3), one ``[start_ns, end_ns, num_values]`` row per interval. ``end_ns`` is
+        exclusive (start plus num_values sample periods).
+    :rtype: numpy.ndarray
+    """
     assert (freq_nhz is None) ^ (period_ns is None)
 
     # Reshape the gap array
@@ -869,6 +892,14 @@ def convert_gap_array_to_intervals(start_time, gap_arr: np.ndarray,
 
 
 def convert_intervals_to_gap_array(intervals: np.ndarray):
+    """
+    Convert intervals back into gap data (inverse of :func:`convert_gap_array_to_intervals`).
+
+    :param numpy.ndarray intervals: Rows of ``[start_ns, end_ns, num_values]`` in time order.
+    :return: int64 array of shape (k, 2), one ``[sample_index, gap_ns]`` row per gap between consecutive intervals.
+        An empty 1-D array if there are fewer than two intervals or no gaps.
+    :rtype: numpy.ndarray
+    """
     # Reshape the intervals array
     intervals = intervals.reshape((-1, 3))
 
