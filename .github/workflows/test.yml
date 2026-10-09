@@ -1,11 +1,6 @@
 name: atriumdb_test
 'on':
   workflow_dispatch:
-    inputs:
-      runTests:
-        description: Run the test suite against the Linux wheel
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -15,7 +10,6 @@ jobs:
     uses: ./.github/workflows/build-wheels.yml
 
   test:
-    if: ${{ inputs.runTests }}
     needs: build
     runs-on: ubuntu-22.04
 
