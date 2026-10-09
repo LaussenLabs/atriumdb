@@ -112,9 +112,11 @@ class AtriumSDK:
     :param bool no_pool: If true disables Mariadb connection pooling, instead using a new connection for each query.
     :param AtriumFileHandler storage_handler: Advanced feature. If you implement your own atriumdb file handler you can set it here.
     :param bool auto_upgrade: If True, automatically upgrade the database schema if needed (e.g., adding new columns). This allows the SDK to initialize successfully even if the database schema is outdated. Default is False.
+    :raises ValueError: If no dataset exists at dataset_location in sqlite mode (create one with AtriumSDK.create_dataset),
+        if the database schema is outdated and auto_upgrade is False, or if metadata_connection_type is not supported.
 
     Examples:
-    -----------
+
     Simple Usage:
 
     >>> from atriumdb import AtriumSDK
@@ -145,6 +147,9 @@ class AtriumSDK:
                  connection_params: dict = None, num_threads: int = 1, api_url: str = None, token: str = None,
                  refresh_token=None, validate_token=True, tsc_file_location: str = None, atriumdb_lib_path: str = None,
                  no_pool=False, storage_handler: AtriumFileHandler = None, auto_upgrade: bool = False):
+        """
+        Connect to an existing dataset. The parameters are described on the class.
+        """
         self.block_cache = {}  # device_id -> list of block sql results
         self.start_cache = {}  # device_id -> list of start times
         self.end_cache = {}  # device_id -> list of end times
@@ -377,6 +382,8 @@ class AtriumSDK:
 
         :return: An initialized AtriumSDK object.
         :rtype: AtriumSDK
+        :raises ValueError: If dataset_location is a file, or database_type, protected_mode or overwrite is not an
+            allowed value.
 
         Examples:
 
@@ -451,23 +458,23 @@ class AtriumSDK:
         The method for querying data from the dataset, indexed by signal type (measure_id or measure_tag with freq and units),
         time (start_time_n and end_time_n), and data source (device_id, device_tag, patient_id, or mrn).
 
-        If measure_id is None, measure_tag along with freq and units must not be None, and vice versa.
-        Similarly, if device_id is None, device_tag must not be None, and if patient_id is None, mrn must not be None.
+        If measure_id is None, measure_tag must not be None (in API mode freq and units are also required).
+        One of device_id, device_tag, patient_id or mrn must not be None.
 
         :param int measure_id: The measure identifier. If None, measure_tag must be provided.
-        :param int start_time_n: The start epoch in nanoseconds of the data you would like to query.
-        :param int end_time_n: The end epoch in nanoseconds. The end time is not inclusive.
+        :param int start_time_n: The start epoch of the data you would like to query, in `time_units` (default nanoseconds).
+        :param int end_time_n: The end epoch, in `time_units` (default nanoseconds). The end time is not inclusive.
         :param int device_id: The device identifier. If None, device_tag must be provided.
         :param int patient_id: The patient identifier. If None, mrn must be provided.
         :param time_type: The type of time returned. Options are:
             - 1: Timestamps (default).
             - 2: Gap array (advanced users only).
-            - 'raw': Return as was originally stored.
-            - 'encoded': Return in the format currently encoded (usually 2 for periodic signals).
         :param bool analog: Convert value return type to analog signal.
-        :param block_info: Custom block_info list to skip metadata table check.
-        :param str time_units: Unit for the time array returned. Options: ["s", "ms", "us", "ns"].
+        :param dict block_info: Custom block information to skip the metadata table check: a dict with keys
+            'block_list' (block_index rows) and 'filename_dict' (file_id to filename).
+        :param str time_units: Unit for start_time_n, end_time_n and the returned time array. Options: ["s", "ms", "us", "ns"].
         :param bool sort: Whether to sort the returned data by time. Sorting is only applied when time_type is 1.
+            When no sorting is applied, the data is not trimmed to [start_time_n, end_time_n) and whole blocks are returned.
         :param bool allow_duplicates: Allow duplicate times in returned data. Affects performance if false.
         :param str measure_tag: A short string identifying the signal. Required if measure_id is None.
         :param freq: The sample frequency of the signal. Helpful with measure_tag.
@@ -476,12 +483,14 @@ class AtriumSDK:
         :param str device_tag: A string identifying the device. Exclusive with device_id.
         :param str mrn: Medical record number for the patient. Exclusive with patient_id. An int can be provided, but will be converted and stored as a string.
         :param bool | ndarray return_nan_filled: Whether or not to fill missing values from start to end with np.nan.
-            This can be floating point numpy array of shape (int(round((end_ns - start_ns) / period_ns),) which works
+            This can be floating point numpy array of shape (int(round((end_ns - start_ns) / period_ns)),) which works
             like the `out` param in the numpy library, filling the result into the passed in array instead of creating
             a new array, which provides a modest performance increase if you already have a result array allocated.
+            When set, values are always analog and the result is (headers, values) with no time array.
 
         :rtype: Tuple[List[BlockMetadata], numpy.ndarray, numpy.ndarray]
         :returns: List of Block header objects, 1D numpy array for time data, 1D numpy array for value data.
+            With return_nan_filled, a 2-tuple of the header list and the NaN-filled value array.
         """
         # check that a correct unit type was entered
         time_units = "ns" if time_units is None else time_units
@@ -592,8 +601,9 @@ class AtriumSDK:
 
         :param list block_list: List of blocks to read data from.
         :param dict filename_dict: Dictionary containing file information.
-        :param int start_time_n: Start time of the data to read.
-        :param int end_time_n: End time of the data to read.
+        :param int start_time_n: Start time of the data to read, in nanoseconds. Data is only trimmed to it when sorting is applied.
+        :param int end_time_n: End time (exclusive) of the data to read, in nanoseconds. Data is only trimmed to it when sorting
+            is applied.
         :param bool analog: Whether the data is analog or not, defaults to True.
         :param time_type: The type of time returned. Options are:
             - 1: Timestamps (default).
@@ -603,9 +613,12 @@ class AtriumSDK:
         :param bool sort: Whether to sort the returned data by time. Sorting is only applied when time_type is 1.
         :param bool allow_duplicates: Whether to allow duplicate times in the sorted returned data if they exist. Does
             nothing if sort is false.
-        :param bool | ndarray return_nan_gap: Whether or not to return values as a list of nans from start to end.
-        :return: Tuple containing headers, times, and values.
+        :param bool | ndarray return_nan_gap: Return analog values on a regular grid from start_time_n to end_time_n,
+            with np.nan where there is no data. An array of that size may be passed to be filled. analog and time_type
+            are ignored.
+        :return: Tuple containing headers, times, and values, or (headers, values) when return_nan_gap is set.
         :rtype: tuple
+        :raises ValueError: In API mode.
         """
         if self.metadata_connection_type == "api":
             raise ValueError("This function is only meant to work in local mode.")
@@ -721,7 +734,6 @@ class AtriumSDK:
             >>> value_data = np.sin(time_data)
             >>> sdk.write_data_easy(measure_id=new_measure_id,device_id=new_device_id,time_data=time_data,value_data=value_data,freq=freq_hz,time_units="s",freq_units="Hz")
 
-        :param interval_index_mode:
         :param int measure_id: The measure identifier corresponding to the measures table in the linked
             relational database.
         :param int device_id: The device identifier corresponding to the devices table in the linked
@@ -789,8 +801,8 @@ class AtriumSDK:
         .. _write_data_label:
 
         Advanced method for writing new data to the dataset. This method can be used to express time data as a gap array
-        (even sized array, odd values are indices of value_data after a gap and even values are the durations of the
-        corresponding gaps in nanoseconds).
+        (even sized array; elements at positions 0, 2, 4, ... are indices of value_data after a gap and elements at
+        positions 1, 3, 5, ... are the durations of the corresponding gaps in nanoseconds).
 
         :param int measure_id: Measure identifier corresponding to the measures table in the linked relational database.
         :param int device_id: Device identifier corresponding to the devices table in the linked relational database.
@@ -831,6 +843,10 @@ class AtriumSDK:
             A 1D numpy array representing the byte locations of the start of each block.
             The filename of the written blocks.
 
+        :raises NotImplementedError: In API mode.
+        :raises ValueError: If both freq_nhz and period_ns are given (or neither, unless raw_time_type is 1), the time or
+            value types are incompatible, or the data overlaps existing data and the overwrite setting is "error".
+
         Examples:
 
             >>> import numpy as np
@@ -842,7 +858,7 @@ class AtriumSDK:
             >>> freq_nhz = 1_000_000_000
             >>> time_zero_nano = 1234567890_000_000_000
             >>> gap_arr = np.array([42, 1_000_000_000, 99, 2_000_000_000])
-            >>> value_data = np.sin(np.linspace(0, 4, num=200))
+            >>> value_data = np.round(1000 * np.sin(np.linspace(0, 4, num=200))).astype(np.int64)
             >>> sdk.write_data(
             >>>     measure_id, device_id, gap_arr, value_data, freq_nhz=freq_nhz, time_0=time_zero_nano,
             >>>     raw_time_type=T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO,
@@ -1133,7 +1149,7 @@ class AtriumSDK:
         :param int max_total_values_buffered: (Optional) If the total number of buffered values across all measure-device pairs
             exceeds this number, the oldest buffer that has values in it will be automatically flushed. Defaults to 10,000 blocks.
         :param float gap_tolerance: (Optional) Merges sequential intervals from the AtriumSDK.get_interval_array method that have a duration between them
-            less than gap_tolerance, specified in `time_units` units (default "s").
+            less than gap_tolerance, specified in `time_units` units.
         :param str time_units: (Optional) Unit for `gap_tolerance`, which can be one of ["s", "ms", "us", "ns"]. Must be specified if gap_tolerance is given.
 
         Example:
@@ -1144,7 +1160,7 @@ class AtriumSDK:
             ...     for i in range(5):
             ...         message_values = np.arange(i * 10, (i + 1) * 10)
             ...         start_time = i * 10.0
-            ...         sdk.write_segment(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz")
+            ...         sdk.write_segment(measure_id, device_id, message_values, start_time, freq=1.0, freq_units="Hz", time_units="s")
             ...     # Buffer auto-flushes when context is exited
 
         **Notes:**
@@ -1168,21 +1184,21 @@ class AtriumSDK:
 
         :param int measure_id: Identifier for the measure, corresponding to the measures table in the linked relational database.
         :param int device_id: Identifier for the device, corresponding to the devices table in the linked relational database.
-        :param np.ndarray segment_values: List or 1D numpy array of contiguous values to write.
+        :param np.ndarray segment_values: 1D numpy array of contiguous values to write.
         :param float start_time: Epoch time when the segment starts. If `time_units` is specified, `start_time` is assumed to be in those units.
         :param float period: (Optional) Sampling period of the data to be written. Only one of `period` or `freq` should be specified.
-                             If units other than the default (seconds) are used, specify the desired unit using the `time_units` parameter.
+                             If units other than the default (nanoseconds) are used, specify the desired unit using the `time_units` parameter.
         :param float freq: (Optional) Sampling frequency of the data to be written. Only one of `period` or `freq` should be specified.
                            If units other than the default (hertz) are used, specify the desired unit using the `freq_units` parameter.
         :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is nanoseconds.
-        :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
+        :param str freq_units: (Optional) Unit for `freq`, which can be one of ["nHz", "uHz", "mHz", "Hz", "kHz", "MHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b).
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b).
 
         Example:
 
             >>> import numpy as np
-            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params=connection_params)
             >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
             >>> device_id = sdk.insert_device(device_tag="test_device")
 
@@ -1230,11 +1246,11 @@ class AtriumSDK:
         :param List[int|float] start_times: Each list item is a float or int representing a start time that corresponds to a `segment`
             from an equally sized segments list.
         :param float period: (Optional) Sampling period of the data to be written. Only one of `period` or `freq` should be specified.
-            If units other than the default (seconds) are used, specify the desired unit using the `time_units` parameter.
+            If units other than the default (nanoseconds) are used, specify the desired unit using the `time_units` parameter.
         :param float freq: (Optional) Sampling frequency of the data to be written. Only one of `period` or `freq` should be specified.
             If units other than the default (hertz) are used, specify the desired unit using the `freq_units` parameter.
         :param str time_units: (Optional) Unit for `start_time` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is nanoseconds.
-        :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
+        :param str freq_units: (Optional) Unit for `freq`, which can be one of ["nHz", "uHz", "mHz", "Hz", "kHz", "MHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b).
             It may be a single number or a list with one number per segment
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b).
@@ -1243,14 +1259,14 @@ class AtriumSDK:
         Example:
 
             >>> import numpy as np
-            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params=connection_params)
             >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
             >>> device_id = sdk.insert_device(device_tag="test_device")
 
             >>> # Inserting multiple segments at once
             >>> segments = [np.arange(10), np.arange(10, 20), np.arange(20, 30)]
             >>> start_times = [0.0, 10.0, 20.0]  # Start times in seconds for each segment
-            >>> sdk.write_segments(measure_id, device_id, segments, start_times, freq=1.0, freq_units="Hz")
+            >>> sdk.write_segments(measure_id, device_id, segments, start_times, freq=1.0, freq_units="Hz", time_units="s")
 
         **Notes:**
 
@@ -1405,25 +1421,25 @@ class AtriumSDK:
         :param ndarray values: Numpy array of values to write.
         :param ndarray times: Numpy array of corresponding timestamps for each value. The shape of `values` and `times` must match.
         :param float period: (Optional) Sampling period of the data. Only one of `period` or `freq` should be specified.
-                             If specified, time deltas in `times` will be adjusted to match `period` within the `gap_tolerance`.
+                             If specified, it is used as the expected spacing when encoding `times`; the timestamps are kept as given.
         :param float freq: (Optional) Sampling frequency of the data. Only one of `period` or `freq` should be specified.
-                           If specified, time deltas in `times` will be adjusted based on `freq` within the `gap_tolerance`.
+                           If specified, it is used as the expected spacing when encoding `times`; the timestamps are kept as given.
         :param str time_units: (Optional) Unit for `times` and `period`, which can be one of ["s", "ms", "us", "ns"]. Default is nanoseconds.
-        :param str freq_units: (Optional) Unit for `freq`, which can be one of ["Hz", "kHz", "MHz", "GHz"]. Default is hertz.
+        :param str freq_units: (Optional) Unit for `freq`, which can be one of ["nHz", "uHz", "mHz", "Hz", "kHz", "MHz"]. Default is hertz.
         :param float scale_m: (Optional) Scaling factor applied to the values (slope in y = mx + b). Default is 1.0.
         :param float scale_b: (Optional) Offset applied to the values (intercept in y = mx + b). Default is 0.0.
 
         Example:
 
             >>> import numpy as np
-            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params)
+            >>> sdk = AtriumSDK.create_dataset(dataset_location, db_type, connection_params=connection_params)
             >>> measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1.0, freq_units="Hz")
             >>> device_id = sdk.insert_device(device_tag="test_device")
 
             >>> # Inserting time-value pairs
             >>> times = np.array([0.0, 2.0, 4.5])  # Time values in seconds
             >>> values = np.array([100, 200, 300])  # Corresponding values
-            >>> sdk.write_time_value_pairs(measure_id, device_id, times, values)
+            >>> sdk.write_time_value_pairs(measure_id, device_id, times, values, time_units="s")
 
         **Notes:**
 
@@ -1628,7 +1644,8 @@ class AtriumSDK:
 
         If this method is called multiple times, the cache is overwritten with the new dataset_definition (they are not compounded).
 
-        This method validates the provided DatasetDefinition object if its not already validated.
+        This method validates the provided DatasetDefinition object if its not already validated. If it is already
+        validated, gap_tolerance, measure_tag_match_rule, start_time and end_time do not change which blocks are cached.
 
         :param DatasetDefinition definition: The dataset definition specifying measures, devices (or patients), and optional time ranges to include.
         :param int gap_tolerance: Tolerance for gaps between consecutive time intervals when "all" is specified in the
@@ -1638,26 +1655,26 @@ class AtriumSDK:
         :param int end_time: Maximum global end time for fetching data, in units of `time_units`.
         :param str time_units: Time units to interpret `start_time`, `end_time`, and `gap_tolerance`.
             One of ["ns", "us", "ms", "s"]. Defaults to "ns".
-        :param str cache_dir: Directory to use for caching processed blocks if caching is enabled.
+        :param str cache_dir: Currently unused.
 
         Notes:
         Supported `time_units` are nanoseconds ("ns"), microseconds ("us"), milliseconds ("ms"), and seconds ("s").
 
-        Example:
-        sdk = AtriumSDK(dataset_location=local_dataset_location)
+        Example::
 
-        # Define measures, devices, and time ranges
-        definition = {
-            'measures': ["MLII"],
-            'devices': {
-                1: "all",
-                2: [{"start": 1682739250000000000, "end": 1682739350000000000}],
-            },
-            'labels': ["seizure", "artifact"]
-        }
+            sdk = AtriumSDK(dataset_location=local_dataset_location)
 
-        # Load the definition with time units in milliseconds
-        sdk.load_definition(definition, gap_tolerance=1000, start_time=0, end_time=60000, time_units="ms")
+            # Define measures, devices, and time ranges
+            definition = DatasetDefinition(
+                measures=["MLII"],
+                device_ids={
+                    1: "all",
+                    2: [{"start": 1682739250000000000, "end": 1682739350000000000}],
+                },
+                labels=["seizure", "artifact"])
+
+            # Load the definition with gap_tolerance in milliseconds
+            sdk.load_definition(definition, gap_tolerance=1000, time_units="ms")
 
         """
         # Validate and convert time_units
@@ -1923,6 +1940,13 @@ class AtriumSDK:
     def find_blocks(self, measure_id: int, device_id: int, start_time: int, end_time: int):
         """
         Find blocks within the cached data that overlap with the specified time range.
+        Only blocks cached by `AtriumSDK.load_device` or `AtriumSDK.load_definition` are searched.
+
+        :param int measure_id: The measure identifier.
+        :param int device_id: The device identifier.
+        :param int start_time: Start time in nanoseconds.
+        :param int end_time: End time in nanoseconds.
+        :return: The cached block_index rows that overlap the time range.
         """
         if measure_id not in self.block_cache or device_id not in self.block_cache[measure_id]:
             return []
@@ -1946,13 +1970,14 @@ class AtriumSDK:
         Returns the identifier for a measure specified by its tag, frequency or period, units, and frequency/time units.
 
         :param str measure_tag: The tag of the measure.
-        :param float freq: The frequency of the measure (mutually exclusive with period).
+        :param float freq: The frequency of the measure (mutually exclusive with period; one of the two is required).
         :param str units: The unit of the measure (default is an empty string).
         :param str freq_units: The frequency unit of the measure (default is 'nHz').
         :param float period: The period of the measure (mutually exclusive with freq).
         :param str time_units: The time unit for the period (default is 'ns').
-        :return: The identifier of the measure.
-        :rtype: int
+        :return: The identifier of the measure, or None if no matching measure exists.
+        :rtype: int | None
+        :raises ValueError: If both or neither of freq and period are given.
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> measure_tag = "Temperature Measure"
@@ -2036,7 +2061,8 @@ class AtriumSDK:
         :param int measure_id: The identifier of the measure to retrieve information for.
 
         :return: A dictionary containing information about the measure, including its id, tag, name, sample frequency
-            (in nanohertz), period (in nanoseconds), code, unit, unit label, unit code, and source_id.
+            (in nanohertz), period (in nanoseconds), code, unit, unit label, unit code, and source_id. Returns None if
+            the measure does not exist.
         :rtype: dict
 
         >>> # Connect to example_dataset
@@ -2123,8 +2149,8 @@ class AtriumSDK:
         :param tag_match: A string to match against the `measure_tag` field. If not None, only measures with a `measure_tag`
             field containing this string will be returned.
         :type tag_match: str, optional
-        :param freq: A value to match against the `measure_freq_nhz` field. If not None, only measures with a
-            `measure_freq_nhz` field equal to this value will be returned. Mutually exclusive with period.
+        :param freq: A frequency, in `freq_units`, to match against each measure's frequency. If not None, only
+            measures with that frequency will be returned. Mutually exclusive with period.
         :type freq: int, optional
         :param unit: A string to match against the `measure_unit` field. If not None, only measures with a `measure_unit`
             field equal to this string will be returned.
@@ -2285,6 +2311,8 @@ class AtriumSDK:
         :param period: Optional period to filter measures. Mutually exclusive with freq.
         :param time_units: Units of the provided period. (Default is 'ns')
         :return: A list of measure_ids
+        :raises ValueError: If both freq and period are provided.
+        :raises NotImplementedError: If the SDK is in API mode.
         """
         # Check for mutually exclusive parameters
         if freq is not None and period is not None:
@@ -2334,7 +2362,7 @@ class AtriumSDK:
 
         Defines a new signal type to be stored in the dataset, as well as defining metadata related to the signal.
 
-        `measure_tag`, and either `freq` or `period`, and `units` are required information.
+        `measure_tag`, and either `freq` or `period` are required information. `units` defaults to an empty string.
 
         >>> # Define a new signal with frequency and additional metadata.
         >>> freq = 500
@@ -2360,8 +2388,8 @@ class AtriumSDK:
         :param str measure_tag: A short string identifying the signal.
         :param freq: The sample frequency of the signal. Mutually exclusive with period.
         :param str units: The units of the signal.
-        :param str freq_units: The unit used for the specified frequency. This value can be one of ["Hz",
-            "kHz", "MHz"]. Keep in mind if you use extremely large values for this it will be
+        :param str freq_units: The unit used for the specified frequency. This value can be one of ["nHz", "uHz",
+            "mHz", "Hz", "kHz", "MHz"]. Keep in mind if you use extremely large values for this it will be
             converted to nano hertz in the backend, and you may overflow 64bit integers. Default is nano hertz.
         :param period: The sample period of the signal. Mutually exclusive with freq.
         :param str time_units: The unit used for the specified period. This value can be one of ["s", "ms", "us", "ns"].
@@ -2378,6 +2406,9 @@ class AtriumSDK:
         :return: The measure_id of the inserted or existing measure.
         :rtype: int
 
+        :raises ValueError: If both or neither of freq and period are provided, if source_name is not found, or if
+            measure_id already exists with a different tag, frequency or units.
+        :raises NotImplementedError: If the SDK is in API mode.
         """
 
         if self.metadata_connection_type == "api":
@@ -2694,7 +2725,6 @@ class AtriumSDK:
 
         If the device_id is specified and already exists in the dataset with a
         different device_tag, a ValueError is raised. If `bed_name` or `source_name`
-
         is provided but does not match any existing records, a ValueError is also raised.
 
         Example usage:
@@ -2732,9 +2762,9 @@ class AtriumSDK:
         :return: The device_id of the inserted or existing device.
         :rtype: int
 
-        Raises:
-            ValueError: If specified device_id already exists with a different device_tag.
-                        If bed_name or source_name is provided but does not match any existing records.
+        :raises ValueError: If specified device_id already exists with a different device_tag, or if bed_name or
+            source_name is provided but does not match any existing records.
+        :raises NotImplementedError: If the SDK is in API mode.
         """
         # Handle source_name to source_id conversion
         if source_name and not source_id:
@@ -2817,7 +2847,7 @@ class AtriumSDK:
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> mrn = sdk.get_mrn(patient_id=1)
         >>> print(mrn)
-        '123456'
+        123456
         """
         # Check if we are in API mode
         if self.metadata_connection_type == "api":
@@ -2848,7 +2878,8 @@ class AtriumSDK:
                  If a time is specified you will also get the height/weight units and the time that each measurement was taken.
                  Returns None if patient not found.
 
-        :raises ValueError: If both patient_id and mrn are not provided or neither of them are provided.
+        :raises ValueError: If both patient_id and mrn are not provided or neither of them are provided, or if
+            time_units is invalid.
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> patient_info = sdk.get_patient_info(patient_id=1)
@@ -2968,6 +2999,8 @@ class AtriumSDK:
              'weight': 9.12,
              'height': 43.2}}
 
+        :param int skip: Number of patients to skip before returning results (optional, default 0).
+        :param int limit: Maximum number of patients to return (optional, default all).
         :return: A dictionary containing information about each patient, including their id, mrn, gender, dob,
             first_name, middle_name, last_name, first_seen, last_updated, source_id, height and weight.
         :rtype: dict
@@ -3161,8 +3194,8 @@ class AtriumSDK:
 
         >>> # Insert a new patient record.
         >>> new_patient_id = sdk.insert_patient(patient_id=123, mrn="123456", gender="M", dob=946684800000000000,
-        >>>                                     first_name="John", middle_name="Doe", last_name="Smith",
-        >>>                                     first_seen=1609459200000000000, last_updated=1609459200000000000, source_id=1)
+        ...                                     first_name="John", middle_name="Doe", last_name="Smith",
+        ...                                     first_seen=1609459200000000000, last_updated=1609459200000000000, source_id=1)
 
         :param int patient_id: A unique number identifying the patient.
         :param str mrn: The Medical Record Number (MRN) of the patient. An int can be provided, but will be converted and stored as a string.
@@ -3181,8 +3214,12 @@ class AtriumSDK:
          history table will be the current time. If you want to make it another time use insert_patient_history instead.
         :param str height_units: The units of the patients height. This must be specified if inserting a height.
 
-        :return: The unique identifier of the inserted patient record.
+        :return: The unique identifier of the inserted patient record, or of the existing patient if patient_id or
+            mrn already exists.
         :rtype: int
+
+        :raises ValueError: If weight or height is provided without its units.
+        :raises NotImplementedError: If the SDK is in API mode.
         """
 
         if self.metadata_connection_type == "api":
@@ -3237,8 +3274,9 @@ class AtriumSDK:
         :param int end_time: The end epoch time for the range of time you want the patient's history. If none it will get all history after the start_time.
         :param str time_units: (Optional) Units for the time. Valid options are 'ns', 's', 'ms', and 'us'. Default is nanoseconds.
 
-        :return: A list of tuples containing the value of the measurement, the units the value is measured in and the
-        epoch timestamp of when the measurement was taken. [(3.3, 'kg', 1483264800000000000), (3.4, 'kg', 1483268400000000000)]
+        :return: A list of tuples (id, patient_id, field, value, units, time), one per measurement, e.g.
+            [(1, 7, 'weight', 3.3, 'kg', 1483264800000000000), (2, 7, 'weight', 3.4, 'kg', 1483268400000000000)].
+            None if the patient is not found.
 
         :raises ValueError: If both patient_id and mrn are not provided or neither of them are provided or if start_time is >= end_time or invalid time_unit/field entered.
         """
@@ -3301,10 +3339,10 @@ class AtriumSDK:
         :param int patient_id: The numeric identifier for the patient.
         :param str mrn: The medical record number for the patient. An int can be provided, but will be converted and stored as a string.
 
-        :return: A list of tuples containing the value of the measurement, the units the value is measured in and the
-        epoch timestamp of when the measurement was taken. [(3.3, 'kg', 1483264800000000000), (3.4, 'kg', 1483268400000000000)]
+        :return: The id of the inserted patient history row.
 
-        :raises ValueError: If both patient_id and mrn are not provided or neither of them are provided or if start_time is >= end_time or invalid time_unit/field entered.
+        :raises ValueError: If both patient_id and mrn are provided or neither of them are provided, or if time_units is invalid.
+        :raises NotImplementedError: If the SDK is in API mode.
         """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
@@ -3333,6 +3371,7 @@ class AtriumSDK:
         Returns a list of all strings in the field column of patient history.
 
         :return: A list of strings of all history fields
+        :raises NotImplementedError: If the SDK is in API mode.
         """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for this method.")
@@ -3365,11 +3404,15 @@ class AtriumSDK:
         :param bool optional truncate: If `True`, the returned mappings will be truncated to fit within the specified
             time range.
         :return: A list of tuples, where each tuple contains four values in the following order:
+
             - device_id (int): The ID of the device associated with the patient.
             - patient_id (int): The ID of the patient associated with the device.
             - start_time (float | int): The start time of the association, in the specified time units.
-            - end_time (float | int): The end time of the association, in the specified time units.
+            - end_time (float | int): The end time of the association, in the specified time units, or the
+              current time if the association has no end time.
+
         :rtype: List[Tuple[int, int, float | int, float | int]]
+        :raises ValueError: If time_units is invalid.
 
         :Example:
 
@@ -3468,6 +3511,7 @@ class AtriumSDK:
         Retrieves device-patient mappings from the dataset's database based on the provided search criteria.
 
         This method returns a list of tuples, where each tuple contains four values in the following order:
+
         - device_id (int): The ID of the device associated with the patient.
         - patient_id (int): The ID of the patient associated with the device.
         - start_time (float | int): The start time of the association between the device and the patient, in the specified time units.
@@ -3495,6 +3539,7 @@ class AtriumSDK:
         ...     end_time=end_time,
         ...     time_units=time_units
         ... )
+        >>> print(device_patient_data)
         [(1, 3, 1647084000.0, 1647094800.0), (2, 4, 1647084000.0, 1647094800.0)]
         """
         return self.get_device_patient_mapping(
@@ -3543,8 +3588,8 @@ class AtriumSDK:
         Retrieve device-patient encounters active at a specific time.
 
         This method returns a list of device-patient mappings (encounters) that were active at the given timestamp.
-        You can provide either device_id or device_tag, and/or patient_id or mrn. Providing at least one of
-        device or patient identifiers is required.
+        You can provide either device_id or device_tag, and/or patient_id or mrn. If neither is given, all
+        encounters active at the timestamp are returned.
 
         :param int timestamp: The timestamp at which to find the device-patient encounters.
         :param int device_id: (Optional) The device identifier. If None, device_tag can be provided.
@@ -3582,7 +3627,7 @@ class AtriumSDK:
         """
         Inserts a new encounter into the database that represents a mapping between a patient and a bed over an interval of time.
 
-        :param start_time: The start time of the encounter in the units specified by `time_units`.
+        :param start_time: The start time of the encounter in the units specified by `time_units`. Required.
         :param end_time: The end time of the encounter in the units specified by `time_units`, optional.
         :param patient_id: The ID of the patient.
         :param str mrn: The medical record number of the patient (mutually exclusive with `patient_id`). An int can be provided, but will be converted and stored as a string.
@@ -3594,8 +3639,11 @@ class AtriumSDK:
                              defaults to the current time if not provided.
         :param time_units: The units for the time parameters. Valid options are 'ns', 'us', 'ms', 's'.
                            Default is 'ns'.
+        :raises ValueError: If time_units is invalid, start_time is missing, or the patient or bed is missing or
+            not found.
 
         **Example:**
+
         >>> # Insert an encounter starting at timestamp 1609459200 seconds and ending 1 hour later
         >>> sdk.insert_encounter(start_time=1609459200, end_time=1609462800, patient_id=123, bed_name='BedA', time_units='s')
         """
@@ -3647,6 +3695,7 @@ class AtriumSDK:
         :param str mrn: The medical record number of the patient, inplace of the patient_id. An int can be provided, but will be converted and stored as a string.
         :param time_units: The units for the time parameters and returned times. Valid options: 'ns', 'us', 'ms', 's'.
                            Default is 'ns'.
+        :raises ValueError: If time_units is invalid or the mrn or bed_name is not found.
 
         **Return Type:**
         A list of tuples representing encounters. Each tuple is of the form:
@@ -3662,6 +3711,7 @@ class AtriumSDK:
         - `last_updated` (float): The last updated timestamp of the encounter in `time_units`.
 
         **Example:**
+
         >>> # Retrieve encounters active at a specific second-based timestamp
         >>> encounters = sdk.get_encounters(timestamp=1609459200, time_units='s')
         >>> print(encounters)
@@ -3720,6 +3770,7 @@ class AtriumSDK:
 
         The `device_patient_data` parameter is a list of tuples, where each tuple contains four values in the
         following order:
+
         - device_id (int): The ID of the device associated with the patient.
         - patient_id (int): The ID of the patient associated with the device.
         - start_time (int | float): The start time of the association between the device and the patient, in the units specified by `time_units`.
@@ -3732,6 +3783,8 @@ class AtriumSDK:
             and end_time.
         :param str optional time_units: Units for the time parameters. Valid options are 'ns', 's', 'ms', and 'us'. Default is 'ns'.
         :return: None
+        :raises ValueError: If time_units is invalid.
+        :raises NotImplementedError: In API mode.
 
         >>> # Insert a device-patient mapping into the dataset's database.
         >>> device_patient_data = [(1, 2, 1647084000, 1647094800),
@@ -3761,12 +3814,13 @@ class AtriumSDK:
         """
         Converts a patient ID or MRN to a device ID based on the specified time range.
 
-        :param int start_time: Start time or only time for the association.
-        :param int end_time: End time for the association. If None, then start_time is taken as a single point in time.
+        :param int start_time: Start time or only time for the association, in nanoseconds.
+        :param int end_time: End time for the association, in nanoseconds. If None, then start_time is taken as a single point in time.
         :param int patient_id: Patient ID to be converted.
         :param str mrn: MRN to be converted. An int can be provided, but will be converted and stored as a string.
         :return: Device ID if a single device fully encapsulates the time range, otherwise None.
         :rtype: int or None
+        :raises ValueError: If neither patient_id nor mrn is given, or more than one device matches.
         """
 
         end_time = start_time if end_time is None else end_time
@@ -3819,12 +3873,14 @@ class AtriumSDK:
         """
         Converts a device ID or tag to a patient ID based on the specified time range.
 
-        :param int start_time: Start time or only time for the association.
-        :param int end_time: End time for the association. If None, then start_time is taken as a single point in time.
+        :param int start_time: Start time or only time for the association, in nanoseconds.
+        :param int end_time: End time for the association, in nanoseconds. If None, then start_time is taken as a single point in time.
         :param device: Device ID (int) or tag (str) to be converted.
-        :param str conflict_resolution: How to handle multiple matching patients. Options are 'error', '90_percent_overlap', 'always_none'.
+        :param str conflict_resolution: How to handle multiple matching patients. Options are 'error' (default), '90_percent_overlap', 'always_none'.
         :return: Patient ID if a single patient's interval encapsulates the time range, otherwise None.
         :rtype: int or None
+        :raises ValueError: If device is not an int or str, or multiple patients match and conflict_resolution is
+            'error' or invalid.
         """
 
         # Convert device tag to device ID if necessary
@@ -3910,10 +3966,11 @@ class AtriumSDK:
             requested_name to represent the label name of the requested parent.
         :param int limit: Maximum number of rows to return.
         :param int offset: Offset this number of rows before starting to return labels. Used in combination with limit.
-        :param int measure_list: The list of measure_ids or measure tuples (measure_tag, freq_hz, measure_units) you
-        would like to restrict the search to. If you specify measures but also want all the labels that don't have a
-            specified measure_id (the labels for all signals at that time) add None to the list. Measures can also be
-            None to get all labels for a specific source regardless of measure_id.
+        :param List[Union[int, tuple[str, int | float, str]]] measure_list: Measure IDs or measure tuples
+            (measure_tag, freq_hz, measure_units) to restrict the search to. Leave as None to return labels
+            regardless of measure.
+        :raises ValueError: If both label_name_id_list and name_list, or both device_list and patient_id_list, are
+            given, if time_units is invalid, or if a label name, device tag, label source or measure is not found.
 
         :return: A list of matching labels from the database. Each label is represented as a dictionary containing label details.
         :rtype: List[Dict]
@@ -3932,7 +3989,7 @@ class AtriumSDK:
                     'device_id': 1001,
                     'device_tag': 'tag_1',
                     'patient_id': 12345,
-                    'mrn': 7654321,
+                    'mrn': '7654321',
                     'start_time_n': 1625000000000000000,
                     'end_time_n': 1625100000000000000,
                     'label_source_id': 4,
@@ -4199,14 +4256,16 @@ class AtriumSDK:
         :param str name: Name of the label type.
         :param int start_time: Start time for the label.
         :param int end_time: End time for the label.
-        :param Union[int, str] device: Device ID or device tag (exclusive with device and patient_id).
+        :param Union[int, str] device: Device ID or device tag (exclusive with patient_id and mrn).
         :param int patient_id: Patient ID for the label to be inserted (exclusive with device and mrn).
         :param str mrn: MRN for the label to be inserted (exclusive with device and patient_id). An int can be provided, but will be converted and stored as a string.
         :param str time_units: Units for the `start_time` and `end_time`. Valid options are 'ns', 's', 'ms', and 'us'.
         :param Union[str, int] label_source: Name or ID of the label source.
         :param Union[int, tuple[str, int|float, str]] measure: Either the measure ID or the measure tuple
             (measure_tag, freq_hz, measure_units), if the label is for a specific measure. Leave as none if it's for all measures.
-        :raises ValueError: If the provided label_source is not found in the database.
+        :raises ValueError: If more than one of device, patient_id and mrn is given, if no device is found, if the
+            measure is not found, or if time_units is invalid. A label_source name that is not found is inserted.
+        :raises NotImplementedError: In API mode.
         :return: The ID of the inserted label
 
         Example usage:
@@ -4293,7 +4352,8 @@ class AtriumSDK:
         """
         Insert multiple label records into the database.
 
-        :param List[Tuple[str, Union[int, str], Union[int, tuple[str, int | float, str]], int, int, Union[str, int]]] labels: A list of labels. Each label is a tuple containing:
+        :param List[Tuple[str, Union[int, str], Union[int, tuple[str, int | float, str], None], Union[str, int, None], int, int]] labels: A list of labels. Each label is a tuple containing:
+
             - Name of the label type.
             - Source ID based on the source_type parameter (device ID, device tag, patient ID, or MRN).
             - Measure for the label. Can be measure ID, tuple containing (measure_tag, freq_hz, measure_units) or none if it applies to all measures at that time.
@@ -4302,8 +4362,10 @@ class AtriumSDK:
             - End time for the label.
 
         :param str time_units: Units for the `start_time` and `end_time` of each label. Valid options are 'ns', 's', 'ms', and 'us'. (default ns)
-        :param str source_type: The type of source ID provided in the labels. Valid options are 'device_id', 'device_tag', 'patient_id', and 'mrn'.
-        :raises ValueError: If the provided label_source, source_type or measure is not found in the database.
+        :param str source_type: The type of source ID provided in the labels. Valid options are 'device_id', 'device_tag', 'patient_id', and 'mrn'. Default is 'device_id'.
+        :raises ValueError: If source_type or time_units is invalid, if no device is found for a label's source ID,
+            or if a measure is not found. A label_source name that is not found is inserted.
+        :raises NotImplementedError: In API mode.
 
         Example usage:
 
@@ -4314,7 +4376,7 @@ class AtriumSDK:
                 ('Sleep Stage', 42, 3, None, 1609459200_000_000_000, 1609462800_000_000_000),
                 ('Medication', 56, None, 'Medication DB', 1609459200_000_000_000, 1609462800_000_000_000)
             ]
-            insert_labels(labels=labels_data, time_units='s', source_type='device_id')
+            insert_labels(labels=labels_data, time_units='ns', source_type='device_id')
 
             # Using MRN as the source type and measure tuple
             labels_data = [
@@ -4404,17 +4466,20 @@ class AtriumSDK:
         Delete labels from the database based on specified criteria. If no parameters are passed, the method raises an error for safety.
 
         :param List[int] label_id_list: List of label IDs to delete. Use '*' to delete all labels.
-        :param List[int] label_name_id_list: List of label set IDs to filter labels for deletion.
-        :param List[str] name_list: List of label names to filter labels for deletion.
+        :param List[int] label_name_id_list: List of label set IDs to filter labels for deletion. Labels of
+            descendant label names are also deleted.
+        :param List[str] name_list: List of label names to filter labels for deletion. Labels of descendant label
+            names are also deleted.
         :param List[Union[int, str]] device_list: List of device IDs or device tags to filter labels for deletion.
         :param int start_time: Start time filter for the labels to delete.
         :param int end_time: End time filter for the labels to delete.
         :param str time_units: Units for the `start_time` and `end_time` filters.
         :param List[int] patient_id_list: List of patient IDs to filter labels for deletion.
         :param Optional[List[Union[str, int]]] label_source_list: List of label source names or IDs to filter labels for deletion.
-        :param int measure_list: The list of measure_ids you would like to delete. Can also be a list of tuples
+        :param List[Union[int, tuple[str, int | float, str]]] measure_list: The list of measure_ids you would like to delete. Can also be a list of tuples
             specifying the measure (measure_tag, freq_hz, measure_units). If None it will delete labels regardless of measure_id.
         :raises ValueError: If no parameters are provided, or if invalid parameters are provided.
+        :raises NotImplementedError: In API mode.
         :return: None
 
         Example usage:
@@ -4453,8 +4518,8 @@ class AtriumSDK:
         Retrieve the identifier of a label type based on its name.
 
         :param str name: The name of the label type.
-        :return: The identifier of the label type.
-        :rtype: int
+        :return: The identifier of the label type, or None if not found.
+        :rtype: int | None
         """
         if self.metadata_connection_type == "api":
             params = {'label_name_id': None, 'label_name': name}
@@ -4481,8 +4546,9 @@ class AtriumSDK:
         Retrieve information about a specific label set.
 
         :param int label_name_id: The identifier of the label set to retrieve information for.
-        :return: A dictionary containing information about the label set, including its id and name.
-        :rtype: dict
+        :return: A dictionary containing information about the label set, including its id and name, or None if
+            not found.
+        :rtype: dict | None
 
         >>> sdk = AtriumSDK(dataset_location="./example_dataset")
         >>> label_name_id = 1
@@ -4534,12 +4600,14 @@ class AtriumSDK:
     def get_all_label_names(self, limit=None, offset=0) -> dict:
         """
         Retrieve all distinct label names from the database.
+
         :param int limit: Maximum number of rows to return.
         :param int offset: Offset this number of rows before starting to return labels. Used in combination with limit.
-        :return: A dictionary where keys are label IDs and values are dictionaries containing 'id' and 'name' keys.
+        :return: A dictionary where keys are label IDs and values are dictionaries containing 'id', 'name',
+            'parent_id' and 'parent_name' keys.
         :rtype: dict
 
-        .. note:: Skip and limit are used if there are too many label names to return in one get request.
+        .. note:: Offset and limit are used if there are too many label names to return in one get request.
         """
         if self.metadata_connection_type == "api":
             return self._api_get_all_label_names(limit=limit, offset=offset)
@@ -4586,7 +4654,7 @@ class AtriumSDK:
         :rtype: list
 
         >>> sdk = AtriumSDK()
-        >>> children_by_id = sdk.get_label_name_children(label_set_id=1)
+        >>> children_by_id = sdk.get_label_name_children(label_name_id=1)
         >>> for child in children_by_id:
         ...     print(child)
         ... {'id': 2, 'name': 'Label Set A1', 'parent_id': 1, 'parent_name': 'Label Set A'}
@@ -4614,11 +4682,11 @@ class AtriumSDK:
         :param int label_name_id: The identifier of the label name.
         :param str name: The name of the label.
 
-        :return: A dictionary representing the parent label set.
-        :rtype: dict
+        :return: A dictionary representing the parent label set, or None if it has no parent.
+        :rtype: dict | None
 
         >>> sdk = AtriumSDK()
-        >>> parent_by_id = sdk.get_label_name_parent(label_set_id=2)
+        >>> parent_by_id = sdk.get_label_name_parent(label_name_id=2)
         >>> print(parent_by_id)
         ... {'id': 1, 'name': 'Label Set A', 'parent_id': None, 'parent_name': None}
         >>> parent_by_name = sdk.get_label_name_parent(name="Label Set A2")
@@ -4650,6 +4718,7 @@ class AtriumSDK:
 
         :return: A nested dictionary of label sets representing the descendants tree.
         :rtype: dict
+        :raises ValueError: If name is given and no label name with that name exists.
         """
 
         if self.metadata_connection_type == "api":
@@ -4693,7 +4762,9 @@ class AtriumSDK:
             will assume this is the parent label name id and if you use a string it will assume it's the parent label name.
         :return: The ID of the label set.
         :rtype: int
-        :raises ValueError: If the label name is empty.
+        :raises ValueError: If the label name is empty, the parent is not found, or label_name_id conflicts with an
+            existing label name.
+        :raises NotImplementedError: If the SDK is in API mode.
 
         >>> sdk = AtriumSDK()
         >>> label_name_id = sdk.insert_label_name("Example Label name")
@@ -4736,6 +4807,7 @@ class AtriumSDK:
     def get_label_source_id(self, name: str) -> Optional[int]:
         """
         Gets the label source ID from the name of the label source.
+
         :param name: The name of the label source to look up.
         :return: The label source ID or None if not found.
         """
@@ -4760,6 +4832,7 @@ class AtriumSDK:
     def get_label_source_info(self, label_source_id: int) -> Optional[dict]:
         """
         Retrieve information about a specific label source by its ID.
+
         :param label_source_id: The identifier for the label source.
         :return: A dictionary containing information about the label source, or None if not found.
         """
@@ -4784,9 +4857,11 @@ class AtriumSDK:
     def get_all_label_sources(self, limit=None, offset=0) -> dict:
         """
         Retrieve all distinct label sources from the database.
+
         :param int limit: Maximum number of rows to return.
         :param int offset: Offset this number of rows before starting to return label sources.
         :return: A dictionary where keys are label source IDs and values are dictionaries containing 'id' and 'name' keys.
+            In API mode a warning is issued and an empty dictionary is returned.
         :rtype: dict
         """
         if self.metadata_connection_type == "api":
@@ -4807,9 +4882,11 @@ class AtriumSDK:
     def insert_label_source(self, name: str, description: str = None) -> int:
         """
         Insert a label source into the database if it doesn't already exist and return its ID.
+
         :param name: The unique name identifier for the label source.
         :param description: A textual description of the label source.
         :return: The ID of the label source.
+        :raises NotImplementedError: If the SDK is in API mode.
         """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for insertion.")
@@ -4833,8 +4910,8 @@ class AtriumSDK:
         :param int end_time: End time filter for the labels.
         :param np.ndarray timestamp_array: Array of timestamps. If not provided, it's generated using `start_time`, `end_time`, and `sample_period`.
         :param int sample_period: Time period between consecutive timestamps. Required if `timestamp_array` is not provided.
-        :param str time_units: Units for the `start_time`, `end_time`, and `sample_period` filters. Valid options are 'ns', 's', 'ms', and 'us'.
-        :param int measure: The measure_id or tuple specifying the measure (measure_tag, freq_hz, measure_units), you
+        :param str time_units: Units for `start_time`, `end_time`, `sample_period` and `timestamp_array`. Valid options are 'ns', 's', 'ms', and 'us'. Default is nanoseconds.
+        :param int | tuple measure: The measure_id or tuple specifying the measure (measure_tag, freq_hz, measure_units), you
             would like to restrict the search to. If none it will get all labels regardless of measure_id.
         :param np.ndarray out: An optional pre-allocated numpy array to hold the result. The shape must match the expected result shape,
             which is the same as `timestamp_array`. Allowed dtypes are integer types or boolean. If provided,
@@ -4996,19 +5073,20 @@ class AtriumSDK:
         :param int window_duration: Duration of each window in units time_units (default nanoseconds).
         :param int window_slide: Slide duration between consecutive windows in units time_units (default nanoseconds).
         :param int gap_tolerance: Tolerance for gaps in definition intervals auto generated by "all", if not already validated
-            (optional) in units time_units (default nanoseconds). The default gap_tolerance is 0.
+            (optional) in units time_units (default nanoseconds). If None, 1 minute is used.
         :param int num_windows_prefetch: Number of windows you want to get from AtriumDB at a time. Setting this value
-            higher will make decompression faster but at the expense of using more RAM. (default the number of windows
-            that gets you closest to 10 million values).
+            higher will make decompression faster but at the expense of using more RAM. (default: enough windows to
+            span about 10 blocks of samples of the lowest-frequency measure, or about 100 blocks when shuffling).
         :param str time_units: If you would like the window_duration, window_slide and gap_tolerance to be specified in units other than
                             nanoseconds you can choose from one of ["s", "ms", "us", "ns"].
         :param float label_threshold: The percentage of the window that must contain a label before the entire window is
             marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
-        :param str iterator_type: Specify the type of iterator. If set to 'mapped', a RandomAccessDatasetIterator
+        :param str iterator_type: Specify the type of iterator. If set to 'mapped', a MappedIterator
           will be returned, allowing indexed access to dataset windows. If set to `lightmapped` a lightweight low RAM mapped iterator is returned.
           'lightmapped' is most suitable when you want true random shuffles and/or you're going to be jumping around
           the indices in no particular order.
-          By default or if set to None, a standard DatasetIterator is returned.
+          If set to 'filtered', a FilteredDatasetIterator is returned and window_filter_fn is required.
+          By default, or if set to None or 'iterator', a standard DatasetIterator is returned.
         :param bool | int shuffle: If True, the order of windows will be randomized before iteration. If set to an integer, this
             value will seed the random number generator for reproducible shuffling. If False, windows are
             returned in their original order.
@@ -5018,8 +5096,16 @@ class AtriumSDK:
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
-of DatasetIterator objects depending on the value of num_iterators.
+        :param window_filter_fn: Function that takes a Window and returns True to keep it. Required when
+            iterator_type is 'filtered', ignored otherwise.
+        :param int num_iterators: Number of iterators to create by partitioning the dataset (default is 1).
+        :param bool label_exact_match: If True, labels are matched exactly as requested and descendant labels are
+            not included (default False).
+
+        :return: A single DatasetIterator object or a list of DatasetIterator objects depending on the value of num_iterators.
         :rtype: Union[DatasetIterator, List[DatasetIterator]]
+        :raises ValueError: If time_units or iterator_type is invalid, window_duration or window_slide is shorter than
+            one sample period of the lowest-frequency measure, or iterator_type is 'filtered' without window_filter_fn.
 
         **Example**:
 
@@ -5221,6 +5307,8 @@ of DatasetIterator objects depending on the value of num_iterators.
         :param str mrn: Medical record number for the patient. Exclusive with patient_id. An int can be provided, but will be converted and stored as a string.
         :rtype: numpy.ndarray
         :returns: A 2D array representing the availability of a specified measure.
+        :raises ValueError: If no device or patient is given (including a device_tag or mrn that is not found), or
+            measure_tag matches no measure.
 
         """
 
@@ -5415,6 +5503,15 @@ of DatasetIterator objects depending on the value of num_iterators.
             self.sql_handler.connection_manager.close_connection()
 
     def get_filename_dict(self, file_id_list):
+        """
+        Map file ids from the block index to the file paths stored in the file index.
+
+        :param list[int] file_id_list: File ids, as found in the file_id column of block_index rows.
+        :return: A dictionary {file_id: path}, where path is the TSC filename as stored in file_index.
+        :rtype: dict
+        :raises ValueError: If the SDK is in API mode.
+        :raises RuntimeError: If any file id is not in the file index.
+        """
         if self.metadata_connection_type == "api":
             raise ValueError("This function is only meant to work in local mode.")
 
@@ -5551,6 +5648,19 @@ of DatasetIterator objects depending on the value of num_iterators.
         return overwrite_file_dict, [row[0] for row in old_block_list], list(old_file_id_dict.items())
 
     def get_data_from_tsc_file(self, file_path, analog=True, time_type=1, sort=True, allow_duplicates=True):
+        """
+        Decode every block in a single TSC file on disk, without using the metadata database.
+
+        :param str file_path: Filesystem path of the TSC file.
+        :param bool analog: If True, values are converted to analog using each block's scale factors.
+        :param int time_type: 1 for a nanosecond timestamp array, 2 for a gap array.
+        :param bool sort: If True and time_type is 1, sort the data by timestamp.
+        :param bool allow_duplicates: If False, duplicate timestamps are removed when sorting.
+        :return: A tuple (headers, times, values), where headers is the list of block headers.
+        :rtype: tuple
+        :raises NotImplementedError: If the SDK is in API mode.
+        :raises ValueError: If time_type is not 1 or 2.
+        """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this function.")
 
@@ -5669,6 +5779,21 @@ of DatasetIterator objects depending on the value of num_iterators.
 
     def get_blocks(self, current_blocks_meta, filename_dict, measure_id, start_time_n, end_time_n, analog, time_type=1,
                    sort=True, allow_duplicates=True):
+        """
+        Read and decode a list of blocks from their TSC files.
+
+        :param list current_blocks_meta: block_index rows (id, measure_id, device_id, file_id, start_byte, num_bytes, ...).
+        :param dict filename_dict: {file_id: filename}, as returned by get_filename_dict.
+        :param int measure_id: Unused.
+        :param int start_time_n: Start time in nanoseconds (inclusive) used to trim the output when sorting.
+        :param int end_time_n: End time in nanoseconds (exclusive) used to trim the output when sorting.
+        :param bool analog: If True, values are converted to analog.
+        :param int time_type: 1 for timestamp arrays, 2 for gap arrays.
+        :param bool sort: If True, sort by timestamp and trim to [start_time_n, end_time_n).
+        :param bool allow_duplicates: If False, duplicate timestamps are removed when sorting.
+        :return: A tuple (headers, times, values).
+        :rtype: tuple
+        """
 
         # Condense the byte read list from the current blocks metadata
         read_list = condense_byte_read_list(current_blocks_meta)
@@ -5693,6 +5818,27 @@ of DatasetIterator objects depending on the value of num_iterators.
                              freq_nhz: int, time_0: int, raw_time_type: int = None, raw_value_type: int = None,
                              encoded_time_type: int = None, encoded_value_type: int = None, scale_m: float = None,
                              scale_b: float = None):
+        """
+        Encode data and write it to a new TSC file without inserting any metadata. Pass the result to
+        metadata_insert_sql to register the file.
+
+        :param int measure_id: The measure identifier.
+        :param int device_id: The device identifier.
+        :param numpy.ndarray time_data: Time data in the format given by raw_time_type.
+        :param numpy.ndarray value_data: The values.
+        :param int freq_nhz: Sample frequency in nanohertz.
+        :param int time_0: Start time of the data in nanoseconds.
+        :param int raw_time_type: Format of time_data. Required.
+        :param int raw_value_type: Format of value_data. Required.
+        :param int encoded_time_type: Time encoding to store. Required.
+        :param int encoded_value_type: Value encoding to store. Required.
+        :param float scale_m: Scale factor slope (default 1.0).
+        :param float scale_b: Scale factor intercept (default 0.0).
+        :return: A tuple (measure_id, device_id, filename, block_headers, byte_start_array, intervals).
+        :rtype: tuple
+        :raises NotImplementedError: If the SDK is in API mode.
+        :raises ValueError: If any of the four type parameters is None.
+        """
 
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not supported for writing data.")
@@ -5719,6 +5865,17 @@ of DatasetIterator objects depending on the value of num_iterators.
 
     def metadata_insert_sql(self, measure_id: int, device_id: int, path: str, metadata: list, start_bytes: np.ndarray,
                             intervals: list):
+        """
+        Insert the file, block and interval metadata for a TSC file written by write_data_file_only.
+
+        :param int measure_id: The measure identifier.
+        :param int device_id: The device identifier.
+        :param str path: The filename returned by write_data_file_only.
+        :param list metadata: The block headers returned by write_data_file_only.
+        :param numpy.ndarray start_bytes: The byte start array returned by write_data_file_only.
+        :param list intervals: The [start, end] nanosecond intervals returned by write_data_file_only.
+        :raises NotImplementedError: If the SDK is in API mode.
+        """
         if self.metadata_connection_type == "api":
             raise NotImplementedError("API mode is not yet supported for this function.")
 

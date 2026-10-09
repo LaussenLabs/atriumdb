@@ -28,6 +28,20 @@ from atriumdb.windowing.windowing_functions import get_threshold_labels, find_cl
 
 
 class LightMappedIterator(DatasetIterator):
+    """
+    Random-access iterator that fetches each window on demand, using little memory. Returned by
+    :meth:`AtriumSDK.get_iterator` with ``iterator_type="lightmapped"``.
+
+    :param AtriumSDK sdk: SDK object to fetch data.
+    :param DatasetDefinition definition: Definition to iterate over; validated with defaults if not yet validated.
+    :param int window_duration_ns: Duration of each window in nanoseconds.
+    :param int window_slide_ns: Interval in nanoseconds by which the window advances.
+    :param float label_threshold: Fraction of a window a label must exceed for ``Window.label`` to be 1.
+    :param bool | int shuffle: If truthy, windows are returned in shuffled order. An int is used as the seed.
+    :param list patient_history_fields: Patient history fields ("height", "weight") to add to ``Window.patient_info``.
+    :param bool allow_partial_windows: If True (default), include windows that run past the end of a time range.
+    :param bool label_exact_match: If True, child labels are not included when their parent is requested.
+    """
     def __init__(self, sdk, definition,
                  window_duration_ns: int, window_slide_ns: int, label_threshold=0.5,
                  shuffle=False, patient_history_fields: list = None, allow_partial_windows = True, label_exact_match=False):
@@ -162,9 +176,22 @@ class LightMappedIterator(DatasetIterator):
         self.window_indices = np.array(self.window_indices)
 
     def __len__(self):
+        """
+        Return the number of windows.
+
+        :rtype: int
+        """
         return self.total_windows
 
     def __getitem__(self, idx):
+        """
+        Fetch the window at the given index (in shuffled order when shuffling).
+
+        :param int idx: Window index, 0 <= idx < len(iterator).
+        :return: The window.
+        :rtype: Window
+        :raises IndexError: If idx is out of range.
+        """
         if idx < 0 or idx >= self.total_windows:
             raise IndexError(f"Index {idx} out of bounds for mapped iterator of size {self.total_windows}")
         # Swap idx with shuffled index if shuffling is enabled
@@ -250,10 +277,21 @@ class LightMappedIterator(DatasetIterator):
         return window
 
     def __iter__(self):
+        """
+        Restart from the first window and return the iterator.
+
+        :rtype: LightMappedIterator
+        """
         self._current_idx = 0
         return self
 
     def __next__(self):
+        """
+        Return the next window.
+
+        :rtype: Window
+        :raises StopIteration: After the last window.
+        """
         if self._current_idx >= self.total_windows:
             raise StopIteration
         window = self[self._current_idx]

@@ -23,16 +23,16 @@ class AtriumDBMapDataset(Dataset):
 
 
     :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the AtriumDB dataset is located.
-    :param filename: (str) Path to the YAML or pickle file containing the dataset definition. If the file extension is `.pkl`,
-    the validated dataset definition is loaded (fast). If a YAML file is provided, the contents of the file will be validated (slow for repeat usage).
-    :param window_duration (int): Duration of each window in `time_units`.
-    :param window_slide (int): Step size for sliding windows in `time_units`.
-    :param time_units (str): Units for time-based windowing ["s", "ms", "us", "ns"].
-    :param memcache_metadata (bool): Whether to cache dataset metadata in memory for speed (but uses more RAM).
-    :param gap_tolerance (int): Maximum allowed gap in data continuity.
-    :param num_threads (int): Number of threads for data decompression. WARNING: AtriumDB will use OpenMP to deal with threading.
-    It will set the OMP_NUM_THREADS environment variable to the value you specify. Pytorch and related libraries sometimes
-    also use this variable which would be overwritten and could cause slower performance in other libraries if set to a low number.
+    :param str dataset_definition_path: Path to the YAML or pickle file containing the dataset definition. If the file extension is `.pkl`,
+        the validated dataset definition is loaded (fast). If a YAML file is provided, the contents of the file will be validated (slow for repeat usage).
+    :param int window_duration: Duration of each window in `time_units`.
+    :param int window_slide: Step size for sliding windows in `time_units`.
+    :param str time_units: Units for time-based windowing ["s", "ms", "us", "ns"].
+    :param bool memcache_metadata: Whether to cache dataset metadata in memory for speed (but uses more RAM).
+    :param int gap_tolerance: Maximum allowed gap in data continuity.
+    :param int num_threads: Number of threads for data decompression. WARNING: AtriumDB will use OpenMP to deal with threading.
+        It will set the OMP_NUM_THREADS environment variable to the value you specify. Pytorch and related libraries sometimes
+        also use this variable which would be overwritten and could cause slower performance in other libraries if set to a low number.
 
 
     Example:
@@ -56,7 +56,7 @@ class AtriumDBMapDataset(Dataset):
         >>> from torch.utils.data import DataLoader
         >>>
         >>> # Wrap the dataset in a DataLoader
-        >>> dataloader = DataLoader(dataset, batch_size=32, shuffle=False, num_workers=3)
+        >>> dataloader = DataLoader(dataset, batch_size=32, shuffle=False, num_workers=3, collate_fn=list)
         >>>
         >>> # Iterate over batches
         >>> for batch_idx, batch in enumerate(dataloader):
@@ -88,12 +88,26 @@ class AtriumDBMapDataset(Dataset):
 
     # get the number of samples in the iterator
     def __len__(self):
+        """
+        Return the number of windows.
+
+        :rtype: int
+        """
         return self.iterator_base_instance.__len__()
 
     # iterate over the dataset in order
     def __iter__(self):
+        """
+        Iterate over the windows in order.
+        """
         return self.iterator_base_instance.__iter__()
 
     # get a window from a specific index
     def __getitem__(self, index):
+        """
+        Return the window at the given index.
+
+        :param int index: Window index, 0 <= index < len(dataset).
+        :rtype: Window
+        """
         return self.iterator_base_instance.__getitem__(index)

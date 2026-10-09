@@ -54,6 +54,7 @@ class DatasetDefinition:
     :param measures: (list, optional) List of requested measures to be considered. Measures can be:
                      1. Just a tag (string) representing the measure.
                      2. A dictionary specifying the measure tag, its frequency in Hertz, and its units.
+                     3. A tuple (tag, freq_hz, units).
                      Example: [{"tag": "ECG", "freq_hz": 300, "units": "mV"}]
     :param patient_ids: (dict, optional) Dictionary containing patient identifiers with their associated
                         time specifications. The specifications can be interval-based, event-based,
@@ -74,6 +75,8 @@ class DatasetDefinition:
                    (such as patient conditions or device states). These labels can be used for classification,
                    segmentation, or other forms of analysis.
                    Example: ["Sinus rhythm", "Junctional ectopic tachycardia (JET)", "arrhythmia"]
+    :raises ValueError: If the file extension is not .pkl, .yaml or .yml, or the definition contents are invalid.
+    :raises FileNotFoundError: If ``filename`` does not exist.
 
     .. note:: For more details on the format expectations, see :ref:`definition_file_format`.
 
@@ -185,6 +188,7 @@ class DatasetDefinition:
             least one specified measure or label, 'intersection' for returning all intervals with every specified
             measure or label.
         :return: DatasetDefinition object
+        :raises ValueError: If build_from_signal_type or merge_strategy is invalid, or not exactly one source list is given.
         """
         # Validate build_from_signal_type
         if build_from_signal_type not in ["measures", "labels"]:
@@ -237,7 +241,7 @@ class DatasetDefinition:
         Verifies and validates a dataset definition against the given SDK, ensuring the data specified actually exists.
 
         :param sdk: SDK object to validate the definition against.
-        :param gap_tolerance: (int, optional) Minimum allowed gap size in nanoseconds for continuous time ranges.
+        :param gap_tolerance: (int, optional) Minimum allowed gap size, in `time_units`, for continuous time ranges.
         :param measure_tag_match_rule: (str, optional) "best" or "all" to determine matching strategy for measure tags.
         :param start_time: (int, optional) Global start time in the specified `time_units`.
         :param end_time: (int, optional) Global end time in the specified `time_units`.
@@ -280,7 +284,7 @@ class DatasetDefinition:
         :param window_slide: (int, optional) Sliding interval for the windows in specified `time_units`.
         :param time_units: (str, optional) Units for window size and slide. One of "ns", "us", "ms", or "s".
         :param allow_partial_windows: (bool, optional) Whether to include partially filled windows. Defaults to True.
-        :param label_threshold: (float, optional) Minimum label coverage threshold for inclusion. Defaults to 0.5.
+        :param label_threshold: (float, optional) Fraction of a window a label must exceed for ``window.label`` to be 1. Defaults to 0.5.
         :param patient_history_fields: (list, optional) Additional fields from patient history to include in the window object.
         :raises ValueError: If the definition is not validated or parameters are invalid.
 
@@ -756,10 +760,10 @@ class DatasetDefinition:
         Combine this definition with one or more other :class:`DatasetDefinition`
         objects, returning a new merged definition.
 
-        Measures and labels are deduplicated. Source dictionaries are merged by
-        taking the union of time ranges. All definitions must share the same
-        validation status (all validated or all unvalidated). If all are validated,
-        the combined result is also validated with merged data.
+        Measures and labels are deduplicated. Source dictionaries are merged per
+        source as in :func:`combine_definitions`. If all definitions are validated, the
+        combined result is also validated with merged data; with mixed validation
+        status a warning is issued and the result is unvalidated.
 
         This is a convenience wrapper around the module-level
         :func:`combine_definitions` function.
@@ -768,7 +772,7 @@ class DatasetDefinition:
             this one.
         :returns: A new :class:`DatasetDefinition` containing the union of all inputs.
         :rtype: DatasetDefinition
-        :raises ValueError: If definitions have mixed validation status.
+        :raises ValueError: If no other definitions are given.
 
         **Examples**:
 
@@ -783,13 +787,13 @@ class DatasetDefinition:
         saves the original data_dict as YAML. If the extension is `.pkl`,
         saves the validated dataset definition using pickle.
 
-        :param filepath: Path where the YAML file should be saved.
+        :param filepath: Path of the .yaml, .yml or .pkl file to write.
         :type filepath: str
         :param force: If set to True, overwrites the file if it already exists.
                       Default is False.
         :type force: bool, optional
         :raises OSError: Raised when the file already exists and `force` is not set to True.
-        :raises ValueError: Raised when file extension is not .yaml.
+        :raises ValueError: Raised when the extension is not .yaml, .yml or .pkl, or when saving .pkl before validation.
 
         **Examples**:
 
