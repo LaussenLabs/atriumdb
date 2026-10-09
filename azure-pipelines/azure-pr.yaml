@@ -27,12 +27,12 @@ jobs:
         cd tsc-lib
         cmake -Bcmake-build-release -DCMAKE_TOOLCHAIN_FILE=windows-TC-mingw.cmake -DCMAKE_BUILD_TYPE='Release';
         cmake --build cmake-build-release --target Block;
-        mkdir ../sdk/bin
-        cp cmake-build-release/src/Block/libTSC.dll ../sdk/bin/libTSC.dll;
+        mkdir ../sdk/atriumdb/bin
+        cp cmake-build-release/src/Block/libTSC.dll ../sdk/atriumdb/bin/libTSC.dll;
         rm -rf cmake-build-release/**;
         cmake -Bcmake-build-release -H. -DCMAKE_BUILD_TYPE='Release';
         cmake --build cmake-build-release --target Block;
-        cp cmake-build-release/src/Block/libTSC.so ../sdk/bin/libTSC.so;
+        cp cmake-build-release/src/Block/libTSC.so ../sdk/atriumdb/bin/libTSC.so;
         cd ..
       displayName: Build C libraries
 
