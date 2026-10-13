@@ -1914,13 +1914,13 @@ class AtriumSDK:
                 continue
 
             # Find labels that overlap with the time range
-            # Labels overlap if: label_start < search_end AND label_end > search_start
+            # Labels overlap if: label_start <= search_end AND label_end >= search_start
             end_idx = np.searchsorted(starts, end_time, side='right')
             candidate_labels = self.label_cache[device_id][search_id][:end_idx]
             candidate_ends = ends[:end_idx]
 
             if len(candidate_ends) > 0:
-                valid_mask = candidate_ends > start_time
+                valid_mask = candidate_ends >= start_time
                 matching_labels = [candidate_labels[i] for i in range(len(candidate_labels)) if valid_mask[i]]
                 all_matching_labels.extend(matching_labels)
 
@@ -1943,7 +1943,7 @@ class AtriumSDK:
         candidate_blocks = blocks[:end_idx]
         candidate_ends = ends[:end_idx]
 
-        valid_mask = candidate_ends > start_time
+        valid_mask = candidate_ends >= start_time
         return candidate_blocks[valid_mask]
 
     def get_measure_id(self, measure_tag: str, freq: Union[int, float] = None, units: str = None, freq_units: str = None,

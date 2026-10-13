@@ -17,6 +17,7 @@
 
 from atriumdb import AtriumSDK, T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE
+from atriumdb import DatasetDefinition
 import numpy as np
 import random
 
@@ -37,6 +38,31 @@ global_d_record, annotation = next(get_records(dataset_name='mitdb', physical=Fa
 def test_small_block():
     _test_for_both(DB_NAME, _test_big_gap_array)
     _test_for_both(DB_NAME, _test_small_block)
+
+
+def test_cached_read_at_block_end():
+    _test_for_both(f"{DB_NAME}-cached-end", _test_cached_read_at_block_end)
+
+
+def _test_cached_read_at_block_end(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+    sdk.block.block_size = 16
+
+    measure_id = sdk.insert_measure("test_measure", 1, "units", freq_units="Hz")
+    device_id = sdk.insert_device("test_device")
+    sdk.write_segment(measure_id, device_id, np.arange(64), 0, freq=1, time_units="s", freq_units="Hz",
+                      scale_m=1.0, scale_b=0.0)
+    sdk.insert_label("event", 5, 15, device=device_id, time_units="s")
+
+    sdk.load_definition(DatasetDefinition(measures=["test_measure"], device_ids={device_id: "all"}, labels=["event"]))
+
+    # The first block and the label both end at 15 s, where these reads start.
+    _, values = sdk.get_data(measure_id, 15 * 10 ** 9, 20 * 10 ** 9, device_id=device_id, return_nan_filled=True)
+    assert np.array_equal(values, np.arange(15, 20))
+    label_time_series = sdk.get_label_time_series(label_name="event", device_id=device_id, start_time=15, end_time=20,
+                                                  sample_period=1, time_units="s")
+    assert np.array_equal(label_time_series, [1, 0, 0, 0, 0])
 
 
 def _test_small_block_experiment(db_type, dataset_location, connection_params):
