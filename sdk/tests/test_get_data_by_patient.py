@@ -61,3 +61,33 @@ def _test_insert_data_with_patient_mapping(db_type, dataset_location, connection
 
     assert np.array_equal(og_time_data, patient_read_times)
     assert np.array_equal(og_value_data, patient_read_values)
+
+
+def test_get_data_by_patient_clipped_to_mapping():
+    _test_for_both(f"{DB_NAME}-clipped", _test_get_data_by_patient_clipped_to_mapping)
+
+
+def _test_get_data_by_patient_clipped_to_mapping(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    measure_id = sdk.insert_measure('signal_1', 1, freq_units="Hz")
+    device_id = sdk.insert_device('dev_1')
+    period_ns = 1_000_000_000
+    times = np.arange(100, dtype=np.int64) * period_ns
+    sdk.write_data_easy(measure_id, device_id, times, np.arange(100, dtype=np.float64), 1, freq_units="Hz")
+
+    # The first patient has two overlapping mappings, then the device moves to the second patient at 50 s.
+    first_patient_id, second_patient_id = sdk.insert_patient(), sdk.insert_patient()
+    sdk.insert_device_patient_data([(device_id, first_patient_id, 0, 30 * period_ns),
+                                    (device_id, first_patient_id, 20 * period_ns, 50 * period_ns),
+                                    (device_id, second_patient_id, 50 * period_ns, 100 * period_ns)])
+
+    _, read_times, read_values = sdk.get_data(measure_id, 0, 60 * period_ns, patient_id=first_patient_id)
+    assert np.array_equal(read_times, times[:50])
+    assert np.array_equal(read_values, np.arange(50))
+
+    _, nan_filled_values = sdk.get_data(measure_id, 40 * period_ns, 60 * period_ns, patient_id=first_patient_id,
+                                        return_nan_filled=True)
+    assert np.array_equal(nan_filled_values[:10], np.arange(40, 50))
+    assert np.all(np.isnan(nan_filled_values[10:]))

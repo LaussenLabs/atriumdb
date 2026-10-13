@@ -57,7 +57,7 @@ from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
 from atriumdb.windowing.light_mapped_iterator import LightMappedIterator
 from atriumdb.windowing.random_access_iterator import MappedIterator
 from atriumdb.windowing.verify_definition import verify_definition
-from atriumdb.windowing.definition_splitter import partition_dataset
+from atriumdb.windowing.definition_splitter import partition_dataset, merge_intervals
 from atriumdb.write_buffer import WriteBuffer
 
 try:
@@ -527,6 +527,11 @@ class AtriumSDK:
 
         measure_id = int(measure_id) if measure_id is not None else measure_id
         device_id = int(device_id) if device_id is not None else device_id
+
+        if patient_id is not None and device_id is None and block_info is None:
+            return self._get_patient_data(measure_id, start_time_n, end_time_n, patient_id, time_type, analog,
+                                          time_units, sort, allow_duplicates, return_nan_filled)
+
         # Determine if we can use the cache
         use_cache = False
         if device_id is not None and measure_id is not None:
@@ -586,6 +591,54 @@ class AtriumSDK:
             r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
         # Convert time data from nanoseconds to unit of choice
+        if time_units != 'ns':
+            r_times = r_times / time_unit_options[time_units]
+
+        return headers, r_times, r_values
+
+    def _get_patient_data(self, measure_id, start_time_n, end_time_n, patient_id, time_type, analog, time_units,
+                          sort, allow_duplicates, return_nan_filled):
+        # Read each device only over the times it was mapped to the patient.
+        device_time_ranges = defaultdict(list)
+        for device_id, mapping_start, mapping_end in self.sql_handler.get_device_time_ranges_by_patient(
+                patient_id, end_time_n, start_time_n):
+            start, end = max(mapping_start, start_time_n), min(mapping_end, end_time_n)
+            if start < end:
+                device_time_ranges[device_id].append((start, end))
+        read_ranges = [(device_id, start, end) for device_id, time_ranges in device_time_ranges.items()
+                       for start, end in merge_intervals(time_ranges)]
+
+        if isinstance(return_nan_filled, np.ndarray) or return_nan_filled:
+            period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
+            if not isinstance(return_nan_filled, np.ndarray):
+                return_nan_filled = np.full(round((end_time_n - start_time_n) / period_ns), np.nan, dtype=np.float64)
+            headers = []
+            for device_id, start, end in read_ranges:
+                # Read on the output's sample grid so each value lands in the same slot as a single read would place it.
+                first = int(np.ceil((start - start_time_n) / period_ns))
+                last = min(int(np.ceil((end - start_time_n) / period_ns)), return_nan_filled.size)
+                if first < last:
+                    headers.extend(self.get_data(
+                        measure_id, start_time_n + round(first * period_ns), start_time_n + round(last * period_ns),
+                        device_id=device_id, return_nan_filled=return_nan_filled[first:last])[0])
+            return headers, return_nan_filled
+
+        results = [self.get_data(measure_id, start, end, device_id=device_id, time_type=time_type, analog=analog,
+                                 allow_duplicates=allow_duplicates) for device_id, start, end in read_ranges]
+        results = [result for result in results if len(result[0]) > 0]
+        if len(results) == 0:
+            return [], np.array([]), np.array([])
+
+        headers = [header for result in results for header in result[0]]
+        r_times = np.concatenate([result[1] for result in results])
+        r_values = np.concatenate([result[2] for result in results])
+        if sort and time_type == 1 and len(results) > 1:
+            if allow_duplicates:
+                order = np.argsort(r_times, kind='stable')
+            else:
+                _, order = np.unique(r_times, return_index=True)
+            r_times, r_values = r_times[order], r_values[order]
+
         if time_units != 'ns':
             r_times = r_times / time_unit_options[time_units]
 
