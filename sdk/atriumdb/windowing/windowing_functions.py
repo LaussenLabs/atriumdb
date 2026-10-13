@@ -138,7 +138,7 @@ def get_label_dictionary(sdk, device_id, query_patient_id, source_batch_start_ti
     return sliced_labels, threshold_labels
 
 def _get_patient_info_from_cache(patient_id, window_start_time, patient_info_cache, patient_history_cache):
-    window_patient_info = patient_info_cache.get(patient_id, {})
+    window_patient_info = dict(patient_info_cache.get(patient_id, {}))
     for field, history_timeseries in patient_history_cache.get(patient_id, {}).items():
         best_match = find_closest_measurement(window_start_time, history_timeseries)
         if best_match is None:
