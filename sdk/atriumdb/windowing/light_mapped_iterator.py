@@ -196,9 +196,13 @@ class LightMappedIterator(DatasetIterator):
             if len(measure_values) > 0:
                 if measure_expected_count != int(round((window_end_time - window_start_time) / period_ns)):
                     window_end_time = window_start_time + int(round(measure_expected_count * period_ns))
-                self.sdk.get_data(
-                    measure_id, window_start_time, window_end_time, device_id=device_id, patient_id=query_patient_id,
-                    return_nan_filled=measure_values)
+                # Partial windows are NaN-filled past the end of the source range.
+                data_end_time = min(window_end_time, source_info['end_time'])
+                num_values = int(round((data_end_time - window_start_time) / period_ns))
+                if num_values > 0:
+                    self.sdk.get_data(
+                        measure_id, window_start_time, data_end_time, device_id=device_id,
+                        patient_id=query_patient_id, return_nan_filled=measure_values[:num_values])
             measure_tag = measure['tag']
             measure_freq_hz = measure['freq_nhz'] / (10 ** 9)
             measure_units = measure['units']
