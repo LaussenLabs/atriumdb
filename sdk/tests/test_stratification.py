@@ -55,6 +55,25 @@ def test_invalid_ratios():
         stratified_partition_by_labels(data_list, partition_ratios, random_state=22)
 
 
+def test_stratified_partition_uneven_ratios():
+    """
+    Every duration is split close to uneven ratios, and different seeds give different splits.
+    """
+    rng = np.random.default_rng(0)
+    hour = 3600 * 10 ** 9
+    data_list = []
+    for patient_id in range(200):
+        waveform = int(rng.lognormal(np.log(24), 1.0) * hour)
+        data_list.append(["patient_ids", patient_id, [], waveform, int(waveform * rng.uniform(0, 0.1))])
+    totals = np.sum([item[3:] for item in data_list], axis=0)
+
+    splits = set()
+    for seed in range(10):
+        partitions, label_totals, _ = stratified_partition_by_labels(data_list, [60, 20, 20], random_state=seed)
+        assert np.all(np.abs(np.array(label_totals) / totals - np.array([[0.6], [0.2], [0.2]])) < 0.05)
+        splits.add(tuple(sorted(item[1] for item in partitions[0])))
+    assert len(splits) > 1
+
 
 def generate_data_list(num_entries):
     data_list = []
