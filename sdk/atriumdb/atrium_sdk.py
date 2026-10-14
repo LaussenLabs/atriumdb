@@ -100,7 +100,7 @@ class AtriumSDK:
     The Core SDK Object that represents a single dataset and provides methods to interact with it. If you are using API
     mode then once you are finished with the object call the close method to clean up all connections.
 
-    :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written. For "mysql" or "mariadb" it may be omitted, together with tsc_file_location, to use only the metadata; reading or writing TSC files then raises an error.
+    :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written. For "mysql" or "mariadb", if you only need metadata from the database and not the times and values stored in the TSC files, this may be omitted. However, if both this and tsc_file_location are omitted, reading or writing TSC files raises an error.
     :param str metadata_connection_type: Specifies the type of connection to use for metadata. Options are "sqlite", "mysql", "mariadb", or "api". Default "sqlite".
     :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" connection type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
     :param int num_threads: Specifies the number of threads to use when processing data.
