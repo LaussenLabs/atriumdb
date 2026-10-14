@@ -877,6 +877,8 @@ class AtriumSDK:
         if freq_nhz is not None:
             period_ns = None
 
+        self._warn_if_freq_differs_from_measure(self.get_measure_info(measure_id), freq_nhz, period_ns)
+
         # Convert period to freq only for legacy calculations that still require it
         if period_ns is not None:
             freq_nhz_for_calc = 10 ** 18 // period_ns
@@ -1301,6 +1303,8 @@ class AtriumSDK:
             freq_nano = measure_info["freq_nhz"]
             period_ns = None
 
+        self._warn_if_freq_differs_from_measure(measure_info, freq_nano, period_ns)
+
         # Create message list for writing.
         scale_m_list = scale_m if isinstance(scale_m, list) else [scale_m] * len(segments)
         scale_b_list = scale_b if isinstance(scale_b, list) else [scale_b] * len(segments)
@@ -1333,6 +1337,19 @@ class AtriumSDK:
         else:
             # Push new segments to the buffer
             self._active_buffer.push_segments(measure_id, device_id, write_segments)
+
+    @staticmethod
+    def _warn_if_freq_differs_from_measure(measure_info, freq_nhz=None, period_ns=None):
+        # A mismatch is usually a freq_units mistake, e.g. insert_measure(tag, 125) defaults to 125 nHz.
+        if measure_info is None or (freq_nhz is None and period_ns is None):
+            return
+        data_period_ns = 10 ** 18 / freq_nhz if freq_nhz is not None else period_ns
+        measure_period_ns = measure_info['period_ns']
+        if abs(data_period_ns - measure_period_ns) > 0.01 * measure_period_ns:
+            warnings.warn(f"Writing data sampled at {10 ** 9 / data_period_ns:g} Hz to measure '{measure_info['tag']}' "
+                          f"(id {measure_info['id']}), which is stored at {measure_info['freq_nhz']} nHz "
+                          f"({measure_info['freq_nhz'] / 10 ** 9:g} Hz). Check the freq_units passed to "
+                          f"insert_measure (default nHz) and to the write call.")
 
     def _write_segments_to_dataset(self, measure_id, device_id, write_segments, interval_gap_tolerance_nano=0):
         if not write_segments:
@@ -2366,7 +2383,8 @@ class AtriumSDK:
                                             units=units, measure_name=measure_name)
 
         :param str measure_tag: A short string identifying the signal.
-        :param freq: The sample frequency of the signal. Mutually exclusive with period.
+        :param freq: The sample frequency of the signal, in nano hertz unless `freq_units` is given, so
+            ``freq=125`` alone defines a 125 nHz measure, not 125 Hz. Mutually exclusive with period.
         :param str units: The units of the signal.
         :param str freq_units: The unit used for the specified frequency. This value can be one of ["Hz",
             "kHz", "MHz"]. Keep in mind if you use extremely large values for this it will be
@@ -5123,16 +5141,19 @@ of DatasetIterator objects depending on the value of num_iterators.
                           f"different from your requested iterator window slide {window_slide} ns. Windows will "
                           f"not be the same as the filter function's windows.")
 
-        min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
+        slowest_measure = min(definition.validated_data_dict['measures'], key=lambda m: m['freq_nhz'])
+        min_freq_nhz = slowest_measure['freq_nhz']
+        slowest_measure_str = (f"measure '{slowest_measure['tag']}' (id {slowest_measure['id']}), stored at "
+                               f"{min_freq_nhz} nHz ({min_freq_nhz / 10 ** 9:g} Hz)")
         number_of_values_per_window_duration = (int(window_duration) * int(min_freq_nhz)) // (10 ** 18)
         if number_of_values_per_window_duration == 0:
-            raise ValueError(f"Window Slide {window_duration} with units {time_units} is less than a single value. "
-                             f"Please increase it to at least one sample period.")
+            raise ValueError(f"Window duration {window_duration} ns is less than one sample period of "
+                             f"{slowest_measure_str}. Please increase it, or check the measure's freq_units.")
 
         number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
         if number_of_values_per_window_slide == 0:
-            raise ValueError(f"Window Slide {window_slide} with units {time_units} is less than a single value. "
-                             f"Please increase it to at least one sample period.")
+            raise ValueError(f"Window slide {window_slide} ns is less than one sample period of "
+                             f"{slowest_measure_str}. Please increase it, or check the measure's freq_units.")
 
         if not isinstance(shuffle, bool) or shuffle:
             # Set some sensible defaults for pseudorandom yet efficient shuffle

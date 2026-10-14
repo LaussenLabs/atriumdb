@@ -189,6 +189,10 @@ Segments are often used for high-frequency waveforms or signals.
 
 **Note**: `freq` and `period` are mutually exclusive - specify one or the other, not both.
 
+**Note**: `insert_measure` and `get_measure_id` default `freq_units` to `"nHz"`, while `write_segment`,
+`write_segments` and `write_time_value_pairs` default to `"Hz"`. Always pass `freq_units` so the data matches the
+measure's frequency.
+
 Segments can be inserted one at a time using `AtriumSDK.write_segment <contents.html#atriumdb.AtriumSDK.write_segment>`_
 or in batches using `AtriumSDK.write_segments <contents.html#atriumdb.AtriumSDK.write_segments>`_.
 
