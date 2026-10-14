@@ -528,9 +528,9 @@ class AtriumSDK:
         measure_id = int(measure_id) if measure_id is not None else measure_id
         device_id = int(device_id) if device_id is not None else device_id
 
-        if patient_id is not None and device_id is None and block_info is None:
+        if patient_id is not None and block_info is None:
             return self._get_patient_data(measure_id, start_time_n, end_time_n, patient_id, time_type, analog,
-                                          time_units, sort, allow_duplicates, return_nan_filled)
+                                          time_units, sort, allow_duplicates, return_nan_filled, device_id)
 
         # Determine if we can use the cache
         use_cache = False
@@ -597,14 +597,14 @@ class AtriumSDK:
         return headers, r_times, r_values
 
     def _get_patient_data(self, measure_id, start_time_n, end_time_n, patient_id, time_type, analog, time_units,
-                          sort, allow_duplicates, return_nan_filled):
-        # Read each device only over the times it was mapped to the patient.
+                          sort, allow_duplicates, return_nan_filled, device_id=None):
+        # Read each device (or only device_id) over the times it was mapped to the patient.
         device_time_ranges = defaultdict(list)
-        for device_id, mapping_start, mapping_end in self.sql_handler.get_device_time_ranges_by_patient(
+        for mapped_device_id, mapping_start, mapping_end in self.sql_handler.get_device_time_ranges_by_patient(
                 patient_id, end_time_n, start_time_n):
             start, end = max(mapping_start, start_time_n), min(mapping_end, end_time_n)
-            if start < end:
-                device_time_ranges[device_id].append((start, end))
+            if start < end and device_id in (None, mapped_device_id):
+                device_time_ranges[mapped_device_id].append((start, end))
         read_ranges = [(device_id, start, end) for device_id, time_ranges in device_time_ranges.items()
                        for start, end in merge_intervals(time_ranges)]
 

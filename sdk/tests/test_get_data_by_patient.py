@@ -91,3 +91,30 @@ def _test_get_data_by_patient_clipped_to_mapping(db_type, dataset_location, conn
                                         return_nan_filled=True)
     assert np.array_equal(nan_filled_values[:10], np.arange(40, 50))
     assert np.all(np.isnan(nan_filled_values[10:]))
+
+
+def test_get_data_by_device_and_patient():
+    _test_for_both(f"{DB_NAME}-device-and-patient", _test_get_data_by_device_and_patient)
+
+
+def _test_get_data_by_device_and_patient(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    measure_id = sdk.insert_measure('signal_1', 1, freq_units="Hz")
+    device_1, device_2 = sdk.insert_device('dev_1'), sdk.insert_device('dev_2')
+    period_ns = 1_000_000_000
+    times = np.arange(100, dtype=np.int64) * period_ns
+    sdk.write_data_easy(measure_id, device_1, times, np.arange(100, dtype=np.float64), 1, freq_units="Hz")
+    sdk.write_data_easy(measure_id, device_2, times, np.arange(100, dtype=np.float64) + 1000, 1, freq_units="Hz")
+
+    # The first patient moves from device 1 to device 2 at 50 s, when the second patient takes device 1.
+    first_patient_id, second_patient_id = sdk.insert_patient(), sdk.insert_patient()
+    sdk.insert_device_patient_data([(device_1, first_patient_id, 0, 50 * period_ns),
+                                    (device_2, first_patient_id, 50 * period_ns, 100 * period_ns),
+                                    (device_1, second_patient_id, 50 * period_ns, 100 * period_ns)])
+
+    _, read_times, read_values = sdk.get_data(measure_id, 0, 100 * period_ns, device_id=device_1,
+                                              patient_id=first_patient_id)
+    assert np.array_equal(read_times, times[:50])
+    assert np.array_equal(read_values, np.arange(50))
