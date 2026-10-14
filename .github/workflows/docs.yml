@@ -1,0 +1,40 @@
+name: atriumdb_docs
+'on':
+  push:
+    branches:
+    - main
+    paths:
+    - sdk/atriumdb/**
+    - sdk/docs/**
+    - .github/workflows/docs.yml
+  pull_request:
+    paths:
+    - sdk/atriumdb/**
+    - sdk/docs/**
+    - .github/workflows/docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install dependencies
+      # The docs import atriumdb from the source tree, so only its Python dependencies are needed.
+      run: pip install sphinx==9.1.0 sphinx_rtd_theme==3.1.0 numpy PyYAML tqdm
+    - name: Build HTML docs
+      run: sphinx-build -b html sdk/docs/source docs-html
+    - name: Upload HTML docs
+      uses: actions/upload-artifact@v4
+      with:
+        name: atriumdb-docs-html
+        path: docs-html
+        if-no-files-found: error
