@@ -5,14 +5,21 @@ This is the C library that supports the encoding and decoding functionality of t
 ## How to Build
 ### Linux
 
-The library is built using Cmake, supported to compile using Linux gcc or Windows MinGW.
+The library is built using Cmake, supported to compile using Linux gcc, Apple clang or Windows MinGW.
+It needs lz4, zstd and an OpenMP runtime (macOS: `brew install libomp lz4 zstd`).
 
 You can build a new release using the command:
 
 ```shell
-$ cd tsc-lib
-$ cmake -Bcmake-build-release -H.
+$ cd sdk/tsc-lib
+$ cmake -Bcmake-build-release -S .
 $ cmake --build cmake-build-release --target Block
+```
+
+Installing it places the library in `sdk/atriumdb/bin`, where the SDK loads it from a source checkout:
+
+```shell
+$ cmake --install cmake-build-release --prefix ..
 ```
 
 You can clean the project build files using:
@@ -21,12 +28,16 @@ You can clean the project build files using:
 $ cmake --build cmake-build-release --target clean
 ```
 
+### macOS
+`build_mac.sh` builds `libTSC.dylib` into `sdk/atriumdb/bin`. `build_mac_deps.sh <prefix>` builds the lz4, zstd and
+libomp the wheels are linked against.
+
 ### Docker
 If you build using docker it will cross compile both for Linux and Windows.
 
 First you build the docker image using the command:
 ```shell
-$ docker build -t c-build tsc-lib
+$ docker build -t c-build sdk/tsc-lib
 ```
 Then to build the binaries for release from a windows host you use the command:
 ```shell
@@ -48,7 +59,7 @@ Unit tests have been written using Google Test.
 You can run the tests by using the commands:
 
 ```shell
-$ cmake -Bcmake-build-debug -H.
+$ cmake -Bcmake-build-debug -S . -DTSC_BUILD_TESTS=ON
 $ cmake --build cmake-build-debug --target Google_Tests_run
 $ ./cmake-build-debug/Google_tests/Google_Tests_run
 ```

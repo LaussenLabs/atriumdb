@@ -40,6 +40,14 @@ For example:
 - AtriumDB can affect other libraries using OpenMP by dynamically setting `OMP_NUM_THREADS`. Similarly, other libraries that modify this variable can impact AtriumDB’s performance.
 - Monitor the overall threading configuration of your application to ensure harmony across all libraries.
 
+**Duplicate OpenMP runtime on macOS**
+
+The macOS wheels include their own OpenMP runtime (libomp). If another package that includes its own copy, such as
+PyTorch or scikit-learn, is loaded in the same process, OpenMP can stop the program with
+`OMP: Error #15: Initializing libomp.dylib, but found libomp.dylib already initialized`.
+Setting the environment variable `KMP_DUPLICATE_LIB_OK=TRUE` before starting Python lets both runtimes load.
+The OpenMP runtime documents this as an unsafe workaround, so prefer importing only one of the packages per process.
+
 
 .. _cdll_not_hashable:
 
