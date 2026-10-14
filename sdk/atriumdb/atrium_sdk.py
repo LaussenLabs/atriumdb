@@ -1858,7 +1858,7 @@ class AtriumSDK:
                 # Check if label intersects with any device time range
                 label_intersects = False
                 for range_start, range_end in device_ranges:
-                    if start_time_n < range_end and end_time_n > range_start:
+                    if start_time_n < range_end and end_time_n >= range_start:
                         label_intersects = True
                         break
 

@@ -55,9 +55,10 @@ def _test_cached_read_at_block_end(db_type, dataset_location, connection_params)
                       scale_m=1.0, scale_b=0.0)
     sdk.insert_label("event", 5, 15, device=device_id, time_units="s")
 
-    sdk.load_definition(DatasetDefinition(measures=["test_measure"], device_ids={device_id: "all"}, labels=["event"]))
+    sdk.load_definition(DatasetDefinition(measures=["test_measure"], labels=["event"],
+                                          device_ids={device_id: [{"start": 15 * 10 ** 9, "end": 64 * 10 ** 9}]}))
 
-    # The first block and the label both end at 15 s, where these reads start.
+    # The first block and the label both end at 15 s, where the definition and these reads start.
     _, values = sdk.get_data(measure_id, 15 * 10 ** 9, 20 * 10 ** 9, device_id=device_id, return_nan_filled=True)
     assert np.array_equal(values, np.arange(15, 20))
     label_time_series = sdk.get_label_time_series(label_name="event", device_id=device_id, start_time=15, end_time=20,
