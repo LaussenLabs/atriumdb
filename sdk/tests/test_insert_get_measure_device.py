@@ -72,6 +72,14 @@ def _test_insert_get_measure_device(db_type, dataset_location, connection_params
     device_info = sdk.get_device_info(100)
     assert device_info is None
 
+    # test the search methods with a tag or name only, in another case, alongside unnamed entries
+    unnamed_measure_id = sdk.insert_measure(measure_tag="ECG Lead V", freq=250, freq_units="Hz", units="mV")
+    assert set(sdk.search_measures(tag_match="ecg")) == {measure_id, unnamed_measure_id}
+    assert set(sdk.search_measures(name_match="electrocardiogram")) == {measure_id}
+    unnamed_device_id = sdk.insert_device(device_tag="Monitor B1")
+    assert set(sdk.search_devices(tag_match="monitor")) == {device_id, unnamed_device_id}
+    assert set(sdk.search_devices(name_match="philips")) == {device_id}
+
     measure_id = sdk.get_measure_id("non_existent_measure_tag", 100, "units")
     assert measure_id is None
 

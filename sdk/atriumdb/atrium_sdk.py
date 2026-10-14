@@ -2121,16 +2121,16 @@ class AtriumSDK:
         period (in nanoseconds), code, unit, unit label, unit code, and source_id.
 
         :param tag_match: A string to match against the `measure_tag` field. If not None, only measures with a `measure_tag`
-            field containing this string will be returned.
+            field containing this string, ignoring case, will be returned.
         :type tag_match: str, optional
-        :param freq: A value to match against the `measure_freq_nhz` field. If not None, only measures with a
-            `measure_freq_nhz` field equal to this value will be returned. Mutually exclusive with period.
-        :type freq: int, optional
+        :param freq: A frequency, in `freq_units`, to match against the measure's sample frequency. If not None, only
+            measures with this frequency will be returned. Mutually exclusive with period.
+        :type freq: float, optional
         :param unit: A string to match against the `measure_unit` field. If not None, only measures with a `measure_unit`
             field equal to this string will be returned.
         :type unit: str, optional
         :param name_match: A string to match against the `measure_name` field. If not None, only measures with a
-            `measure_name` field containing this string will be returned.
+            `measure_name` field containing this string, ignoring case, will be returned.
         :type name_match: str, optional
         :param freq_units: The units for the freq parameter. (Default: "Hz")
         :type freq_units: str, optional
@@ -2166,7 +2166,7 @@ class AtriumSDK:
             target_freq_nhz = convert_to_nanohz(freq, freq_units)
         elif freq is not None:
             target_freq_nhz = freq
-        else:
+        elif period is not None:
             period_ns = int(period * time_unit_options[time_units])
             target_freq_nhz = 10 ** 18 // period_ns
 
@@ -2180,10 +2180,10 @@ class AtriumSDK:
         for measure_id, measure_info in all_measures.items():
             # Create a list of boolean values for each search criterion
             match_bool_list = [
-                tag_match is None or tag_match in measure_info['tag'],
+                tag_match is None or tag_match.lower() in measure_info['tag'].lower(),
                 target_freq_nhz is None or target_freq_nhz == measure_info['freq_nhz'],
                 unit is None or unit == measure_info['unit'],
-                name_match is None or name_match in measure_info['name']
+                name_match is None or name_match.lower() in (measure_info['name'] or "").lower()
             ]
 
             # If all search criteria match, add the measure to the result dictionary
@@ -2587,10 +2587,10 @@ class AtriumSDK:
         This method supports searching by device tag and/or device name.
 
         :param tag_match: A string to match against the `device_tag` field. If not None, only devices with a `device_tag`
-            field containing this string will be returned. Default is None.
+            field containing this string, ignoring case, will be returned. Default is None.
         :type tag_match: str, optional
         :param name_match: A string to match against the `device_name` field. If not None, only devices with a `device_name`
-            field containing this string will be returned. Default is None.
+            field containing this string, ignoring case, will be returned. Default is None.
         :type name_match: str, optional
         :return: A dictionary containing information about each device that matches the specified search criteria, including
             its id, tag, name, manufacturer, model, type, bed_id, and source_id.
@@ -2610,8 +2610,8 @@ class AtriumSDK:
         for device_id, device_info in all_devices.items():
             # Create a list of boolean values to determine if the device matches the search criteria
             match_bool_list = [
-                tag_match is None or tag_match in device_info['tag'],
-                name_match is None or name_match in device_info['name']
+                tag_match is None or tag_match.lower() in device_info['tag'].lower(),
+                name_match is None or name_match.lower() in (device_info['name'] or "").lower()
             ]
 
             # If all conditions in the match_bool_list are True, add the device to the result dictionary
