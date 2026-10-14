@@ -15,6 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from atriumdb.intervals.intersection import list_intersection
 from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.definition import DatasetDefinition
 import numpy as np
@@ -429,6 +430,14 @@ def convert_source_lists_to_definitions(partitioned_source_list, original_defini
     measures = original_definition.data_dict['measures']
     labels = original_definition.data_dict['labels']
 
+    # Partitions of a device-based definition are written as device_ids, since patient_ids would cover every device
+    # the patients are mapped to.
+    device_based = not original_definition.data_dict['patient_ids'] and not original_definition.data_dict['mrns']
+    patient_device_ranges = {}
+    for (device_id, patient_id), ranges in original_definition.validated_data_dict['sources'][
+            'device_patient_tuples'].items():
+        patient_device_ranges.setdefault(patient_id, {})[device_id] = ranges
+
     partitioned_definitions = []
 
     for partition in partitioned_source_list:
@@ -454,6 +463,11 @@ def convert_source_lists_to_definitions(partitioned_source_list, original_defini
 
                 device_ids[device_id].extend(time_specifications)
 
+            elif source_type == 'patient_ids' and device_based:
+                for device_id, device_ranges in patient_device_ranges.get(source_key, {}).items():
+                    device_ids.setdefault(device_id, []).extend(
+                        {'start': start, 'end': end}
+                        for start, end in list_intersection(merge_intervals(device_ranges), time_ranges))
             elif source_type == 'patient_ids':
                 patient_id = source_key
                 if patient_id not in patient_ids:
@@ -491,9 +505,9 @@ def merge_time_ranges(time_ranges):
     current_range = time_ranges[0]
 
     for next_range in time_ranges[1:]:
-        if current_range['end'] == next_range['start']:
+        if current_range['end'] >= next_range['start']:
             # Merge the ranges
-            current_range['end'] = next_range['end']
+            current_range['end'] = max(current_range['end'], next_range['end'])
         else:
             # No merging needed, push the current range and move to the next
             merged_ranges.append(current_range)
