@@ -1344,12 +1344,11 @@ class AtriumSDK:
         if measure_info is None or (freq_nhz is None and period_ns is None):
             return
         data_period_ns = 10 ** 18 / freq_nhz if freq_nhz is not None else period_ns
-        measure_period_ns = measure_info['period_ns']
-        if abs(data_period_ns - measure_period_ns) > 0.01 * measure_period_ns:
+        if not 0.5 <= data_period_ns / measure_info['period_ns'] <= 2:
             warnings.warn(f"Writing data sampled at {10 ** 9 / data_period_ns:g} Hz to measure '{measure_info['tag']}' "
                           f"(id {measure_info['id']}), which is stored at {measure_info['freq_nhz']} nHz "
                           f"({measure_info['freq_nhz'] / 10 ** 9:g} Hz). Check the freq_units passed to "
-                          f"insert_measure (default nHz) and to the write call.")
+                          f"insert_measure (default nHz) and the freq_units or time_units of the write call.")
 
     def _write_segments_to_dataset(self, measure_id, device_id, write_segments, interval_gap_tolerance_nano=0):
         if not write_segments:
