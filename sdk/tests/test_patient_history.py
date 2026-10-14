@@ -19,12 +19,13 @@ import time
 from atriumdb import AtriumSDK
 import threading
 import uvicorn
-from tests.testing_framework import _test_for_both
+from tests.testing_framework import _test_for_both, free_port
 from tests.mock_api.app import app
 from tests.mock_api.sdk_dependency import get_sdk_instance
 import pytest
 
 DB_NAME = 'test_db_patient_history'
+API_PORT = free_port()
 
 
 def test_patient_history():
@@ -32,7 +33,7 @@ def test_patient_history():
     _test_for_both(DB_NAME, _test_patient_history)
 
     def start_server():
-        uvicorn.run(app)
+        uvicorn.run(app, port=API_PORT)
 
     # start server in daemon thread so it exits when complete
     api_thread = threading.Thread(target=start_server, daemon=True)
@@ -197,7 +198,7 @@ def _test_patient_history_api(db_type, dataset_location, connection_params):
     app.dependency_overrides[get_sdk_instance] = lambda: sdk
 
     # set up remote mode sdk to connect to the api
-    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="http://127.0.0.1:8000", validate_token=False)
+    api_sdk = AtriumSDK(metadata_connection_type="api", api_url=f"http://127.0.0.1:{API_PORT}", validate_token=False)
     # change the sdk token expiry so the test can work
     api_sdk.token_expiry = time.time() + 1_000_000
 
