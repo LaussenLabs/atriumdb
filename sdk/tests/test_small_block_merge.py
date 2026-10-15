@@ -28,6 +28,26 @@ DB_NAME = 'test-merge-small-block'
 def test_merge_small_block():
     _test_for_both(DB_NAME, _test_merge_small_block_timestamp)
     _test_for_both(DB_NAME, _test_merge_small_block_gap)
+    _test_for_both(DB_NAME, _test_merge_small_block_default_scale)
+
+
+def _test_merge_small_block_default_scale(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    measure_id = sdk.insert_measure(measure_tag="test_measure", freq=1, units="test_units", freq_units="Hz")
+    device_id = sdk.insert_device(device_tag="test_device")
+
+    # Without scale factors, a small write should still merge into the previous block.
+    for start in (1, 7):
+        times = np.arange(start, start + 6, dtype=np.int64) * 1_000_000_000
+        sdk.write_data(measure_id, device_id, times, times // 1_000_000_000, 1_000_000_000, time_0=times[0],
+                       raw_time_type=1, raw_value_type=1, encoded_time_type=2, encoded_value_type=3)
+
+    headers, r_times, r_values = sdk.get_data(measure_id, 0, 13_000_000_000, device_id)
+
+    assert len(headers) == 1
+    assert np.array_equal(np.arange(1, 13), r_values)
 
 
 def _test_merge_small_block_timestamp(db_type, dataset_location, connection_params):
