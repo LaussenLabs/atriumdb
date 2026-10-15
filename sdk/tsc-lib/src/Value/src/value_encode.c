@@ -41,7 +41,12 @@ size_t value_encode(const void *value_data, void *encoded_value, block_metadata_
         case V_TYPE_DOUBLE:
             /* Double Value */
             block_metadata->v_raw_size = value_f64_get_size(block_metadata);
-            block_metadata->v_encoded_size = value_f64_encode(value_data, encoded_value, block_metadata);
+            if(block_metadata->v_encoded_type == V_TYPE_SCALED_INT64){
+                block_metadata->v_encoded_size = value_scaled_d64_encode(value_data, encoded_value, block_metadata,
+                                                                         block_options);
+            } else{
+                block_metadata->v_encoded_size = value_f64_encode(value_data, encoded_value, block_metadata);
+            }
             break;
 
         case V_TYPE_DELTA_INT64:

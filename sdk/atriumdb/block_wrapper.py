@@ -40,6 +40,7 @@ V_TYPE_DOUBLE = 2
 
 V_TYPE_DELTA_INT64 = 3
 V_TYPE_XOR_DOUBLE = 4
+V_TYPE_SCALED_INT64 = 5
 
 
 class BlockMetadata(Structure):

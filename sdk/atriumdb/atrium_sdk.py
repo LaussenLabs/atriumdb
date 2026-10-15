@@ -31,7 +31,7 @@ from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_i
     create_gap_arr_from_variable_messages, sort_message_time_values, convert_from_nanoseconds, detect_period
 from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
-    V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
+    V_TYPE_DOUBLE, V_TYPE_SCALED_INT64, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
 from atriumdb.file_api import AtriumFileHandler
 from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_macos, shared_lib_filename_linux, \
     protected_mode_default_setting, overwrite_default_setting
@@ -1014,7 +1014,7 @@ class AtriumSDK:
                         f"The time type ({TIME_TYPES_STR[encoded_time_type]}) you are trying to encode the times as "
                         f"doesn't match the encoded time type ({TIME_TYPES_STR[header[0].t_encoded_type]}) of the block "
                         f"you are trying to merge with.")
-                elif header[0].v_encoded_type != encoded_value_type:
+                elif header[0].v_encoded_type not in (encoded_value_type, V_TYPE_SCALED_INT64):
                     same_type = False
                     _LOGGER.warning(
                         f"The value type ({VALUE_TYPES_STR[encoded_value_type]}) you are trying to encode the values as "

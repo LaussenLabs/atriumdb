@@ -44,6 +44,7 @@
 
 #define V_TYPE_DELTA_INT64 3
 #define V_TYPE_XOR_DOUBLE 4
+#define V_TYPE_SCALED_INT64 5
 
 
 typedef struct block_metadata{

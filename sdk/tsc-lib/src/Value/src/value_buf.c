@@ -46,6 +46,10 @@ size_t value_encode_buffer_get_size(block_metadata_t *block_metadata)
             /* Int64 Delta */
             return value_xor_f64_get_size(block_metadata);
 
+        case V_TYPE_SCALED_INT64:
+            /* Double stored as scaled Int64 */
+            return value_scaled_d64_get_size(block_metadata);
+
         default:
             printf("value type %u not supported. On line %d in file %s\n",
                    block_metadata->v_encoded_type, __LINE__, __FILE__);
