@@ -41,10 +41,10 @@ class Block:
         self.delta_order_min = 0
         self.delta_order_max = 5
 
-        self.t_compression = 1
+        self.t_compression = 3
         self.v_compression = 3
-        self.t_compression_level = 0
-        self.v_compression_level = 19
+        self.t_compression_level = 6
+        self.v_compression_level = 6
 
     def load_dll(self, path_to_dll, num_threads):
         self.wrapped_dll = WrappedBlockDll(os.path.abspath(path_to_dll), num_threads)
