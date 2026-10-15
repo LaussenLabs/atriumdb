@@ -51,6 +51,13 @@ If it's a MariaDB dataset, you will also have to specify the connection paramete
     token = "4e78a93749ead7893"
     sdk = AtriumSDK(api_url=api_url, token=token, metadata_connection_type="api")
 
+AtriumSDK encodes and decodes blocks on 4 threads by default. Set `num_threads` to suit your machine, and lower it when
+other parallel work shares the CPUs, such as PyTorch DataLoader workers.
+
+.. code-block:: python
+
+    sdk = AtriumSDK(dataset_location=dataset_location, num_threads=8)
+
 
 Deleting a Dataset
 #######################

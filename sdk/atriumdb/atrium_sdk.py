@@ -102,7 +102,7 @@ class AtriumSDK:
     :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
     :param str metadata_connection_type: Specifies the type of connection to use for metadata. Options are "sqlite", "mysql", "mariadb", or "api". Default "sqlite".
     :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" connection type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
-    :param int num_threads: Specifies the number of threads to use when processing data.
+    :param int num_threads: The number of threads used to encode and decode blocks. Default 4.
     :param str api_url: Specifies the URL of the server hosting the API in "api" connection type.
     :param str token: An authorization token for the API in "api" connection type.
     :param str refresh_token: A token to refresh your authorization token if it expires while you are doing something. Only for the API in "api" connection type.
@@ -142,7 +142,7 @@ class AtriumSDK:
     """
 
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
-                 connection_params: dict = None, num_threads: int = 1, api_url: str = None, token: str = None,
+                 connection_params: dict = None, num_threads: int = 4, api_url: str = None, token: str = None,
                  refresh_token=None, validate_token=True, tsc_file_location: str = None, atriumdb_lib_path: str = None,
                  no_pool=False, storage_handler: AtriumFileHandler = None, auto_upgrade: bool = False):
         self.block_cache = {}  # device_id -> list of block sql results
