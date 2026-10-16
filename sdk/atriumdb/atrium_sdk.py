@@ -971,6 +971,10 @@ class AtriumSDK:
                 else:
                     raise ValueError(f"Overwrite setting {overwrite_setting} not recognized.")
 
+        # encode_blocks stores no scaling as 1.0 and 0.0, so compare against those when merging.
+        scale_m = 1.0 if scale_m is None else scale_m
+        scale_b = 0.0 if scale_b is None else scale_b
+
         # default for block merging code (needed to check if we need to delete old stuff at the end)
         old_block = None
         num_full_blocks = value_data.size // self.block.block_size
