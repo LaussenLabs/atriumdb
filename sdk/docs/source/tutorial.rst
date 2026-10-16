@@ -54,6 +54,12 @@ You can also create a dataset with a different metadata database, such as MariaD
    }
    sdk = AtriumSDK.create_dataset(dataset_location="./new_dataset", database_type="mysql", connection_params=connection_params)
 
+Reading and writing use 4 threads by default. To use a different number, open the dataset with `num_threads`:
+
+.. code-block:: python
+
+   sdk = AtriumSDK(dataset_location="./new_dataset", num_threads=8)
+
 
 
 .. _inserting_data_into_the_dataset:
