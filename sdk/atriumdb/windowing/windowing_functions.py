@@ -14,11 +14,33 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import warnings
+
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 from bisect import bisect_right
 
 from atriumdb.windowing.window import Window
+
+
+def window_start_indices(num_windows, window_slide_ns, period_ns):
+    # Window k starts k * slide ns in, i.e. k * slide / period samples, often a fraction.
+    # Adding 0.5 before flooring rounds to the nearest sample (halves round up), so no window
+    # is more than half a sample off and the error never adds up. A 62.5-sample slide gives 0, 63, 125, 188.
+    return np.floor(np.arange(num_windows) * (window_slide_ns / period_ns) + 0.5).astype(np.int64)
+
+
+def warn_off_grid_windows(measures, window_duration_ns, window_slide_ns):
+    for measure in measures:
+        freq_nhz = measure['freq_nhz']
+        if (window_duration_ns * freq_nhz) % 10 ** 18 == 0 and (window_slide_ns * freq_nhz) % 10 ** 18 == 0:
+            continue
+        warnings.warn(
+            f"Measure {measure['tag']} has {window_duration_ns * freq_nhz / 10 ** 18:g} samples per window and "
+            f"{window_slide_ns * freq_nhz / 10 ** 18:g} samples per slide. Each window holds "
+            f"{(window_duration_ns * freq_nhz) // 10 ** 18} samples and starts at the sample nearest its start time, "
+            f"so windows advance by a varying number of samples and some samples can fall between windows. "
+            f"Use a window duration and slide that are multiples of every measure's sample period to avoid this.")
 
 
 def get_threshold_labels(sliced_labels, label_threshold=0.5):
@@ -56,8 +78,8 @@ def get_signal_dictionary(sdk, device_id, query_patient_id, window_duration_ns, 
 
         # Create a time array for this specific measure
         measure_window_size = int(window_duration_ns // period_ns)
-        measure_slide_size = int(window_slide_ns // period_ns)
-        measure_batch_size = measure_window_size + (batch_num_windows - 1) * measure_slide_size
+        measure_window_starts = window_start_indices(batch_num_windows, window_slide_ns, period_ns)
+        measure_batch_size = measure_window_size + int(measure_window_starts[-1])
         measure_quantized_end_time = batch_start_time + (measure_batch_size * period_ns)
         measure_filled_time_array = np.arange(batch_start_time, measure_quantized_end_time, period_ns)
         measure_filled_value_array = np.full(measure_filled_time_array.shape, np.nan)
@@ -86,18 +108,14 @@ def get_signal_dictionary(sdk, device_id, query_patient_id, window_duration_ns, 
         windowed_measure_times = sliding_window_view(measure_filled_time_array, measure_window_size)
         windowed_measure_values = sliding_window_view(measure_filled_value_array, measure_window_size)
 
-        # Slide the windows
-        sliced_windowed_measure_times = windowed_measure_times[::measure_slide_size]
-        sliced_windowed_measure_values = windowed_measure_values[::measure_slide_size]
-
-        # Store the measure's time and value arrays in the batch data dictionary
+        # Store the measure's windowed time and value arrays, and each window's start index, in the batch data dictionary
         source_batch_data_dictionary[measure_id] = \
-            (sliced_windowed_measure_times, sliced_windowed_measure_values, measure_window_size)
+            (windowed_measure_times, windowed_measure_values, measure_window_size, measure_window_starts)
     return source_batch_data_dictionary
 
 
 def get_label_data(device_id, query_patient_id, batch_start_time, batch_end_time, batch_time_array, sdk,
-                   row_size, slide_size, label_sets, label_threshold, label_exact_match=False):
+                   row_size, window_starts, label_sets, label_threshold, label_exact_match=False):
     sliced_labels, threshold_labels = None, None
     # If labels exist, calculate them
     if len(label_sets) > 0:
@@ -120,20 +138,21 @@ def get_label_data(device_id, query_patient_id, batch_start_time, batch_end_time
         # Create label windows
         windowed_label_views = sliding_window_view(
             label_matrix, (len(label_sets), row_size), axis=None)
-        sliced_labels = windowed_label_views[0][::slide_size]
+        sliced_labels = windowed_label_views[0][window_starts]
 
         threshold_labels = get_threshold_labels(sliced_labels, label_threshold=label_threshold)
     return sliced_labels, threshold_labels
 
 
 def get_label_dictionary(sdk, device_id, query_patient_id, source_batch_start_time, source_batch_end_time, label_sets,
-                         label_threshold, range_num_windows, row_period_ns, row_size, slide_size, label_exact_match=False):
-    range_size = row_size + (range_num_windows - 1) * slide_size
+                         label_threshold, range_num_windows, row_period_ns, row_size, window_slide_ns, label_exact_match=False):
+    window_starts = window_start_indices(range_num_windows, window_slide_ns, row_period_ns)
+    range_size = row_size + int(window_starts[-1])
     quantized_end_time = source_batch_start_time + (range_size * row_period_ns)
     source_time_array = np.arange(source_batch_start_time, quantized_end_time, row_period_ns)
     sliced_labels, threshold_labels = get_label_data(
         device_id, query_patient_id, source_batch_start_time, source_batch_end_time, source_time_array,
-        sdk, row_size, slide_size, label_sets, label_threshold, label_exact_match=label_exact_match
+        sdk, row_size, window_starts, label_sets, label_threshold, label_exact_match=label_exact_match
     )
     return sliced_labels, threshold_labels
 
@@ -166,9 +185,10 @@ def get_window_list(device_id, patient_id, validated_measure_list, source_batch_
             measure_freq_hz = float(measure_freq_nhz / (10 ** 9))
             measure_units = measure['units']
 
-            window_times = source_batch_data_dictionary[measure_id][0][window_i]
+            window_start_i = source_batch_data_dictionary[measure_id][3][window_i]
+            window_times = source_batch_data_dictionary[measure_id][0][window_start_i]
 
-            window_values = source_batch_data_dictionary[measure_id][1][window_i]
+            window_values = source_batch_data_dictionary[measure_id][1][window_start_i]
             measure_expected_count = source_batch_data_dictionary[measure_id][2]
 
             signal_dictionary[(measure_tag, measure_freq_hz, measure_units)] = \

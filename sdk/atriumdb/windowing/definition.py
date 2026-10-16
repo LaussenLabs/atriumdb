@@ -26,7 +26,7 @@ from atriumdb.adb_functions import time_unit_options
 from atriumdb.windowing.definition_builder import build_source_intervals
 from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.windowing_functions import get_signal_dictionary, get_label_dictionary, get_window_list, \
-    _load_patient_cache
+    _load_patient_cache, warn_off_grid_windows
 from atriumdb.windowing.definition_combine import combine_definitions
 
 
@@ -327,9 +327,9 @@ class DatasetDefinition:
                 f"({self.filtered_window_slide} ns). Refiltering will alter the window positions."
             )
 
+        warn_off_grid_windows(self.validated_data_dict['measures'], window_duration, window_slide)
         highest_freq_nhz = max([measure['freq_nhz'] for measure in self.validated_data_dict['measures']])
         row_size = int((highest_freq_nhz * window_duration) // (10 ** 18))
-        slide_size = int((highest_freq_nhz * window_slide) // (10 ** 18))
         row_period_ns = int((10 ** 18) // highest_freq_nhz)
 
         filtered_sources = {}
@@ -376,7 +376,7 @@ class DatasetDefinition:
                     sliced_labels, threshold_labels = get_label_dictionary(
                         sdk, device_id, None, start_time, end_time,
                         self.validated_data_dict['labels'],
-                        label_threshold, num_windows, row_period_ns, row_size, slide_size)
+                        label_threshold, num_windows, row_period_ns, row_size, window_slide)
 
                     batch_window_list = get_window_list(device_id, patient_id, self.validated_data_dict['measures'], data_dictionary,
                                                         start_time, num_windows, window_duration, window_slide,

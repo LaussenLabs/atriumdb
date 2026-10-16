@@ -69,7 +69,7 @@ class FilteredDatasetIterator(DatasetIterator):
 
             sliced_labels, threshold_labels = get_label_dictionary(
                 self.sdk, device_id, query_patient_id, source_batch_start_time, source_batch_end_time, self.label_sets,
-                self.label_threshold, range_num_windows, self.row_period_ns, self.row_size, self.slide_size, label_exact_match=self.label_exact_match)
+                self.label_threshold, range_num_windows, self.row_period_ns, self.row_size, self.window_slide_ns, label_exact_match=self.label_exact_match)
 
             patient_history_fields = self.patient_history_fields
 
