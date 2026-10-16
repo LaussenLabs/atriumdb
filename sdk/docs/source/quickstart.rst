@@ -102,6 +102,17 @@ We will start by pulling a record from the MITDB database using the `wfdb` libra
     record = wfdb.rdrecord(record_name, pn_dir=pn_dir, return_res=64, smooth_frames=False, m2s=False, physical=False)
     segments = record.segments if isinstance(record, wfdb.MultiRecord) else [record]
 
+Digital Values and Scale Factors
+#######################################
+
+When you have them, write the integers the device recorded (the digital values) with the scale factors
+`scale_m` and `scale_b`, where analog = `scale_m` * digital + `scale_b`. AtriumDB compresses integers far better
+than floating-point values, and reading with `analog=True` applies the scale factors for you.
+
+If you only have floating-point values, write them as they are. AtriumDB stores a block as integers when it finds a
+scale that reproduces every value in it exactly, and as plain doubles otherwise, so floating-point data is always
+stored without loss.
+
 Inserting Signals
 ######################################################################################################################
 

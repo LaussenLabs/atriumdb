@@ -71,6 +71,10 @@ class Block:
         values = np.array(values, dtype=np.int64) if raw_value_type == VALUE_TYPES['INT64'] else \
             np.array(values, dtype=np.float64)
 
+        # Blocks re-encoded from scaled integers start again from their doubles.
+        if encoded_value_type == VALUE_TYPES['SCALED_INT64']:
+            encoded_value_type = VALUE_TYPES['DOUBLE']
+
         # Calculate the number of blocks needed to store the data
         num_blocks = max(1, values.size // self.block_size)
 
@@ -89,6 +93,9 @@ class Block:
                                raw_time_type, raw_value_type, encoded_time_type, encoded_value_type,
                                freq_nhz=freq_nhz, period_ns=period_ns,
                                scale_m=scale_m, scale_b=scale_b, time_data=time_info_data)
+
+        if encoded_value_type == VALUE_TYPES['DOUBLE']:
+            values, v_block_start = scale_float_blocks(values, headers, v_block_start)
 
         # Encode the blocks using the wrapped_dll's encode_blocks_sdk function
         encoded_bytes, byte_start_array = self.wrapped_dll.encode_blocks_sdk(
@@ -930,3 +937,89 @@ def merge_interval_data(blocked_interval_data, period_ns):
 
     # Convert the merged_intervals list into a flattened NumPy array with the int64 data type and return it
     return np.array(merged_intervals, dtype=np.int64).flatten()
+
+
+def scale_float_blocks(values, headers, v_block_start):
+    """
+    Store each block of doubles as integers k, with a scale and offset, when every value equals
+    (k - offset) / scale bit for bit. Blocks that don't round-trip exactly stay doubles.
+    Returns the value bytes to encode and their block start offsets.
+    """
+    parts, starts, pos, found, any_scaled = [], [], 0, None, False
+    for header, start in zip(headers, v_block_start):
+        block = values[int(start) // 8:int(start) // 8 + header.num_vals]
+        k = None
+        # Small blocks gain little, and the stored scale must not make a block decode larger than its doubles.
+        if header.num_vals >= 1024:
+            k = scaled_ints(block, *found) if found else None
+            if k is None:
+                found = find_float_scale(block)
+                k = scaled_ints(block, *found) if found else None
+        if k is not None:
+            header.v_encoded_type = VALUE_TYPES['SCALED_INT64']
+            block = np.concatenate([np.array(found).view(np.int64), k])
+            any_scaled = True
+        starts.append(pos)
+        parts.append(block.view(np.uint8))
+        pos += parts[-1].size
+    if not any_scaled:
+        return values, v_block_start
+    return np.concatenate(parts), np.array(starts, dtype=np.uint64)
+
+
+def find_float_scale(values):
+    """
+    Look for a scale and offset that turn the finite values into integers exactly, as ADC samples
+    converted to physical units or decimal text usually allow. Returns (scale, offset) or None.
+    """
+    finite = values[np.isfinite(values)]
+    if finite.size < 16:
+        return None
+    sample = finite[:1024]
+    for scale in _float_scale_candidates(finite):
+        with np.errstate(all="ignore"):
+            scaled = sample * scale
+            steps = scaled - scaled[0]
+            # On an integer grid, the values are whole steps apart.
+            if not np.max(np.abs(steps - np.rint(steps))) < 1e-3:
+                continue
+        for offset in _float_offset_candidates(scaled[0]):
+            if scaled_ints(sample, scale, offset) is not None and scaled_ints(finite, scale, offset) is not None:
+                return scale, offset
+    return None
+
+
+def scaled_ints(values, scale, offset):
+    """
+    Integers k with (k - offset) / scale == values bit for bit, or None. Decoding uses the same subtraction
+    and division, which IEEE 754 rounds the same way everywhere. |k| < 2**47 keeps every delta within 7 bytes.
+    """
+    with np.errstate(all="ignore"):
+        k = np.rint(values * scale + offset)
+        if not np.all(np.abs(k) < 2 ** 47):
+            return None
+        k = k.astype(np.int64)
+        same = np.array_equal(((k.astype(np.float64) - offset) / scale).view(np.int64), values.view(np.int64))
+    return k if same else None
+
+
+def _float_scale_candidates(values):
+    # The data's own step first, since smaller integers compress better, then powers of ten for decimal data.
+    unique = np.unique(values)
+    if unique.size > 1:
+        span = unique[-1] - unique[0]
+        scale = np.rint(span / np.min(np.diff(unique))) / span
+        if np.isfinite(scale) and scale > 0:
+            for digits in range(1, 18):
+                yield float(f"{scale:.{digits}g}")
+    for exponent in range(10):
+        yield 10.0 ** exponent
+
+
+def _float_offset_candidates(first_scaled):
+    # Zero, then the offset that makes the first value whole, rounded to a few binary places.
+    yield 0.0
+    offset = float(np.rint(first_scaled) - first_scaled)
+    if offset != 0:
+        for bits in (1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16, 20):
+            yield round(offset * 2 ** bits) / 2 ** bits

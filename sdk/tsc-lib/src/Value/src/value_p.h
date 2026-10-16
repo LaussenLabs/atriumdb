@@ -50,5 +50,11 @@ size_t value_xor_f64_get_size(block_metadata_t *block_metadata);
 size_t value_xor_f64_encode(const double * value_data, void *encoded_value, block_metadata_t * block_metadata);
 void value_xor_f64_decode(void *value_data, block_metadata_t *block_metadata);
 
+/* Double stored as scaled Int64 */
+size_t value_scaled_d64_get_size(block_metadata_t *block_metadata);
+size_t value_scaled_d64_encode(const void *value_data, void *encoded_value, block_metadata_t *block_metadata,
+                               const block_options_t *block_options);
+void value_scaled_d64_decode(void *value_data, block_metadata_t *block_metadata);
+
 
 #endif //MINIMAL_SDK_VALUE_P_H
