@@ -57,7 +57,7 @@ from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
 from atriumdb.windowing.light_mapped_iterator import LightMappedIterator
 from atriumdb.windowing.random_access_iterator import MappedIterator
 from atriumdb.windowing.verify_definition import verify_definition
-from atriumdb.windowing.definition_splitter import partition_dataset
+from atriumdb.windowing.definition_splitter import partition_dataset, merge_intervals
 from atriumdb.write_buffer import WriteBuffer
 
 try:
@@ -467,6 +467,8 @@ class AtriumSDK:
         :param int end_time_n: The end epoch in nanoseconds. The end time is not inclusive.
         :param int device_id: The device identifier. If None, device_tag must be provided.
         :param int patient_id: The patient identifier. If None, mrn must be provided.
+            Data is read only from the patient's devices while they were mapped to the patient; with ``time_type=2``
+            whole blocks are returned.
         :param time_type: The type of time returned. Options are:
             - 1: Timestamps (default).
             - 2: Gap array (advanced users only).
@@ -527,6 +529,11 @@ class AtriumSDK:
 
         measure_id = int(measure_id) if measure_id is not None else measure_id
         device_id = int(device_id) if device_id is not None else device_id
+
+        if patient_id is not None and block_info is None:
+            return self._get_patient_data(measure_id, start_time_n, end_time_n, patient_id, time_type, analog,
+                                          time_units, sort, allow_duplicates, return_nan_filled, device_id)
+
         # Determine if we can use the cache
         use_cache = False
         if device_id is not None and measure_id is not None:
@@ -586,6 +593,59 @@ class AtriumSDK:
             r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
         # Convert time data from nanoseconds to unit of choice
+        if time_units != 'ns':
+            r_times = r_times / time_unit_options[time_units]
+
+        return headers, r_times, r_values
+
+    def _get_patient_data(self, measure_id, start_time_n, end_time_n, patient_id, time_type, analog, time_units,
+                          sort, allow_duplicates, return_nan_filled, device_id=None):
+        # Read each device (or only device_id) over the times it was mapped to the patient.
+        nan_fill = isinstance(return_nan_filled, np.ndarray) or bool(return_nan_filled)
+        period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
+        # A NaN-filled read puts the sample nearest each slot in it, so it reads from half a period before the start.
+        read_start_n = int(np.ceil(start_time_n - period_ns / 2)) if nan_fill else start_time_n
+        device_time_ranges = defaultdict(list)
+        for mapped_device_id, mapping_start, mapping_end in self.sql_handler.get_device_time_ranges_by_patient(
+                patient_id, end_time_n, read_start_n):
+            start, end = max(mapping_start, read_start_n), min(mapping_end, end_time_n)
+            if start < end and device_id in (None, mapped_device_id):
+                device_time_ranges[mapped_device_id].append((start, end))
+        read_ranges = [(device_id, start, end) for device_id, time_ranges in device_time_ranges.items()
+                       for start, end in merge_intervals(time_ranges)]
+
+        if nan_fill:
+            num_values = int(round((end_time_n - start_time_n) / period_ns))
+            if not isinstance(return_nan_filled, np.ndarray):
+                return_nan_filled = np.full(num_values, np.nan, dtype=np.float64)
+            elif return_nan_filled.size != num_values:
+                raise ValueError("input array must be of size int(round((end_time_n - start_time_n) / period_ns))")
+            headers = []
+            for device_id, start, end in read_ranges:
+                # Place each sample in the slot a single read would use (round half away from zero, as in the C fill).
+                range_headers, times, values = self.get_data(measure_id, start, end, device_id=device_id)
+                headers.extend(range_headers)
+                index = np.floor((times - start_time_n) / period_ns + 0.5).astype(np.int64)
+                in_bounds = (index >= 0) & (index < return_nan_filled.size)
+                return_nan_filled[index[in_bounds]] = values[in_bounds]
+            return headers, return_nan_filled
+
+        results = [self.get_data(measure_id, start, end, device_id=device_id, time_type=time_type, analog=analog,
+                                 allow_duplicates=allow_duplicates) for device_id, start, end in read_ranges]
+        results = [result for result in results if len(result[0]) > 0]
+        if len(results) == 0:
+            return [], np.array([]), np.array([])
+
+        headers = [header for result in results for header in result[0]]
+        r_times = np.concatenate([result[1] for result in results])
+        r_values = np.concatenate([result[2] for result in results])
+        if sort and time_type == 1 and len(results) > 1:
+            if allow_duplicates:
+                order = np.argsort(r_times, kind='stable')
+            else:
+                _, order = np.unique(r_times, return_index=True)
+            r_times, r_values = r_times[order], r_values[order]
+
         if time_units != 'ns':
             r_times = r_times / time_unit_options[time_units]
 
