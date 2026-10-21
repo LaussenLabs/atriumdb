@@ -377,3 +377,7 @@ def _test_iterator_patient_history(db_type, dataset_location, connection_params)
         for window in windows:
             expected_weight = 10 if window.start_time < 50 * 1_000_000_000 else 20
             assert window.patient_info['weight']['value'] == expected_weight
+
+    # Iterating and time lookups leave the SDK's own patient info unchanged.
+    sdk.get_patient_info(patient_id, time=0, time_units='s')
+    assert sdk.get_patient_info(patient_id)['weight'] == 20

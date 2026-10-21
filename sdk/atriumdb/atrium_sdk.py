@@ -2919,6 +2919,9 @@ class AtriumSDK:
         if patient_info is None or patient_id is None:
             return None
 
+        # Give the caller its own dict so changes to it do not reach the cache.
+        patient_info = dict(patient_info)
+
         # If a time was specified then get the patient info closest to that timestamp
         if time is not None:
             # make them none incase no matching info is available for the supplied time
@@ -5016,6 +5019,7 @@ class AtriumSDK:
             on to a new source, helpful for adding more randomness to the shuffle. Making it too small heavily decreases
             efficiency, making it too large will make the windows less random when shuffled. Only used when shuffling.
         :param list patient_history_fields: A list of patient_info fields you would like returned in the Window object.
+            Each window reports the latest value recorded at or before the window start.
         :param int start_time: The global minimum start time for data windows, using time_units units.
         :param int end_time: The global maximum end time for data windows, using time_units units.
 of DatasetIterator objects depending on the value of num_iterators.
