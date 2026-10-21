@@ -3663,11 +3663,14 @@ class AtriumSDK:
         - `id` (int): The encounter ID.
         - `patient_id` (int): The ID of the patient.
         - `bed_id` (int): The ID of the bed.
-        - `start_time` (float): The start time of the encounter in `time_units`.
-        - `end_time` (float or None): The end time of the encounter in `time_units`, or `None` if ongoing.
+        - `start_time` (int or float): The start time of the encounter in `time_units`: an int when `time_units` is
+          'ns' (the default), otherwise a float.
+        - `end_time` (int, float or None): The end time of the encounter in `time_units`, as for `start_time`, or
+          `None` if ongoing.
         - `source_id` (int): The source ID of the encounter.
         - `visit_number` (str or None): The visit number of the encounter, if available.
-        - `last_updated` (float): The last updated timestamp of the encounter in `time_units`.
+        - `last_updated` (int or float): The last updated timestamp of the encounter in `time_units`, as for
+          `start_time`.
 
         **Example:**
         >>> # Retrieve encounters active at a specific second-based timestamp
@@ -3710,9 +3713,9 @@ class AtriumSDK:
         # Convert times back from nanoseconds to the requested time_units
         converted_results = []
         for (enc_id, p_id, b_id, s_time, e_time, src_id, v_num, l_updated) in results:
-            start_time_converted = s_time / time_unit_options[time_units] if s_time is not None else None
-            end_time_converted = e_time / time_unit_options[time_units] if e_time is not None else None
-            last_updated_converted = l_updated / time_unit_options[time_units] if l_updated is not None else None
+            start_time_converted = convert_from_nanoseconds(s_time, time_units) if s_time is not None else None
+            end_time_converted = convert_from_nanoseconds(e_time, time_units) if e_time is not None else None
+            last_updated_converted = convert_from_nanoseconds(l_updated, time_units) if l_updated is not None else None
 
             converted_results.append(
                 (enc_id, p_id, b_id, start_time_converted, end_time_converted, src_id, v_num, last_updated_converted)
