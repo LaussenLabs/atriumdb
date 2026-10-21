@@ -396,19 +396,20 @@ def stratified_partition_by_labels(data_list, partition_ratios, random_state=Non
 
     # Normalize the partition ratios
     ratios = np.array(partition_ratios) / sum(partition_ratios)
-    target_sums = np.outer(total_sums, ratios).T
 
     # Initialize partitions and their total sums
     partitions = [[] for _ in range(len(ratios))]
     partition_sums = [np.zeros(len(total_sums), dtype=np.int64) for _ in range(len(ratios))]
     partition_source_counts = [0 for _ in range(len(ratios))]
 
-    # Function to find the best partition for the current item.
+    # Function to find the best partition for the current item: the one where adding it most reduces the summed
+    # squared error between each partition's share of every non-empty duration and its ratio.
+    non_empty = total_sums > 0
+
     def find_best_partition(item):
-        item_sums = np.array(item[3:], dtype=np.int64)
-        deficits = target_sums - partition_sums
-        deficits[deficits < 0] = np.inf
-        scores = np.sum(deficits - item_sums, axis=1)
+        item_shares = np.array(item[3:], dtype=np.float64)[non_empty] / total_sums[non_empty]
+        share_errors = np.array(partition_sums)[:, non_empty] / total_sums[non_empty] - ratios[:, None]
+        scores = np.sum(item_shares * (2 * share_errors + item_shares), axis=1)
         return np.argmin(scores)
 
     # Randomly shuffle the data list.
@@ -420,6 +421,18 @@ def stratified_partition_by_labels(data_list, partition_ratios, random_state=Non
         partitions[best_partition].append(item)
         partition_sums[best_partition] += item[3:]
         partition_source_counts[best_partition] += 1
+
+    # Move the smallest item of the fullest partition into each empty partition.
+    for empty_partition in [i for i, count in enumerate(partition_source_counts) if count == 0]:
+        donor_partition = int(np.argmax(partition_source_counts))
+        if partition_source_counts[donor_partition] > 1:
+            item = min(partitions[donor_partition], key=lambda x: x[3])
+            partitions[donor_partition].remove(item)
+            partition_sums[donor_partition] -= item[3:]
+            partition_source_counts[donor_partition] -= 1
+            partitions[empty_partition].append(item)
+            partition_sums[empty_partition] += item[3:]
+            partition_source_counts[empty_partition] += 1
 
     return partitions, partition_sums, partition_source_counts
 
