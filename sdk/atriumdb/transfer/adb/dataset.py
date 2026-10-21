@@ -90,6 +90,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         (Default False) Setting to False will reuse existing blocks where possible and significantly speed up transfer.
         Setting to True allows you to change the block size and in general will reorder the blocks by time, which can
         speed up datasets that were originally ingested in small or unordered chunks.
+    :raises ValueError: If `include_labels` is True and a selected label is on a measure that is not in the definition.
 
     Examples:
     ---------
@@ -524,9 +525,13 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                         label_dict['end_time_n'] += time_shift
 
                 # Make the list of label tuples to insert to the other dataset
+                for label in labels:
+                    if label['measure_id'] is not None and label['measure_id'] not in measure_id_map:
+                        raise ValueError(f"Label {label['label_name']!r} is on measure {label['measure_id']}, which is "
+                                         f"not in the dataset definition. Add the measure to the definition.")
                 dest_labels = [(label['label_name'], device_id_map[label['device_id']],
-                                measure_id_map[label['measure_id']], label['start_time_n'], label['end_time_n'],
-                                label['label_source_id']) for label in labels]
+                                measure_id_map.get(label['measure_id']), label['label_source'],
+                                label['start_time_n'], label['end_time_n']) for label in labels]
 
                 dest_sdk.insert_labels(dest_labels, source_type="device_id")
 
