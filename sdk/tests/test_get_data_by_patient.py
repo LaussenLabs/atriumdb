@@ -92,6 +92,14 @@ def _test_get_data_by_patient_clipped_to_mapping(db_type, dataset_location, conn
     assert np.array_equal(nan_filled_values[:10], np.arange(40, 50))
     assert np.all(np.isnan(nan_filled_values[10:]))
 
+    # Off the sample grid, each slot holds its nearest sample, and the sample at 50 s goes to the second patient.
+    for offset, first_values, second_values in [(period_ns // 3, np.arange(40, 50), np.arange(50, 60)),
+                                                (2 * period_ns // 3, np.arange(41, 50), np.arange(50, 61))]:
+        for patient_id, expected_values in [(first_patient_id, first_values), (second_patient_id, second_values)]:
+            _, nan_filled_values = sdk.get_data(measure_id, 40 * period_ns + offset, 60 * period_ns + offset,
+                                                patient_id=patient_id, return_nan_filled=True)
+            assert np.array_equal(nan_filled_values[~np.isnan(nan_filled_values)], expected_values)
+
 
 def test_get_data_by_device_and_patient():
     _test_for_both(f"{DB_NAME}-device-and-patient", _test_get_data_by_device_and_patient)

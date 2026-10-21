@@ -467,6 +467,8 @@ class AtriumSDK:
         :param int end_time_n: The end epoch in nanoseconds. The end time is not inclusive.
         :param int device_id: The device identifier. If None, device_tag must be provided.
         :param int patient_id: The patient identifier. If None, mrn must be provided.
+            Data is read only from the patient's devices while they were mapped to the patient; with ``time_type=2``
+            whole blocks are returned.
         :param time_type: The type of time returned. Options are:
             - 1: Timestamps (default).
             - 2: Gap array (advanced users only).
@@ -599,28 +601,33 @@ class AtriumSDK:
     def _get_patient_data(self, measure_id, start_time_n, end_time_n, patient_id, time_type, analog, time_units,
                           sort, allow_duplicates, return_nan_filled, device_id=None):
         # Read each device (or only device_id) over the times it was mapped to the patient.
+        nan_fill = isinstance(return_nan_filled, np.ndarray) or bool(return_nan_filled)
+        period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
+        # A NaN-filled read puts the sample nearest each slot in it, so it reads from half a period before the start.
+        read_start_n = int(np.ceil(start_time_n - period_ns / 2)) if nan_fill else start_time_n
         device_time_ranges = defaultdict(list)
         for mapped_device_id, mapping_start, mapping_end in self.sql_handler.get_device_time_ranges_by_patient(
-                patient_id, end_time_n, start_time_n):
-            start, end = max(mapping_start, start_time_n), min(mapping_end, end_time_n)
+                patient_id, end_time_n, read_start_n):
+            start, end = max(mapping_start, read_start_n), min(mapping_end, end_time_n)
             if start < end and device_id in (None, mapped_device_id):
                 device_time_ranges[mapped_device_id].append((start, end))
         read_ranges = [(device_id, start, end) for device_id, time_ranges in device_time_ranges.items()
                        for start, end in merge_intervals(time_ranges)]
 
-        if isinstance(return_nan_filled, np.ndarray) or return_nan_filled:
-            period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
+        if nan_fill:
+            num_values = int(round((end_time_n - start_time_n) / period_ns))
             if not isinstance(return_nan_filled, np.ndarray):
-                return_nan_filled = np.full(round((end_time_n - start_time_n) / period_ns), np.nan, dtype=np.float64)
+                return_nan_filled = np.full(num_values, np.nan, dtype=np.float64)
+            elif return_nan_filled.size != num_values:
+                raise ValueError("input array must be of size int(round((end_time_n - start_time_n) / period_ns))")
             headers = []
             for device_id, start, end in read_ranges:
-                # Read on the output's sample grid so each value lands in the same slot as a single read would place it.
-                first = int(np.ceil((start - start_time_n) / period_ns))
-                last = min(int(np.ceil((end - start_time_n) / period_ns)), return_nan_filled.size)
-                if first < last:
-                    headers.extend(self.get_data(
-                        measure_id, start_time_n + round(first * period_ns), start_time_n + round(last * period_ns),
-                        device_id=device_id, return_nan_filled=return_nan_filled[first:last])[0])
+                # Place each sample in the slot a single read would use (round half away from zero, as in the C fill).
+                range_headers, times, values = self.get_data(measure_id, start, end, device_id=device_id)
+                headers.extend(range_headers)
+                index = np.floor((times - start_time_n) / period_ns + 0.5).astype(np.int64)
+                in_bounds = (index >= 0) & (index < return_nan_filled.size)
+                return_nan_filled[index[in_bounds]] = values[in_bounds]
             return headers, return_nan_filled
 
         results = [self.get_data(measure_id, start, end, device_id=device_id, time_type=time_type, analog=analog,
