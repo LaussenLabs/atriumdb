@@ -75,6 +75,16 @@ def test_stratified_partition_uneven_ratios():
     assert len(splits) > 1
 
 
+def test_stratified_partition_no_empty_partition():
+    """
+    Every partition gets an item when there are at least as many items as partitions.
+    """
+    data_list = [["patient_ids", patient_id, [], 3600 * 10 ** 9] for patient_id in range(3)]
+    for seed in range(10):
+        _, _, counts = stratified_partition_by_labels(data_list, [60, 20, 20], random_state=seed)
+        assert counts == [1, 1, 1]
+
+
 def generate_data_list(num_entries):
     data_list = []
 

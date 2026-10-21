@@ -422,6 +422,18 @@ def stratified_partition_by_labels(data_list, partition_ratios, random_state=Non
         partition_sums[best_partition] += item[3:]
         partition_source_counts[best_partition] += 1
 
+    # Move the smallest item of the fullest partition into each empty partition.
+    for empty_partition in [i for i, count in enumerate(partition_source_counts) if count == 0]:
+        donor_partition = int(np.argmax(partition_source_counts))
+        if partition_source_counts[donor_partition] > 1:
+            item = min(partitions[donor_partition], key=lambda x: x[3])
+            partitions[donor_partition].remove(item)
+            partition_sums[donor_partition] -= item[3:]
+            partition_source_counts[donor_partition] -= 1
+            partitions[empty_partition].append(item)
+            partition_sums[empty_partition] += item[3:]
+            partition_source_counts[empty_partition] += 1
+
     return partitions, partition_sums, partition_source_counts
 
 
