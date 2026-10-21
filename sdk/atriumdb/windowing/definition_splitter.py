@@ -20,6 +20,7 @@ from atriumdb.windowing.definition import DatasetDefinition
 import numpy as np
 import random
 import bisect
+from itertools import accumulate
 import copy
 from tqdm import tqdm
 
@@ -280,7 +281,7 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
     for device_id in device_labels.keys():
         device_labels[device_id] = sorted(device_labels[device_id], key=lambda x: (x['start_time_n'], x['end_time_n']))
         label_starts[device_id] = [entry['start_time_n'] for entry in device_labels[device_id]]
-        label_ends[device_id] = [entry['end_time_n'] for entry in device_labels[device_id]]
+        label_ends[device_id] = list(accumulate((entry['end_time_n'] for entry in device_labels[device_id]), max))
 
     # Process additional labels if provided.
     additional_device_labels = {}
@@ -311,7 +312,8 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
                                                          key=lambda x: (x['start_time_n'], x['end_time_n']))
             additional_label_starts[device_id] = [entry['start_time_n'] for entry in
                                                   additional_device_labels[device_id]]
-            additional_label_ends[device_id] = [entry['end_time_n'] for entry in additional_device_labels[device_id]]
+            additional_label_ends[device_id] = list(accumulate(
+                (entry['end_time_n'] for entry in additional_device_labels[device_id]), max))
 
     patient_results = {}
     # This will hold additional label durations per patient.
@@ -350,7 +352,7 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
             for label in range_labels:
                 if label['label_name_id'] in label_to_index_dict:
                     label_index = label_to_index_dict[label['label_name_id']]
-                    label_duration = label['end_time_n'] - label['start_time_n']
+                    label_duration = min(label['end_time_n'], end_time) - max(label['start_time_n'], start_time)
                     patient_results[patient_id]["durations"][label_index + 1] += label_duration
 
             # Fetch and tally additional labels if applicable.
@@ -368,7 +370,7 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
                 for label in range_additional_labels:
                     if label['label_name_id'] in additional_label_to_index_dict:
                         label_index = additional_label_to_index_dict[label['label_name_id']]
-                        label_duration = label['end_time_n'] - label['start_time_n']
+                        label_duration = min(label['end_time_n'], end_time) - max(label['start_time_n'], start_time)
                         patient_additional_results[patient_id][label_index] += label_duration
 
     # Merge and sort the time ranges per patient.
@@ -582,20 +584,11 @@ def get_random_states(n_trials, random_state=None):
 
 
 def find_labels(sorted_labels, starts, ends, start_time, end_time):
+    # ends holds the running maximum of end times, so it stays sorted when labels nest.
     start_idx = bisect.bisect_left(ends, start_time)
-    end_idx = bisect.bisect_left(ends, end_time)
+    end_idx = bisect.bisect_right(starts, end_time)
 
-    if start_idx == end_idx:
-        if start_idx >= len(starts):
-            return []
-        if (not (starts[start_idx] <= start_time <= ends[start_idx])
-                and not (starts[end_idx] <= end_time <= ends[end_idx])):
-            return []
-
-    if end_idx < len(starts) and end_time < starts[end_idx]:
-        end_idx = max(0, end_idx - 1)
-
-    return sorted_labels[start_idx:end_idx + 1]
+    return [label for label in sorted_labels[start_idx:end_idx] if label['end_time_n'] >= start_time]
 
 
 def pretty_print_duration_info(duration_info, header=None, priority_labels=None, additional_labels=None,
