@@ -234,6 +234,7 @@ class LightMappedIterator(DatasetIterator):
                     out=label_time_series[idx],
                     include_descendants=not self.label_exact_match,
                 )
+            label_time_series[:, label_timestamp_array >= source_info['end_time']] = 0
             label = (np.mean(label_time_series, axis=1) > self.label_threshold).astype(np.int8)
 
         # Create Window object
