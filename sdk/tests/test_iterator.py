@@ -251,3 +251,24 @@ def get_index_of_first_nan(arr):
     if nan_index == 0 and not np.isnan(arr[0]):
         return len(arr) - 1
     return nan_index
+
+
+def test_cached_windows_per_source():
+    _test_for_both(f"{DB_NAME}_cached_windows", _test_cached_windows_per_source)
+
+
+def _test_cached_windows_per_source(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+    measure_id = sdk.insert_measure("test_measure", 1, "units", freq_units="Hz")
+    device_id = sdk.insert_device("test_device")
+    sdk.write_segment(measure_id, device_id, np.arange(60), 0, freq=1, time_units="s", freq_units="Hz",
+                      scale_m=1.0, scale_b=0.0)
+
+    # Windows inside the data come back whole, and the caller's definition keeps its one range.
+    definition = DatasetDefinition(measures=["test_measure"], device_ids={device_id: [{"start": 0, "end": 60 * 10 ** 9}]})
+    windows = list(sdk.get_iterator(definition, 10, 5, time_units="s", shuffle=1, cached_windows_per_source=2))
+    full_windows = [window for window in windows if window.start_time <= 50 * 10 ** 9]
+    assert len(full_windows) == 11
+    assert all(not np.isnan(window.signals[("test_measure", 1.0, "units")]["values"]).any() for window in full_windows)
+    assert definition.validated_data_dict["sources"]["device_ids"][device_id] == [[0, 60 * 10 ** 9]]

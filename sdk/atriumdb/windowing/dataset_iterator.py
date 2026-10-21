@@ -91,7 +91,7 @@ class DatasetIterator:
         if shuffle is not False and max_cache_duration is not None:
             assert max_cache_duration >= window_duration_ns, \
                 "max_cache_duration must be greater than window_duration_ns"
-            self._split_time_ranges(max_cache_duration)
+            self._split_time_ranges(max_cache_duration, int(window_duration_ns), int(window_slide_ns))
 
         self.shuffle = shuffle
 
@@ -175,16 +175,13 @@ class DatasetIterator:
         self.matrix_cache = []
         self.cache_window_i = 0
 
-    def _split_time_ranges(self, max_duration):
-        for source_type, sources in self.sources.items():
-            for source_id, time_ranges in sources.items():
-                new_time_ranges = []
-                for start, end in time_ranges:
-                    while start + max_duration < end:
-                        new_time_ranges.append([start, start + max_duration])
-                        start += max_duration
-                    new_time_ranges.append([start, end])
-                self.sources[source_type][source_id] = new_time_ranges
+    def _split_time_ranges(self, max_duration, window_duration_ns, window_slide_ns):
+        # Each chunk holds whole windows: [first window start, window start limit, data end].
+        step = ((max_duration - window_duration_ns) // window_slide_ns + 1) * window_slide_ns
+        self.sources = {source_type: {source_id: [[s, min(s + step, end), end] for start, end in time_ranges
+                                                  for s in range(start, end, step)]
+                                      for source_id, time_ranges in sources.items()}
+                        for source_type, sources in self.sources.items()}
 
 
     def _extract_cache_info(self):
@@ -192,8 +189,8 @@ class DatasetIterator:
         flattened_sources = []
         for source_type, sources in self.sources.items():
             for source_id, time_ranges in sources.items():
-                for range_start_time, range_end_time in time_ranges:
-                    flattened_sources.append([source_type, source_id, range_start_time, range_end_time])
+                for time_range in time_ranges:
+                    flattened_sources.append([source_type, source_id, time_range[0], time_range[1], time_range[-1]])
 
         # Shuffling if random_gen is not None
         if self.random_gen is not None:
@@ -207,13 +204,13 @@ class DatasetIterator:
         current_batch_num_windows = 0
 
         for source in flattened_sources:
-            source_type, source_id, range_start_time, range_end_time = source
+            source_type, source_id, range_start_time, window_start_end, range_end_time = source
             num_time_range_windows = 0
             time_range_info_start = cur_window_start = range_start_time
             time_range_info_end = cur_window_end = cur_window_start + self.window_duration_ns
 
             # While the next window is valid
-            while cur_window_start < range_end_time:
+            while cur_window_start < window_start_end:
 
                 # Increment Window Counters
                 num_time_range_windows += 1
