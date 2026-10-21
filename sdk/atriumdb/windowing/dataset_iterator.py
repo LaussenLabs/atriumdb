@@ -17,7 +17,6 @@
 
 
 from bisect import bisect_right
-import warnings
 import random
 import pickle
 import hashlib
@@ -28,7 +27,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 from atriumdb.windowing.window import Window
 from atriumdb.windowing.windowing_functions import get_signal_dictionary, find_closest_measurement, \
-    get_label_dictionary, _get_patient_info_from_cache, _load_patient_cache, get_window_list
+    get_label_dictionary, _get_patient_info_from_cache, _load_patient_cache, get_window_list, warn_off_grid_windows
 
 
 class DatasetIterator:
@@ -107,21 +106,7 @@ class DatasetIterator:
         # Compute the matrix's row size based on the lowest period and the window duration in nanoseconds.
         # Determines how many data points fit in a single window.
 
-        # Emitting warnings for row_size, slide_size, and row_period_ns
-
-        if self.window_duration_ns % self.lowest_period_ns != 0:
-            warnings.warn(
-                f'Given window duration of {window_duration_ns / 1e9} seconds and signal period of '
-                f'{self.lowest_period_ns / (10 ** 9)} seconds result in a non-integer number of signals in the window. '
-                f'window size / row size will round down'
-            )
-
-        if self.window_slide_ns % self.lowest_period_ns != 0:
-            warnings.warn(
-                f'Given sliding window duration of {window_slide_ns / 1e9} seconds and signal period of '
-                f'{self.lowest_period_ns / (10 ** 9)} seconds result in a non-integer number of signals in the slide. '
-                f'slide will round down'
-            )
+        warn_off_grid_windows(self.measures, self.window_duration_ns, self.window_slide_ns)
 
         self.row_size = int(self.window_duration_ns // self.lowest_period_ns)
 
@@ -294,7 +279,7 @@ class DatasetIterator:
 
             sliced_labels, threshold_labels = get_label_dictionary(
                 self.sdk, device_id, query_patient_id, source_batch_start_time, source_batch_end_time, self.label_sets,
-                self.label_threshold, range_num_windows, self.row_period_ns, self.row_size, self.slide_size,
+                self.label_threshold, range_num_windows, self.row_period_ns, self.row_size, self.window_slide_ns,
                 label_exact_match=self.label_exact_match)
 
             patient_history_fields = self.patient_history_fields
