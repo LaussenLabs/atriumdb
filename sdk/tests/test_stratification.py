@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import random
 
-from atriumdb.windowing.definition_splitter import stratified_partition_by_labels
+from atriumdb.windowing.definition_splitter import stratified_partition_by_labels, warn_shared_device_time
 from tests.testing_framework import scaled
 
 
@@ -78,3 +78,9 @@ def generate_data_list(num_entries):
         data_list.append([first_column, second_column, [[]]] + durations)
 
     return data_list
+
+
+def test_warn_shared_device_time():
+    # Device 1 is mapped to patients 10 and 11 between 50 and 100.
+    with pytest.warns(UserWarning, match="2 patients share device time"):
+        warn_shared_device_time({(1, 10): [(0, 100)], (1, 11): [(50, 150)], (2, 12): [(0, 100)]})

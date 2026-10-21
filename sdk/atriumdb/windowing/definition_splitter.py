@@ -22,6 +22,7 @@ import numpy as np
 import random
 import bisect
 import copy
+import warnings
 from tqdm import tqdm
 
 
@@ -87,6 +88,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     validated_measure_list = validated_data['measures']
     validated_label_set_list = validated_data['labels']
     validated_sources = validated_data['sources']
+    warn_shared_device_time(validated_sources.get('device_patient_tuples', {}))
 
     # Convert priority stratification labels to label set IDs, using the SDK if necessary.
     priority_stratification_label_set_ids = get_priority_stratification_label_set_ids(
@@ -225,6 +227,22 @@ def get_priority_stratification_label_set_ids(priority_labels, validated_label_s
         raise ValueError(f"label names: {missing_label_names} with label_name_ids {missing_label_ids} are not in the validated label set list.")
 
     return label_set_ids
+
+
+def warn_shared_device_time(device_patient_tuples):
+    # A device mapped to two patients at once records the same samples for both, so they can reach two partitions.
+    rows = sorted((device_id, start, end, patient_id)
+                  for (device_id, patient_id), time_ranges in device_patient_tuples.items() for start, end in time_ranges)
+    shared_patient_ids, latest = set(), {}
+    for device_id, start, end, patient_id in rows:
+        latest_end, latest_patient_id = latest.get(device_id, (start, patient_id))
+        if start < latest_end and patient_id != latest_patient_id:
+            shared_patient_ids.update((patient_id, latest_patient_id))
+        if end > latest_end:
+            latest[device_id] = (end, patient_id)
+    if shared_patient_ids:
+        warnings.warn(f"{len(shared_patient_ids)} patients share device time with another patient. Samples from that "
+                      f"time can appear in more than one partition.")
 
 
 def merge_intervals(intervals):
