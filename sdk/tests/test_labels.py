@@ -18,7 +18,7 @@
 import pytest
 import numpy as np
 
-from atriumdb import AtriumSDK
+from atriumdb import AtriumSDK, DatasetDefinition
 from tests.testing_framework import _test_for_both
 
 DB_NAME = 'labels'
@@ -164,3 +164,24 @@ def _test_labels(db_type, dataset_location, connection_params):
     with pytest.raises(ValueError):
         sdk.get_label_time_series(label_name=label_name, device_tag=device_tag, time_units="ms")
 
+
+
+def test_lightmapped_labels_off_grid():
+    _test_for_both(f"{DB_NAME}-lightmapped", _test_lightmapped_labels_off_grid)
+
+
+def _test_lightmapped_labels_off_grid(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+    device_id = sdk.insert_device("bed")
+    for tag, freq in [("fast", 62.5), ("hr", 1), ("slow", 0.5)]:
+        measure_id = sdk.insert_measure(tag, freq, "units", freq_units="Hz")
+        sdk.write_segment(measure_id, device_id, np.zeros(int(70 * freq)), 0, freq=freq, time_units="s",
+                          freq_units="Hz", scale_m=1.0, scale_b=0.0)
+    sdk.insert_label("event", 0, 70, device=device_id, time_units="s")
+
+    # 62.5 Hz does not fit a 1 s window, and 0.5 Hz listed after 1 Hz leaves half a period at the end of a 7 s window.
+    for measures, window_s in [(["fast"], 1), (["hr", "slow"], 7)]:
+        definition = DatasetDefinition(measures=measures, device_ids={device_id: "all"}, labels=["event"])
+        windows = list(sdk.get_iterator(definition, window_s, window_s, time_units="s", iterator_type="lightmapped"))
+        assert len(windows) == 70 // window_s

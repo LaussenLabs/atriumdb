@@ -194,10 +194,11 @@ class LightMappedIterator(DatasetIterator):
             measure_times = (np.arange(measure_expected_count) * period_ns) + window_start_time
             measure_values = np.full(measure_times.shape, np.nan)
             if len(measure_values) > 0:
+                measure_end_time = window_end_time
                 if measure_expected_count != int(round((window_end_time - window_start_time) / period_ns)):
-                    window_end_time = window_start_time + int(round(measure_expected_count * period_ns))
+                    measure_end_time = window_start_time + int(round(measure_expected_count * period_ns))
                 # Partial windows are NaN-filled past the end of the source range.
-                data_end_time = min(window_end_time, source_info['end_time'])
+                data_end_time = min(measure_end_time, source_info['end_time'])
                 num_values = int(round((data_end_time - window_start_time) / period_ns))
                 if num_values > 0:
                     self.sdk.get_data(
@@ -224,7 +225,8 @@ class LightMappedIterator(DatasetIterator):
             # Preallocate label matrix
             label_time_series_num_samples = int(self.window_duration_ns // self.lowest_period_ns)
             label_time_series = np.zeros((len(self.label_sets), label_time_series_num_samples), dtype=np.int8)
-            label_timestamp_array = np.arange(window_start_time, window_end_time, self.lowest_period_ns, dtype=np.int64)
+            label_timestamp_array = (window_start_time +
+                                     np.arange(label_time_series_num_samples, dtype=np.int64) * self.lowest_period_ns)
 
             # Populate label matrix
             for idx, label_set_id in enumerate(self.label_sets):
