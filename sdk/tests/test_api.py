@@ -21,17 +21,18 @@ from atriumdb.atrium_sdk import AtriumSDK
 from tests.mock_api.app import app
 from tests.mock_api.sdk_dependency import get_sdk_instance
 from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset
-from tests.testing_framework import _test_for_both
+from tests.testing_framework import _test_for_both, free_port
 import pytest
 
 DB_NAME = 'api_test'
 MAX_RECORDS = 2
 SEED = 42
+API_PORT = free_port()
 
 
 def test_api():
     def start_server():
-        uvicorn.run(app, port=8123)
+        uvicorn.run(app, port=API_PORT)
 
     # start server in daemon thread so it exits when complete
     api_thread = threading.Thread(target=start_server, daemon=True)
@@ -56,7 +57,7 @@ def _test_api(db_type, dataset_location, connection_params):
     app.dependency_overrides[get_sdk_instance] = lambda: sdk
 
     # set up remote mode sdk to connect to the api
-    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="http://127.0.0.1:8123", validate_token=False)
+    api_sdk = AtriumSDK(metadata_connection_type="api", api_url=f"http://127.0.0.1:{API_PORT}", validate_token=False)
     # change the sdk token expiry so the test can work
     api_sdk.token_expiry = time.time() + 1_000_000
 
@@ -77,7 +78,7 @@ def _test_api_labels(db_type, dataset_location, connection_params):
     app.dependency_overrides[get_sdk_instance] = lambda: sdk
 
     # set up remote mode sdk to connect to the api
-    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="http://127.0.0.1:8123", validate_token=False)
+    api_sdk = AtriumSDK(metadata_connection_type="api", api_url=f"http://127.0.0.1:{API_PORT}", validate_token=False)
     # change the sdk token expiry so the test can work
     api_sdk.token_expiry = time.time() + 1_000_000
 
@@ -370,7 +371,7 @@ def _test_api_device_patient_mapping(db_type, dataset_location, connection_param
     app.dependency_overrides[get_sdk_instance] = lambda: sdk
 
     # set up remote mode sdk to connect to the api
-    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="http://127.0.0.1:8123", validate_token=False)
+    api_sdk = AtriumSDK(metadata_connection_type="api", api_url=f"http://127.0.0.1:{API_PORT}", validate_token=False)
     api_sdk.token_expiry = time.time() + 1_000_000
 
     # insert three devices and three patients with three back-to-back encounters
