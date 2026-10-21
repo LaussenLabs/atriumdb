@@ -67,3 +67,18 @@ def _test_out_of_order_patient_intervals(db_type, dataset_location, connection_p
 
     assert np.array_equal(actual_interval_array, expected_interval_array)
 
+    # A concurrent device fills the gap in another device's data.
+    patient_id_2 = sdk.insert_patient()
+    device_id_3 = sdk.insert_device("dev3")
+    device_id_4 = sdk.insert_device("dev4")
+    sdk.insert_device_patient_data([(device_id_3, patient_id_2, 20_000 * 10 ** 9, 21_200 * 10 ** 9),
+                                    (device_id_4, patient_id_2, 20_000 * 10 ** 9, 21_200 * 10 ** 9)])
+
+    for device_id, start_epoch_s, end_epoch_s in [(device_id_3, 20_000, 20_400), (device_id_3, 20_900, 21_200),
+                                                  (device_id_4, 20_300, 21_000)]:
+        times = np.arange(start_epoch_s * 10 ** 9, end_epoch_s * 10 ** 9, period_ns, dtype=np.int64)
+        sdk.write_data_easy(measure_id, device_id, times, np.zeros(times.size, dtype=np.int64), freq_nhz)
+
+    actual_interval_array = sdk.get_interval_array(measure_id, patient_id=patient_id_2)
+
+    assert np.array_equal(actual_interval_array, np.array([[20_000 * 10 ** 9, 21_200 * 10 ** 9]], dtype=np.int64))

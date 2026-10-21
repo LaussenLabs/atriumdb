@@ -492,7 +492,8 @@ class SQLHandler(ABC):
 
                     interval_results.extend(encounter_intervals)
 
-            return interval_results
+            # Match the device query's ordering; callers merge assuming start order across devices.
+            return sorted(interval_results, key=lambda row: (row[3], row[4]))
 
         # Query by device.
         args = (int(measure_id), int(device_id))
