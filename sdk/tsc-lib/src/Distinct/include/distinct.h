@@ -25,9 +25,11 @@
 #define MINIMAL_SDK_DISTINCT_H
 #include <stdint.h>
 
-/* These functions don't ask for more memory, and they preserve the order of the array */
-uint64_t count_num_distinct_d64(const int64_t *arr, uint64_t arr_len);
-void count_arr_distinct_d64(const int64_t *arr, uint64_t arr_len, uint64_t num_distinct,
-                                int64_t *distinct_elements, uint64_t *distinct_count);
+/* These functions don't ask for more memory, and they preserve the order of the array.
+ * distinct_elements and distinct_count hold arr_len values, and table holds
+ * distinct_table_size_d64(arr_len) values. Returns the number of distinct values. */
+uint64_t distinct_table_size_d64(uint64_t arr_len);
+uint64_t count_arr_distinct_d64(const int64_t *arr, uint64_t arr_len, int64_t *distinct_elements,
+                                uint64_t *distinct_count, uint64_t *table);
 
 #endif //MINIMAL_SDK_DISTINCT_H
