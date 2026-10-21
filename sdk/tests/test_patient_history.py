@@ -16,7 +16,8 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import time
-from atriumdb import AtriumSDK
+import numpy as np
+from atriumdb import AtriumSDK, DatasetDefinition
 import threading
 import uvicorn
 from tests.testing_framework import _test_for_both
@@ -347,3 +348,36 @@ def _test_patient_history_api(db_type, dataset_location, connection_params):
 
     # close api connection
     api_sdk.close()
+
+
+def test_iterator_patient_history():
+    _test_for_both(f"{DB_NAME}_iterator", _test_iterator_patient_history)
+
+
+def _test_iterator_patient_history(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    measure_id = sdk.insert_measure("test_measure", 1, "units", freq_units="Hz")
+    device_id = sdk.insert_device("test_device")
+    sdk.write_segment(measure_id, device_id, np.arange(100), 0, freq=1, time_units="s", freq_units="Hz",
+                      scale_m=1.0, scale_b=0.0)
+
+    patient_id = sdk.insert_patient()
+    sdk.insert_device_patient_data([(device_id, patient_id, 0, 100)], time_units="s")
+    sdk.insert_patient_history(field='weight', value=10, units='kg', time=0, time_units='s', patient_id=patient_id)
+    sdk.insert_patient_history(field='weight', value=20, units='kg', time=50, time_units='s', patient_id=patient_id)
+
+    # Each window reports the weight recorded at or before its start.
+    for iterator_type in ["iterator", "lightmapped"]:
+        definition = DatasetDefinition(measures=["test_measure"], patient_ids={patient_id: "all"})
+        windows = list(sdk.get_iterator(definition, 10, 10, time_units="s", iterator_type=iterator_type,
+                                        patient_history_fields=['weight']))
+        assert len(windows) == 10
+        for window in windows:
+            expected_weight = 10 if window.start_time < 50 * 1_000_000_000 else 20
+            assert window.patient_info['weight']['value'] == expected_weight
+
+    # Iterating and time lookups leave the SDK's own patient info unchanged.
+    sdk.get_patient_info(patient_id, time=0, time_units='s')
+    assert sdk.get_patient_info(patient_id)['weight'] == 20
