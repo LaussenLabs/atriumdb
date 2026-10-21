@@ -26,6 +26,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
@@ -47,7 +49,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mariadb = [
-    "mariadb == 1.1.13",
+    "mariadb == 1.1.14",
 ]
 remote = [
     "requests >= 2.32.4, < 3",
@@ -66,7 +68,7 @@ cli = [
     "PyYAML >= 6.0.2"
 ]
 all = [
-    "mariadb == 1.1.13",
+    "mariadb == 1.1.14",
     "requests >= 2.32.4, < 3",
     "PyJWT[crypto] >= 2.6.0, < 3",
     "websockets >= 15.0.1, < 16",
@@ -81,7 +83,7 @@ all = [
     "tzdata >= 2025.2, < 2026"
 ]
 testing = [
-    "mariadb == 1.1.13",
+    "mariadb == 1.1.14",
     "requests >= 2.32.4, < 3",
     "PyJWT[crypto] >= 2.6.0, < 3",
     "websockets >= 15.0.1, < 16",
