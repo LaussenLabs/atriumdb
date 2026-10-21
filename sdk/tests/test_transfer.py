@@ -15,6 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import numpy as np
+import pytest
 
 from atriumdb import AtriumSDK, DatasetDefinition, partition_dataset
 import shutil
@@ -33,6 +34,7 @@ def test_transfer():
     _test_for_both(DB_NAME, _test_transfer)
     _test_for_both(DB_NAME, _test_transfer_period)
     _test_for_both(DB_NAME, _test_transfer_without_re_encoding)
+    _test_for_both(DB_NAME, _test_transfer_labels)
 
 
 def _test_transfer(db_type, dataset_location, connection_params):
@@ -55,6 +57,35 @@ def _test_transfer(db_type, dataset_location, connection_params):
                   include_labels=False, reencode_waveforms=True)
 
     assert_mit_bih_to_dataset(sdk_2, device_patient_map=device_patient_dict, max_records=MAX_RECORDS, seed=SEED)
+
+
+def _test_transfer_labels(db_type, dataset_location, connection_params):
+    sdk_1 = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
+
+    ecg_id = sdk_1.insert_measure("ECG", 500, "mV", freq_units="Hz")
+    pleth_id = sdk_1.insert_measure("PLETH", 125, "%", freq_units="Hz")
+    device_id = sdk_1.insert_device("monitor_1")
+    sdk_1.write_data_easy(ecg_id, device_id, np.arange(5000) / 500, np.arange(5000), 500, time_units="s", freq_units="Hz")
+    sdk_1.insert_labels([("arrhythmia", device_id, ecg_id, "cardiologist", 1, 2),
+                         ("artifact", device_id, None, None, 3, 4)], time_units="s", source_type="device_id")
+
+    definition = DatasetDefinition(measures=["ECG"], device_ids={device_id: "all"}, labels=["arrhythmia", "artifact"])
+    transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, include_labels=True)
+
+    dest_ecg_id = sdk_2.get_measure_id("ECG", 500, "mV", freq_units="Hz")
+    labels = sorted((label['label_name'], label['measure_id'], label['label_source'], label['start_time_n'],
+                     label['end_time_n']) for label in sdk_2.get_labels())
+    assert labels == [("arrhythmia", dest_ecg_id, "cardiologist", 1_000_000_000, 2_000_000_000),
+                      ("artifact", None, None, 3_000_000_000, 4_000_000_000)]
+
+    # A label on a measure left out of the definition cannot be transferred
+    sdk_1.insert_labels([("arrhythmia", device_id, pleth_id, None, 5, 6)], time_units="s", source_type="device_id")
+    with pytest.raises(ValueError, match="not in the dataset definition"):
+        transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, include_labels=True)
+
 
 def _test_transfer_period(db_type, dataset_location, connection_params):
     # Setup
