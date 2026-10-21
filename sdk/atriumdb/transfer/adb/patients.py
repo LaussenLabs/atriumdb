@@ -81,7 +81,8 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
     """
     patient_id_list = validate_patient_transfer_list(src_sdk, patient_id_list, mrn_list, deidentify)
 
-    patient_id_map = create_patient_id_map(patient_id_list, deidentify)
+    patient_id_map = create_patient_id_map(patient_id_list, deidentify,
+                                           used_patient_ids=dest_sdk.get_all_patients().keys())
 
     transfer_patient_table(src_sdk, dest_sdk, patient_id_list, patient_id_map, patient_info_to_transfer,
                            deidentification_functions, time_shift_nano, deidentify)
@@ -112,6 +113,9 @@ def transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_tim
         dest_device_patient_list.append(
             [src_to_dest_dev_ids_dict[device_id], patient_id_map[patient_id], start_time, end_time])
 
+    existing = {(device_id, patient_id, start_time) for device_id, patient_id, start_time, _ in
+                dest_sdk.get_device_patient_data()}
+    dest_device_patient_list = [row for row in dest_device_patient_list if tuple(row[:3]) not in existing]
     if len(dest_device_patient_list) > 0:
         dest_sdk.insert_device_patient_data(device_patient_data=dest_device_patient_list)
 
@@ -143,7 +147,7 @@ def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list, deidenti
     return patient_id_list
 
 
-def create_patient_id_map(patient_id_list, deidentify, overwrite=False):
+def create_patient_id_map(patient_id_list, deidentify, overwrite=False, used_patient_ids=()):
     if not deidentify:
         # No de-identification needed; return a direct mapping
         return {patient_id: patient_id for patient_id in patient_id_list}
@@ -160,16 +164,16 @@ def create_patient_id_map(patient_id_list, deidentify, overwrite=False):
                 raise ValueError("Existing de-identification map does not cover all patient IDs.")
         else:
             # If the file doesn't exist or we're overwriting, create a new map
-            new_map = generate_new_patient_id_map(patient_id_list)
+            new_map = generate_new_patient_id_map(patient_id_list, used_patient_ids)
             write_dict_to_csv(new_map, file_path)
             return new_map
     else:
         # deidentify is True, generate new map without saving
-        return generate_new_patient_id_map(patient_id_list)
+        return generate_new_patient_id_map(patient_id_list, used_patient_ids)
 
 
-def generate_new_patient_id_map(patient_id_list):
-    new_ids = generate_patient_ids(len(patient_id_list))
+def generate_new_patient_id_map(patient_id_list, used_patient_ids=()):
+    new_ids = generate_patient_ids(len(patient_id_list), used_patient_ids)
     return dict(zip(patient_id_list, new_ids))
 
 
@@ -193,9 +197,10 @@ def validate_csv_dict(csv_dict: Dict, patient_id_list: list) -> bool:
     return all(patient_id in csv_dict for patient_id in patient_id_list)
 
 
-def generate_patient_ids(number_of_patients):
-    # Generate the list of unique patient IDs
-    return random.sample(range(10000, 10000 + 2 * number_of_patients), number_of_patients)
+def generate_patient_ids(number_of_patients, used_patient_ids=()):
+    # Generate the list of unique patient IDs, above any already in use
+    start = max(10000, max(used_patient_ids, default=0) + 1)
+    return random.sample(range(start, start + 2 * number_of_patients), number_of_patients)
 
 
 def transfer_patient_table(from_sdk, to_sdk, patient_id_list, patient_id_map, patient_info_to_transfer=None,

@@ -36,6 +36,7 @@ DB_NAME = "transfer-patients"
 
 def test_transfer_patients():
     _test_for_both(DB_NAME, _test_transfer_patients)
+    _test_for_both(DB_NAME, _test_deidentified_rerun)
 
 
 def _test_transfer_patients(db_type, dataset_location, connection_params):
@@ -122,3 +123,17 @@ def insert_random_patients(sdk, n):
         patient_id_list.append(patient_id)
         
     return patient_id_list
+
+
+def _test_deidentified_rerun(db_type, dataset_location, connection_params):
+    sdk_1 = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
+
+    insert_random_patients(sdk_1, 100)
+
+    # A second de-identified run must not reuse ids given to other patients by the first
+    first_map = transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=True)
+    second_map = transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=True)
+    assert not set(first_map.values()) & set(second_map.values())
