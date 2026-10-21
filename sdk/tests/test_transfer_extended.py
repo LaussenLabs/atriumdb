@@ -59,10 +59,11 @@ def _test_partition_dataset(db_type, dataset_location, connection_params):
         verbose=False
     )
 
-    test_patients = list(test_def.data_dict['patient_ids'].keys())
-    train_patients = list(train_def.data_dict['patient_ids'].keys())
-    val_patients = list(val_def.data_dict['patient_ids'].keys())
+    test_patients = list(test_def.data_dict['device_ids'].keys())
+    train_patients = list(train_def.data_dict['device_ids'].keys())
+    val_patients = list(val_def.data_dict['device_ids'].keys())
 
+    assert set(test_patients) | set(train_patients) | set(val_patients) == set(device_ids)
     assert not (set(test_patients) & set(train_patients)), "Overlap found between test and train sets"
     assert not (set(test_patients) & set(val_patients)), "Overlap found between test and validation sets"
     assert not (set(train_patients) & set(val_patients)), "Overlap found between train and validation sets"

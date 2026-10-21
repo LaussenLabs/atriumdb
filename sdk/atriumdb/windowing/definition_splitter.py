@@ -15,12 +15,14 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from atriumdb.intervals.intersection import list_intersection
 from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.definition import DatasetDefinition
 import numpy as np
 import random
 import bisect
 import copy
+import warnings
 from tqdm import tqdm
 
 
@@ -86,6 +88,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     validated_measure_list = validated_data['measures']
     validated_label_set_list = validated_data['labels']
     validated_sources = validated_data['sources']
+    warn_shared_device_time(validated_sources.get('device_patient_tuples', {}))
 
     # Convert priority stratification labels to label set IDs, using the SDK if necessary.
     priority_stratification_label_set_ids = get_priority_stratification_label_set_ids(
@@ -224,6 +227,22 @@ def get_priority_stratification_label_set_ids(priority_labels, validated_label_s
         raise ValueError(f"label names: {missing_label_names} with label_name_ids {missing_label_ids} are not in the validated label set list.")
 
     return label_set_ids
+
+
+def warn_shared_device_time(device_patient_tuples):
+    # A device mapped to two patients at once records the same samples for both, so they can reach two partitions.
+    rows = sorted((device_id, start, end, patient_id)
+                  for (device_id, patient_id), time_ranges in device_patient_tuples.items() for start, end in time_ranges)
+    shared_patient_ids, latest = set(), {}
+    for device_id, start, end, patient_id in rows:
+        latest_end, latest_patient_id = latest.get(device_id, (start, patient_id))
+        if start < latest_end and patient_id != latest_patient_id:
+            shared_patient_ids.update((patient_id, latest_patient_id))
+        if end > latest_end:
+            latest[device_id] = (end, patient_id)
+    if shared_patient_ids:
+        warnings.warn(f"{len(shared_patient_ids)} patients share device time with another patient. Samples from that "
+                      f"time can appear in more than one partition.")
 
 
 def merge_intervals(intervals):
@@ -429,6 +448,14 @@ def convert_source_lists_to_definitions(partitioned_source_list, original_defini
     measures = original_definition.data_dict['measures']
     labels = original_definition.data_dict['labels']
 
+    # Partitions of a device-based definition are written as device_ids, since patient_ids would cover every device
+    # the patients are mapped to.
+    device_based = not original_definition.data_dict['patient_ids'] and not original_definition.data_dict['mrns']
+    patient_device_ranges = {}
+    for (device_id, patient_id), ranges in original_definition.validated_data_dict['sources'][
+            'device_patient_tuples'].items():
+        patient_device_ranges.setdefault(patient_id, {})[device_id] = ranges
+
     partitioned_definitions = []
 
     for partition in partitioned_source_list:
@@ -454,6 +481,11 @@ def convert_source_lists_to_definitions(partitioned_source_list, original_defini
 
                 device_ids[device_id].extend(time_specifications)
 
+            elif source_type == 'patient_ids' and device_based:
+                for device_id, device_ranges in patient_device_ranges.get(source_key, {}).items():
+                    device_ids.setdefault(device_id, []).extend(
+                        {'start': start, 'end': end}
+                        for start, end in list_intersection(merge_intervals(device_ranges), time_ranges))
             elif source_type == 'patient_ids':
                 patient_id = source_key
                 if patient_id not in patient_ids:
@@ -491,9 +523,9 @@ def merge_time_ranges(time_ranges):
     current_range = time_ranges[0]
 
     for next_range in time_ranges[1:]:
-        if current_range['end'] == next_range['start']:
+        if current_range['end'] >= next_range['start']:
             # Merge the ranges
-            current_range['end'] = next_range['end']
+            current_range['end'] = max(current_range['end'], next_range['end'])
         else:
             # No merging needed, push the current range and move to the next
             merged_ranges.append(current_range)
