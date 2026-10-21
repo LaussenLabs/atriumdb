@@ -33,6 +33,7 @@ def test_transfer():
     _test_for_both(DB_NAME, _test_transfer_with_patient_context)
     _test_for_both(DB_NAME, _test_transfer_with_patient_context_deidentify_timeshift)
     _test_for_both(DB_NAME, _test_partition_dataset)
+    _test_for_both(DB_NAME, _test_transfer_device_id_taken)
 
 
 def _test_partition_dataset(db_type, dataset_location, connection_params):
@@ -126,3 +127,27 @@ def _test_transfer_with_patient_context_deidentify_timeshift(db_type, dataset_lo
     assert_mit_bih_to_dataset(
         sdk_2, device_patient_map=device_patient_dict, deidentify=True, time_shift=-3600_000_000_000, max_records=MAX_RECORDS,
         seed=SEED)
+
+
+def _test_transfer_device_id_taken(db_type, dataset_location, connection_params):
+    sdk_1 = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
+
+    measure_id = sdk_1.insert_measure("ECG", 500, "mV", freq_units="Hz")
+    device_id = sdk_1.insert_device("monitor_1")
+    values = np.arange(5000)
+    sdk_1.write_data_easy(measure_id, device_id, values / 500, values, 500, time_units="s", freq_units="Hz")
+
+    # The destination already uses the source device's id for another device
+    sdk_2.insert_device("other_monitor", device_id=device_id)
+
+    definition = DatasetDefinition(measures=["ECG"], device_ids={device_id: "all"})
+    transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, include_labels=False)
+
+    dest_device_id = sdk_2.get_device_id("monitor_1")
+    assert dest_device_id != device_id
+    _, _, dest_values = sdk_2.get_data(sdk_2.get_measure_id("ECG", 500, "mV", freq_units="Hz"), 0, 10 ** 10,
+                                       device_id=dest_device_id)
+    assert np.array_equal(dest_values, values)
