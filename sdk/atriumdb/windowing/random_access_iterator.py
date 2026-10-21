@@ -1,3 +1,6 @@
+import random
+from bisect import bisect_right
+
 import numpy as np
 
 from atriumdb.windowing.dataset_iterator import DatasetIterator
@@ -33,7 +36,13 @@ class MappedIterator(DatasetIterator):
                          label_threshold=label_threshold, shuffle=shuffle, max_cache_duration=max_cache_duration,
                          patient_history_fields=patient_history_fields, label_exact_match=label_exact_match)
 
-        pass
+        # Shuffle each batch with its own seed so an index always returns the same window.
+        self._batch_seed = None if self.random_gen is None else self.random_gen.getrandbits(32)
+
+    def _load_batch_matrix(self, idx: int):
+        if self._batch_seed is not None:
+            self.random_gen = random.Random(self._batch_seed + bisect_right(self.batch_first_index, idx))
+        super()._load_batch_matrix(idx)
 
     def __len__(self) -> int:
         """
