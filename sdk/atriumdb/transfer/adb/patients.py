@@ -112,6 +112,9 @@ def transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_tim
         dest_device_patient_list.append(
             [src_to_dest_dev_ids_dict[device_id], patient_id_map[patient_id], start_time, end_time])
 
+    existing = {(device_id, patient_id, start_time) for device_id, patient_id, start_time, _ in
+                dest_sdk.get_device_patient_data()}
+    dest_device_patient_list = [row for row in dest_device_patient_list if tuple(row[:3]) not in existing]
     if len(dest_device_patient_list) > 0:
         dest_sdk.insert_device_patient_data(device_patient_data=dest_device_patient_list)
 

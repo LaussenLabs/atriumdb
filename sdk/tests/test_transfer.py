@@ -15,6 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import numpy as np
+import pytest
 
 from atriumdb import AtriumSDK, DatasetDefinition, partition_dataset
 import shutil
@@ -93,3 +94,11 @@ def _test_transfer_without_re_encoding(db_type, dataset_location, connection_par
                   include_labels=False, reencode_waveforms=False)
 
     assert_mit_bih_to_dataset(sdk_2, device_patient_map=device_patient_dict, max_records=MAX_RECORDS, seed=SEED)
+
+    # Running the same transfer again must not duplicate data
+    with pytest.warns(UserWarning, match="already holds data"):
+        transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
+                      include_labels=False, reencode_waveforms=False)
+
+    assert_mit_bih_to_dataset(sdk_2, device_patient_map=device_patient_dict, max_records=MAX_RECORDS, seed=SEED)
+    assert len(sdk_2.get_device_patient_data()) == len(sdk_1.get_device_patient_data())

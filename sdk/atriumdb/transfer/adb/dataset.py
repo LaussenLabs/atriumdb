@@ -17,6 +17,7 @@
 
 import random
 import time
+import warnings
 from collections import defaultdict
 from pathlib import Path
 from typing import List
@@ -242,6 +243,14 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                         measure_device_intervals.append(write_intervals)
 
                     if not blocks_to_transfer:
+                        continue
+
+                    # Do not copy a signal twice, e.g. when a transfer is run again into the same destination.
+                    new_intervals = intervals_union_list(measure_device_intervals, gap_tolerance_nano=0) + (time_shift or 0)
+                    if dest_sdk.get_interval_array(dest_measure_id, device_id=dest_device_id, gap_tolerance_nano=0,
+                                                   start=int(new_intervals[0][0]), end=int(new_intervals[-1][1])).size:
+                        warnings.warn(f"Destination already holds data for measure {dest_measure_id} on device "
+                                      f"{dest_device_id} in this time range; skipping it.")
                         continue
 
                     block_start_index = 0
