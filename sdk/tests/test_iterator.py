@@ -37,6 +37,27 @@ def test_iterator():
     _test_for_both(DB_NAME, _test_iterator_freq)
 
 
+def test_mapped_shuffle_index():
+    _test_for_both(f"{DB_NAME}_mapped_shuffle", _test_mapped_shuffle_index)
+
+
+def _test_mapped_shuffle_index(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+    measure_id = sdk.insert_measure("test_measure", 1, "units", freq_units="Hz")
+    device_ids = [sdk.insert_device(f"bed{i}") for i in range(6)]
+    for device_id in device_ids:
+        sdk.write_segment(measure_id, device_id, np.arange(60), 0, freq=1, time_units="s", freq_units="Hz",
+                          scale_m=1.0, scale_b=0.0)
+
+    # Reading every index in random order returns every window once.
+    definition = DatasetDefinition(measures=["test_measure"], device_ids={device_id: "all" for device_id in device_ids})
+    iterator = sdk.get_iterator(definition, 10, 5, time_units="s", iterator_type="mapped", shuffle=1,
+                                num_windows_prefetch=12)
+    windows = [iterator[int(i)] for i in np.random.default_rng(0).permutation(len(iterator))]
+    assert len({(window.device_id, window.start_time) for window in windows}) == len(iterator)
+
+
 def _test_iterator_freq(db_type, dataset_location, connection_params):
     _run_iterator_test(db_type, dataset_location, connection_params, False)
 
