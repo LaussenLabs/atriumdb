@@ -326,6 +326,8 @@ Now, load the training data and wrap it in a :class:`DataLoader`:
      which is distinct from the ``num_threads`` you allocate to AtriumSDK. This will GREATLY increase speed and should
      be used to buffer out the time the SDK needs to decompress data. This will allow you to saturate the GPU and make
      data retrieval not the rate limiting step.
+   - Start the :class:`DataLoader`'s workers before any other thread in the same process reads from AtriumDB, or use
+     ``multiprocessing_context="spawn"``. A worker forked while another thread is in the middle of a read can hang.
 
 Appendix: What to Replace in Your Environment
 ---------------------------------------------
