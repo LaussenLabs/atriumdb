@@ -877,7 +877,9 @@ class AtriumSDK:
         if freq_nhz is not None:
             period_ns = None
 
-        self._warn_if_freq_differs_from_measure(self.get_measure_info(measure_id), freq_nhz, period_ns)
+        # One sample says nothing about the rate (write_time_value_pairs then assumes 1 Hz).
+        if value_data.size > 1:
+            self._warn_if_freq_differs_from_measure(self.get_measure_info(measure_id), freq_nhz, period_ns)
 
         # Convert period to freq only for legacy calculations that still require it
         if period_ns is not None:

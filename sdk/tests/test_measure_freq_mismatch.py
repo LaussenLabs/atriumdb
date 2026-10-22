@@ -51,4 +51,6 @@ def _test_measure_freq_mismatch(db_type, dataset_location, connection_params):
         warnings.simplefilter("always")
         sdk.write_segment(hz_measure_id, device_id, values, 0, freq=125, time_units="s")
         sdk.write_time_value_pairs(hz_measure_id, device_id, times + 100, values, time_units="s")
+        # A single sample has no detectable rate.
+        sdk.write_time_value_pairs(hz_measure_id, device_id, np.array([200 * 10 ** 9]), np.array([1]))
     assert not any("stored at" in str(w.message) for w in caught)
