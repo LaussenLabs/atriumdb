@@ -23,6 +23,9 @@ import os
 
 from typing import Tuple
 
+# GNU OpenMP's thread pool does not survive fork(), so a forked child encodes and decodes on one thread.
+_PID = os.getpid()
+
 # Current Block Data
 TSC_VERSION_NUM = 2
 TSC_VERSION_EXT = 3
@@ -192,7 +195,8 @@ class WrappedBlockDll:
             encoded_bytes.ctypes.data_as(c_void_p),
             num_blocks, t_block_start.ctypes.data_as(POINTER(c_uint64)),
             v_block_start.ctypes.data_as(POINTER(c_uint64)),
-            byte_start.ctypes.data_as(POINTER(c_uint64)), headers, byref(options), self.num_threads)
+            byte_start.ctypes.data_as(POINTER(c_uint64)), headers, byref(options),
+            self.num_threads if os.getpid() == _PID else 1)
 
         return encoded_bytes[:len_encoded], byte_start
 
@@ -207,7 +211,7 @@ class WrappedBlockDll:
             num_blocks, t_block_start.ctypes.data_as(POINTER(c_uint64)),
             v_block_start.ctypes.data_as(POINTER(c_uint64)),
             byte_start.ctypes.data_as(POINTER(c_uint64)), t_byte_start.ctypes.data_as(POINTER(c_uint64)),
-            self.num_threads)
+            self.num_threads if os.getpid() == _PID else 1)
 
     def convert_value_data_to_analog(self, value_data: np.ndarray, analog_values: np.ndarray,
                                      headers: list[BlockMetadata], num_blocks: int):
