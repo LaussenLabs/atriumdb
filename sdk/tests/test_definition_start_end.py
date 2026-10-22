@@ -157,3 +157,27 @@ def _test_transfer_start_end(db_type, dataset_location, connection_params):
 
         if valid_start_time < third_time or valid_end_time >= second_third_time:
             assert False, f"{valid_start_time} < {third_time} or {valid_end_time} >= {second_third_time}"
+
+
+def test_transfer_between_samples():
+    _test_for_both(f"{DB_NAME}-between-samples", _test_transfer_between_samples)
+
+
+def _test_transfer_between_samples(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+    measure_id = sdk.insert_measure("measure", 1, "mV", freq_units="Hz")
+    device_id = sdk.insert_device("device")
+    sdk.write_segment(measure_id, device_id, np.arange(100), 0, freq=1, time_units="s", freq_units="Hz",
+                      scale_m=1.0, scale_b=0.0)
+
+    # The device moves to the second patient 0.3 s after the sample at 50 s, which belongs to the first patient.
+    first_patient_id, second_patient_id = sdk.insert_patient(), sdk.insert_patient()
+    transfer_time = 50_300_000_000
+    sdk.insert_device_patient_data([(device_id, first_patient_id, 0, transfer_time),
+                                    (device_id, second_patient_id, transfer_time, 100 * 10 ** 9)])
+    definition = DatasetDefinition(measures=["measure"], patient_ids={second_patient_id: "all"})
+    for iterator_type in ["iterator", "lightmapped"]:
+        window = next(iter(sdk.get_iterator(definition, 10, 10, time_units="s", iterator_type=iterator_type)))
+        values = window.signals[("measure", 1.0, "mV")]["values"]
+        assert np.isnan(values[0]) and values[1] == 51

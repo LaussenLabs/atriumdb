@@ -46,6 +46,16 @@ def find_closest_measurement(time, measurements):
         return None
 
 
+def clear_sample_before_start(sdk, measure_id, start_time, period_ns, device_id, patient_id, values):
+    # NaN filling rounds to the nearest slot, so the last sample before a range start (another patient's,
+    # after a transfer) can land in slot 0. Keep slot 0 only if a sample of this range rounds into it.
+    if values.size > 0 and not np.isnan(values[0]):
+        _, times, _ = sdk.get_data(measure_id, start_time, start_time + (int(period_ns) + 1) // 2,
+                                   device_id=device_id, patient_id=patient_id)
+        if times.size == 0:
+            values[0] = np.nan
+
+
 def get_signal_dictionary(sdk, device_id, query_patient_id, window_duration_ns, window_slide_ns, measures,
                           batch_start_time, batch_end_time, batch_num_windows, range_start_time, range_end_time):
     # Reset and populate the batch data signal dictionary
@@ -81,6 +91,9 @@ def get_signal_dictionary(sdk, device_id, query_patient_id, window_duration_ns, 
             sdk.get_data(
                 measure_id, data_start_time, data_end_time, device_id=device_id, patient_id=query_patient_id,
                 return_nan_filled=nan_filled_out)
+            if data_start_time == range_start_time:
+                clear_sample_before_start(sdk, measure_id, range_start_time, period_ns, device_id, query_patient_id,
+                                          nan_filled_out)
 
         # Create Windows
         windowed_measure_times = sliding_window_view(measure_filled_time_array, measure_window_size)

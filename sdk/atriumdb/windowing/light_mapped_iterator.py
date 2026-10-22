@@ -24,7 +24,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 from atriumdb.windowing.window import Window
 from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.windowing_functions import get_threshold_labels, find_closest_measurement, \
-    _get_patient_info_from_cache, _load_patient_cache
+    _get_patient_info_from_cache, _load_patient_cache, clear_sample_before_start
 
 
 class LightMappedIterator(DatasetIterator):
@@ -204,6 +204,9 @@ class LightMappedIterator(DatasetIterator):
                     self.sdk.get_data(
                         measure_id, window_start_time, data_end_time, device_id=device_id,
                         patient_id=query_patient_id, return_nan_filled=measure_values[:num_values])
+                    if window_start_time == source_info['start_time']:
+                        clear_sample_before_start(self.sdk, measure_id, window_start_time, period_ns, device_id,
+                                                  query_patient_id, measure_values)
             measure_tag = measure['tag']
             measure_freq_hz = measure['freq_nhz'] / (10 ** 9)
             measure_units = measure['units']
