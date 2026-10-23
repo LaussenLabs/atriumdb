@@ -50,7 +50,8 @@ def import_data_to_sdk(sdk: AtriumSDK, filename: Union[str, PurePath], metadata:
     assert measure_id is not None, f"Measure {measure_tag} {freq_nhz} {units} could not be inserted."
     assert device_id is not None, f"Device {device_tag} could not be inserted."
 
-    sdk.write_data_easy(measure_id, device_id, times, values, freq_nhz, scale_m=scale_m, scale_b=scale_b)
+    sdk.write_data_easy(measure_id, device_id, times, values, freq_nhz, scale_m=scale_m, scale_b=scale_b,
+                        freq_units="nHz")
 
     return measure_id, device_id, int(times[0]), int(times[-1] + period_ns)
 
@@ -85,9 +86,9 @@ def parse_csv_data(df):
 
 
 def get_source_identifiers(sdk, device_tag, measure_tag, freq_nhz, units):
-    measure_id = sdk.get_measure_id(measure_tag, freq_nhz, units)
+    measure_id = sdk.get_measure_id(measure_tag, freq_nhz, units, freq_units="nHz")
     if measure_id is None:
-        measure_id = sdk.insert_measure(measure_tag, freq_nhz, units)
+        measure_id = sdk.insert_measure(measure_tag, freq_nhz, units, freq_units="nHz")
 
     device_id = sdk.get_device_id(device_tag)
     if device_id is None:

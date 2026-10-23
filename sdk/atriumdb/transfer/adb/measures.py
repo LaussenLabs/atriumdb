@@ -69,5 +69,6 @@ def _transfer_measure(to_sdk, measure_info):
             from_measure_id = None
 
     to_measure_id = to_sdk.insert_measure(
-        measure_tag=measure_tag, freq=freq, units=units, measure_name=measure_name, measure_id=from_measure_id)
+        measure_tag=measure_tag, freq=freq, units=units, freq_units="nHz", measure_name=measure_name,
+        measure_id=from_measure_id)
     return to_measure_id
