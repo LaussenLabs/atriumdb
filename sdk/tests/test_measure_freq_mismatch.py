@@ -36,7 +36,8 @@ def _test_measure_freq_mismatch(db_type, dataset_location, connection_params):
     times = np.arange(values.size) / 125
 
     # freq_units omitted: the measure is stored at 125 nHz.
-    nhz_measure_id = sdk.insert_measure("ecg_nhz", 125, "mV")
+    with pytest.warns(FutureWarning, match="changes to Hz in AtriumDB 2.8"):
+        nhz_measure_id = sdk.insert_measure("ecg_nhz", 125, "mV")
     with pytest.warns(UserWarning, match=r"125 Hz to measure 'ecg_nhz' \(id \d+\), which is stored at 125 nHz"):
         sdk.write_segment(nhz_measure_id, device_id, values, 0, freq=125, time_units="s")
     with pytest.warns(UserWarning, match="stored at 125 nHz"):

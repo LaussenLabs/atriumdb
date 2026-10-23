@@ -29,7 +29,8 @@ from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_i
     find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, reconstruct_messages, \
     ALLOWED_TIME_TYPES, collect_all_descendant_ids, get_best_measure_id, _calc_end_time_from_gap_data, \
     merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns, time_unit_options, \
-    create_gap_arr_from_variable_messages, sort_message_time_values, convert_from_nanoseconds, detect_period
+    create_gap_arr_from_variable_messages, sort_message_time_values, convert_from_nanoseconds, detect_period, \
+    default_freq_units
 from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
@@ -755,7 +756,7 @@ class AtriumSDK:
 
         # Set default time and frequency units if not provided
         time_units = "ns" if time_units is None else time_units
-        freq_units = "nHz" if freq_units is None else freq_units
+        freq_units = default_freq_units(freq, freq_units)
 
         # Convert time_data to nanoseconds if a different time unit is used
         if time_units != "ns":
@@ -2003,7 +2004,7 @@ class AtriumSDK:
 
         # Set default values for units and freq_units/time_units if not provided
         units = "" if units is None else units
-        freq_units = "nHz" if freq_units is None else freq_units
+        freq_units = default_freq_units(freq, freq_units)
         time_units = "ns" if time_units is None else time_units
 
         # Convert to nanohertz based on which parameter was provided
@@ -2317,6 +2318,7 @@ class AtriumSDK:
             raise ValueError("freq and period are mutually exclusive. Specify only one.")
 
         # Convert frequency or period to nanohertz if necessary
+        freq_units = default_freq_units(freq, freq_units)
         target_freq_nhz = None
         if freq is not None and freq_units and freq_units != "nHz":
             target_freq_nhz = convert_to_nanohz(freq, freq_units)
@@ -2426,7 +2428,7 @@ class AtriumSDK:
         assert isinstance(unit_code, str) or unit_code is None
 
         # Set default frequency/time units if not provided
-        freq_units = "nHz" if freq_units is None else freq_units
+        freq_units = default_freq_units(freq, freq_units)
         time_units = "ns" if time_units is None else time_units
         units = "" if units is None else units
 
