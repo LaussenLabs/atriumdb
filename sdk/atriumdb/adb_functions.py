@@ -889,7 +889,7 @@ def truncate_messages(value_data, message_starts, message_sizes, freq_nhz=None, 
 
         # Calculate the sample indices within the message
         samples_before_overlap_start = ((overlap_start_ns - msg_start_ns) + current_period_ns - 1) // current_period_ns
-        samples_until_overlap_end = (overlap_end_ns - msg_start_ns) // current_period_ns
+        samples_until_overlap_end = ((overlap_end_ns - msg_start_ns) + current_period_ns - 1) // current_period_ns
 
         num_samples_to_keep = samples_until_overlap_end - samples_before_overlap_start
 
