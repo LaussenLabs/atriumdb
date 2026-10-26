@@ -32,7 +32,7 @@ from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_i
     create_gap_arr_from_variable_messages, sort_message_time_values, convert_from_nanoseconds, detect_period
 from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
-    V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
+    V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper, get_period_ns_from_header
 from atriumdb.file_api import AtriumFileHandler
 from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_macos, shared_lib_filename_linux, \
     protected_mode_default_setting, overwrite_default_setting
@@ -1034,8 +1034,10 @@ class AtriumSDK:
                         f"The raw value type ({VALUE_TYPES_STR[raw_value_type]}) doesn't match the raw value type "
                         f"({VALUE_TYPES_STR[header[0].v_raw_type]}) of the block you are trying to merge with.")
 
-                # make sure the scale factors match. If they don't then don't merge the blocks
-                if same_type and header[0].scale_m == scale_m and header[0].scale_b == scale_b:
+                # make sure the scale factors and periods match. If they don't then don't merge the blocks, since the
+                # merge reads the old block's times with this write's period
+                if same_type and header[0].scale_m == scale_m and header[0].scale_b == scale_b and \
+                        get_period_ns_from_header(header[0]) == period_ns_for_calc:
                     # if the original time type of the old block is not the same as the time type of the data we are
                     # trying to save, we need to make them the same
                     if header[0].t_raw_type != raw_time_type:
@@ -1075,7 +1077,7 @@ class AtriumSDK:
                                                                        value_data, time_data, time_0,
                                                                        freq_nhz=freq_nhz, period_ns=period_ns)
                 else:
-                    # if the scale factors are not the same don't merge and set old block to none, so we don't delete it
+                    # if the scale factors or periods differ don't merge and set old block to none, so we don't delete it
                     old_block = None
             else:
                 # if this is an end block and the closest block is full don't merge and set old block to none, so we don't delete it
