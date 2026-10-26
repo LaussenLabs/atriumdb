@@ -269,3 +269,16 @@ def _test_merge_small_block_gap(db_type, dataset_location, connection_params):
     assert len(headers) == 1
     assert np.array_equal(np.array([19, 20, 21, 22, 24, 26, 27, 30, 32], dtype=np.int64) * 1_000_000_000, r_times)
     assert np.array_equal([19, 20, 21, 22, 24, 26, 27, 30, 32], r_values)
+
+    # make sure that when the period is different it inserts a new block, keeping the old block's times
+    times, values = np.array([40_000, 40_500, 41_000, 41_500], dtype=np.int64) * 1_000_000, np.array([40, 41, 42, 43])
+    sdk.write_data(measure_id, device_id, create_gap_arr(times, 1, 2_000_000_000), values, 2_000_000_000,
+                   time_0=times[0], raw_time_type=2,
+                   raw_value_type=1, encoded_time_type=2, encoded_value_type=3, scale_m=0, scale_b=0)
+
+    headers, r_times, r_values = sdk.get_data(measure_id, 19_000_000_000, 42_000_000_000, device_id)
+
+    assert len(headers) == 2
+    assert np.array_equal(np.concatenate([np.array([19, 20, 21, 22, 24, 26, 27, 30, 32]) * 1_000_000_000, times]),
+                          r_times)
+    assert np.array_equal([19, 20, 21, 22, 24, 26, 27, 30, 32, 40, 41, 42, 43], r_values)
