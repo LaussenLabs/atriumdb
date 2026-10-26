@@ -2428,10 +2428,12 @@ class AtriumSDK:
         else:  # period is not None
             # Convert period to nanoseconds then to equivalent frequency in nanohertz
             period_ns = int(period * time_unit_options[time_units])
-            freq_nhz = 10 ** 18 // period_ns
+            freq_nhz = 10 ** 18 // period_ns if period_ns > 0 else 0
 
         # Force Cast Python integer
         freq_nhz = int(freq_nhz)
+        if freq_nhz <= 0:
+            raise ValueError("A measure's frequency must be at least 1 nHz.")
 
         # Check for id clash
         if measure_id is not None:
