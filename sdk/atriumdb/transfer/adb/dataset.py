@@ -184,6 +184,9 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
             if src_device_id is None:
                 continue
 
+            # Overlapping time ranges would copy the values they share more than once.
+            time_ranges = intervals_union_list([np.array(time_ranges, dtype=np.int64).reshape(-1, 2)]).tolist()
+
             if export_format == "tsc":
                 for src_measure_id, dest_measure_id in measure_id_map.items():
                     seen_block_ids = set()
@@ -208,31 +211,20 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                                 int(src_measure_id), int(start_time_nano), int(end_time_nano), int(src_device_id), None)
                             block_list.sort(key=lambda x: x[6])
 
-                        # Filter out duplicates
-                        filtered_blocks = []
+                        # A block inside this time range is copied once. A block reaching past it is re-encoded for
+                        # each time range it overlaps, keeping only that range's values.
                         for block in block_list:
                             block_id = block["id"] if src_sdk.mode == "api" else block[0]
-                            if block_id not in seen_block_ids:
+                            block_s = block["start_time_n"] if src_sdk.mode == "api" else block[6]
+                            block_e = block["end_time_n"] if src_sdk.mode == "api" else block[7]
+                            inside_range = start_time_nano <= block_s and block_e <= end_time_nano
+                            if inside_range:
+                                if block_id in seen_block_ids:
+                                    continue
                                 seen_block_ids.add(block_id)
-                                filtered_blocks.append(block)
-
-                        # Extend the main list with unique blocks
-                        blocks_to_transfer.extend(filtered_blocks)
-
-                        # Decide which blocks need to be reencoded.
-                        if not reencode_waveforms:
-                            for block in block_list:
-                                block_s = block["start_time_n"] if src_sdk.mode == "api" else block[6]
-                                block_e = block["end_time_n"] if src_sdk.mode == "api" else block[7]
-                                if start_time_nano <= block_s and block_e <= end_time_nano:
-                                    time_range_index_to_transfer.append(-1)
-                                    re_encode_block_bool_list.append(False)
-                                else:
-                                    re_encode_block_bool_list.append(True)
-                        else:
-                            re_encode_block_bool_list.extend([True] * len(block_list))
-
-                        time_range_index_to_transfer.extend([time_range_i] * len(block_list))
+                            blocks_to_transfer.append(block)
+                            re_encode_block_bool_list.append(reencode_waveforms or not inside_range)
+                            time_range_index_to_transfer.append(time_range_i)
 
                         # Grab the interval data for transferring into the new sdk.
                         write_intervals = src_sdk.get_interval_array(
