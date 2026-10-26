@@ -326,6 +326,33 @@ class SQLiteHandler(SQLHandler):
             row = cursor.fetchone()
         return row
 
+    @staticmethod
+    def _merge_intervals(cursor, interval_data: List[Dict], gap_tolerance: int = 0):
+        # Join each interval with every existing row of its measure and device that it overlaps or comes within
+        # gap_tolerance of, as MariaDB's insert_interval procedure does.
+        for interval in interval_data:
+            measure_id, device_id = int(interval["measure_id"]), int(interval["device_id"])
+            start, end = int(interval["start_time_n"]), int(interval["end_time_n"])
+            low, high = start - int(gap_tolerance), end + int(gap_tolerance)
+
+            # Two seeks on the (measure, device, start) index: the last row starting before the range, and the
+            # rows starting inside it.
+            cursor.execute("SELECT id, start_time_n, end_time_n FROM interval_index WHERE measure_id = ? AND "
+                           "device_id = ? AND start_time_n < ? ORDER BY start_time_n DESC LIMIT 1;",
+                           (measure_id, device_id, low))
+            rows = [row for row in cursor.fetchall() if row[2] >= low]
+            cursor.execute("SELECT id, start_time_n, end_time_n FROM interval_index WHERE measure_id = ? AND "
+                           "device_id = ? AND start_time_n >= ? AND start_time_n <= ?;",
+                           (measure_id, device_id, low, high))
+            rows += cursor.fetchall()
+
+            if not rows:
+                cursor.execute(sqlite_insert_interval_index_query, (measure_id, device_id, start, end))
+                continue
+            cursor.executemany("DELETE FROM interval_index WHERE id = ?;", [(row[0],) for row in rows[1:]])
+            cursor.execute("UPDATE interval_index SET start_time_n = ?, end_time_n = ? WHERE id = ?;",
+                           (min(start, *(row[1] for row in rows)), max(end, *(row[2] for row in rows)), rows[0][0]))
+
     def insert_tsc_file_data(self, file_path: str, block_data: List[Dict], interval_data: List[Dict],
                              interval_index_mode, gap_tolerance: int = 0):
         # default to fast
@@ -342,7 +369,9 @@ class SQLiteHandler(SQLHandler):
             cursor.executemany(sqlite_insert_block_query, block_tuples)
 
             # insert into interval_index
-            if interval_index_mode != "disable":
+            if interval_index_mode == "merge":
+                self._merge_intervals(cursor, interval_data, gap_tolerance)
+            elif interval_index_mode != "disable":
                 interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
                                     interval["end_time_n"]) for interval in interval_data]
                 cursor.executemany(sqlite_insert_interval_index_query, interval_tuples)
@@ -363,9 +392,7 @@ class SQLiteHandler(SQLHandler):
                 cursor.executemany(sqlite_insert_block_query, block_tuples)
 
                 # insert into interval_index
-                interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
-                                    interval["end_time_n"]) for interval in interval_data]
-                cursor.executemany(sqlite_insert_interval_index_query, interval_tuples)
+                self._merge_intervals(cursor, interval_data, gap_tolerance)
 
             # delete old block data (Don't need, triggered automatically)
             cursor.executemany(sqlite_delete_block_query, [(block_id,) for block_id in block_ids_to_delete])
@@ -389,7 +416,9 @@ class SQLiteHandler(SQLHandler):
             cursor.executemany(sqlite_insert_block_query, block_tuples)
 
             # insert into interval_index
-            if interval_index_mode != "disable":
+            if interval_index_mode == "merge":
+                self._merge_intervals(cursor, interval_data, gap_tolerance)
+            elif interval_index_mode != "disable":
                 # insert into interval_index
                 interval_tuples = [(interval["measure_id"], interval["device_id"], interval["start_time_n"],
                                     interval["end_time_n"]) for interval in interval_data]
