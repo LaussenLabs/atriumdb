@@ -255,18 +255,18 @@ Example of defining a filter function:
     The filter function is a good place to do preprocessing. Any modifications made to the window object within the filter function will be retained when the window is passed back through the iterator.
 
 
-Mapped Iterator
+Lightmapped Iterator
 ####################
 
-The mapped iterator allows random access to dataset windows by using the `__getitem__` method. This means you can index the iterator directly to get a specific window, which is a useful feature if you need precise control over which windows to access, such as when labeling or visualizing specific windows by their indices.
+The lightmapped iterator allows random access to dataset windows by using the `__getitem__` method. This means you can index the iterator directly to get a specific window, which is a useful feature if you need precise control over which windows to access, such as when labeling or visualizing specific windows by their indices, or when a sampler such as a PyTorch ``DataLoader`` shuffles the indices.
 
-To use the mapped iterator, set `iterator_type` to `"mapped"`. Be aware that this iterator type might be slower compared to the default iterator, as it cannot take advantage of certain optimizations related to sequential access.
+To use the lightmapped iterator, set `iterator_type` to `"lightmapped"`. Each window is read on its own, so sequential iteration is slower than with the default iterator. The older `"mapped"` iterator type is deprecated and will become another name for `"lightmapped"` in AtriumDB 2.8.
 
-Example of using the mapped iterator:
+Example of using the lightmapped iterator:
 
 .. code-block:: python
 
-    iterator = sdk.get_iterator(definition, window_size_nano, slide_size_nano, iterator_type='mapped')
+    iterator = sdk.get_iterator(definition, window_size_nano, slide_size_nano, iterator_type='lightmapped')
 
     # Access a specific window by index
     window = iterator[5]
@@ -277,7 +277,7 @@ Recommendations
 
 - For most use cases, including model training and general window iteration, the default iterator should suffice. If you need to ensure data randomness for model training, you can set the `shuffle` parameter to `True`.
 - Use the filtered iterator when you need to filter or preprocess windows on-the-fly.
-- Use the mapped iterator for tasks that require random access to specific windows by their indices. However, note that it may be slower due to the lack of sequential access optimizations.
+- Use the lightmapped iterator for tasks that require random access to specific windows by their indices. However, note that it may be slower due to the lack of sequential access optimizations.
 
 For further information and options on the `get_iterator` method, `check its section in the API Reference  <contents.html#atriumdb.AtriumSDK.get_iterator>`_.
 
