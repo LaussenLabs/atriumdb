@@ -5012,7 +5012,7 @@ class AtriumSDK:
                             nanoseconds you can choose from one of ["s", "ms", "us", "ns"].
         :param float label_threshold: The percentage of the window that must contain a label before the entire window is
             marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
-        :param str iterator_type: Specify the type of iterator. If set to 'mapped', a RandomAccessDatasetIterator
+        :param str iterator_type: Specify the type of iterator. If set to 'mapped' (deprecated), a MappedIterator
           will be returned, allowing indexed access to dataset windows. If set to `lightmapped` a lightweight low RAM mapped iterator is returned.
           'lightmapped' is most suitable when you want true random shuffles and/or you're going to be jumping around
           the indices in no particular order.
@@ -5152,6 +5152,8 @@ of DatasetIterator objects depending on the value of num_iterators.
 
         # Create appropriate iterator object based on iterator_type
         if iterator_type == 'mapped':
+            warnings.warn("iterator_type='mapped' is deprecated and will return the lightmapped iterator in "
+                          "AtriumDB 2.8; use iterator_type='lightmapped'.", FutureWarning, stacklevel=2)
             iterator = MappedIterator(self, definition, window_duration, window_slide,
                                       num_windows_prefetch=num_windows_prefetch, label_threshold=label_threshold,
                                       shuffle=shuffle, max_cache_duration=max_cache_duration_per_source,
