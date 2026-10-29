@@ -112,6 +112,11 @@ def _test_advanced_definition(db_type, dataset_location, connection_params):
 
     assert np.allclose(floating_odd_numbers, result_data)
 
+    patient_id = sdk.insert_patient(mrn="1234")
+    sdk.insert_device_patient_data([(device_id, patient_id, 0, len(repeated_data))], time_units="s")
+    built = DatasetDefinition.build_from_intervals(sdk, "measures", measures=measures, mrn_list=["1234"])
+    assert list(built.data_dict['mrns']) == ["1234"] and built.data_dict['patient_ids'] == {}
+
 
 def test_filter_slide_greater_than_window():
     """Test filtering with slide size greater than window size to verify warning behavior."""

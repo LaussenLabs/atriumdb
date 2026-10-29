@@ -184,7 +184,7 @@ class DatasetDefinition:
         :param merge_strategy: Strategy to merge intervals. 'union' (default) for returning all intervals with at
             least one specified measure or label, 'intersection' for returning all intervals with every specified
             measure or label.
-        :return: DatasetDefinition object
+        :return: DatasetDefinition object, with regions keyed by the same kind of identifier as the source list given
         """
         # Validate build_from_signal_type
         if build_from_signal_type not in ["measures", "labels"]:
