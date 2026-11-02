@@ -42,7 +42,8 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     :param n_trials: Optional. Number of random trials to find the most balanced partitioning out of all trials,
         measured by how well the durations of the resulting priority_stratification_labels fit the requested partition_ratios.
     :param num_show_best_trials: Optional. Number of best trials to display if verbose is True.
-    :param gap_tolerance: Optional. An integer specifying the minimum allowed gap in nanoseconds for time ranges.
+    :param gap_tolerance: Optional. An integer specifying the minimum allowed gap in nanoseconds for time ranges,
+        used to validate `definition` if it is not already validated.
     :return: A tuple of DatasetDefinition objects (one per partition). If verbose and n_trials is None, also returns
              the duration_info (a list of dicts containing duration and count info, including unique patients and
              additional label tallies).
@@ -76,7 +77,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
         raise ValueError("Supplied dataset has no measures and therefore cannot stratify based on measure availability")
 
     if not definition.is_validated:
-        definition.validate(sdk=sdk)
+        definition.validate(sdk=sdk, gap_tolerance=gap_tolerance)
 
     priority_stratification_labels = [] if priority_stratification_labels is None else priority_stratification_labels
     additional_labels = [] if additional_labels is None else additional_labels
