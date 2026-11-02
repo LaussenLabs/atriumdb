@@ -310,6 +310,14 @@ def convert_to_nanohz(freq, freq_units):
     return round(freq)
 
 
+def default_freq_units(freq, freq_units):
+    if freq is not None and freq_units is None:
+        warnings.warn("freq_units was not given, so freq is read as nHz. The default changes to Hz in "
+                      "AtriumDB 2.8; pass freq_units explicitly.", FutureWarning, stacklevel=3)
+        return "nHz"
+    return freq_units
+
+
 def convert_from_nanohz(freq_nhz, freq_units):
     if freq_units not in freq_unit_options.keys():
         raise ValueError("Invalid frequency units. Expected one of: %s" % freq_unit_options)
@@ -495,7 +503,7 @@ def convert_gap_data_to_timestamps(headers, r_times, r_values, start_time_n=None
 def get_best_measure_id(sdk, measure_tag, freq, units, freq_units):
     measure_dict = {'tag': measure_tag}
     if freq is not None:
-        freq_units = "nHz" if freq_units is None else freq_units
+        freq_units = default_freq_units(freq, freq_units)
         if freq and freq_units and freq_units != "nHz":
             freq = convert_to_nanohz(freq, freq_units)
         measure_dict['freq_nhz'] = freq
