@@ -43,9 +43,11 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
         measured by how well the durations of the resulting priority_stratification_labels fit the requested partition_ratios.
     :param num_show_best_trials: Optional. Number of best trials to display if verbose is True.
     :param gap_tolerance: Optional. An integer specifying the minimum allowed gap in nanoseconds for time ranges.
-    :return: A tuple of DatasetDefinition objects (one per partition). If verbose and n_trials is None, also returns
+    :return: A list of DatasetDefinition objects (one per partition). If verbose is True, also returns
              the duration_info (a list of dicts containing duration and count info, including unique patients and
              additional label tallies).
+    :raises ValueError: If the definition has no measures or no patient-mapped data, if a stratification label is
+        not in the definition's labels, or if a partition ratio is 0.
 
     Example:
     --------

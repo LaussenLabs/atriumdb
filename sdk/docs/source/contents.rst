@@ -17,9 +17,12 @@ API Reference
 .. autoclass:: atriumdb.AtriumSDK
 
    .. automethod:: __init__
+   .. automethod:: close
    .. automethod:: create_dataset
 
    .. automethod:: get_data
+   .. automethod:: find_blocks
+   .. automethod:: get_data_from_blocks
    .. automethod:: write_data_easy
    .. automethod:: write_data
    .. automethod:: write_buffer
@@ -33,6 +36,7 @@ API Reference
    .. automethod:: get_measure_id
    .. automethod:: get_measure_info
    .. automethod:: search_measures
+   .. automethod:: get_measure_id_list_from_tag
    .. automethod:: get_all_measures
    .. automethod:: insert_measure
 
@@ -49,13 +53,22 @@ API Reference
    .. automethod:: get_patient_id_to_mrn_map
    .. automethod:: get_patient_id
    .. automethod:: get_mrn
+   .. automethod:: get_patient_history
+   .. automethod:: insert_patient_history
+   .. automethod:: get_patient_history_fields
 
    .. automethod:: get_device_patient_data
    .. automethod:: insert_device_patient_data
    .. automethod:: convert_patient_to_device_id
    .. automethod:: convert_device_to_patient_id
+   .. automethod:: get_device_patient_mapping
+   .. automethod:: get_device_patient_encounters
+
+   .. automethod:: insert_encounter
+   .. automethod:: get_encounters
 
    .. automethod:: get_labels
+   .. automethod:: get_label_time_series
    .. automethod:: insert_label
    .. automethod:: insert_labels
    .. automethod:: delete_labels
@@ -69,7 +82,13 @@ API Reference
 
    .. automethod:: get_label_source_id
    .. automethod:: get_label_source_info
+   .. automethod:: get_all_label_sources
    .. automethod:: insert_label_source
+
+   .. automethod:: get_bed_id
+   .. automethod:: get_bed_info
+   .. automethod:: get_source_id
+   .. automethod:: get_source_info
 
    .. automethod:: get_iterator
    .. automethod:: get_interval_array
@@ -101,12 +120,42 @@ API Reference
 
    .. automethod:: __next__
    .. automethod:: __iter__
+   .. automethod:: __len__
+
+.. autoclass:: atriumdb.windowing.random_access_iterator.MappedIterator
+
+   .. automethod:: __getitem__
+   .. automethod:: __len__
+
+.. autoclass:: atriumdb.windowing.light_mapped_iterator.LightMappedIterator
+
+   .. automethod:: __getitem__
+   .. automethod:: __len__
+   .. automethod:: __next__
+   .. automethod:: __iter__
+
+.. autoclass:: atriumdb.windowing.filtered_iterator.FilteredDatasetIterator
+
+.. autoclass:: atriumdb.windowing.window.Window
+
+.. autoclass:: atriumdb.pytorch_integrations.AtriumDBMapDataset
+
+   .. automethod:: __getitem__
+   .. automethod:: __len__
+   .. automethod:: __iter__
 
 
 .. autofunction:: partition_dataset
 .. autofunction:: combine_definitions
 .. autofunction:: cross_validate_dataset
 .. autofunction:: transfer_data
+
+.. autofunction:: create_gap_arr
+.. autofunction:: convert_gap_array_to_intervals
+.. autofunction:: convert_intervals_to_gap_array
+.. autofunction:: merge_gap_data
+.. autofunction:: indices_to_signal
+.. autofunction:: signal_to_indices
 
 
 Index

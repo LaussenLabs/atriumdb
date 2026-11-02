@@ -135,7 +135,7 @@ information related to patient and analysis results.
     Each signal dictionary has the following structure:
 
     - ``times`` : ``np.ndarray``
-        A 1D numpy array representing the timestamps corresponding to each data point of the signal. This ensures that each data point in the window is associated with its precise capture time.
+        A 1D numpy array of nanosecond timestamps on the measure's regular sample grid, starting at the window start. Values are placed on this grid; missing samples are NaN.
 
     - ``values`` : ``np.ndarray``
         A 1D numpy array containing the actual data points of the signal.
@@ -157,16 +157,16 @@ information related to patient and analysis results.
     Values derived from a window should be timestamped at ``end_time``, the first time all of its data is available.
 
 - ``device_id`` : ``int``
-    An identifier representing the device from which the data was captured.
+    An identifier representing the device from which the data was captured. None when the source has no device mapping.
 
 - ``patient_id`` : ``int``
-    An identifier representing the patient associated with the data.
+    An identifier representing the patient associated with the data. None when the source has no patient mapping.
 
 - ``label_time_series`` : ``np.ndarray``
-    A 1D numpy array representing the labels for each data point in the window, typically used in supervised learning scenarios.
+    A 2D numpy array of shape (num_labels, num_samples) with 0/1 for each label at each sample of the highest-frequency measure. None if the definition has no labels (an empty array for the lightmapped iterator).
 
 - ``label`` : ``np.ndarray``
-    A 1D numpy array representing the aggregated or final label for the window, used for classification or regression outputs.
+    A 1D numpy array of shape (num_labels,), 1 where the label covers more than ``label_threshold`` of the window, else 0. None if the definition has no labels (an empty array for the lightmapped iterator).
 
 - ``patient_info`` : ``dict``
     A dictionary containing static patient meta information (such as id, mrn, gender, dob, etc.) returned by

@@ -15,14 +15,16 @@ class MappedIterator(DatasetIterator):
     If you need random/shuffled access to windows we recommend using the `LightMappedIterator`.
 
     :param AtriumSDK sdk: SDK object to fetch data
-    :param list validated_measure_list: List of validated measures with information about each measure
-    :param dict validated_sources: Dictionary containing sources with associated time ranges
+    :param DatasetDefinition definition: DatasetDefinition of the cohort to be iterated over.
     :param int window_duration_ns: Duration of each window in nanoseconds
     :param int window_slide_ns: Interval in nanoseconds by which the window advances in time
     :param int num_windows_prefetch: Number of windows you want to get from AtriumDB at a time. Setting this value
             higher will make decompression faster but at the expense of using more RAM. (default the number of windows
             that gets you closest to 10 million values).
     :param float label_threshold: Threshold for labeling in classification tasks.
+
+    Other parameters (shuffle, max_cache_duration, patient_history_fields, label_exact_match) are as for
+    :class:`DatasetIterator`.
     """
 
     def __init__(self, sdk, definition, window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
