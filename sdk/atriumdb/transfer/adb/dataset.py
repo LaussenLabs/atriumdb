@@ -57,8 +57,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                   reencode_waveforms=False, **kwargs):
     """
     Transfers data from a source AtriumSDK instance to a destination AtriumSDK instance based on a specified dataset definition.
-    This includes transferring measures, devices, patient information, and labels with options for data de-identification,
-    time shifting, and custom gap tolerance.
+    This includes transferring measures, devices, patient information, encounters, and labels with options for data
+    de-identification, time shifting, and custom gap tolerance.
 
     :param AtriumSDK src_sdk: The source SDK instance from which data will be transferred.
     :param AtriumSDK dest_sdk: The destination SDK instance to which data will be transferred.
@@ -161,6 +161,12 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     src_measure_id_list = [measure_info["id"] for measure_info in validated_measure_list]
     src_device_id_list, src_patient_id_list = extract_src_device_and_patient_id_list(validated_sources)
 
+    patient_time_ranges = defaultdict(list)
+    for source_type, sources in validated_sources.items():
+        for source_id, time_ranges in sources.items():
+            if source_type != "device_ids":
+                patient_time_ranges[source_id if source_type == "patient_ids" else source_id[1]].extend(time_ranges)
+
     # Transfer measure, devices, patients between SDKs
     measure_id_map = transfer_measures(src_sdk, dest_sdk, measure_id_list=src_measure_id_list,
                                        measure_tag_match_rule=measure_tag_match_rule)
@@ -168,7 +174,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     patient_id_map = transfer_patient_info(
         src_sdk, dest_sdk, patient_id_list=src_patient_id_list, deidentify=deidentify,
         patient_info_to_transfer=patient_info_to_transfer, start_time_nano=start_time_n, end_time_nano=end_time_n,
-        deidentification_functions=deidentification_functions, time_shift_nano=time_shift)
+        deidentification_functions=deidentification_functions, time_shift_nano=time_shift,
+        patient_time_ranges=patient_time_ranges)
 
     if include_labels:
         label_set_id_map = transfer_label_sets(src_sdk, dest_sdk, label_set_id_list=validated_label_set_list)
