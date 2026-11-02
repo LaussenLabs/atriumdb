@@ -15,6 +15,7 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import json
 import warnings
 from collections import defaultdict
 import numpy as np
@@ -28,13 +29,14 @@ from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_i
     find_intervals, sort_data, yield_data, convert_to_nanoseconds, convert_to_nanohz, reconstruct_messages, \
     ALLOWED_TIME_TYPES, collect_all_descendant_ids, get_best_measure_id, _calc_end_time_from_gap_data, \
     merge_timestamp_data, merge_gap_data, create_timestamps_from_gap_data, freq_nhz_to_period_ns, time_unit_options, \
-    create_gap_arr_from_variable_messages, sort_message_time_values, convert_from_nanoseconds, detect_period
+    create_gap_arr_from_variable_messages, sort_message_time_values, convert_from_nanoseconds, detect_period, \
+    default_freq_units
 from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
     V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
 from atriumdb.file_api import AtriumFileHandler
-from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_linux, protected_mode_default_setting, \
-    overwrite_default_setting
+from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_macos, shared_lib_filename_linux, \
+    protected_mode_default_setting, overwrite_default_setting
 from atriumdb.helpers.settings import ALLOWABLE_OVERWRITE_SETTINGS, PROTECTED_MODE_SETTING_NAME, OVERWRITE_SETTING_NAME, \
     ALLOWABLE_PROTECTED_MODE_SETTINGS
 from atriumdb.helpers.block_constants import TIME_TYPES_STR, VALUE_TYPES_STR
@@ -99,7 +101,7 @@ class AtriumSDK:
     The Core SDK Object that represents a single dataset and provides methods to interact with it. If you are using API
     mode then once you are finished with the object call the close method to clean up all connections.
 
-    :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
+    :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written. For "mysql" or "mariadb", if you only need metadata from the database and not the times and values stored in the TSC files, this may be omitted. However, if both this and tsc_file_location are omitted, reading or writing TSC files raises an error.
     :param str metadata_connection_type: Specifies the type of connection to use for metadata. Options are "sqlite", "mysql", "mariadb", or "api". Default "sqlite".
     :param dict connection_params: A dictionary containing connection parameters for "mysql" or "mariadb" connection type. It should contain keys for 'host', 'user', 'password', 'database', and 'port'.
     :param int num_threads: Specifies the number of threads to use when processing data.
@@ -170,16 +172,16 @@ class AtriumSDK:
         self.metadata_connection_type = metadata_connection_type
 
         # Set the C DLL path based on the platform if not provided
-        if platform.system() == "Darwin":
-            raise OSError("AtriumSDK is not currently supported on macOS.")
         if atriumdb_lib_path is None:
             if sys.platform == "win32":
                 shared_lib_filename = shared_lib_filename_windows
+            elif platform.system() == "Darwin":
+                shared_lib_filename = shared_lib_filename_macos
             else:
                 shared_lib_filename = shared_lib_filename_linux
 
             this_file_path = Path(__file__)
-            atriumdb_lib_path = this_file_path.parent.parent / shared_lib_filename
+            atriumdb_lib_path = this_file_path.parent / shared_lib_filename
 
         # Initialize the block object with the C DLL path and number of threads
         self.block = Block(atriumdb_lib_path, num_threads)
@@ -228,16 +230,12 @@ class AtriumSDK:
 
         # Handle MySQL or MariaDB connections
         elif metadata_connection_type == 'mysql' or metadata_connection_type == 'mariadb':
-            # Ensure at least one of the required parameters is provided
-            if dataset_location is None and tsc_file_location is None:
-                raise ValueError("One of dataset_location, tsc_file_location must be specified.")
-
             # Convert dataset_location to a Path object if it's a string
             if isinstance(dataset_location, str):
                 dataset_location = Path(dataset_location)
 
             # Set the default tsc_file_location if not provided
-            if tsc_file_location is None:
+            if tsc_file_location is None and dataset_location is not None:
                 tsc_file_location = dataset_location / 'tsc'
 
             # Import the MariaDBHandler class and extract connection parameters
@@ -370,7 +368,8 @@ class AtriumSDK:
         """
         .. _create_dataset_label:
 
-        A class method to create a new dataset.
+        A class method to create a new dataset. The metadata database is described in `meta/database.json` inside
+        the dataset directory: its type and, for mysql and mariadb, the host, port and database name.
 
         :param Union[str, PurePath] dataset_location: A file path or a path-like object that points to the directory in which the dataset will be written.
         :param str database_type: Specifies the type of metadata database to use. Options are "sqlite", "mysql", or "mariadb".
@@ -446,6 +445,16 @@ class AtriumSDK:
         sdk_object.sql_handler.insert_setting(OVERWRITE_SETTING_NAME, str(overwrite))
 
         sdk_object.settings_dict = sdk_object._get_all_settings()
+
+        # Record which metadata database this dataset directory belongs to.
+        if database_type == 'sqlite':
+            database_info = {'type': 'sqlite', 'database': 'index.db'}
+        else:
+            database_info = {'type': database_type, 'host': connection_params['host'],
+                             'port': connection_params['port'], 'database': connection_params['database']}
+        database_file = dataset_location / 'meta' / 'database.json'
+        database_file.parent.mkdir(parents=True, exist_ok=True)
+        database_file.write_text(json.dumps(database_info, indent=4) + "\n")
 
         return sdk_object
 
@@ -759,7 +768,7 @@ class AtriumSDK:
 
         # Set default time and frequency units if not provided
         time_units = "ns" if time_units is None else time_units
-        freq_units = "nHz" if freq_units is None else freq_units
+        freq_units = default_freq_units(freq, freq_units)
 
         # Convert time_data to nanoseconds if a different time unit is used
         if time_units != "ns":
@@ -884,6 +893,10 @@ class AtriumSDK:
 
         if freq_nhz is not None:
             period_ns = None
+
+        # One sample says nothing about the rate (write_time_value_pairs then assumes 1 Hz).
+        if value_data.size > 1:
+            self._warn_if_freq_differs_from_measure(self.get_measure_info(measure_id), freq_nhz, period_ns)
 
         # Convert period to freq only for legacy calculations that still require it
         if period_ns is not None:
@@ -1309,6 +1322,8 @@ class AtriumSDK:
             freq_nano = measure_info["freq_nhz"]
             period_ns = None
 
+        self._warn_if_freq_differs_from_measure(measure_info, freq_nano, period_ns)
+
         # Create message list for writing.
         scale_m_list = scale_m if isinstance(scale_m, list) else [scale_m] * len(segments)
         scale_b_list = scale_b if isinstance(scale_b, list) else [scale_b] * len(segments)
@@ -1341,6 +1356,18 @@ class AtriumSDK:
         else:
             # Push new segments to the buffer
             self._active_buffer.push_segments(measure_id, device_id, write_segments)
+
+    @staticmethod
+    def _warn_if_freq_differs_from_measure(measure_info, freq_nhz=None, period_ns=None):
+        # A mismatch is usually a freq_units mistake, e.g. insert_measure(tag, 125) defaults to 125 nHz.
+        if measure_info is None or (freq_nhz is None and period_ns is None):
+            return
+        data_period_ns = 10 ** 18 / freq_nhz if freq_nhz is not None else period_ns
+        if not 0.5 <= data_period_ns / measure_info['period_ns'] <= 2:
+            warnings.warn(f"Writing data sampled at {10 ** 9 / data_period_ns:g} Hz to measure '{measure_info['tag']}' "
+                          f"(id {measure_info['id']}), which is stored at {measure_info['freq_nhz']} nHz "
+                          f"({measure_info['freq_nhz'] / 10 ** 9:g} Hz). Check the freq_units passed to "
+                          f"insert_measure (default nHz) and the freq_units or time_units of the write call.")
 
     def _write_segments_to_dataset(self, measure_id, device_id, write_segments, interval_gap_tolerance_nano=0):
         if not write_segments:
@@ -2002,7 +2029,7 @@ class AtriumSDK:
 
         # Set default values for units and freq_units/time_units if not provided
         units = "" if units is None else units
-        freq_units = "nHz" if freq_units is None else freq_units
+        freq_units = default_freq_units(freq, freq_units)
         time_units = "ns" if time_units is None else time_units
 
         # Convert to nanohertz based on which parameter was provided
@@ -2147,16 +2174,16 @@ class AtriumSDK:
         period (in nanoseconds), code, unit, unit label, unit code, and source_id.
 
         :param tag_match: A string to match against the `measure_tag` field. If not None, only measures with a `measure_tag`
-            field containing this string will be returned.
+            field containing this string, ignoring case, will be returned.
         :type tag_match: str, optional
-        :param freq: A frequency, in `freq_units`, to match against each measure's frequency. If not None, only
-            measures with that frequency will be returned. Mutually exclusive with period.
-        :type freq: int, optional
+        :param freq: A frequency, in `freq_units`, to match against the measure's sample frequency. If not None, only
+            measures with this frequency will be returned. Mutually exclusive with period.
+        :type freq: float, optional
         :param unit: A string to match against the `measure_unit` field. If not None, only measures with a `measure_unit`
             field equal to this string will be returned.
         :type unit: str, optional
         :param name_match: A string to match against the `measure_name` field. If not None, only measures with a
-            `measure_name` field containing this string will be returned.
+            `measure_name` field containing this string, ignoring case, will be returned.
         :type name_match: str, optional
         :param freq_units: The units for the freq parameter. (Default: "Hz")
         :type freq_units: str, optional
@@ -2192,7 +2219,7 @@ class AtriumSDK:
             target_freq_nhz = convert_to_nanohz(freq, freq_units)
         elif freq is not None:
             target_freq_nhz = freq
-        else:
+        elif period is not None:
             period_ns = int(period * time_unit_options[time_units])
             target_freq_nhz = 10 ** 18 // period_ns
 
@@ -2206,10 +2233,10 @@ class AtriumSDK:
         for measure_id, measure_info in all_measures.items():
             # Create a list of boolean values for each search criterion
             match_bool_list = [
-                tag_match is None or tag_match in measure_info['tag'],
+                tag_match is None or tag_match.lower() in measure_info['tag'].lower(),
                 target_freq_nhz is None or target_freq_nhz == measure_info['freq_nhz'],
                 unit is None or unit == measure_info['unit'],
-                name_match is None or name_match in measure_info['name']
+                name_match is None or name_match.lower() in (measure_info['name'] or "").lower()
             ]
 
             # If all search criteria match, add the measure to the result dictionary
@@ -2319,6 +2346,7 @@ class AtriumSDK:
             raise ValueError("freq and period are mutually exclusive. Specify only one.")
 
         # Convert frequency or period to nanohertz if necessary
+        freq_units = default_freq_units(freq, freq_units)
         target_freq_nhz = None
         if freq is not None and freq_units and freq_units != "nHz":
             target_freq_nhz = convert_to_nanohz(freq, freq_units)
@@ -2386,7 +2414,8 @@ class AtriumSDK:
                                             units=units, measure_name=measure_name)
 
         :param str measure_tag: A short string identifying the signal.
-        :param freq: The sample frequency of the signal. Mutually exclusive with period.
+        :param freq: The sample frequency of the signal, in nano hertz unless `freq_units` is given, so
+            ``freq=125`` alone defines a 125 nHz measure, not 125 Hz. Mutually exclusive with period.
         :param str units: The units of the signal.
         :param str freq_units: The unit used for the specified frequency. This value can be one of ["nHz", "uHz",
             "mHz", "Hz", "kHz", "MHz"]. Keep in mind if you use extremely large values for this it will be
@@ -2430,7 +2459,7 @@ class AtriumSDK:
         assert isinstance(unit_code, str) or unit_code is None
 
         # Set default frequency/time units if not provided
-        freq_units = "nHz" if freq_units is None else freq_units
+        freq_units = default_freq_units(freq, freq_units)
         time_units = "ns" if time_units is None else time_units
         units = "" if units is None else units
 
@@ -2618,10 +2647,10 @@ class AtriumSDK:
         This method supports searching by device tag and/or device name.
 
         :param tag_match: A string to match against the `device_tag` field. If not None, only devices with a `device_tag`
-            field containing this string will be returned. Default is None.
+            field containing this string, ignoring case, will be returned. Default is None.
         :type tag_match: str, optional
         :param name_match: A string to match against the `device_name` field. If not None, only devices with a `device_name`
-            field containing this string will be returned. Default is None.
+            field containing this string, ignoring case, will be returned. Default is None.
         :type name_match: str, optional
         :return: A dictionary containing information about each device that matches the specified search criteria, including
             its id, tag, name, manufacturer, model, type, bed_id, and source_id.
@@ -2641,8 +2670,8 @@ class AtriumSDK:
         for device_id, device_info in all_devices.items():
             # Create a list of boolean values to determine if the device matches the search criteria
             match_bool_list = [
-                tag_match is None or tag_match in device_info['tag'],
-                name_match is None or name_match in device_info['name']
+                tag_match is None or tag_match.lower() in device_info['tag'].lower(),
+                name_match is None or name_match.lower() in (device_info['name'] or "").lower()
             ]
 
             # If all conditions in the match_bool_list are True, add the device to the result dictionary
@@ -5201,32 +5230,36 @@ class AtriumSDK:
                           f"different from your requested iterator window slide {window_slide} ns. Windows will "
                           f"not be the same as the filter function's windows.")
 
-        min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
+        slowest_measure = min(definition.validated_data_dict['measures'], key=lambda m: m['freq_nhz'])
+        min_freq_nhz = slowest_measure['freq_nhz']
+        slowest_measure_str = (f"measure '{slowest_measure['tag']}' (id {slowest_measure['id']}), stored at "
+                               f"{min_freq_nhz} nHz ({min_freq_nhz / 10 ** 9:g} Hz)")
         number_of_values_per_window_duration = (int(window_duration) * int(min_freq_nhz)) // (10 ** 18)
         if number_of_values_per_window_duration == 0:
-            raise ValueError(f"Window Slide {window_duration} with units {time_units} is less than a single value. "
-                             f"Please increase it to at least one sample period.")
+            raise ValueError(f"Window duration {window_duration} ns is less than one sample period of "
+                             f"{slowest_measure_str}. Please increase it, or check the measure's freq_units.")
 
         number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
         if number_of_values_per_window_slide == 0:
-            raise ValueError(f"Window Slide {window_slide} with units {time_units} is less than a single value. "
-                             f"Please increase it to at least one sample period.")
+            raise ValueError(f"Window slide {window_slide} ns is less than one sample period of "
+                             f"{slowest_measure_str}. Please increase it, or check the measure's freq_units.")
 
         if not isinstance(shuffle, bool) or shuffle:
             # Set some sensible defaults for pseudorandom yet efficient shuffle
             if cached_windows_per_source is None:
-                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
-                number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
-                cached_windows_per_source = self.block.block_size // number_of_values_per_window_slide
+                # Size the cache by the fastest measure, which sets the memory each window needs.
+                max_freq_nhz = max(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
+                number_of_values_per_window_slide = (int(window_slide) * int(max_freq_nhz)) // (10 ** 18)
+                cached_windows_per_source = max(1, self.block.block_size // number_of_values_per_window_slide)
             if num_windows_prefetch is None:
                 num_windows_prefetch = 100 * cached_windows_per_source
 
         else:
             # Not shuffling
             if num_windows_prefetch is None:
-                min_freq_nhz = min(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
-                number_of_values_per_window_slide = (int(window_slide) * int(min_freq_nhz)) // (10 ** 18)
-                num_windows_prefetch = (10 * self.block.block_size) // number_of_values_per_window_slide
+                max_freq_nhz = max(measure_info['freq_nhz'] for measure_info in definition.validated_data_dict['measures'])
+                number_of_values_per_window_slide = (int(window_slide) * int(max_freq_nhz)) // (10 ** 18)
+                num_windows_prefetch = max(1, (10 * self.block.block_size) // number_of_values_per_window_slide)
 
         # Create appropriate iterator object based on iterator_type
         if iterator_type == 'mapped':
@@ -5595,7 +5628,7 @@ class AtriumSDK:
             old_times = old_times.astype(np.int64)
 
             # Get the mask for the difference between old and new times
-            diff_mask = np.in1d(old_times, new_time_data, assume_unique=False, invert=True)
+            diff_mask = np.isin(old_times, new_time_data, assume_unique=False, invert=True)
 
             # If there is any difference, process it
             if np.any(diff_mask):

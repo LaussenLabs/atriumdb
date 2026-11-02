@@ -733,7 +733,7 @@ De-identification & Time Shifting
 
 If you're sharing data externally (e.g., for research or compliance), you can enable:
 
-- `deidentify`: Removes patient-level metadata (name, MRN, DOB, etc.) and scrambles patient IDs, True, False or a csv filepath which resolves to True and writes a csv containing the original to deidentified patient mapping.
+- `deidentify`: Removes patient-level metadata (name, MRN, DOB, etc.) and scrambles patient IDs, True, False or a csv filepath which resolves to True and writes a csv containing the original to deidentified patient mapping. Encounters keep their bed, unit and institution names and drop their visit numbers.
 - `time_shift`: Uniformly shifts all timestamps within the dataset to obscure precise dates within the patient information.
 
 These can be used independently, but are often combined for data privacy.

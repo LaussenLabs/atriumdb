@@ -28,7 +28,13 @@ class AtriumFileHandler:
     def __init__(self, top_level_dir):
         self.top_level_dir = top_level_dir
 
+    def _require_top_level_dir(self):
+        if self.top_level_dir is None:
+            raise ValueError("No TSC file location is set. Pass dataset_location or tsc_file_location to AtriumSDK.")
+
     def generate_tsc_filename(self, measure_id, device_id):
+        self._require_top_level_dir()
+
         # Generate a random UUID and convert it to a hexadecimal string
         hex_str = uuid.uuid4().hex
 
@@ -104,6 +110,7 @@ class AtriumFileHandler:
 
                 # if we have not already opened the file open it and add it to the dictionary
                 if file_id not in open_files:
+                    self._require_top_level_dir()
                     # Open the file in binary mode with the absolute path provided by the to_abs_path function
                     open_files[file_id] = open(self.to_abs_path(filename_dict[file_id], measure_id, device_id), 'rb')
 

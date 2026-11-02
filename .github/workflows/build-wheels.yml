@@ -1,0 +1,114 @@
+name: atriumdb_build_wheels
+'on':
+  workflow_call:
+    outputs:
+      sha256sums:
+        description: SHA-256 checksums of the checked distributions
+        value: ${{ jobs.check.outputs.sha256sums }}
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    name: wheel (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: linux-x86_64
+          os: ubuntu-24.04
+        - name: linux-aarch64
+          os: ubuntu-24.04-arm
+        - name: macos-x86_64
+          os: macos-15-intel
+        - name: macos-arm64
+          os: macos-15
+        - name: windows-amd64
+          os: windows-2025
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install MinGW-w64
+      if: runner.os == 'Windows'
+      id: msys2
+      uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e  # v2.33.0
+      with:
+        msystem: MINGW64
+        install: mingw-w64-x86_64-gcc mingw-w64-x86_64-libgomp
+    - name: Add MinGW-w64 to PATH
+      if: runner.os == 'Windows'
+      shell: bash
+      run: echo "${{ steps.msys2.outputs.msys2-location }}/mingw64/bin" >> "$GITHUB_PATH"
+    - name: Build wheel
+      working-directory: sdk
+      run: |
+        pip install cibuildwheel==4.2.1
+        python -m cibuildwheel --output-dir ../wheelhouse
+    - name: Upload wheel
+      uses: actions/upload-artifact@v4
+      with:
+        name: dist-wheel-${{ matrix.name }}
+        path: wheelhouse/*.whl
+        if-no-files-found: error
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install dependencies
+      run: |
+        sudo apt-get update && sudo apt-get install -y liblz4-dev libzstd-dev
+        pip install build
+    - name: Build sdist
+      run: python -m build --sdist sdk
+    - name: Install from the sdist and test
+      run: |
+        pip install sdk/dist/*.tar.gz
+        python sdk/tests/test_wheel_smoke.py
+    - name: Upload sdist
+      uses: actions/upload-artifact@v4
+      with:
+        name: dist-sdist
+        path: sdk/dist/*.tar.gz
+        if-no-files-found: error
+
+  check:
+    name: check distributions
+    needs:
+      - wheels
+      - sdist
+    runs-on: ubuntu-24.04
+    outputs:
+      sha256sums: ${{ steps.checksums.outputs.sha256sums }}
+    steps:
+    - name: Retrieve distributions
+      uses: actions/download-artifact@v5
+      with:
+        pattern: dist-*
+        merge-multiple: true
+        path: dist
+    - name: Record checksums
+      id: checksums
+      run: |
+        {
+          echo 'sha256sums<<EOF'
+          cd dist && sha256sum -- *
+          echo EOF
+        } >> "$GITHUB_OUTPUT"
+    - name: Check package metadata
+      run: |
+        pip install twine
+        twine check --strict dist/*

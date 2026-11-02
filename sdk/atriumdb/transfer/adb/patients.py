@@ -25,10 +25,10 @@ import random
 
 def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None, deidentify=True,
                           patient_info_to_transfer=None, start_time_nano=None, end_time_nano=None,
-                          deidentification_functions=None, time_shift_nano=None):
+                          deidentification_functions=None, time_shift_nano=None, patient_time_ranges=None):
     """
-    Transfers patient information, mappings between patients and devices, and patient history records from one
-    AtriumSDK instance to another. Depending on the `deidentify` parameter, it may also anonymize
+    Transfers patient information, mappings between patients and devices, encounters, and patient history records
+    from one AtriumSDK instance to another. Depending on the `deidentify` parameter, it may also anonymize
     patient IDs in the transfer process.
 
    :param AtriumSDK src_sdk: The source SDK instance from which to transfer data.
@@ -41,10 +41,14 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
     is provided, use the deidentification table from the file. If False, keep the original patient IDs.
    :param list patient_info_to_transfer: (Optional) A list of patient info keys to transfer.
     If None or "all", transfer all patient info.
-   :param int start_time_nano: (Optional) The start time in nanoseconds for patient-device history records.
-   :param int end_time_nano: (Optional) The end time in nanoseconds for patient-device history records.
+   :param int start_time_nano: (Optional) The start time in nanoseconds for patient-device history and encounter
+    records.
+   :param int end_time_nano: (Optional) The end time in nanoseconds for patient-device history and encounter
+    records.
    :param deidentification_functions: (Optional) A dictionary mapping patient info keys to deidentification functions.
    :param int time_shift_nano: (Optional) The number of nanoseconds to shift the times of the data.
+   :param dict patient_time_ranges: (Optional) A dictionary mapping each source patient ID to a list of
+    [start, end] nanosecond ranges. If provided, only encounters overlapping a patient's ranges are transferred.
 
    :raises ValueError: If both `patient_id_list` and `mrn_list` are None, or if the provided
     `patient_info_to_transfer` contains invalid keys.
@@ -88,6 +92,11 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
 
     transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_time_nano, end_time_nano, time_shift_nano)
 
+    # Encounters, beds and units are only readable from a local database.
+    if src_sdk.metadata_connection_type != "api":
+        transfer_patient_encounters(src_sdk, dest_sdk, patient_id_map, start_time_nano, end_time_nano,
+                                    time_shift_nano, deidentify, patient_time_ranges)
+
     return patient_id_map
 
 
@@ -114,6 +123,59 @@ def transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_tim
 
     if len(dest_device_patient_list) > 0:
         dest_sdk.insert_device_patient_data(device_patient_data=dest_device_patient_list)
+
+
+def transfer_patient_encounters(src_sdk, dest_sdk, patient_id_map, start_time_nano, end_time_nano,
+                                time_shift_nano=None, deidentify=False, patient_time_ranges=None):
+    bed_id_map = {None: None}
+    for src_patient_id, dest_patient_id in patient_id_map.items():
+        existing_encounters = {(bed_id, start_time, end_time) for _, _, bed_id, start_time, end_time, _, _, _ in
+                               dest_sdk.sql_handler.select_encounters_from_range_or_timestamp(
+                                   patient_id=dest_patient_id)}
+
+        time_ranges = [(start_time_nano, end_time_nano)] if patient_time_ranges is None else \
+            patient_time_ranges.get(src_patient_id, [])
+        src_encounters = {encounter[0]: encounter for start, end in time_ranges for encounter in
+                          src_sdk.sql_handler.select_encounters_from_range_or_timestamp(
+                              start_time=start, end_time=end, patient_id=src_patient_id)}
+
+        for _, _, bed_id, start_time, end_time, _, visit_number, last_updated in src_encounters.values():
+            if bed_id not in bed_id_map:
+                bed_id_map[bed_id] = transfer_bed(src_sdk, dest_sdk, bed_id)
+
+            if time_shift_nano is not None:
+                start_time += time_shift_nano
+                end_time = None if end_time is None else end_time + time_shift_nano
+                last_updated += time_shift_nano
+
+            if (bed_id_map[bed_id], start_time, end_time) in existing_encounters:
+                continue
+
+            dest_sdk.sql_handler.insert_encounter_row(
+                dest_patient_id, bed_id_map[bed_id], start_time, end_time,
+                visit_number=None if deidentify else visit_number, last_updated=last_updated)
+
+
+def transfer_bed(src_sdk, dest_sdk, src_bed_id):
+    _, src_unit_id, bed_name = src_sdk.sql_handler.select_bed(bed_id=src_bed_id)
+    _, src_institution_id, unit_name, unit_type = src_sdk.sql_handler.select_unit(unit_id=src_unit_id)
+    dest_unit = dest_sdk.sql_handler.select_unit(name=unit_name)
+    if dest_unit is not None:
+        dest_unit_id = dest_unit[0]
+    else:
+        _, institution_name = src_sdk.sql_handler.select_institution(institution_id=src_institution_id)
+        dest_institution = dest_sdk.sql_handler.select_institution(name=institution_name)
+        dest_institution_id = dest_institution[0] if dest_institution is not None else \
+            dest_sdk.sql_handler.insert_institution(institution_name)
+        dest_unit_id = dest_sdk.sql_handler.insert_unit(dest_institution_id, unit_name, unit_type)
+
+    dest_bed = dest_sdk.sql_handler.select_bed(name=bed_name, unit_id=dest_unit_id)
+    if dest_bed is not None:
+        return dest_bed[0]
+
+    # Keep the source bed id when it is free in the destination.
+    free_bed_id = src_bed_id if dest_sdk.sql_handler.select_bed(bed_id=src_bed_id) is None else None
+    return dest_sdk.sql_handler.insert_bed(dest_unit_id, bed_name, bed_id=free_bed_id)
 
 
 def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list, deidentify):

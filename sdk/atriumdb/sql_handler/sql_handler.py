@@ -1207,15 +1207,16 @@ class SQLHandler(ABC):
             conn.commit()
             return bed_id if bed_id is not None else cursor.lastrowid
 
-    def select_bed(self, bed_id: Optional[int] = None, name: Optional[str] = None) -> Optional[Tuple[int, int, str]]:
+    def select_bed(self, bed_id: Optional[int] = None, name: Optional[str] = None,
+                   unit_id: Optional[int] = None) -> Optional[Tuple[int, int, str]]:
         query = "SELECT id, unit_id, name FROM bed WHERE "
         params = []
         if bed_id:
             query += "id = ?"
             params.append(int(bed_id))
         elif name:
-            query += "name = ?"
-            params.append(name)
+            query += "name = ?" if unit_id is None else "name = ? AND unit_id = ?"
+            params.extend([name] if unit_id is None else [name, int(unit_id)])
         else:
             raise ValueError("Either bed_id or name must be provided")
 

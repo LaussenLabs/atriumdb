@@ -41,7 +41,7 @@ If it's a MariaDB dataset you will also have to specify the connection parameter
 # Import AtriumSDK python object
 from atriumdb import AtriumSDK
 
-# Define a directory path where the dataset is stored (always needed)
+# Define a directory path where the dataset is stored (optional for MariaDB if you only need metadata)
 dataset_location = "./example_dataset"
 
 # Create AtriumSDK python object (sqlite)
