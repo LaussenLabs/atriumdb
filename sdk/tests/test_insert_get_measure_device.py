@@ -15,6 +15,8 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import pytest
+
 from atriumdb import AtriumSDK
 from atriumdb.atrium_sdk import convert_to_nanohz
 from tests.testing_framework import _test_for_both
@@ -53,6 +55,11 @@ def _test_insert_get_measure_device(db_type, dataset_location, connection_params
     # test the get_measure_info method when the requested measure hasn't been inserted
     measure_info = sdk.get_measure_info(100)
     assert measure_info is None
+
+    # A frequency that rounds to 0 nHz is refused without adding the measure.
+    with pytest.raises(ValueError):
+        sdk.insert_measure(measure_tag="zero", freq=1e-10, freq_units="Hz", units=units)
+    assert sdk.get_measure_id("zero", 0, units) is None
 
     # test the insert_device method
     device_tag = "Monitor A3"
