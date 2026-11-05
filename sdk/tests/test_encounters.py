@@ -137,6 +137,11 @@ def _test_encounters(db_type, dataset_location, connection_params):
     assert patient_101_ms[0][3] == T1 * 1000.0
     assert patient_101_ms[0][4] == T2 * 1000.0
 
+    # Test 'ns' returns integer times
+    patient_101_ns = sdk.get_encounters(patient_id=101)
+    assert patient_101_ns[0][3] == T1 * 10 ** 9
+    assert all(isinstance(t, int) for t in (patient_101_ns[0][3], patient_101_ns[0][4], patient_101_ns[0][7]))
+
     # Test no encounters found
     no_encounters = sdk.get_encounters(patient_id=999, time_units='s')
     assert no_encounters == [], "No encounters expected for non-existent patient"
