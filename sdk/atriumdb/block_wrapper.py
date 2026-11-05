@@ -20,11 +20,13 @@ import numpy as np
 import platform
 from pathlib import Path
 import os
+import warnings
 
 from typing import Tuple
 
-# GNU OpenMP's thread pool does not survive fork(), so a forked child encodes and decodes on one thread.
-_PID = os.getpid()
+# GNU OpenMP's thread pool does not survive fork(): a process forked after its parent encoded or decoded on several
+# threads hangs if it does the same, so it uses one thread. _THREAD_POOL_PID is the last process that used several.
+_THREAD_POOL_PID = None
 
 # Current Block Data
 TSC_VERSION_NUM = 2
@@ -139,6 +141,17 @@ class WrappedBlockDll:
         self.num_threads = num_threads
         self.bc_dll = None
 
+    def _get_num_threads(self):
+        global _THREAD_POOL_PID
+        if self.num_threads > 1:
+            if _THREAD_POOL_PID not in (None, os.getpid()):
+                warnings.warn(f"Using 1 thread instead of num_threads={self.num_threads}: this process was forked "
+                              f"after its parent encoded or decoded on several threads, and OpenMP's thread pool does "
+                              f"not survive fork(). Start processes with the 'spawn' method to keep num_threads.")
+                return 1
+            _THREAD_POOL_PID = os.getpid()
+        return self.num_threads
+
     def load_dll(self):
         # lazy load the dll so that when you're using multiprocessing,
         # the CDLL object doesn't get passed before its used.
@@ -196,7 +209,7 @@ class WrappedBlockDll:
             num_blocks, t_block_start.ctypes.data_as(POINTER(c_uint64)),
             v_block_start.ctypes.data_as(POINTER(c_uint64)),
             byte_start.ctypes.data_as(POINTER(c_uint64)), headers, byref(options),
-            self.num_threads if os.getpid() == _PID else 1)
+            self._get_num_threads())
 
         return encoded_bytes[:len_encoded], byte_start
 
@@ -211,7 +224,7 @@ class WrappedBlockDll:
             num_blocks, t_block_start.ctypes.data_as(POINTER(c_uint64)),
             v_block_start.ctypes.data_as(POINTER(c_uint64)),
             byte_start.ctypes.data_as(POINTER(c_uint64)), t_byte_start.ctypes.data_as(POINTER(c_uint64)),
-            self.num_threads if os.getpid() == _PID else 1)
+            self._get_num_threads())
 
     def convert_value_data_to_analog(self, value_data: np.ndarray, analog_values: np.ndarray,
                                      headers: list[BlockMetadata], num_blocks: int):
