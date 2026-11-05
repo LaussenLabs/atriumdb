@@ -82,7 +82,7 @@ class AtriumDBMapDataset(Dataset):
 
         # get your iterator over the dataset from the atriumdb
         self.iterator_base_instance = self.sdk.get_iterator(self.dataset_def, window_duration=window_duration, window_slide=window_slide,
-                                                            time_units=time_units, iterator_type="lightmapped", shuffle=False, gap_tolerance=gap_tolerance)
+                                                            time_units=time_units, iterator_type="mapped", shuffle=False, gap_tolerance=gap_tolerance)
 
         _LOGGER.info(f"Number of samples: {self.__len__()}")
 

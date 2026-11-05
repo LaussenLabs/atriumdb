@@ -70,7 +70,7 @@ def _period_simple(db_type, dataset_location, connection_params):
     window_size_ns = window_size * 10**6
     window_slide_ns = window_slide * 10**6
 
-    iterator = sdk.get_iterator(dataset_definition, window_size, window_slide, iterator_type='lightmapped', time_units="ms")
+    iterator = sdk.get_iterator(dataset_definition, window_size, window_slide, iterator_type='mapped', time_units="ms")
     measure_tuple = ("test", freq_nhz / 10**9, 'anything')
 
     # Loop through all windows
@@ -150,7 +150,8 @@ def _period_weird(db_type, dataset_location, connection_params):
     window_size_ns = window_size * 10**6
     window_slide_ns = window_slide * 10**6
 
-    iterator = sdk.get_iterator(dataset_definition, window_size, window_slide, iterator_type='lightmapped', time_units="ms")
+    with pytest.warns(FutureWarning, match="lightmapped"):
+        iterator = sdk.get_iterator(dataset_definition, window_size, window_slide, iterator_type='lightmapped', time_units="ms")
     measure_tuple = ("test", freq_nhz / 10**9, 'anything')
 
     # Loop through all windows
