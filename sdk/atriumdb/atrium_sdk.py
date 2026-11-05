@@ -56,7 +56,6 @@ from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
 from atriumdb.windowing.light_mapped_iterator import LightMappedIterator
-from atriumdb.windowing.random_access_iterator import MappedIterator
 from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.definition_splitter import partition_dataset
 from atriumdb.write_buffer import WriteBuffer
@@ -5116,10 +5115,9 @@ class AtriumSDK:
                             nanoseconds you can choose from one of ["s", "ms", "us", "ns"].
         :param float label_threshold: The percentage of the window that must contain a label before the entire window is
             marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
-        :param str iterator_type: Specify the type of iterator. If set to 'mapped', a MappedIterator
-          will be returned, allowing indexed access to dataset windows. If set to `lightmapped` a lightweight low RAM mapped iterator is returned.
-          'lightmapped' is most suitable when you want true random shuffles and/or you're going to be jumping around
-          the indices in no particular order.
+        :param str iterator_type: Specify the type of iterator. If set to 'mapped', a lightweight low RAM
+          LightMappedIterator is returned, allowing indexed access to dataset windows. It is most suitable when you
+          want true random shuffles and/or you're going to be jumping around the indices in no particular order.
           If set to 'filtered', a FilteredDatasetIterator is returned and window_filter_fn is required.
           By default, or if set to None or 'iterator', a standard DatasetIterator is returned.
         :param bool | int shuffle: If True, the order of windows will be randomized before iteration. If set to an integer, this
@@ -5269,13 +5267,10 @@ class AtriumSDK:
                 num_windows_prefetch = max(1, (10 * self.block.block_size) // number_of_values_per_window_slide)
 
         # Create appropriate iterator object based on iterator_type
-        if iterator_type == 'mapped':
-            iterator = MappedIterator(self, definition, window_duration, window_slide,
-                                      num_windows_prefetch=num_windows_prefetch, label_threshold=label_threshold,
-                                      shuffle=shuffle, max_cache_duration=max_cache_duration_per_source,
-                                      patient_history_fields=patient_history_fields,
-                                      label_exact_match=label_exact_match)
-        elif iterator_type == 'lightmapped':
+        if iterator_type == 'lightmapped':
+            warnings.warn("iterator_type='lightmapped' is deprecated and will be removed in AtriumDB 2.8; use 'mapped', "
+                          "which returns the same iterator.", FutureWarning, stacklevel=2)
+        if iterator_type in ('mapped', 'lightmapped'):
             iterator = LightMappedIterator(
                 self, definition,
                 window_duration, window_slide,

@@ -30,7 +30,7 @@ from atriumdb.windowing.windowing_functions import get_threshold_labels, find_cl
 class LightMappedIterator(DatasetIterator):
     """
     Random-access iterator that fetches each window on demand, using little memory. Returned by
-    :meth:`AtriumSDK.get_iterator` with ``iterator_type="lightmapped"``.
+    :meth:`AtriumSDK.get_iterator` with ``iterator_type="mapped"``.
 
     :param AtriumSDK sdk: SDK object to fetch data.
     :param DatasetDefinition definition: Definition to iterate over; validated with defaults if not yet validated.
