@@ -17,10 +17,14 @@
 
 
 import csv
+import hashlib
 import time
+import warnings
 from pathlib import Path
 from typing import Dict, Union
 import random
+
+DEIDENTIFICATION_KEY_SETTING = "deidentification_key_sha256"
 
 
 def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None, deidentify=True,
@@ -85,8 +89,18 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
     """
     patient_id_list = validate_patient_transfer_list(src_sdk, patient_id_list, mrn_list, deidentify)
 
+    if deidentify:
+        check_deidentification_key(dest_sdk, deidentify)
+    elif dest_sdk.sql_handler.select_setting(DEIDENTIFICATION_KEY_SETTING) is not None:
+        warnings.warn("The destination holds de-identified patients, and this transfer adds identified patients "
+                      "(deidentify=False) to it.")
+
     patient_id_map = create_patient_id_map(patient_id_list, deidentify,
                                            used_patient_ids=dest_sdk.get_all_patients().keys())
+
+    if deidentify:
+        key = deidentification_key_fingerprint(patient_id_map) if isinstance(deidentify, (str, Path)) else "none"
+        dest_sdk.sql_handler.insert_setting(DEIDENTIFICATION_KEY_SETTING, key)
 
     transfer_patient_table(src_sdk, dest_sdk, patient_id_list, patient_id_map, patient_info_to_transfer,
                            deidentification_functions, time_shift_nano, deidentify)
@@ -180,6 +194,25 @@ def transfer_bed(src_sdk, dest_sdk, src_bed_id):
     # Keep the source bed id when it is free in the destination.
     free_bed_id = src_bed_id if dest_sdk.sql_handler.select_bed(bed_id=src_bed_id) is None else None
     return dest_sdk.sql_handler.insert_bed(dest_unit_id, bed_name, bed_id=free_bed_id)
+
+
+def check_deidentification_key(dest_sdk, deidentify):
+    # A destination remembers the key that de-identified it ("none" for deidentify=True, which keeps no key), so a
+    # later transfer cannot give its patients a second id.
+    setting = dest_sdk.sql_handler.select_setting(DEIDENTIFICATION_KEY_SETTING)
+    if setting is None:
+        return
+    key_path = Path(deidentify) if isinstance(deidentify, (str, Path)) else None
+    if key_path is None or not key_path.exists() or \
+            deidentification_key_fingerprint(read_csv_to_dict(key_path)) != setting[1]:
+        raise ValueError("The destination already holds patients de-identified with another key, so this transfer "
+                         "could give a patient a second id. Pass the key file used for the destination as deidentify, "
+                         "or transfer into a new dataset.")
+
+
+def deidentification_key_fingerprint(patient_id_map):
+    rows = "".join(f"{src_id},{dest_id}\n" for src_id, dest_id in sorted(patient_id_map.items()))
+    return hashlib.sha256(rows.encode()).hexdigest()
 
 
 def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list, deidentify):
