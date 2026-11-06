@@ -8,7 +8,6 @@ This page addresses common issues encountered when using AtriumDB and provides r
 **Contents**
 
 - :ref:`OpenMP Interference <openmp_interference>`
-- :ref:`CDLL Not Hashable <cdll_not_hashable>`
 
 
 .. _openmp_interference:
@@ -47,46 +46,3 @@ PyTorch or scikit-learn, is loaded in the same process, OpenMP can stop the prog
 `OMP: Error #15: Initializing libomp.dylib, but found libomp.dylib already initialized`.
 Setting the environment variable `KMP_DUPLICATE_LIB_OK=TRUE` before starting Python lets both runtimes load.
 The OpenMP runtime documents this as an unsafe workaround, so prefer importing only one of the packages per process.
-
-
-.. _cdll_not_hashable:
-
-CDLL Not Hashable
-----------------------
-
-**Problem**
-
-AtriumDB (a python library) calls a C shared library (ctypes CDLL or WINDLL) to optimize its CPU-intensive operations.
-This shared library is stored as an object variable in the `AtriumSDK` instance upon calling of its `get_data`, `write_data` (or similar) methods.
-Due to this, the `AtriumSDK` object becomes unhashable after timeseries data is read or stored, which can cause issues
-in parallelized frameworks like multiprocessing, or other hashable use cases.
-
-**Solution**
-
-To ensure the `AtriumSDK` object is hashable, either:
-
-1. Ensure that you do not invoke any timeseries data read or write operations before creating worker processes. This will prevent the shared library from being loaded prematurely.
-
---or--
-
-2. If you need to use timeseries operations before creating workers, explicitly unset the shared library reference just before creating worker processes (or other hashing functions):
-
-.. code-block:: python
-
-    from atriumdb import AtriumSDK
-
-    sdk = AtriumSDK(dataset_location="./my_dataset")
-
-    # Perform necessary operations that involve timeseries data
-
-    # Unset the shared library reference before worker creation
-    AtriumSDK.block.wrapped_dll.bc_dll = None
-
-    # Create worker processes
-    from multiprocessing import Pool
-    with Pool(processes=4) as pool:
-        pool.map(worker_function, args_list)
-
-**Important Notes:**
-
-- The shared library is lazy-loaded, meaning it is not loaded until a timeseries read or write operation is performed.
