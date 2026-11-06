@@ -90,5 +90,3 @@ To ensure the `AtriumSDK` object is hashable, either:
 **Important Notes:**
 
 - The shared library is lazy-loaded, meaning it is not loaded until a timeseries read or write operation is performed.
-- Processes started with the `spawn` method pickle the `AtriumSDK` object, so they need one of the solutions above.
-  `spawn` is the default on Windows and macOS, and is used by a PyTorch `DataLoader` with `multiprocessing_context="spawn"`.
