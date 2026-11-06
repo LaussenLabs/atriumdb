@@ -136,6 +136,10 @@ class WrappedBlockDll:
         self.num_threads = num_threads
         self.bc_dll = None
 
+    def __getstate__(self):
+        # A loaded library can't be pickled; the copy loads it again on first use.
+        return {**self.__dict__, 'bc_dll': None}
+
     def load_dll(self):
         # lazy load the dll so that when you're using multiprocessing,
         # the CDLL object doesn't get passed before its used.
