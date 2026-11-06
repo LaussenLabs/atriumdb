@@ -36,5 +36,5 @@ def test_forked_process_threads(monkeypatch):
 
     # The parent process used several threads before forking.
     monkeypatch.setattr(block_wrapper, "_THREAD_POOL_PID", os.getpid() + 1)
-    with pytest.warns(UserWarning, match="spawn"):
+    with pytest.warns(UserWarning, match="Start worker processes"):
         assert block._get_num_threads() == 1

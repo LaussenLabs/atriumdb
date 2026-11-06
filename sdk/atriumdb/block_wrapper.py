@@ -147,7 +147,8 @@ class WrappedBlockDll:
             if _THREAD_POOL_PID not in (None, os.getpid()):
                 warnings.warn(f"Using 1 thread instead of num_threads={self.num_threads}: this process was forked "
                               f"after its parent encoded or decoded on several threads, and OpenMP's thread pool does "
-                              f"not survive fork(). Start processes with the 'spawn' method to keep num_threads.")
+                              f"not survive fork(). Start worker processes before the parent encodes or decodes to keep "
+                              f"num_threads.")
                 return 1
             _THREAD_POOL_PID = os.getpid()
         return self.num_threads
