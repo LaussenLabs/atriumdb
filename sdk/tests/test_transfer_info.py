@@ -20,6 +20,7 @@ import shutil
 import random
 import time
 import string
+from pathlib import Path
 
 import names
 
@@ -28,7 +29,7 @@ import pytest
 from atriumdb import AtriumSDK
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 from atriumdb.transfer.adb.devices import transfer_devices
-from atriumdb.transfer.adb.patients import transfer_patient_info
+from atriumdb.transfer.adb.patients import transfer_patient_info, write_dict_to_csv
 from tests.testing_framework import _test_for_both, create_sibling_sdk
 
 DB_NAME = "transfer-patients"
@@ -36,6 +37,7 @@ DB_NAME = "transfer-patients"
 
 def test_transfer_patients():
     _test_for_both(DB_NAME, _test_transfer_patients)
+    _test_for_both(DB_NAME, _test_deidentified_rerun)
 
 
 def _test_transfer_patients(db_type, dataset_location, connection_params):
@@ -151,3 +153,31 @@ def insert_random_patients(sdk, n):
         patient_id_list.append(patient_id)
         
     return patient_id_list
+
+
+def _test_deidentified_rerun(db_type, dataset_location, connection_params):
+    sdk_1 = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
+
+    insert_random_patients(sdk_1, 100)
+
+    # A second de-identified run must not give the same patients new ids
+    transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=True)
+    with pytest.raises(ValueError):
+        transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=True)
+
+    # With a key file, only that key is accepted
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
+    key_file, wrong_key_file = Path(f"{dataset_location}_key.csv"), Path(f"{dataset_location}_wrong_key.csv")
+    key_file.unlink(missing_ok=True)
+    first_map = transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=key_file)
+    assert transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=key_file) == first_map
+    write_dict_to_csv({src_id: dest_id + 1 for src_id, dest_id in first_map.items()}, wrong_key_file)
+    with pytest.raises(ValueError):
+        transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=wrong_key_file)
+
+    # Identified patients can still be added, with a warning
+    with pytest.warns(UserWarning, match="identified patients"):
+        transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=False)

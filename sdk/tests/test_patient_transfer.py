@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 import os
 
-from atriumdb.transfer.adb.patients import create_patient_id_map, write_dict_to_csv
+from atriumdb.transfer.adb.patients import create_patient_id_map, write_dict_to_csv, generate_patient_ids
 
 
 def test_direct_mapping():
@@ -16,6 +16,7 @@ def test_deidentify_true():
     result = create_patient_id_map(patient_id_list, True)
     assert all(key != value for key, value in result.items()), "De-identification failed"
     assert len(set(result.values())) == len(patient_id_list), "Generated IDs are not unique"
+    assert min(generate_patient_ids(3, used_patient_ids=[20000])) > 20000
 
 
 def test_deidentify_with_new_file(tmp_path):

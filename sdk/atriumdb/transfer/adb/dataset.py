@@ -17,6 +17,7 @@
 
 import random
 import time
+import warnings
 from collections import defaultdict
 from pathlib import Path
 from typing import List
@@ -69,7 +70,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     :param Optional[int] gap_tolerance: A tolerance period for gaps in data, units specified in `time_units` (defaults to 5 minutes if not specified).
         Helps to optimize the waveform transfer by transferring large chunks at a time.
     :param bool | str deidentify: If True or a filename, scrambles patient_ids during the transfer. patient IDs are replaced with randomly generated IDs or according to provided de-identification csv
-        with source ids as column 1 and destination ids as column 2. If the file doesn't exist, then a new one is created with randomly assigned ids. Exported datasets will remain identified with full patient info by default.
+        with source ids as column 1 and destination ids as column 2. If the file doesn't exist, then a new one is created with randomly assigned ids. A destination that already holds de-identified patients only accepts the file it was de-identified with. Exported datasets will remain identified with full patient info by default.
     :param Optional[list] patient_info_to_transfer: Specific patient information fields to transfer. If not provided or set to None, all available information will be considered.
     :param bool include_labels: Specifies whether labels should be included in the transfer process.
     :param Optional[str] measure_tag_match_rule: Determines how to match the measures by tags. One of ['all', 'best'].
@@ -250,6 +251,14 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                         measure_device_intervals.append(write_intervals)
 
                     if not blocks_to_transfer:
+                        continue
+
+                    # Do not copy a signal twice, e.g. when a transfer is run again into the same destination.
+                    new_intervals = intervals_union_list(measure_device_intervals, gap_tolerance_nano=0) + (time_shift or 0)
+                    if dest_sdk.get_interval_array(dest_measure_id, device_id=dest_device_id, gap_tolerance_nano=0,
+                                                   start=int(new_intervals[0][0]), end=int(new_intervals[-1][1])).size:
+                        warnings.warn(f"Destination already holds data for measure {dest_measure_id} on device "
+                                      f"{dest_device_id} in this time range; skipping it.")
                         continue
 
                     block_start_index = 0
