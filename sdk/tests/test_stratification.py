@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import random
 
-from atriumdb.windowing.definition_splitter import stratified_partition_by_labels
+from atriumdb.windowing.definition_splitter import stratified_partition_by_labels, warn_shared_device_time
 from tests.testing_framework import scaled
 
 
@@ -55,6 +55,35 @@ def test_invalid_ratios():
         stratified_partition_by_labels(data_list, partition_ratios, random_state=22)
 
 
+def test_stratified_partition_uneven_ratios():
+    """
+    Every duration is split close to uneven ratios, and different seeds give different splits.
+    """
+    rng = np.random.default_rng(0)
+    hour = 3600 * 10 ** 9
+    data_list = []
+    for patient_id in range(200):
+        waveform = int(rng.lognormal(np.log(24), 1.0) * hour)
+        data_list.append(["patient_ids", patient_id, [], waveform, int(waveform * rng.uniform(0, 0.1))])
+    totals = np.sum([item[3:] for item in data_list], axis=0)
+
+    splits = set()
+    for seed in range(10):
+        partitions, label_totals, _ = stratified_partition_by_labels(data_list, [60, 20, 20], random_state=seed)
+        assert np.all(np.abs(np.array(label_totals) / totals - np.array([[0.6], [0.2], [0.2]])) < 0.05)
+        splits.add(tuple(sorted(item[1] for item in partitions[0])))
+    assert len(splits) > 1
+
+
+def test_stratified_partition_no_empty_partition():
+    """
+    Every partition gets an item when there are at least as many items as partitions.
+    """
+    data_list = [["patient_ids", patient_id, [], 3600 * 10 ** 9] for patient_id in range(3)]
+    for seed in range(10):
+        _, _, counts = stratified_partition_by_labels(data_list, [60, 20, 20], random_state=seed)
+        assert counts == [1, 1, 1]
+
 
 def generate_data_list(num_entries):
     data_list = []
@@ -78,3 +107,9 @@ def generate_data_list(num_entries):
         data_list.append([first_column, second_column, [[]]] + durations)
 
     return data_list
+
+
+def test_warn_shared_device_time():
+    # Device 1 is mapped to patients 10 and 11 between 50 and 100.
+    with pytest.warns(UserWarning, match="2 patients share device time"):
+        warn_shared_device_time({(1, 10): [(0, 100)], (1, 11): [(50, 150)], (2, 12): [(0, 100)]})

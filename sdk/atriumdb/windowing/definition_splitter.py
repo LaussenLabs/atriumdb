@@ -15,12 +15,15 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from atriumdb.intervals.intersection import list_intersection
 from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.definition import DatasetDefinition
 import numpy as np
 import random
 import bisect
+from itertools import accumulate
 import copy
+import warnings
 from tqdm import tqdm
 
 
@@ -44,9 +47,11 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     :param num_show_best_trials: Optional. Number of best trials to display if verbose is True.
     :param gap_tolerance: Optional. An integer specifying the minimum allowed gap in nanoseconds for time ranges,
         used to validate `definition` if it is not already validated.
-    :return: A tuple of DatasetDefinition objects (one per partition). If verbose and n_trials is None, also returns
+    :return: A list of DatasetDefinition objects (one per partition). If verbose is True, also returns
              the duration_info (a list of dicts containing duration and count info, including unique patients and
              additional label tallies).
+    :raises ValueError: If the definition has no measures or no patient-mapped data, if a stratification label is
+        not in the definition's labels, or if a partition ratio is 0.
 
     Example:
     --------
@@ -87,6 +92,7 @@ def partition_dataset(definition, sdk, partition_ratios, priority_stratification
     validated_measure_list = validated_data['measures']
     validated_label_set_list = validated_data['labels']
     validated_sources = validated_data['sources']
+    warn_shared_device_time(validated_sources.get('device_patient_tuples', {}))
 
     # Convert priority stratification labels to label set IDs, using the SDK if necessary.
     priority_stratification_label_set_ids = get_priority_stratification_label_set_ids(
@@ -227,6 +233,22 @@ def get_priority_stratification_label_set_ids(priority_labels, validated_label_s
     return label_set_ids
 
 
+def warn_shared_device_time(device_patient_tuples):
+    # A device mapped to two patients at once records the same samples for both, so they can reach two partitions.
+    rows = sorted((device_id, start, end, patient_id)
+                  for (device_id, patient_id), time_ranges in device_patient_tuples.items() for start, end in time_ranges)
+    shared_patient_ids, latest = set(), {}
+    for device_id, start, end, patient_id in rows:
+        latest_end, latest_patient_id = latest.get(device_id, (start, patient_id))
+        if start < latest_end and patient_id != latest_patient_id:
+            shared_patient_ids.update((patient_id, latest_patient_id))
+        if end > latest_end:
+            latest[device_id] = (end, patient_id)
+    if shared_patient_ids:
+        warnings.warn(f"{len(shared_patient_ids)} patients share device time with another patient. Samples from that "
+                      f"time can appear in more than one partition.")
+
+
 def merge_intervals(intervals):
     if not intervals:
         return []
@@ -281,7 +303,7 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
     for device_id in device_labels.keys():
         device_labels[device_id] = sorted(device_labels[device_id], key=lambda x: (x['start_time_n'], x['end_time_n']))
         label_starts[device_id] = [entry['start_time_n'] for entry in device_labels[device_id]]
-        label_ends[device_id] = [entry['end_time_n'] for entry in device_labels[device_id]]
+        label_ends[device_id] = list(accumulate((entry['end_time_n'] for entry in device_labels[device_id]), max))
 
     # Process additional labels if provided.
     additional_device_labels = {}
@@ -312,7 +334,8 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
                                                          key=lambda x: (x['start_time_n'], x['end_time_n']))
             additional_label_starts[device_id] = [entry['start_time_n'] for entry in
                                                   additional_device_labels[device_id]]
-            additional_label_ends[device_id] = [entry['end_time_n'] for entry in additional_device_labels[device_id]]
+            additional_label_ends[device_id] = list(accumulate(
+                (entry['end_time_n'] for entry in additional_device_labels[device_id]), max))
 
     patient_results = {}
     # This will hold additional label durations per patient.
@@ -351,7 +374,7 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
             for label in range_labels:
                 if label['label_name_id'] in label_to_index_dict:
                     label_index = label_to_index_dict[label['label_name_id']]
-                    label_duration = label['end_time_n'] - label['start_time_n']
+                    label_duration = min(label['end_time_n'], end_time) - max(label['start_time_n'], start_time)
                     patient_results[patient_id]["durations"][label_index + 1] += label_duration
 
             # Fetch and tally additional labels if applicable.
@@ -369,7 +392,7 @@ def get_label_duration_list(validated_sources, priority_stratification_label_set
                 for label in range_additional_labels:
                     if label['label_name_id'] in additional_label_to_index_dict:
                         label_index = additional_label_to_index_dict[label['label_name_id']]
-                        label_duration = label['end_time_n'] - label['start_time_n']
+                        label_duration = min(label['end_time_n'], end_time) - max(label['start_time_n'], start_time)
                         patient_additional_results[patient_id][label_index] += label_duration
 
     # Merge and sort the time ranges per patient.
@@ -397,19 +420,20 @@ def stratified_partition_by_labels(data_list, partition_ratios, random_state=Non
 
     # Normalize the partition ratios
     ratios = np.array(partition_ratios) / sum(partition_ratios)
-    target_sums = np.outer(total_sums, ratios).T
 
     # Initialize partitions and their total sums
     partitions = [[] for _ in range(len(ratios))]
     partition_sums = [np.zeros(len(total_sums), dtype=np.int64) for _ in range(len(ratios))]
     partition_source_counts = [0 for _ in range(len(ratios))]
 
-    # Function to find the best partition for the current item.
+    # Function to find the best partition for the current item: the one where adding it most reduces the summed
+    # squared error between each partition's share of every non-empty duration and its ratio.
+    non_empty = total_sums > 0
+
     def find_best_partition(item):
-        item_sums = np.array(item[3:], dtype=np.int64)
-        deficits = target_sums - partition_sums
-        deficits[deficits < 0] = np.inf
-        scores = np.sum(deficits - item_sums, axis=1)
+        item_shares = np.array(item[3:], dtype=np.float64)[non_empty] / total_sums[non_empty]
+        share_errors = np.array(partition_sums)[:, non_empty] / total_sums[non_empty] - ratios[:, None]
+        scores = np.sum(item_shares * (2 * share_errors + item_shares), axis=1)
         return np.argmin(scores)
 
     # Randomly shuffle the data list.
@@ -422,6 +446,18 @@ def stratified_partition_by_labels(data_list, partition_ratios, random_state=Non
         partition_sums[best_partition] += item[3:]
         partition_source_counts[best_partition] += 1
 
+    # Move the smallest item of the fullest partition into each empty partition.
+    for empty_partition in [i for i, count in enumerate(partition_source_counts) if count == 0]:
+        donor_partition = int(np.argmax(partition_source_counts))
+        if partition_source_counts[donor_partition] > 1:
+            item = min(partitions[donor_partition], key=lambda x: x[3])
+            partitions[donor_partition].remove(item)
+            partition_sums[donor_partition] -= item[3:]
+            partition_source_counts[donor_partition] -= 1
+            partitions[empty_partition].append(item)
+            partition_sums[empty_partition] += item[3:]
+            partition_source_counts[empty_partition] += 1
+
     return partitions, partition_sums, partition_source_counts
 
 
@@ -429,6 +465,14 @@ def convert_source_lists_to_definitions(partitioned_source_list, original_defini
     # Get measures and labels from the original definition.
     measures = original_definition.data_dict['measures']
     labels = original_definition.data_dict['labels']
+
+    # Partitions of a device-based definition are written as device_ids, since patient_ids would cover every device
+    # the patients are mapped to.
+    device_based = not original_definition.data_dict['patient_ids'] and not original_definition.data_dict['mrns']
+    patient_device_ranges = {}
+    for (device_id, patient_id), ranges in original_definition.validated_data_dict['sources'][
+            'device_patient_tuples'].items():
+        patient_device_ranges.setdefault(patient_id, {})[device_id] = ranges
 
     partitioned_definitions = []
 
@@ -455,6 +499,11 @@ def convert_source_lists_to_definitions(partitioned_source_list, original_defini
 
                 device_ids[device_id].extend(time_specifications)
 
+            elif source_type == 'patient_ids' and device_based:
+                for device_id, device_ranges in patient_device_ranges.get(source_key, {}).items():
+                    device_ids.setdefault(device_id, []).extend(
+                        {'start': start, 'end': end}
+                        for start, end in list_intersection(merge_intervals(device_ranges), time_ranges))
             elif source_type == 'patient_ids':
                 patient_id = source_key
                 if patient_id not in patient_ids:
@@ -492,9 +541,9 @@ def merge_time_ranges(time_ranges):
     current_range = time_ranges[0]
 
     for next_range in time_ranges[1:]:
-        if current_range['end'] == next_range['start']:
+        if current_range['end'] >= next_range['start']:
             # Merge the ranges
-            current_range['end'] = next_range['end']
+            current_range['end'] = max(current_range['end'], next_range['end'])
         else:
             # No merging needed, push the current range and move to the next
             merged_ranges.append(current_range)
@@ -583,20 +632,11 @@ def get_random_states(n_trials, random_state=None):
 
 
 def find_labels(sorted_labels, starts, ends, start_time, end_time):
+    # ends holds the running maximum of end times, so it stays sorted when labels nest.
     start_idx = bisect.bisect_left(ends, start_time)
-    end_idx = bisect.bisect_left(ends, end_time)
+    end_idx = bisect.bisect_right(starts, end_time)
 
-    if start_idx == end_idx:
-        if start_idx >= len(starts):
-            return []
-        if (not (starts[start_idx] <= start_time <= ends[start_idx])
-                and not (starts[end_idx] <= end_time <= ends[end_idx])):
-            return []
-
-    if end_idx < len(starts) and end_time < starts[end_idx]:
-        end_idx = max(0, end_idx - 1)
-
-    return sorted_labels[start_idx:end_idx + 1]
+    return [label for label in sorted_labels[start_idx:end_idx] if label['end_time_n'] >= start_time]
 
 
 def pretty_print_duration_info(duration_info, header=None, priority_labels=None, additional_labels=None,

@@ -45,7 +45,21 @@ def _test_transfer_patients(db_type, dataset_location, connection_params):
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
     # Actual Test Below
-    insert_random_patients(sdk_1, 100)
+    patient_id_list = insert_random_patients(sdk_1, 100)
+
+    institution_id = sdk_1.sql_handler.insert_institution(name="Test Institution")
+    unit_id = sdk_1.sql_handler.insert_unit(institution_id=institution_id, name="Test Unit", unit_type="Test Type")
+    bed_id = sdk_1.sql_handler.insert_bed(unit_id=unit_id, name="Test Bed")
+    sdk_1.insert_encounter(start_time=1_000, end_time=2_000, patient_id=patient_id_list[0], bed_id=bed_id,
+                           visit_number="V1", last_updated=3_000)
+    sdk_1.insert_encounter(start_time=4_000, patient_id=patient_id_list[1], bed_id=bed_id, last_updated=5_000)
+
+    # A bed with the same name in another unit
+    other_unit_id = sdk_1.sql_handler.insert_unit(institution_id=institution_id, name="Other Unit",
+                                                  unit_type="Test Type")
+    other_bed_id = sdk_1.sql_handler.insert_bed(unit_id=other_unit_id, name="Test Bed")
+    sdk_1.insert_encounter(start_time=6_000, end_time=7_000, patient_id=patient_id_list[2], bed_id=other_bed_id,
+                           last_updated=8_000)
 
     # Test transfer_patients without deidentification
     # from_to_patient_id_dict = transfer_patients(sdk_1, sdk_2)
@@ -60,10 +74,18 @@ def _test_transfer_patients(db_type, dataset_location, connection_params):
         assert from_patient_id == to_patient_id
         assert all_patients_1[from_patient_id] == all_patients_2[to_patient_id]
 
+    assert [e[1:] for e in sdk_2.get_encounters()] == [e[1:] for e in sdk_1.get_encounters()]
+
     # Test transfer_patients with deidentification
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
     device_id_map = transfer_devices(sdk_1, sdk_2)
-    from_to_patient_id_dict_deid = transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=True)
+    time_shift = 10_000
+    from_to_patient_id_dict_deid = transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=True,
+                                                         time_shift_nano=time_shift)
+
+    assert [e[1:] for e in sdk_2.get_encounters()] == [
+        (from_to_patient_id_dict_deid[p_id], b_id, start + time_shift, None if end is None else end + time_shift,
+         1, None, updated + time_shift) for _, p_id, b_id, start, end, _, _, updated in sdk_1.get_encounters()]
 
     all_patients_1_deid = sdk_1.get_all_patients()
     all_patients_2_deid = sdk_2.get_all_patients()
@@ -84,6 +106,13 @@ def _test_transfer_patients(db_type, dataset_location, connection_params):
             'weight': None,
             'height': None
         }
+
+    # Only encounters overlapping a patient's time ranges are transferred
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
+    transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=False,
+                          patient_time_ranges={patient_id_list[0]: [(1_500, 1_600)], patient_id_list[1]: [(0, 1_000)]})
+    assert [e[1:] for e in sdk_2.get_encounters()] == \
+        [e[1:] for e in sdk_1.get_encounters(patient_id=patient_id_list[0])]
 
 
 def insert_random_patients(sdk, n):
