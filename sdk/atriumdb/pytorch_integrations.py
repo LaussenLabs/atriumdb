@@ -78,7 +78,7 @@ class AtriumDBMapDataset(Dataset):
 
         # if you want to cache your dataset in memory for speed do that here
         if memcache_metadata:
-            self.sdk.load_definition(self.dataset_def, gap_tolerance=gap_tolerance)
+            self.sdk.load_definition(self.dataset_def, gap_tolerance=gap_tolerance, time_units=time_units)
 
         # get your iterator over the dataset from the atriumdb
         self.iterator_base_instance = self.sdk.get_iterator(self.dataset_def, window_duration=window_duration, window_slide=window_slide,
