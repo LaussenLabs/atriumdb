@@ -77,6 +77,13 @@ def _test_transfer_start_end(db_type, dataset_location, connection_params):
         if window.start_time < third_time or window.start_time >= second_third_time:
             assert False, f"{window.start_time} < {third_time} or {window.start_time} > {second_third_time}"
 
+    # A partial window at the end bound holds no samples from after it.
+    definition = DatasetDefinition(measures=["measure"], device_ids={device_id: "all"})
+    for window in sdk_1.get_iterator(definition, window_duration_nano, window_slide_nano, time_units="ns",
+                                     start_time=third_time, end_time=second_third_time, iterator_type="lightmapped"):
+        signal = window.signals[("measure", freq_nano / 10 ** 9, 'mV')]
+        assert np.all(signal['times'][~np.isnan(signal['values'])] < second_third_time)
+
     # Test transfer
     transfer_data(sdk_1, sdk_2, definition, gap_tolerance=None, deidentify=False, patient_info_to_transfer=None,
                   include_labels=False, start_time=third_time, end_time=second_third_time)
