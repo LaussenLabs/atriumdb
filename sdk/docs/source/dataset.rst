@@ -163,10 +163,10 @@ information related to patient and analysis results.
     An identifier representing the patient associated with the data. None when the source has no patient mapping.
 
 - ``label_time_series`` : ``np.ndarray``
-    A 2D numpy array of shape (num_labels, num_samples) with 0/1 for each label at each sample of the highest-frequency measure. None if the definition has no labels (an empty array for the lightmapped iterator).
+    A 2D numpy array of shape (num_labels, num_samples) with 0/1 for each label at each sample of the highest-frequency measure. None if the definition has no labels (an empty array for the mapped iterator).
 
 - ``label`` : ``np.ndarray``
-    A 1D numpy array of shape (num_labels,), 1 where the label covers more than ``label_threshold`` of the window, else 0. None if the definition has no labels (an empty array for the lightmapped iterator).
+    A 1D numpy array of shape (num_labels,), 1 where the label covers more than ``label_threshold`` of the window, else 0. None if the definition has no labels (an empty array for the mapped iterator).
 
 - ``patient_info`` : ``dict``
     A dictionary containing static patient meta information (such as id, mrn, gender, dob, etc.) returned by

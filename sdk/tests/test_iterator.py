@@ -81,8 +81,8 @@ def _run_iterator_test(db_type, dataset_location, connection_params, use_period)
             assert isinstance(window.label_time_series, np.ndarray)
             assert isinstance(window.label, np.ndarray)
 
-        # Try light mapped
-        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, iterator_type="lightmapped")
+        # Try mapped
+        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, iterator_type="mapped")
         for window_i, window in enumerate(iterator):
             assert isinstance(window.start_time, int) or isinstance(window.start_time, float)
             assert window.end_time == window.start_time + window_size_nano

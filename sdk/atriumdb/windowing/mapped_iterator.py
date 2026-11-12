@@ -27,10 +27,10 @@ from atriumdb.windowing.windowing_functions import get_threshold_labels, find_cl
     _get_patient_info_from_cache, _load_patient_cache
 
 
-class LightMappedIterator(DatasetIterator):
+class MappedIterator(DatasetIterator):
     """
     Random-access iterator that fetches each window on demand, using little memory. Returned by
-    :meth:`AtriumSDK.get_iterator` with ``iterator_type="lightmapped"``.
+    :meth:`AtriumSDK.get_iterator` with ``iterator_type="mapped"``.
 
     :param AtriumSDK sdk: SDK object to fetch data.
     :param DatasetDefinition definition: Definition to iterate over; validated with defaults if not yet validated.
@@ -280,7 +280,7 @@ class LightMappedIterator(DatasetIterator):
         """
         Restart from the first window and return the iterator.
 
-        :rtype: LightMappedIterator
+        :rtype: MappedIterator
         """
         self._current_idx = 0
         return self
