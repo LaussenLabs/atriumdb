@@ -55,7 +55,7 @@ from atriumdb.sql_handler.sql_constants import SUPPORTED_DB_TYPES
 from atriumdb.sql_handler.sqlite.sqlite_handler import SQLiteHandler
 from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
-from atriumdb.windowing.light_mapped_iterator import LightMappedIterator
+from atriumdb.windowing.mapped_iterator import MappedIterator
 from atriumdb.windowing.verify_definition import verify_definition
 from atriumdb.windowing.definition_splitter import partition_dataset
 from atriumdb.write_buffer import WriteBuffer
@@ -5116,7 +5116,7 @@ class AtriumSDK:
         :param float label_threshold: The percentage of the window that must contain a label before the entire window is
             marked by that label (eg. 0.5 = 50%). All labels meeting the threshold will be marked.
         :param str iterator_type: Specify the type of iterator. If set to 'mapped', a lightweight low RAM
-          LightMappedIterator is returned, allowing indexed access to dataset windows. It is most suitable when you
+          MappedIterator is returned, allowing indexed access to dataset windows. It is most suitable when you
           want true random shuffles and/or you're going to be jumping around the indices in no particular order.
           If set to 'filtered', a FilteredDatasetIterator is returned and window_filter_fn is required.
           By default, or if set to None or 'iterator', a standard DatasetIterator is returned.
@@ -5271,7 +5271,7 @@ class AtriumSDK:
             warnings.warn("iterator_type='lightmapped' is deprecated and will be removed in AtriumDB 2.8; use 'mapped', "
                           "which returns the same iterator.", FutureWarning, stacklevel=2)
         if iterator_type in ('mapped', 'lightmapped'):
-            iterator = LightMappedIterator(
+            iterator = MappedIterator(
                 self, definition,
                 window_duration, window_slide,
                 label_threshold=label_threshold, shuffle=shuffle,
@@ -5293,7 +5293,7 @@ class AtriumSDK:
                                        patient_history_fields=patient_history_fields,
                                        label_exact_match=label_exact_match)
         else:
-            raise ValueError("iterator_type must be either 'mapped', 'lightmapped','filtered' or 'iterator'")
+            raise ValueError("iterator_type must be either 'mapped', 'filtered' or 'iterator'")
 
         return iterator
 

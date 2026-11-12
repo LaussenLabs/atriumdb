@@ -122,12 +122,7 @@ API Reference
    .. automethod:: __iter__
    .. automethod:: __len__
 
-.. autoclass:: atriumdb.windowing.random_access_iterator.MappedIterator
-
-   .. automethod:: __getitem__
-   .. automethod:: __len__
-
-.. autoclass:: atriumdb.windowing.light_mapped_iterator.LightMappedIterator
+.. autoclass:: atriumdb.windowing.mapped_iterator.MappedIterator
 
    .. automethod:: __getitem__
    .. automethod:: __len__
