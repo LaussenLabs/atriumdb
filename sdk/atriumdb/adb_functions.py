@@ -310,6 +310,14 @@ def convert_to_nanohz(freq, freq_units):
     return round(freq)
 
 
+def default_freq_units(freq, freq_units):
+    if freq is not None and freq_units is None:
+        warnings.warn("freq_units was not given, so freq is read as nHz. The default changes to Hz in "
+                      "AtriumDB 2.8; pass freq_units explicitly.", FutureWarning, stacklevel=3)
+        return "nHz"
+    return freq_units
+
+
 def convert_from_nanohz(freq_nhz, freq_units):
     if freq_units not in freq_unit_options.keys():
         raise ValueError("Invalid frequency units. Expected one of: %s" % freq_unit_options)
@@ -495,7 +503,7 @@ def convert_gap_data_to_timestamps(headers, r_times, r_values, start_time_n=None
 def get_best_measure_id(sdk, measure_tag, freq, units, freq_units):
     measure_dict = {'tag': measure_tag}
     if freq is not None:
-        freq_units = "nHz" if freq_units is None else freq_units
+        freq_units = default_freq_units(freq, freq_units)
         if freq and freq_units and freq_units != "nHz":
             freq = convert_to_nanohz(freq, freq_units)
         measure_dict['freq_nhz'] = freq
@@ -590,6 +598,23 @@ def collect_all_descendant_ids(label_set_ids, sql_handler):
 
 def merge_gap_data(values_1, gap_array_1, start_time_1, values_2, gap_array_2, start_time_2, freq_nhz=None, *,
                    period_ns=None):
+    """
+    Merge two sets of gap-array data into one, in time order. Where they overlap, values from the second
+    set replace those from the first.
+
+    :param numpy.ndarray values_1: Values of the first set.
+    :param numpy.ndarray gap_array_1: Flat gap array of the first set.
+    :param int start_time_1: Start time of the first set in nanoseconds.
+    :param numpy.ndarray values_2: Values of the second set (same dtype as ``values_1``).
+    :param numpy.ndarray gap_array_2: Flat gap array of the second set.
+    :param int start_time_2: Start time of the second set in nanoseconds.
+    :param int freq_nhz: Sample frequency in nanohertz. Give exactly one of ``freq_nhz`` and ``period_ns``.
+    :param int period_ns: Keyword-only. Sample period in nanoseconds.
+    :return: Tuple ``(values, gap_array, start_time)`` of the merged data.
+    :rtype: tuple
+    :raises ValueError: If an input array is not a numpy array, the value dtypes differ, or not exactly one
+        of ``freq_nhz`` and ``period_ns`` is given.
+    """
     _validate_freq_period_params(freq_nhz, period_ns)
 
     if not all(isinstance(arr, np.ndarray) for arr in [values_1, gap_array_1, values_2, gap_array_2]):
@@ -889,7 +914,7 @@ def truncate_messages(value_data, message_starts, message_sizes, freq_nhz=None, 
 
         # Calculate the sample indices within the message
         samples_before_overlap_start = ((overlap_start_ns - msg_start_ns) + current_period_ns - 1) // current_period_ns
-        samples_until_overlap_end = (overlap_end_ns - msg_start_ns) // current_period_ns
+        samples_until_overlap_end = ((overlap_end_ns - msg_start_ns) + current_period_ns - 1) // current_period_ns
 
         num_samples_to_keep = samples_until_overlap_end - samples_before_overlap_start
 

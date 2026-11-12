@@ -38,6 +38,8 @@ class FilteredDatasetIterator(DatasetIterator):
     :param function window_filter_fn: Function to filter windows during iteration. Takes a window object as input and returns
         True if the window should be included in the iteration, and False if it should be omitted. This allows for
         customized filtering based on specific criteria set within the function.
+
+    All other parameters are as for :class:`DatasetIterator`.
     """
     def __init__(self, sdk, definition, window_duration_ns: int, window_slide_ns: int, num_windows_prefetch: int = None,
                  label_threshold=0.5, shuffle=False, max_cache_duration=None, window_filter_fn=None,

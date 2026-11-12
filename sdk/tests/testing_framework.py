@@ -17,6 +17,7 @@
 
 import os
 import shutil
+import socket
 from pathlib import Path
 from dotenv import load_dotenv
 import numpy as np
@@ -31,6 +32,13 @@ FULL_RUN = os.environ.get("ATRIUMDB_TEST_FULL") == "1"
 def scaled(lean, full):
     """``lean`` normally, ``full`` when ATRIUMDB_TEST_FULL=1."""
     return full if FULL_RUN else lean
+
+
+def free_port():
+    """An unused local TCP port, for the mock API server."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def _test_for_both(db_name, test_function, *args):

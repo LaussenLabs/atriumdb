@@ -29,7 +29,7 @@ def indices_to_signal(array_size, indices):
 
 def signal_to_indices(signal):
     """
-    A function that takes a binary signal and converts it into a list of indices.
+    A function that takes a binary signal and returns a numpy array of the indices where it equals 1.
     """
     indices = np.where(signal == 1)[0]
     return indices
