@@ -193,7 +193,7 @@ def _period_off_grid_slide(db_type, dataset_location, connection_params):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
-    # 62.5 Hz: a 1 s window and slide hold 62.5 samples
+    # 62.5 Hz: a 0.9 s window and slide hold 56.25 samples
     period_ns = 16_000_000
     measure_id = sdk.insert_measure(measure_tag="test", freq=62.5, units="anything", freq_units="Hz")
     device_id = sdk.insert_device("test_device")
@@ -201,8 +201,8 @@ def _period_off_grid_slide(db_type, dataset_location, connection_params):
 
     dataset_definition = DatasetDefinition(measures=['test'], device_tags={'test_device': "all"})
     with pytest.warns(UserWarning, match="Measure test"):
-        iterator = sdk.get_iterator(dataset_definition, 10 ** 9, 10 ** 9)
+        iterator = sdk.get_iterator(dataset_definition, 9 * 10 ** 8, 9 * 10 ** 8)
 
     for window in iterator:
         window_times = window.signals[("test", 62.5, "anything")]['times']
-        assert abs(window_times[0] - window.start_time) <= period_ns // 2
+        assert 0 <= window_times[0] - window.start_time < period_ns

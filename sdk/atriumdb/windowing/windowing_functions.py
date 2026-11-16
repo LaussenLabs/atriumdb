@@ -25,9 +25,9 @@ from atriumdb.windowing.window import Window
 
 def window_start_indices(num_windows, window_slide_ns, period_ns):
     # Window k starts k * slide ns in, i.e. k * slide / period samples, often a fraction.
-    # Adding 0.5 before flooring rounds to the nearest sample (halves round up), so no window
-    # is more than half a sample off and the error never adds up. A 62.5-sample slide gives 0, 63, 125, 188.
-    return np.floor(np.arange(num_windows) * (window_slide_ns / period_ns) + 0.5).astype(np.int64)
+    # Rounding up starts each window at the first sample at or after its start time, as PDSS does,
+    # and the error never adds up. A 62.5-sample slide gives 0, 63, 125, 188.
+    return -(-np.arange(num_windows, dtype=np.int64) * int(window_slide_ns) // int(period_ns))
 
 
 def warn_off_grid_windows(measures, window_duration_ns, window_slide_ns):
@@ -38,7 +38,7 @@ def warn_off_grid_windows(measures, window_duration_ns, window_slide_ns):
         warnings.warn(
             f"Measure {measure['tag']} has {window_duration_ns * freq_nhz / 10 ** 18:g} samples per window and "
             f"{window_slide_ns * freq_nhz / 10 ** 18:g} samples per slide. Each window holds "
-            f"{(window_duration_ns * freq_nhz) // 10 ** 18} samples and starts at the sample nearest its start time, "
+            f"{(window_duration_ns * freq_nhz) // 10 ** 18} samples and starts at the first sample at or after its start time, "
             f"so windows advance by a varying number of samples and some samples can fall between windows. "
             f"Use a window duration and slide that are multiples of every measure's sample period to avoid this.")
 

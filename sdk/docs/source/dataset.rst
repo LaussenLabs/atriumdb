@@ -72,8 +72,8 @@ changeable using ``time_units`` param, output times with conform to ``time_units
 
 Choose a window and slide that are whole multiples of every measure's sample period. For example, a 1 second window
 holds 62.5 samples at 62.5 Hz, and 60 seconds holds 58.6 values of a measure recorded every 1.024 seconds. When a
-measure does not fit, each window holds the whole number of samples that fits, starts at the sample nearest its start
-time, and some samples fall between windows. The iterator warns for each measure this affects.
+measure does not fit, each window holds the whole number of samples that fits, starts at the first sample at or after
+its start time, and some samples fall between windows. The iterator warns for each measure this affects.
 
 4. Optional parameters:
 
