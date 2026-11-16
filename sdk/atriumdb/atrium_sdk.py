@@ -1318,9 +1318,11 @@ class AtriumSDK:
         elif period is not None:
             period_ns = int(period * time_unit_options[time_units])
             freq_nano = None
-        else:
+        elif measure_info["freq_nhz"]:
             freq_nano = measure_info["freq_nhz"]
             period_ns = None
+        else:
+            raise ValueError(f"Measure {measure_id} has no fixed rate; pass freq or period to write segments.")
 
         self._warn_if_freq_differs_from_measure(measure_info, freq_nano, period_ns)
 
@@ -1360,7 +1362,7 @@ class AtriumSDK:
     @staticmethod
     def _warn_if_freq_differs_from_measure(measure_info, freq_nhz=None, period_ns=None):
         # A mismatch is usually a freq_units mistake, e.g. insert_measure(tag, 125) defaults to 125 nHz.
-        if measure_info is None or (freq_nhz is None and period_ns is None):
+        if measure_info is None or not measure_info['freq_nhz'] or (freq_nhz is None and period_ns is None):
             return
         data_period_ns = 10 ** 18 / freq_nhz if freq_nhz is not None else period_ns
         if not 0.5 <= data_period_ns / measure_info['period_ns'] <= 2:
@@ -2118,7 +2120,8 @@ class AtriumSDK:
             if measure_info:
                 # Add period_ns to API response if not present
                 if 'period_ns' not in measure_info or measure_info['period_ns'] is None:
-                    measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+                    measure_info['period_ns'] = \
+                        10 ** 18 // measure_info['freq_nhz'] if measure_info['freq_nhz'] else None
             return measure_info
 
         # If measure_id is already in the cache, return the cached measure info
@@ -2140,7 +2143,7 @@ class AtriumSDK:
         if stored_period_ns is not None:
             measure_period_ns = stored_period_ns
         else:
-            measure_period_ns = 10 ** 18 // measure_freq_nhz
+            measure_period_ns = 10 ** 18 // measure_freq_nhz if measure_freq_nhz else None
 
         # Create a dictionary containing the measure information
         measure_info = {
@@ -2206,7 +2209,7 @@ class AtriumSDK:
             result = self._request("GET", "measures/", params=params)
             # Add period_ns to each measure in API response
             for measure_id, measure_info in result.items():
-                measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+                measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz'] if measure_info['freq_nhz'] else None
             return result
 
         # Set the default frequency units to "Hz" if not provided
@@ -2287,7 +2290,8 @@ class AtriumSDK:
             # Add period_ns to each measure in API response if not present
             for measure_id, measure_info in result.items():
                 if 'period_ns' not in measure_info or measure_info['period_ns'] is None:
-                    measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+                    measure_info['period_ns'] = \
+                        10 ** 18 // measure_info['freq_nhz'] if measure_info['freq_nhz'] else None
             return result
 
         # Get all measures from the SQL handler
@@ -2305,7 +2309,7 @@ class AtriumSDK:
             if stored_period_ns is not None:
                 measure_period_ns = stored_period_ns
             else:
-                measure_period_ns = 10 ** 18 // measure_freq_nhz
+                measure_period_ns = 10 ** 18 // measure_freq_nhz if measure_freq_nhz else None
 
             # Add the measure information to the dictionary
             measure_dict[measure_id] = {
@@ -2484,8 +2488,9 @@ class AtriumSDK:
 
         # Force Cast Python integer
         freq_nhz = int(freq_nhz)
-        if freq_nhz <= 0:
-            raise ValueError("A measure's frequency must be at least 1 nHz.")
+        # 0 marks a measure with no fixed rate. A non-zero rate that rounds to 0 nHz is a units mistake.
+        if freq_nhz < 0 or (freq_nhz == 0 and freq != 0):
+            raise ValueError("A measure's frequency must be 0 (no fixed rate) or at least 1 nHz.")
 
         # Check for id clash
         if measure_id is not None:
@@ -2513,7 +2518,7 @@ class AtriumSDK:
             return inserted_measure_id
 
         # Calculate period_ns from freq_nhz for cache (if not already calculated)
-        if period_ns is None:
+        if period_ns is None and freq_nhz != 0:
             period_ns = 10 ** 18 // freq_nhz
 
         # Add new measure_id into cache
