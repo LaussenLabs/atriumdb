@@ -18,6 +18,7 @@ Building the package compiles the C library in `sdk/tsc-lib` with CMake. It need
 - Debian/Ubuntu: `sudo apt install build-essential liblz4-dev libzstd-dev`
 - RHEL/Rocky: `sudo dnf install gcc lz4-devel libzstd-devel`
 - macOS: `brew install libomp lz4 zstd`
+- Windows: MinGW-w64 gcc and libgomp from MSYS2 (`pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-libgomp`), on `PATH`, with `CMAKE_GENERATOR=Ninja` and `CC=gcc` set
 
 #### Python SDK
 Install the package from the sdk folder of the repo, or build a wheel from it.

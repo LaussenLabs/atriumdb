@@ -214,6 +214,27 @@ def _run_iterator_test(db_type, dataset_location, connection_params, use_period)
         assert window.label_time_series is None
         assert window.label is None
 
+def test_prefetch_with_slow_measure():
+    _test_for_both(f"{DB_NAME}_prefetch", _test_prefetch_with_slow_measure)
+
+
+def _test_prefetch_with_slow_measure(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+    device_id = sdk.insert_device("bed")
+    for tag, freq in [("ecg", 250), ("hr", 1)]:
+        measure_id = sdk.insert_measure(tag, freq, "units", freq_units="Hz")
+        sdk.write_segment(measure_id, device_id, np.zeros(600 * freq), 0, freq=freq, time_units="s", freq_units="Hz",
+                          scale_m=1.0, scale_b=0.0)
+
+    # Adding a 1 Hz measure to 250 Hz ECG leaves the default batch size unchanged.
+    batch_sizes = []
+    for measures in [["ecg"], ["ecg", "hr"]]:
+        definition = DatasetDefinition(measures=measures, device_ids={device_id: "all"})
+        batch_sizes.append(sdk.get_iterator(definition, 10, 10, time_units="s").max_batch_size)
+    assert batch_sizes[0] == batch_sizes[1]
+
+
 def create_test_definition_files(sdk):
     measures = []
     for measure_id, measure_info in sdk.get_all_measures().items():

@@ -57,8 +57,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                   reencode_waveforms=False, **kwargs):
     """
     Transfers data from a source AtriumSDK instance to a destination AtriumSDK instance based on a specified dataset definition.
-    This includes transferring measures, devices, patient information, and labels with options for data de-identification,
-    time shifting, and custom gap tolerance.
+    This includes transferring measures, devices, patient information, encounters, and labels with options for data
+    de-identification, time shifting, and custom gap tolerance.
 
     :param AtriumSDK src_sdk: The source SDK instance from which data will be transferred.
     :param AtriumSDK dest_sdk: The destination SDK instance to which data will be transferred.
@@ -68,7 +68,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     :param end_time: A global end time for the transfer, units specified in `time_units`.
     :param Optional[int] gap_tolerance: A tolerance period for gaps in data, units specified in `time_units` (defaults to 5 minutes if not specified).
         Helps to optimize the waveform transfer by transferring large chunks at a time.
-    :param bool deidentify: If True or a filename, scrambles patient_ids during the transfer. patient IDs are replaced with randomly generated IDs or according to provided de-identification csv
+    :param bool | str deidentify: If True or a filename, scrambles patient_ids during the transfer. patient IDs are replaced with randomly generated IDs or according to provided de-identification csv
         with source ids as column 1 and destination ids as column 2. If the file doesn't exist, then a new one is created with randomly assigned ids. Exported datasets will remain identified with full patient info by default.
     :param Optional[list] patient_info_to_transfer: Specific patient information fields to transfer. If not provided or set to None, all available information will be considered.
     :param bool include_labels: Specifies whether labels should be included in the transfer process.
@@ -90,6 +90,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
         (Default False) Setting to False will reuse existing blocks where possible and significantly speed up transfer.
         Setting to True allows you to change the block size and in general will reorder the blocks by time, which can
         speed up datasets that were originally ingested in small or unordered chunks.
+    :raises ValueError: If `include_labels` is True and a selected label is on a measure that is not in the definition.
 
     Examples:
     ---------
@@ -106,7 +107,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
     Transfer data with a specific gap tolerance of one day and without including labels:
 
-    >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,include_labels=False)
+    >>> transfer_data(src_sdk=my_src_sdk,dest_sdk=my_dest_sdk,definition=my_definition,gap_tolerance=24*60*60,time_units='s',include_labels=False)
 
     Transfer data with a two-hour time shift applied to the entire dataset, and use custom de-identification functions:
 
@@ -161,6 +162,12 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     src_measure_id_list = [measure_info["id"] for measure_info in validated_measure_list]
     src_device_id_list, src_patient_id_list = extract_src_device_and_patient_id_list(validated_sources)
 
+    patient_time_ranges = defaultdict(list)
+    for source_type, sources in validated_sources.items():
+        for source_id, time_ranges in sources.items():
+            if source_type != "device_ids":
+                patient_time_ranges[source_id if source_type == "patient_ids" else source_id[1]].extend(time_ranges)
+
     # Transfer measure, devices, patients between SDKs
     measure_id_map = transfer_measures(src_sdk, dest_sdk, measure_id_list=src_measure_id_list,
                                        measure_tag_match_rule=measure_tag_match_rule)
@@ -168,7 +175,8 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     patient_id_map = transfer_patient_info(
         src_sdk, dest_sdk, patient_id_list=src_patient_id_list, deidentify=deidentify,
         patient_info_to_transfer=patient_info_to_transfer, start_time_nano=start_time_n, end_time_nano=end_time_n,
-        deidentification_functions=deidentification_functions, time_shift_nano=time_shift)
+        deidentification_functions=deidentification_functions, time_shift_nano=time_shift,
+        patient_time_ranges=patient_time_ranges)
 
     if include_labels:
         label_set_id_map = transfer_label_sets(src_sdk, dest_sdk, label_set_id_list=validated_label_set_list)
@@ -183,6 +191,9 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
 
             if src_device_id is None:
                 continue
+
+            # Overlapping time ranges would copy the values they share more than once.
+            time_ranges = intervals_union_list([np.array(time_ranges, dtype=np.int64).reshape(-1, 2)]).tolist()
 
             if export_format == "tsc":
                 for src_measure_id, dest_measure_id in measure_id_map.items():
@@ -208,31 +219,20 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                                 int(src_measure_id), int(start_time_nano), int(end_time_nano), int(src_device_id), None)
                             block_list.sort(key=lambda x: x[6])
 
-                        # Filter out duplicates
-                        filtered_blocks = []
+                        # A block inside this time range is copied once. A block reaching past it is re-encoded for
+                        # each time range it overlaps, keeping only that range's values.
                         for block in block_list:
                             block_id = block["id"] if src_sdk.mode == "api" else block[0]
-                            if block_id not in seen_block_ids:
+                            block_s = block["start_time_n"] if src_sdk.mode == "api" else block[6]
+                            block_e = block["end_time_n"] if src_sdk.mode == "api" else block[7]
+                            inside_range = start_time_nano <= block_s and block_e <= end_time_nano
+                            if inside_range:
+                                if block_id in seen_block_ids:
+                                    continue
                                 seen_block_ids.add(block_id)
-                                filtered_blocks.append(block)
-
-                        # Extend the main list with unique blocks
-                        blocks_to_transfer.extend(filtered_blocks)
-
-                        # Decide which blocks need to be reencoded.
-                        if not reencode_waveforms:
-                            for block in block_list:
-                                block_s = block["start_time_n"] if src_sdk.mode == "api" else block[6]
-                                block_e = block["end_time_n"] if src_sdk.mode == "api" else block[7]
-                                if start_time_nano <= block_s and block_e <= end_time_nano:
-                                    time_range_index_to_transfer.append(-1)
-                                    re_encode_block_bool_list.append(False)
-                                else:
-                                    re_encode_block_bool_list.append(True)
-                        else:
-                            re_encode_block_bool_list.extend([True] * len(block_list))
-
-                        time_range_index_to_transfer.extend([time_range_i] * len(block_list))
+                            blocks_to_transfer.append(block)
+                            re_encode_block_bool_list.append(reencode_waveforms or not inside_range)
+                            time_range_index_to_transfer.append(time_range_i)
 
                         # Grab the interval data for transferring into the new sdk.
                         write_intervals = src_sdk.get_interval_array(
@@ -524,9 +524,13 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                         label_dict['end_time_n'] += time_shift
 
                 # Make the list of label tuples to insert to the other dataset
+                for label in labels:
+                    if label['measure_id'] is not None and label['measure_id'] not in measure_id_map:
+                        raise ValueError(f"Label {label['label_name']!r} is on measure {label['measure_id']}, which is "
+                                         f"not in the dataset definition. Add the measure to the definition.")
                 dest_labels = [(label['label_name'], device_id_map[label['device_id']],
-                                measure_id_map[label['measure_id']], label['start_time_n'], label['end_time_n'],
-                                label['label_source_id']) for label in labels]
+                                measure_id_map.get(label['measure_id']), label['label_source'],
+                                label['start_time_n'], label['end_time_n']) for label in labels]
 
                 dest_sdk.insert_labels(dest_labels, source_type="device_id")
 

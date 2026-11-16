@@ -114,7 +114,7 @@ class Intervals:
         """Return a new :class:`Intervals` containing all time ranges present in either *self* or *other*.
 
         Overlapping or adjacent intervals are merged. An optional *gap_tolerance_nano*
-        allows merging intervals separated by a gap smaller than the tolerance.
+        allows merging intervals separated by a gap of at most the tolerance.
 
         :param other: The intervals to unite with.
         :type other: Intervals

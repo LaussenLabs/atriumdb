@@ -49,8 +49,9 @@ class DatasetIterator:
                                         a seeded random number generator for reproducible shuffling. If False or None, no shuffling occurs.
     :param int | None max_cache_duration: If specified, no single cache will have a time range larger than this duration.
                                            The time range will be split accordingly. The duration must be larger than window_duration_ns.
-    :param list patient_history_fields: A list of patient_history fields you would like returned in the Window object.
-    :param str cache_dir: A directory, if specified, caches the results of _extract_cache_info to speed up future iterations. Setting to None will disable the cache.
+                                           Ignored when shuffle is False.
+    :param float label_threshold: Fraction of a window a label must exceed for ``Window.label`` to be 1. Default 0.5.
+    :param list patient_history_fields: A list of patient_history fields ("height", "weight") you would like returned in the Window object.
     :param bool label_exact_match: If True, labels will be matched exactly as requested, and child labels will not be returned
         when their parent is requested. If False, child labels will be included when their parent is requested.
     """
@@ -361,13 +362,13 @@ class DatasetIterator:
             structure of the Window object and the included signals dictionary is described in the Window Format section
             of the documentation.
         :rtype: Window
-        :raises IndexError: Raised if the index is out of bounds.
+        :raises StopIteration: When all windows have been returned.
 
         :Example:
 
         .. code-block:: python
 
-            window_obj = dataset_iterator[5]
+            window_obj = next(dataset_iterator)
             signals_dict = window_obj.signals
 
             for measure_info, signal_data in signals_dict.items():
