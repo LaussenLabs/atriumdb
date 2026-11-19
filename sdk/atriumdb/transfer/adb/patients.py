@@ -17,14 +17,15 @@
 
 
 import csv
-import hashlib
 import time
+import uuid
 import warnings
 from pathlib import Path
 from typing import Dict, Union
 import random
 
-DEIDENTIFICATION_KEY_SETTING = "deidentification_key_sha256"
+DEIDENTIFICATION_KEY_SETTING = "deidentification_key_id"
+KEY_ID_ROW = "key_id"
 
 
 def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None, deidentify=True,
@@ -90,7 +91,7 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
     patient_id_list = validate_patient_transfer_list(src_sdk, patient_id_list, mrn_list, deidentify)
 
     if deidentify:
-        check_deidentification_key(dest_sdk, deidentify)
+        key_id = check_deidentification_key(dest_sdk, deidentify)
     elif dest_sdk.sql_handler.select_setting(DEIDENTIFICATION_KEY_SETTING) is not None:
         warnings.warn("The destination holds de-identified patients, and this transfer adds identified patients "
                       "(deidentify=False) to it.")
@@ -99,8 +100,9 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
                                            used_patient_ids=dest_sdk.get_all_patients().keys())
 
     if deidentify:
-        key = deidentification_key_fingerprint(patient_id_map) if isinstance(deidentify, (str, Path)) else "none"
-        dest_sdk.sql_handler.insert_setting(DEIDENTIFICATION_KEY_SETTING, key)
+        dest_sdk.sql_handler.insert_setting(DEIDENTIFICATION_KEY_SETTING, key_id)
+        if isinstance(deidentify, (str, Path)) and read_key_id(deidentify) is None:
+            write_dict_to_csv({KEY_ID_ROW: key_id, **patient_id_map}, deidentify)
 
     transfer_patient_table(src_sdk, dest_sdk, patient_id_list, patient_id_map, patient_info_to_transfer,
                            deidentification_functions, time_shift_nano, deidentify)
@@ -197,22 +199,26 @@ def transfer_bed(src_sdk, dest_sdk, src_bed_id):
 
 
 def check_deidentification_key(dest_sdk, deidentify):
-    # A destination remembers the key that de-identified it ("none" for deidentify=True, which keeps no key), so a
-    # later transfer cannot give its patients a second id.
+    # A destination and its key file carry the same id, set by the first de-identified transfer into it, so a later
+    # transfer with another key (or with deidentify=True, which keeps no key) cannot give its patients a second id.
     setting = dest_sdk.sql_handler.select_setting(DEIDENTIFICATION_KEY_SETTING)
+    key_id = read_key_id(deidentify) if isinstance(deidentify, (str, Path)) else None
     if setting is None:
-        return
-    key_path = Path(deidentify) if isinstance(deidentify, (str, Path)) else None
-    if key_path is None or not key_path.exists() or \
-            deidentification_key_fingerprint(read_csv_to_dict(key_path)) != setting[1]:
+        return key_id or uuid.uuid4().hex
+    if key_id != setting[1]:
         raise ValueError("The destination already holds patients de-identified with another key, so this transfer "
                          "could give a patient a second id. Pass the key file used for the destination as deidentify, "
                          "or transfer into a new dataset.")
+    return key_id
 
 
-def deidentification_key_fingerprint(patient_id_map):
-    rows = "".join(f"{src_id},{dest_id}\n" for src_id, dest_id in sorted(patient_id_map.items()))
-    return hashlib.sha256(rows.encode()).hexdigest()
+def read_key_id(file_path):
+    if Path(file_path).exists():
+        with open(file_path, mode='r', newline='') as csvfile:
+            for row in csv.reader(csvfile):
+                if row[0] == KEY_ID_ROW:
+                    return row[1]
+    return None
 
 
 def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list, deidentify):
@@ -284,7 +290,8 @@ def read_csv_to_dict(file_path: Union[str, Path]) -> Dict:
     with open(file_path, mode='r', newline='') as csvfile:
         reader = csv.reader(csvfile)
         for row in reader:
-            dictionary[int(row[0])] = int(row[1])
+            if row[0] != KEY_ID_ROW:
+                dictionary[int(row[0])] = int(row[1])
     return dictionary
 
 

@@ -178,6 +178,12 @@ def _test_deidentified_rerun(db_type, dataset_location, connection_params):
     with pytest.raises(ValueError):
         transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=wrong_key_file)
 
+    # Patients added to the key file are accepted
+    new_patient_id = insert_random_patients(sdk_1, 1)[0]
+    with open(key_file, "a") as key:
+        key.write(f"{new_patient_id},1\n")
+    assert transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=key_file)[new_patient_id] == 1
+
     # Identified patients can still be added, with a warning
     with pytest.warns(UserWarning, match="identified patients"):
         transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=False)
