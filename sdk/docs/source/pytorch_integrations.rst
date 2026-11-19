@@ -320,6 +320,19 @@ Now, load the training data and wrap it in a :class:`DataLoader`:
        # Integrate with your model's forward pass here.
        pass
 
+.. note::
+
+   To let every :class:`DataLoader` worker use the ``num_threads`` you set:
+
+   - Give every :class:`DataLoader` ``num_workers`` of 1 or more, including validation and test loaders.
+   - Don't read or write signal data in your main script: no ``get_data``, no ``write_data`` or ``write_segment``,
+     and no indexing or looping over the dataset yourself.
+
+   Looking up patients, measures, devices, intervals and labels, and building dataset definitions, is fine at any time.
+
+   If the main script does read or write signal data, workers started after that, including those of later epochs,
+   use one thread each and print a warning. They return the same data, more slowly.
+
 .. tip::
 
    - ``num_workers`` in :class:`DataLoader` parallelizes batching at the PyTorch level,
