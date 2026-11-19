@@ -33,6 +33,9 @@ class AtriumDBMapDataset(Dataset):
     :param int num_threads: Number of threads for data decompression. WARNING: AtriumDB will use OpenMP to deal with threading.
         It will set the OMP_NUM_THREADS environment variable to the value you specify. Pytorch and related libraries sometimes
         also use this variable which would be overwritten and could cause slower performance in other libraries if set to a low number.
+        WARNING: Do not use the dataset object to get data directly, only use it inside a DataLoader object. If you use it
+        to get a sample before it is used inside the DataLoader, it will be limited to 1 thread per DataLoader worker and
+        `num_threads` will be ignored.
 
 
     Example:
