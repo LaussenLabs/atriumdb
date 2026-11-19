@@ -37,11 +37,12 @@ def test_deidentify_with_existing_file(tmp_path):
     assert result == pre_existing_map, "Existing map was not used"
 
 
-def test_deidentify_with_invalid_existing_file(tmp_path):
+def test_deidentify_with_partial_existing_file(tmp_path):
     patient_id_list = [1, 2, 3]
     file_path = tmp_path / "deid_map.csv"
-    invalid_map = {1: 10001, 2: 10002}  # Missing patient_id 3
-    write_dict_to_csv(invalid_map, file_path)
+    partial_map = {1: 10001, 2: 10002}  # Missing patient_id 3
+    write_dict_to_csv(partial_map, file_path)
 
-    with pytest.raises(ValueError):
-        create_patient_id_map(patient_id_list, file_path, overwrite=False)
+    result = create_patient_id_map(patient_id_list, file_path, overwrite=False)
+    assert {1: result[1], 2: result[2]} == partial_map and result[3] > 10002
+    assert create_patient_id_map(patient_id_list, file_path, overwrite=False) == result

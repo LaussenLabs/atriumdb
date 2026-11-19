@@ -43,7 +43,7 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
    :param list mrn_list: (Optional) A list of medical record numbers (MRNs) corresponding to the patients to transfer.
     If `patient_id_list` is not provided, `mrn_list` will be used to determine patients to transfer.
    :param union[bool, str, Path] deidentify: If True, randomly assign new patient IDs. If a filename (str or Path)
-    is provided, use the deidentification table from the file. If False, keep the original patient IDs.
+    is provided, use the deidentification table from the file, adding any patients it lacks. If False, keep the original patient IDs.
    :param list patient_info_to_transfer: (Optional) A list of patient info keys to transfer.
     If None or "all", transfer all patient info.
    :param int start_time_nano: (Optional) The start time in nanoseconds for patient-device history and encounter
@@ -222,10 +222,6 @@ def read_key_id(file_path):
 
 
 def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list, deidentify):
-    if patient_id_list == "all" and isinstance(deidentify, (str, Path)) and Path(deidentify).exists():
-        patient_id_map = read_csv_to_dict(Path(deidentify))
-        patient_id_list = list(patient_id_map.keys())
-
     if patient_id_list is None and mrn_list is None:
         raise ValueError("Either patient_id_list or mrn_list must be specified.")
     if patient_id_list == "all":
@@ -257,12 +253,15 @@ def create_patient_id_map(patient_id_list, deidentify, overwrite=False, used_pat
         # If deidentify is a file path
         file_path = Path(deidentify)
         if file_path.exists() and not overwrite:
-            # If the file exists and we're not overwriting, load the existing map
+            # If the file exists and we're not overwriting, load the existing map and add any missing patients to it
             patient_id_map = read_csv_to_dict(file_path)
-            if validate_csv_dict(patient_id_map, patient_id_list):
-                return patient_id_map
-            else:
-                raise ValueError("Existing de-identification map does not cover all patient IDs.")
+            missing_patient_ids = [patient_id for patient_id in patient_id_list if patient_id not in patient_id_map]
+            if missing_patient_ids:
+                patient_id_map.update(generate_new_patient_id_map(
+                    missing_patient_ids, [*used_patient_ids, *patient_id_map.values()]))
+                key_id = read_key_id(file_path)
+                write_dict_to_csv({KEY_ID_ROW: key_id, **patient_id_map} if key_id else patient_id_map, file_path)
+            return patient_id_map
         else:
             # If the file doesn't exist or we're overwriting, create a new map
             new_map = generate_new_patient_id_map(patient_id_list, used_patient_ids)

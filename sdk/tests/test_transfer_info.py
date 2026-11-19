@@ -178,11 +178,12 @@ def _test_deidentified_rerun(db_type, dataset_location, connection_params):
     with pytest.raises(ValueError):
         transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=wrong_key_file)
 
-    # Patients added to the key file are accepted
-    new_patient_id = insert_random_patients(sdk_1, 1)[0]
-    with open(key_file, "a") as key:
-        key.write(f"{new_patient_id},1\n")
-    assert transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=key_file)[new_patient_id] == 1
+    # New source patients are added to the key file, which the destination still accepts
+    new_patient_ids = insert_random_patients(sdk_1, 10)
+    grown_map = transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=key_file)
+    assert first_map.items() <= grown_map.items() and len(set(grown_map.values())) == len(first_map) + 10
+    assert {grown_map[patient_id] for patient_id in new_patient_ids} <= set(sdk_2.get_all_patients())
+    assert transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=key_file) == grown_map
 
     # Identified patients can still be added, with a warning
     with pytest.warns(UserWarning, match="identified patients"):
