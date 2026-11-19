@@ -183,5 +183,5 @@ def _test_lightmapped_labels_off_grid(db_type, dataset_location, connection_para
     # 62.5 Hz does not fit a 1 s window, and 0.5 Hz listed after 1 Hz leaves half a period at the end of a 7 s window.
     for measures, window_s in [(["fast"], 1), (["hr", "slow"], 7)]:
         definition = DatasetDefinition(measures=measures, device_ids={device_id: "all"}, labels=["event"])
-        windows = list(sdk.get_iterator(definition, window_s, window_s, time_units="s", iterator_type="lightmapped"))
+        windows = list(sdk.get_iterator(definition, window_s, window_s, time_units="s", iterator_type="mapped"))
         assert len(windows) == 70 // window_s
