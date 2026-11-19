@@ -24,10 +24,24 @@ from numpy.lib.stride_tricks import sliding_window_view
 from atriumdb.windowing.window import Window
 from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.windowing_functions import get_threshold_labels, find_closest_measurement, \
-    _get_patient_info_from_cache, _load_patient_cache
+    _get_patient_info_from_cache, _load_patient_cache, clear_sample_before_start
 
 
-class LightMappedIterator(DatasetIterator):
+class MappedIterator(DatasetIterator):
+    """
+    Random-access iterator that fetches each window on demand, using little memory. Returned by
+    :meth:`AtriumSDK.get_iterator` with ``iterator_type="mapped"``.
+
+    :param AtriumSDK sdk: SDK object to fetch data.
+    :param DatasetDefinition definition: Definition to iterate over; validated with defaults if not yet validated.
+    :param int window_duration_ns: Duration of each window in nanoseconds.
+    :param int window_slide_ns: Interval in nanoseconds by which the window advances.
+    :param float label_threshold: Fraction of a window a label must exceed for ``Window.label`` to be 1.
+    :param bool | int shuffle: If truthy, windows are returned in shuffled order. An int is used as the seed.
+    :param list patient_history_fields: Patient history fields ("height", "weight") to add to ``Window.patient_info``.
+    :param bool allow_partial_windows: If True (default), include windows that run past the end of a time range.
+    :param bool label_exact_match: If True, child labels are not included when their parent is requested.
+    """
     def __init__(self, sdk, definition,
                  window_duration_ns: int, window_slide_ns: int, label_threshold=0.5,
                  shuffle=False, patient_history_fields: list = None, allow_partial_windows = True, label_exact_match=False):
@@ -162,9 +176,22 @@ class LightMappedIterator(DatasetIterator):
         self.window_indices = np.array(self.window_indices)
 
     def __len__(self):
+        """
+        Return the number of windows.
+
+        :rtype: int
+        """
         return self.total_windows
 
     def __getitem__(self, idx):
+        """
+        Fetch the window at the given index (in shuffled order when shuffling).
+
+        :param int idx: Window index, 0 <= idx < len(iterator).
+        :return: The window.
+        :rtype: Window
+        :raises IndexError: If idx is out of range.
+        """
         if idx < 0 or idx >= self.total_windows:
             raise IndexError(f"Index {idx} out of bounds for mapped iterator of size {self.total_windows}")
         # Swap idx with shuffled index if shuffling is enabled
@@ -194,11 +221,19 @@ class LightMappedIterator(DatasetIterator):
             measure_times = (np.arange(measure_expected_count) * period_ns) + window_start_time
             measure_values = np.full(measure_times.shape, np.nan)
             if len(measure_values) > 0:
+                measure_end_time = window_end_time
                 if measure_expected_count != int(round((window_end_time - window_start_time) / period_ns)):
-                    window_end_time = window_start_time + int(round(measure_expected_count * period_ns))
-                self.sdk.get_data(
-                    measure_id, window_start_time, window_end_time, device_id=device_id, patient_id=query_patient_id,
-                    return_nan_filled=measure_values)
+                    measure_end_time = window_start_time + int(round(measure_expected_count * period_ns))
+                # Partial windows are NaN-filled past the end of the source range.
+                data_end_time = min(measure_end_time, source_info['end_time'])
+                num_values = int(round((data_end_time - window_start_time) / period_ns))
+                if num_values > 0:
+                    self.sdk.get_data(
+                        measure_id, window_start_time, data_end_time, device_id=device_id,
+                        patient_id=query_patient_id, return_nan_filled=measure_values[:num_values])
+                    if window_start_time == source_info['start_time']:
+                        clear_sample_before_start(self.sdk, measure_id, window_start_time, period_ns, device_id,
+                                                  query_patient_id, measure_values)
             measure_tag = measure['tag']
             measure_freq_hz = measure['freq_nhz'] / (10 ** 9)
             measure_units = measure['units']
@@ -220,7 +255,8 @@ class LightMappedIterator(DatasetIterator):
             # Preallocate label matrix
             label_time_series_num_samples = int(self.window_duration_ns // self.lowest_period_ns)
             label_time_series = np.zeros((len(self.label_sets), label_time_series_num_samples), dtype=np.int8)
-            label_timestamp_array = np.arange(window_start_time, window_end_time, self.lowest_period_ns, dtype=np.int64)
+            label_timestamp_array = (window_start_time +
+                                     np.arange(label_time_series_num_samples, dtype=np.int64) * self.lowest_period_ns)
 
             # Populate label matrix
             for idx, label_set_id in enumerate(self.label_sets):
@@ -234,6 +270,7 @@ class LightMappedIterator(DatasetIterator):
                     out=label_time_series[idx],
                     include_descendants=not self.label_exact_match,
                 )
+            label_time_series[:, label_timestamp_array >= source_info['end_time']] = 0
             label = (np.mean(label_time_series, axis=1) > self.label_threshold).astype(np.int8)
 
         # Create Window object
@@ -250,10 +287,21 @@ class LightMappedIterator(DatasetIterator):
         return window
 
     def __iter__(self):
+        """
+        Restart from the first window and return the iterator.
+
+        :rtype: MappedIterator
+        """
         self._current_idx = 0
         return self
 
     def __next__(self):
+        """
+        Return the next window.
+
+        :rtype: Window
+        :raises StopIteration: After the last window.
+        """
         if self._current_idx >= self.total_windows:
             raise StopIteration
         window = self[self._current_idx]

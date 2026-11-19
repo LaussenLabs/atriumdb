@@ -23,14 +23,13 @@ TEST(DistinctTestSuite, SimpleD64Test){
     uint64_t arr_len = sizeof(arr) / sizeof(arr[0]);
     uint64_t expected_answer = 7;
 
-    uint64_t num_distinct = count_num_distinct_d64(arr, arr_len);
+    auto *distinct_elements = (int64_t *)malloc(arr_len * sizeof(int64_t));
+    auto *distinct_count = (uint64_t *)malloc(arr_len * sizeof(uint64_t));
+    auto *table = (uint64_t *)malloc(distinct_table_size_d64(arr_len) * sizeof(uint64_t));
+
+    uint64_t num_distinct = count_arr_distinct_d64(arr, arr_len, distinct_elements, distinct_count, table);
 
     ASSERT_EQ(num_distinct, expected_answer);
-
-    auto *distinct_elements = (int64_t *)malloc(num_distinct * sizeof(int64_t));
-    auto *distinct_count = (uint64_t *)malloc(num_distinct * sizeof(uint64_t));
-
-    count_arr_distinct_d64(arr, arr_len, num_distinct, distinct_elements, distinct_count);
 
     uint64_t i;
     for(i=0; i<num_distinct; i++){

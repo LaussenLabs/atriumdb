@@ -70,6 +70,11 @@ changeable using ``time_units`` param, output times with conform to ``time_units
 
    slide_size_nano = window_size_nano = 60_000_000_000  # 1 minute nano
 
+Choose a window and slide that are whole multiples of every measure's sample period. For example, a 1 second window
+holds 62.5 samples at 62.5 Hz, and 60 seconds holds 58.6 values of a measure recorded every 1.024 seconds. When a
+measure does not fit, each window holds the whole number of samples that fits, starts at the first sample at or after
+its start time, and some samples fall between windows. The iterator warns for each measure this affects.
+
 4. Optional parameters:
 
 **num_windows_prefetch** is the number of windows to preload for optimization, a higher number
@@ -135,7 +140,7 @@ information related to patient and analysis results.
     Each signal dictionary has the following structure:
 
     - ``times`` : ``np.ndarray``
-        A 1D numpy array representing the timestamps corresponding to each data point of the signal. This ensures that each data point in the window is associated with its precise capture time.
+        A 1D numpy array of nanosecond timestamps on the measure's regular sample grid, starting at the window start. Values are placed on this grid; missing samples are NaN.
 
     - ``values`` : ``np.ndarray``
         A 1D numpy array containing the actual data points of the signal.
@@ -157,16 +162,16 @@ information related to patient and analysis results.
     Values derived from a window should be timestamped at ``end_time``, the first time all of its data is available.
 
 - ``device_id`` : ``int``
-    An identifier representing the device from which the data was captured.
+    An identifier representing the device from which the data was captured. None when the source has no device mapping.
 
 - ``patient_id`` : ``int``
-    An identifier representing the patient associated with the data.
+    An identifier representing the patient associated with the data. None when the source has no patient mapping.
 
 - ``label_time_series`` : ``np.ndarray``
-    A 1D numpy array representing the labels for each data point in the window, typically used in supervised learning scenarios.
+    A 2D numpy array of shape (num_labels, num_samples) with 0/1 for each label at each sample of the highest-frequency measure. None if the definition has no labels (an empty array for the mapped iterator).
 
 - ``label`` : ``np.ndarray``
-    A 1D numpy array representing the aggregated or final label for the window, used for classification or regression outputs.
+    A 1D numpy array of shape (num_labels,), 1 where the label covers more than ``label_threshold`` of the window, else 0. None if the definition has no labels (an empty array for the mapped iterator).
 
 - ``patient_info`` : ``dict``
     A dictionary containing static patient meta information (such as id, mrn, gender, dob, etc.) returned by
@@ -733,7 +738,7 @@ De-identification & Time Shifting
 
 If you're sharing data externally (e.g., for research or compliance), you can enable:
 
-- `deidentify`: Removes patient-level metadata (name, MRN, DOB, etc.) and scrambles patient IDs, True, False or a csv filepath which resolves to True and writes a csv containing the original to deidentified patient mapping.
+- `deidentify`: Removes patient-level metadata (name, MRN, DOB, etc.) and scrambles patient IDs, True, False or a csv filepath which resolves to True and writes a csv containing the original to deidentified patient mapping. Encounters keep their bed, unit and institution names and drop their visit numbers.
 - `time_shift`: Uniformly shifts all timestamps within the dataset to obscure precise dates within the patient information.
 
 These can be used independently, but are often combined for data privacy.

@@ -20,6 +20,7 @@ import shutil
 import random
 import time
 import string
+from pathlib import Path
 
 import names
 
@@ -28,7 +29,7 @@ import pytest
 from atriumdb import AtriumSDK
 from atriumdb.sql_handler.maria.maria_handler import MariaDBHandler
 from atriumdb.transfer.adb.devices import transfer_devices
-from atriumdb.transfer.adb.patients import transfer_patient_info
+from atriumdb.transfer.adb.patients import transfer_patient_info, write_dict_to_csv
 from tests.testing_framework import _test_for_both, create_sibling_sdk
 
 DB_NAME = "transfer-patients"
@@ -36,6 +37,7 @@ DB_NAME = "transfer-patients"
 
 def test_transfer_patients():
     _test_for_both(DB_NAME, _test_transfer_patients)
+    _test_for_both(DB_NAME, _test_deidentified_rerun)
 
 
 def _test_transfer_patients(db_type, dataset_location, connection_params):
@@ -45,7 +47,21 @@ def _test_transfer_patients(db_type, dataset_location, connection_params):
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
 
     # Actual Test Below
-    insert_random_patients(sdk_1, 100)
+    patient_id_list = insert_random_patients(sdk_1, 100)
+
+    institution_id = sdk_1.sql_handler.insert_institution(name="Test Institution")
+    unit_id = sdk_1.sql_handler.insert_unit(institution_id=institution_id, name="Test Unit", unit_type="Test Type")
+    bed_id = sdk_1.sql_handler.insert_bed(unit_id=unit_id, name="Test Bed")
+    sdk_1.insert_encounter(start_time=1_000, end_time=2_000, patient_id=patient_id_list[0], bed_id=bed_id,
+                           visit_number="V1", last_updated=3_000)
+    sdk_1.insert_encounter(start_time=4_000, patient_id=patient_id_list[1], bed_id=bed_id, last_updated=5_000)
+
+    # A bed with the same name in another unit
+    other_unit_id = sdk_1.sql_handler.insert_unit(institution_id=institution_id, name="Other Unit",
+                                                  unit_type="Test Type")
+    other_bed_id = sdk_1.sql_handler.insert_bed(unit_id=other_unit_id, name="Test Bed")
+    sdk_1.insert_encounter(start_time=6_000, end_time=7_000, patient_id=patient_id_list[2], bed_id=other_bed_id,
+                           last_updated=8_000)
 
     # Test transfer_patients without deidentification
     # from_to_patient_id_dict = transfer_patients(sdk_1, sdk_2)
@@ -60,10 +76,18 @@ def _test_transfer_patients(db_type, dataset_location, connection_params):
         assert from_patient_id == to_patient_id
         assert all_patients_1[from_patient_id] == all_patients_2[to_patient_id]
 
+    assert [e[1:] for e in sdk_2.get_encounters()] == [e[1:] for e in sdk_1.get_encounters()]
+
     # Test transfer_patients with deidentification
     sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
     device_id_map = transfer_devices(sdk_1, sdk_2)
-    from_to_patient_id_dict_deid = transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=True)
+    time_shift = 10_000
+    from_to_patient_id_dict_deid = transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=True,
+                                                         time_shift_nano=time_shift)
+
+    assert [e[1:] for e in sdk_2.get_encounters()] == [
+        (from_to_patient_id_dict_deid[p_id], b_id, start + time_shift, None if end is None else end + time_shift,
+         1, None, updated + time_shift) for _, p_id, b_id, start, end, _, _, updated in sdk_1.get_encounters()]
 
     all_patients_1_deid = sdk_1.get_all_patients()
     all_patients_2_deid = sdk_2.get_all_patients()
@@ -84,6 +108,13 @@ def _test_transfer_patients(db_type, dataset_location, connection_params):
             'weight': None,
             'height': None
         }
+
+    # Only encounters overlapping a patient's time ranges are transferred
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
+    transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=False,
+                          patient_time_ranges={patient_id_list[0]: [(1_500, 1_600)], patient_id_list[1]: [(0, 1_000)]})
+    assert [e[1:] for e in sdk_2.get_encounters()] == \
+        [e[1:] for e in sdk_1.get_encounters(patient_id=patient_id_list[0])]
 
 
 def insert_random_patients(sdk, n):
@@ -122,3 +153,38 @@ def insert_random_patients(sdk, n):
         patient_id_list.append(patient_id)
         
     return patient_id_list
+
+
+def _test_deidentified_rerun(db_type, dataset_location, connection_params):
+    sdk_1 = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
+
+    insert_random_patients(sdk_1, 100)
+
+    # A second de-identified run must not give the same patients new ids
+    transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=True)
+    with pytest.raises(ValueError):
+        transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=True)
+
+    # With a key file, only that key is accepted
+    sdk_2 = create_sibling_sdk(connection_params, dataset_location, db_type)
+    key_file, wrong_key_file = Path(f"{dataset_location}_key.csv"), Path(f"{dataset_location}_wrong_key.csv")
+    key_file.unlink(missing_ok=True)
+    first_map = transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=key_file)
+    assert transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=key_file) == first_map
+    write_dict_to_csv({src_id: dest_id + 1 for src_id, dest_id in first_map.items()}, wrong_key_file)
+    with pytest.raises(ValueError):
+        transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=wrong_key_file)
+
+    # New source patients are added to the key file, which the destination still accepts
+    new_patient_ids = insert_random_patients(sdk_1, 10)
+    grown_map = transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=key_file)
+    assert first_map.items() <= grown_map.items() and len(set(grown_map.values())) == len(first_map) + 10
+    assert {grown_map[patient_id] for patient_id in new_patient_ids} <= set(sdk_2.get_all_patients())
+    assert transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=key_file) == grown_map
+
+    # Identified patients can still be added, with a warning
+    with pytest.warns(UserWarning, match="identified patients"):
+        transfer_patient_info(sdk_1, sdk_2, patient_id_list="all", deidentify=False)

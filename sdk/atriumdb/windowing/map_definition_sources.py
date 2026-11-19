@@ -16,6 +16,7 @@
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import bisect
+from itertools import accumulate
 from typing import List, Tuple
 
 from atriumdb.intervals.difference import list_difference
@@ -43,7 +44,7 @@ def map_validated_sources(sources: dict, sdk) -> dict:
 
             # Extract start_times and end_times
             device_patient_starts = [entry[2] for entry in time_sorted_device_patient_data]
-            device_patient_ends = [entry[3] for entry in time_sorted_device_patient_data]
+            device_patient_ends = list(accumulate((entry[3] for entry in time_sorted_device_patient_data), max))
 
             for time_range in time_ranges:
                 start_time, end_time = time_range
@@ -111,17 +112,8 @@ def aggregate_time_ranges(device_patient_data: List[Tuple[int, int, int, int]]):
 
 
 def find_device_patient_data(sorted_device_patient_data, starts, ends, start_time, end_time):
+    # ends holds the running maximum of end times, so it stays sorted when mappings nest.
     start_idx = bisect.bisect_left(ends, start_time)
-    end_idx = bisect.bisect_left(ends, end_time)
+    end_idx = bisect.bisect_right(starts, end_time)
 
-    if start_idx == end_idx:
-        if start_idx >= len(starts):
-            return []
-        if (not (starts[start_idx] <= start_time <= ends[start_idx])
-                and not (starts[end_idx] <= end_time <= ends[end_idx])):
-            return []
-
-    if end_idx < len(starts) and end_time < starts[end_idx]:
-        end_idx = max(0, end_idx - 1)
-
-    return sorted_device_patient_data[start_idx:end_idx + 1]
+    return [row for row in sorted_device_patient_data[start_idx:end_idx] if row[3] >= start_time]

@@ -5,6 +5,7 @@
 
 extern "C" {
 #include <delta.h>
+#include <entropy.h>
 #include <inttypes.h>
 }
 
@@ -41,7 +42,7 @@ TEST(DeltaTestSuite, MultiOrderD64Test)
     int64_t num_values = 100;
     int64_t arr[num_values];
     int64_t delta[num_values];
-    int64_t entropy_buff[num_values * 2];
+    int64_t entropy_buff[entropy_buffer_size_d64(num_values) / sizeof(int64_t)];
     int8_t max_order = 6;
 
     int64_t i, order, best_order;

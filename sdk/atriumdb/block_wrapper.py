@@ -141,6 +141,10 @@ class WrappedBlockDll:
         self.num_threads = num_threads
         self.bc_dll = None
 
+    def __getstate__(self):
+        # A loaded library can't be pickled; the copy loads it again on first use.
+        return {**self.__dict__, 'bc_dll': None}
+
     def _get_num_threads(self):
         global _THREAD_POOL_PID
         if self.num_threads > 1:

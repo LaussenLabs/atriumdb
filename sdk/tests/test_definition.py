@@ -112,6 +112,11 @@ def _test_advanced_definition(db_type, dataset_location, connection_params):
 
     assert np.allclose(floating_odd_numbers, result_data)
 
+    patient_id = sdk.insert_patient(mrn="1234")
+    sdk.insert_device_patient_data([(device_id, patient_id, 0, len(repeated_data))], time_units="s")
+    built = DatasetDefinition.build_from_intervals(sdk, "measures", measures=measures, mrn_list=["1234"])
+    assert list(built.data_dict['mrns']) == ["1234"] and built.data_dict['patient_ids'] == {}
+
 
 def test_filter_slide_greater_than_window():
     """Test filtering with slide size greater than window size to verify warning behavior."""
@@ -168,3 +173,32 @@ def _test_filter_slide_greater_than_window(db_type, dataset_location, connection
 
     # Should have some windows since we accepted all of them
     assert window_count > 0
+
+def test_partial_window_labels():
+    _test_for_both(f"{DB_NAME}_partial_labels", _test_partial_window_labels)
+
+
+def _test_partial_window_labels(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+
+    measure_id = sdk.insert_measure("test_measure", 1, "units", freq_units="Hz")
+    device_id = sdk.insert_device("test_device")
+    sdk.write_segment(measure_id, device_id, np.arange(200), 0, freq=1, time_units="s", freq_units="Hz",
+                      scale_m=1.0, scale_b=0.0)
+
+    # The device moves to the second patient at 95 s, and that patient has an event from 96 s.
+    first_patient_id, second_patient_id = sdk.insert_patient(), sdk.insert_patient()
+    sdk.insert_device_patient_data([(device_id, first_patient_id, 0, 95), (device_id, second_patient_id, 95, 200)],
+                                   time_units="s")
+    sdk.insert_label("event", 96, 150, device=device_id, time_units="s")
+
+    for iterator_type in ["iterator", "filtered", "lightmapped"]:
+        definition = DatasetDefinition(measures=["test_measure"], patient_ids={first_patient_id: "all"},
+                                       labels=["event"])
+        windows = list(sdk.get_iterator(definition, 20, 10, time_units="s", iterator_type=iterator_type,
+                                        window_filter_fn=lambda window: True))
+        assert windows[-1].start_time == 90 * 1_000_000_000
+        for window in windows:
+            assert np.all(window.label_time_series == 0)
+            assert np.all(window.label == 0)

@@ -25,10 +25,8 @@
 #include <distinct.h>
 
 
-size_t entropy_buffer_size_d64(const int64_t *arr, uint64_t arr_len)
+size_t entropy_buffer_size_d64(uint64_t arr_len)
 {
-    uint64_t num_distinct_elements = count_num_distinct_d64(arr, arr_len);
-
-    // 2 Arrays of n number of int64's
-    return 2 * num_distinct_elements * sizeof(int64_t);
+    // The distinct elements and their counts (arr_len int64's each), then the hash table.
+    return (2 * arr_len + distinct_table_size_d64(arr_len)) * sizeof(int64_t);
 }

@@ -81,8 +81,8 @@ def _run_iterator_test(db_type, dataset_location, connection_params, use_period)
             assert isinstance(window.label_time_series, np.ndarray)
             assert isinstance(window.label, np.ndarray)
 
-        # Try light mapped
-        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, iterator_type="lightmapped")
+        # Try mapped
+        iterator = sdk.get_iterator(definition, window_size_nano, window_size_nano, iterator_type="mapped")
         for window_i, window in enumerate(iterator):
             assert isinstance(window.start_time, int) or isinstance(window.start_time, float)
             assert window.end_time == window.start_time + window_size_nano
@@ -214,6 +214,27 @@ def _run_iterator_test(db_type, dataset_location, connection_params, use_period)
         assert window.label_time_series is None
         assert window.label is None
 
+def test_prefetch_with_slow_measure():
+    _test_for_both(f"{DB_NAME}_prefetch", _test_prefetch_with_slow_measure)
+
+
+def _test_prefetch_with_slow_measure(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+    device_id = sdk.insert_device("bed")
+    for tag, freq in [("ecg", 250), ("hr", 1)]:
+        measure_id = sdk.insert_measure(tag, freq, "units", freq_units="Hz")
+        sdk.write_segment(measure_id, device_id, np.zeros(600 * freq), 0, freq=freq, time_units="s", freq_units="Hz",
+                          scale_m=1.0, scale_b=0.0)
+
+    # Adding a 1 Hz measure to 250 Hz ECG leaves the default batch size unchanged.
+    batch_sizes = []
+    for measures in [["ecg"], ["ecg", "hr"]]:
+        definition = DatasetDefinition(measures=measures, device_ids={device_id: "all"})
+        batch_sizes.append(sdk.get_iterator(definition, 10, 10, time_units="s").max_batch_size)
+    assert batch_sizes[0] == batch_sizes[1]
+
+
 def create_test_definition_files(sdk):
     measures = []
     for measure_id, measure_info in sdk.get_all_measures().items():
@@ -251,3 +272,24 @@ def get_index_of_first_nan(arr):
     if nan_index == 0 and not np.isnan(arr[0]):
         return len(arr) - 1
     return nan_index
+
+
+def test_cached_windows_per_source():
+    _test_for_both(f"{DB_NAME}_cached_windows", _test_cached_windows_per_source)
+
+
+def _test_cached_windows_per_source(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+    measure_id = sdk.insert_measure("test_measure", 1, "units", freq_units="Hz")
+    device_id = sdk.insert_device("test_device")
+    sdk.write_segment(measure_id, device_id, np.arange(60), 0, freq=1, time_units="s", freq_units="Hz",
+                      scale_m=1.0, scale_b=0.0)
+
+    # Windows inside the data come back whole, and the caller's definition keeps its one range.
+    definition = DatasetDefinition(measures=["test_measure"], device_ids={device_id: [{"start": 0, "end": 60 * 10 ** 9}]})
+    windows = list(sdk.get_iterator(definition, 10, 5, time_units="s", shuffle=1, cached_windows_per_source=2))
+    full_windows = [window for window in windows if window.start_time <= 50 * 10 ** 9]
+    assert len(full_windows) == 11
+    assert all(not np.isnan(window.signals[("test_measure", 1.0, "units")]["values"]).any() for window in full_windows)
+    assert definition.validated_data_dict["sources"]["device_ids"][device_id] == [[0, 60 * 10 ** 9]]

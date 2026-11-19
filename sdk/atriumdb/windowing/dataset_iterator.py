@@ -17,7 +17,6 @@
 
 
 from bisect import bisect_right
-import warnings
 import random
 import pickle
 import hashlib
@@ -28,7 +27,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 from atriumdb.windowing.window import Window
 from atriumdb.windowing.windowing_functions import get_signal_dictionary, find_closest_measurement, \
-    get_label_dictionary, _get_patient_info_from_cache, _load_patient_cache, get_window_list
+    get_label_dictionary, _get_patient_info_from_cache, _load_patient_cache, get_window_list, warn_off_grid_windows
 
 
 class DatasetIterator:
@@ -49,8 +48,9 @@ class DatasetIterator:
                                         a seeded random number generator for reproducible shuffling. If False or None, no shuffling occurs.
     :param int | None max_cache_duration: If specified, no single cache will have a time range larger than this duration.
                                            The time range will be split accordingly. The duration must be larger than window_duration_ns.
-    :param list patient_history_fields: A list of patient_history fields you would like returned in the Window object.
-    :param str cache_dir: A directory, if specified, caches the results of _extract_cache_info to speed up future iterations. Setting to None will disable the cache.
+                                           Ignored when shuffle is False.
+    :param float label_threshold: Fraction of a window a label must exceed for ``Window.label`` to be 1. Default 0.5.
+    :param list patient_history_fields: A list of patient_history fields ("height", "weight") you would like returned in the Window object.
     :param bool label_exact_match: If True, labels will be matched exactly as requested, and child labels will not be returned
         when their parent is requested. If False, child labels will be included when their parent is requested.
     """
@@ -91,7 +91,7 @@ class DatasetIterator:
         if shuffle is not False and max_cache_duration is not None:
             assert max_cache_duration >= window_duration_ns, \
                 "max_cache_duration must be greater than window_duration_ns"
-            self._split_time_ranges(max_cache_duration)
+            self._split_time_ranges(max_cache_duration, int(window_duration_ns), int(window_slide_ns))
 
         self.shuffle = shuffle
 
@@ -107,21 +107,7 @@ class DatasetIterator:
         # Compute the matrix's row size based on the lowest period and the window duration in nanoseconds.
         # Determines how many data points fit in a single window.
 
-        # Emitting warnings for row_size, slide_size, and row_period_ns
-
-        if self.window_duration_ns % self.lowest_period_ns != 0:
-            warnings.warn(
-                f'Given window duration of {window_duration_ns / 1e9} seconds and signal period of '
-                f'{self.lowest_period_ns / (10 ** 9)} seconds result in a non-integer number of signals in the window. '
-                f'window size / row size will round down'
-            )
-
-        if self.window_slide_ns % self.lowest_period_ns != 0:
-            warnings.warn(
-                f'Given sliding window duration of {window_slide_ns / 1e9} seconds and signal period of '
-                f'{self.lowest_period_ns / (10 ** 9)} seconds result in a non-integer number of signals in the slide. '
-                f'slide will round down'
-            )
+        warn_off_grid_windows(self.measures, self.window_duration_ns, self.window_slide_ns)
 
         self.row_size = int(self.window_duration_ns // self.lowest_period_ns)
 
@@ -175,16 +161,13 @@ class DatasetIterator:
         self.matrix_cache = []
         self.cache_window_i = 0
 
-    def _split_time_ranges(self, max_duration):
-        for source_type, sources in self.sources.items():
-            for source_id, time_ranges in sources.items():
-                new_time_ranges = []
-                for start, end in time_ranges:
-                    while start + max_duration < end:
-                        new_time_ranges.append([start, start + max_duration])
-                        start += max_duration
-                    new_time_ranges.append([start, end])
-                self.sources[source_type][source_id] = new_time_ranges
+    def _split_time_ranges(self, max_duration, window_duration_ns, window_slide_ns):
+        # Each chunk holds whole windows: [first window start, window start limit, data end].
+        step = ((max_duration - window_duration_ns) // window_slide_ns + 1) * window_slide_ns
+        self.sources = {source_type: {source_id: [[s, min(s + step, end), end] for start, end in time_ranges
+                                                  for s in range(start, end, step)]
+                                      for source_id, time_ranges in sources.items()}
+                        for source_type, sources in self.sources.items()}
 
 
     def _extract_cache_info(self):
@@ -192,8 +175,8 @@ class DatasetIterator:
         flattened_sources = []
         for source_type, sources in self.sources.items():
             for source_id, time_ranges in sources.items():
-                for range_start_time, range_end_time in time_ranges:
-                    flattened_sources.append([source_type, source_id, range_start_time, range_end_time])
+                for time_range in time_ranges:
+                    flattened_sources.append([source_type, source_id, time_range[0], time_range[1], time_range[-1]])
 
         # Shuffling if random_gen is not None
         if self.random_gen is not None:
@@ -207,13 +190,13 @@ class DatasetIterator:
         current_batch_num_windows = 0
 
         for source in flattened_sources:
-            source_type, source_id, range_start_time, range_end_time = source
+            source_type, source_id, range_start_time, window_start_end, range_end_time = source
             num_time_range_windows = 0
             time_range_info_start = cur_window_start = range_start_time
             time_range_info_end = cur_window_end = cur_window_start + self.window_duration_ns
 
             # While the next window is valid
-            while cur_window_start < range_end_time:
+            while cur_window_start < window_start_end:
 
                 # Increment Window Counters
                 num_time_range_windows += 1
@@ -293,8 +276,8 @@ class DatasetIterator:
                 source_batch_start_time, source_batch_end_time, batch_num_windows, range_start_time, range_end_time)
 
             sliced_labels, threshold_labels = get_label_dictionary(
-                self.sdk, device_id, query_patient_id, source_batch_start_time, source_batch_end_time, self.label_sets,
-                self.label_threshold, range_num_windows, self.row_period_ns, self.row_size, self.slide_size,
+                self.sdk, device_id, query_patient_id, source_batch_start_time, range_end_time, self.label_sets,
+                self.label_threshold, range_num_windows, self.row_period_ns, self.row_size, self.window_slide_ns,
                 label_exact_match=self.label_exact_match)
 
             patient_history_fields = self.patient_history_fields
@@ -361,13 +344,13 @@ class DatasetIterator:
             structure of the Window object and the included signals dictionary is described in the Window Format section
             of the documentation.
         :rtype: Window
-        :raises IndexError: Raised if the index is out of bounds.
+        :raises StopIteration: When all windows have been returned.
 
         :Example:
 
         .. code-block:: python
 
-            window_obj = dataset_iterator[5]
+            window_obj = next(dataset_iterator)
             signals_dict = window_obj.signals
 
             for measure_info, signal_data in signals_dict.items():

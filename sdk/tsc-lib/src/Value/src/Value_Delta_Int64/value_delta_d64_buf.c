@@ -21,11 +21,11 @@
 // Created by Will Dixon on 2021-06-14.
 //
 #include <value_p.h>
+#include <entropy.h>
 
 
 size_t value_delta_d64_get_size(block_metadata_t *block_metadata)
 {
-    // The delta array (num_vals int64s) followed by the entropy buffer, which needs up to
-    // 2 * num_vals int64s (see entropy_buffer_size_d64).
-    return block_metadata->num_vals * sizeof(int64_t) * 3;
+    // The delta array (num_vals int64s) followed by the entropy buffer.
+    return block_metadata->num_vals * sizeof(int64_t) + entropy_buffer_size_d64(block_metadata->num_vals);
 }
