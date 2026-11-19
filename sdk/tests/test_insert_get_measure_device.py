@@ -15,6 +15,9 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import numpy as np
+import pytest
+
 from atriumdb import AtriumSDK
 from atriumdb.atrium_sdk import convert_to_nanohz
 from tests.testing_framework import _test_for_both
@@ -54,6 +57,11 @@ def _test_insert_get_measure_device(db_type, dataset_location, connection_params
     measure_info = sdk.get_measure_info(100)
     assert measure_info is None
 
+    # A frequency that rounds to 0 nHz is refused without adding the measure.
+    with pytest.raises(ValueError):
+        sdk.insert_measure(measure_tag="zero", freq=1e-10, freq_units="Hz", units=units)
+    assert sdk.get_measure_id("zero", 0, units) is None
+
     # test the insert_device method
     device_tag = "Monitor A3"
     device_name = "Philips Monitor A3 in Room 2B"
@@ -71,6 +79,19 @@ def _test_insert_get_measure_device(db_type, dataset_location, connection_params
     # test the get_device_info method when the requested device hasn't been inserted
     device_info = sdk.get_device_info(100)
     assert device_info is None
+
+    # A measure with 0 frequency has no fixed rate: it takes timestamped data, and the dataset still opens.
+    aperiodic_id = sdk.insert_measure(measure_tag="aperiodic", freq=0, freq_units="nHz", units=units)
+    times = np.array([0, 1_000_000_000, 3_500_000_000, 4_000_000_000], dtype=np.int64)
+    values = np.array([1.0, 2.0, 3.0, 4.0])
+    sdk.write_time_value_pairs(aperiodic_id, device_id, times, values)
+    with pytest.raises(ValueError):
+        sdk.write_segment(aperiodic_id, device_id, values, 0)
+    sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type=db_type,
+                    connection_params=connection_params)
+    assert sdk.get_measure_info(aperiodic_id)['period_ns'] is None
+    _, read_times, read_values = sdk.get_data(aperiodic_id, 0, 5_000_000_000, device_id=device_id)
+    assert np.array_equal(read_times, times) and np.array_equal(read_values, values)
 
     # test the search methods with a tag or name only, in another case, alongside unnamed entries
     unnamed_measure_id = sdk.insert_measure(measure_tag="ECG Lead V", freq=250, freq_units="Hz", units="mV")
