@@ -134,6 +134,8 @@ def get_label_data(device_id, query_patient_id, batch_start_time, batch_end_time
                 out=label_matrix[idx],
                 include_descendants=not label_exact_match,
             )
+        # Partial windows carry no labels past the end of the source range.
+        label_matrix[:, batch_time_array >= batch_end_time] = 0
 
         # Create label windows
         windowed_label_views = sliding_window_view(
