@@ -61,6 +61,16 @@ class SingleConnectionManager:
         self._validation_interval = validation_interval
         self._borrowed = False
 
+    def __getstate__(self):
+        # Connections and locks can't be pickled; the copy opens its own connection on first use.
+        state = {**self.__dict__, '_connection': None, '_borrowed': False}
+        del state['_lock']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._lock = threading.RLock()
+
     def _create_connection(self):
         attempts = 0
         while attempts < 5:
