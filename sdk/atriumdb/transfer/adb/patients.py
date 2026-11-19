@@ -18,9 +18,14 @@
 
 import csv
 import time
+import uuid
+import warnings
 from pathlib import Path
 from typing import Dict, Union
 import random
+
+DEIDENTIFICATION_KEY_SETTING = "deidentification_key_id"
+KEY_ID_ROW = "key_id"
 
 
 def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None, deidentify=True,
@@ -38,7 +43,7 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
    :param list mrn_list: (Optional) A list of medical record numbers (MRNs) corresponding to the patients to transfer.
     If `patient_id_list` is not provided, `mrn_list` will be used to determine patients to transfer.
    :param union[bool, str, Path] deidentify: If True, randomly assign new patient IDs. If a filename (str or Path)
-    is provided, use the deidentification table from the file. If False, keep the original patient IDs.
+    is provided, use the deidentification table from the file, adding any patients it lacks. If False, keep the original patient IDs.
    :param list patient_info_to_transfer: (Optional) A list of patient info keys to transfer.
     If None or "all", transfer all patient info.
    :param int start_time_nano: (Optional) The start time in nanoseconds for patient-device history and encounter
@@ -85,7 +90,19 @@ def transfer_patient_info(src_sdk, dest_sdk, patient_id_list=None, mrn_list=None
     """
     patient_id_list = validate_patient_transfer_list(src_sdk, patient_id_list, mrn_list, deidentify)
 
-    patient_id_map = create_patient_id_map(patient_id_list, deidentify)
+    if deidentify:
+        key_id = check_deidentification_key(dest_sdk, deidentify)
+    elif dest_sdk.sql_handler.select_setting(DEIDENTIFICATION_KEY_SETTING) is not None:
+        warnings.warn("The destination holds de-identified patients, and this transfer adds identified patients "
+                      "(deidentify=False) to it.")
+
+    patient_id_map = create_patient_id_map(patient_id_list, deidentify,
+                                           used_patient_ids=dest_sdk.get_all_patients().keys())
+
+    if deidentify:
+        dest_sdk.sql_handler.insert_setting(DEIDENTIFICATION_KEY_SETTING, key_id)
+        if isinstance(deidentify, (str, Path)) and read_key_id(deidentify) is None:
+            write_dict_to_csv({KEY_ID_ROW: key_id, **patient_id_map}, deidentify)
 
     transfer_patient_table(src_sdk, dest_sdk, patient_id_list, patient_id_map, patient_info_to_transfer,
                            deidentification_functions, time_shift_nano, deidentify)
@@ -121,6 +138,9 @@ def transfer_patient_device_mapping(src_sdk, dest_sdk, patient_id_map, start_tim
         dest_device_patient_list.append(
             [src_to_dest_dev_ids_dict[device_id], patient_id_map[patient_id], start_time, end_time])
 
+    existing = {(device_id, patient_id, start_time) for device_id, patient_id, start_time, _ in
+                dest_sdk.get_device_patient_data()}
+    dest_device_patient_list = [row for row in dest_device_patient_list if tuple(row[:3]) not in existing]
     if len(dest_device_patient_list) > 0:
         dest_sdk.insert_device_patient_data(device_patient_data=dest_device_patient_list)
 
@@ -178,11 +198,30 @@ def transfer_bed(src_sdk, dest_sdk, src_bed_id):
     return dest_sdk.sql_handler.insert_bed(dest_unit_id, bed_name, bed_id=free_bed_id)
 
 
-def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list, deidentify):
-    if patient_id_list == "all" and isinstance(deidentify, (str, Path)) and Path(deidentify).exists():
-        patient_id_map = read_csv_to_dict(Path(deidentify))
-        patient_id_list = list(patient_id_map.keys())
+def check_deidentification_key(dest_sdk, deidentify):
+    # A destination and its key file carry the same id, set by the first de-identified transfer into it, so a later
+    # transfer with another key (or with deidentify=True, which keeps no key) cannot give its patients a second id.
+    setting = dest_sdk.sql_handler.select_setting(DEIDENTIFICATION_KEY_SETTING)
+    key_id = read_key_id(deidentify) if isinstance(deidentify, (str, Path)) else None
+    if setting is None:
+        return key_id or uuid.uuid4().hex
+    if key_id != setting[1]:
+        raise ValueError("The destination already holds patients de-identified with another key, so this transfer "
+                         "could give a patient a second id. Pass the key file used for the destination as deidentify, "
+                         "or transfer into a new dataset.")
+    return key_id
 
+
+def read_key_id(file_path):
+    if Path(file_path).exists():
+        with open(file_path, mode='r', newline='') as csvfile:
+            for row in csv.reader(csvfile):
+                if row[0] == KEY_ID_ROW:
+                    return row[1]
+    return None
+
+
+def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list, deidentify):
     if patient_id_list is None and mrn_list is None:
         raise ValueError("Either patient_id_list or mrn_list must be specified.")
     if patient_id_list == "all":
@@ -205,7 +244,7 @@ def validate_patient_transfer_list(from_sdk, patient_id_list, mrn_list, deidenti
     return patient_id_list
 
 
-def create_patient_id_map(patient_id_list, deidentify, overwrite=False):
+def create_patient_id_map(patient_id_list, deidentify, overwrite=False, used_patient_ids=()):
     if not deidentify:
         # No de-identification needed; return a direct mapping
         return {patient_id: patient_id for patient_id in patient_id_list}
@@ -214,24 +253,27 @@ def create_patient_id_map(patient_id_list, deidentify, overwrite=False):
         # If deidentify is a file path
         file_path = Path(deidentify)
         if file_path.exists() and not overwrite:
-            # If the file exists and we're not overwriting, load the existing map
+            # If the file exists and we're not overwriting, load the existing map and add any missing patients to it
             patient_id_map = read_csv_to_dict(file_path)
-            if validate_csv_dict(patient_id_map, patient_id_list):
-                return patient_id_map
-            else:
-                raise ValueError("Existing de-identification map does not cover all patient IDs.")
+            missing_patient_ids = [patient_id for patient_id in patient_id_list if patient_id not in patient_id_map]
+            if missing_patient_ids:
+                patient_id_map.update(generate_new_patient_id_map(
+                    missing_patient_ids, [*used_patient_ids, *patient_id_map.values()]))
+                key_id = read_key_id(file_path)
+                write_dict_to_csv({KEY_ID_ROW: key_id, **patient_id_map} if key_id else patient_id_map, file_path)
+            return patient_id_map
         else:
             # If the file doesn't exist or we're overwriting, create a new map
-            new_map = generate_new_patient_id_map(patient_id_list)
+            new_map = generate_new_patient_id_map(patient_id_list, used_patient_ids)
             write_dict_to_csv(new_map, file_path)
             return new_map
     else:
         # deidentify is True, generate new map without saving
-        return generate_new_patient_id_map(patient_id_list)
+        return generate_new_patient_id_map(patient_id_list, used_patient_ids)
 
 
-def generate_new_patient_id_map(patient_id_list):
-    new_ids = generate_patient_ids(len(patient_id_list))
+def generate_new_patient_id_map(patient_id_list, used_patient_ids=()):
+    new_ids = generate_patient_ids(len(patient_id_list), used_patient_ids)
     return dict(zip(patient_id_list, new_ids))
 
 
@@ -247,7 +289,8 @@ def read_csv_to_dict(file_path: Union[str, Path]) -> Dict:
     with open(file_path, mode='r', newline='') as csvfile:
         reader = csv.reader(csvfile)
         for row in reader:
-            dictionary[int(row[0])] = int(row[1])
+            if row[0] != KEY_ID_ROW:
+                dictionary[int(row[0])] = int(row[1])
     return dictionary
 
 
@@ -255,9 +298,10 @@ def validate_csv_dict(csv_dict: Dict, patient_id_list: list) -> bool:
     return all(patient_id in csv_dict for patient_id in patient_id_list)
 
 
-def generate_patient_ids(number_of_patients):
-    # Generate the list of unique patient IDs
-    return random.sample(range(10000, 10000 + 2 * number_of_patients), number_of_patients)
+def generate_patient_ids(number_of_patients, used_patient_ids=()):
+    # Generate the list of unique patient IDs, above any already in use
+    start = max(10000, max(used_patient_ids, default=0) + 1)
+    return random.sample(range(start, start + 2 * number_of_patients), number_of_patients)
 
 
 def transfer_patient_table(from_sdk, to_sdk, patient_id_list, patient_id_map, patient_info_to_transfer=None,

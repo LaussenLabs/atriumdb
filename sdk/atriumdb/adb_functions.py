@@ -29,6 +29,7 @@ import bisect
 from atriumdb.helpers.block_calculations import calc_time_by_freq
 from atriumdb.helpers.block_constants import TIME_TYPES
 from atriumdb.intervals.union import intervals_union_list
+from atriumdb.block_wrapper import get_period_ns_from_header
 
 ALLOWED_TIME_TYPES = [1, 2]
 time_unit_options = {
@@ -914,7 +915,7 @@ def truncate_messages(value_data, message_starts, message_sizes, freq_nhz=None, 
 
         # Calculate the sample indices within the message
         samples_before_overlap_start = ((overlap_start_ns - msg_start_ns) + current_period_ns - 1) // current_period_ns
-        samples_until_overlap_end = (overlap_end_ns - msg_start_ns) // current_period_ns
+        samples_until_overlap_end = ((overlap_end_ns - msg_start_ns) + current_period_ns - 1) // current_period_ns
 
         num_samples_to_keep = samples_until_overlap_end - samples_before_overlap_start
 
@@ -1461,17 +1462,18 @@ def rebuild_intervals_from_existing_blocks(sdk, interval_gap_tolerance_nano=0, m
                 for group_headers, group_times, group_values in group_headers_by_scale_factor_freq_time_type(
                         r_headers, r_times, r_values):
                     group_time_type = int(group_headers[0].t_raw_type)
-                    group_freq_nhz = int(group_headers[0].freq_nhz)
+                    period_ns = int(get_period_ns_from_header(group_headers[0]))
 
                     # Calculate intervals based on time type
                     if group_time_type == 1:
-                        period_ns = (10 ** 18) // group_freq_nhz
                         group_times, sorted_time_indices = np.unique(group_times, return_index=True)
                         group_interval_data = get_interval_list_from_ordered_timestamps(group_times, period_ns)
                     elif group_time_type == 2:
                         # Merge the gap data into messages (segments)
-                        message_starts, message_sizes = reconstruct_messages_multi(group_headers, group_times, group_freq_nhz)
-                        group_interval_data = get_interval_list_from_message_starts_and_sizes(message_starts, message_sizes, group_freq_nhz)
+                        message_starts, message_sizes = reconstruct_messages_multi(
+                            group_headers, group_times, period_ns=period_ns)
+                        group_interval_data = get_interval_list_from_message_starts_and_sizes(
+                            message_starts, message_sizes, period_ns=period_ns)
                     else:
                         raise ValueError("time_type must be 1 or 2")
 

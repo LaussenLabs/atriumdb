@@ -33,7 +33,7 @@ from atriumdb.adb_functions import allowed_interval_index_modes, get_block_and_i
     default_freq_units
 from atriumdb.block import Block, create_gap_arr
 from atriumdb.block_wrapper import T_TYPE_GAP_ARRAY_INT64_INDEX_DURATION_NANO, V_TYPE_INT64, V_TYPE_DELTA_INT64, \
-    V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper
+    V_TYPE_DOUBLE, T_TYPE_TIMESTAMP_ARRAY_INT64_NANO, BlockMetadataWrapper, get_period_ns_from_header
 from atriumdb.file_api import AtriumFileHandler
 from atriumdb.helpers import shared_lib_filename_windows, shared_lib_filename_macos, shared_lib_filename_linux, \
     protected_mode_default_setting, overwrite_default_setting
@@ -57,7 +57,7 @@ from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.filtered_iterator import FilteredDatasetIterator
 from atriumdb.windowing.mapped_iterator import MappedIterator
 from atriumdb.windowing.verify_definition import verify_definition
-from atriumdb.windowing.definition_splitter import partition_dataset
+from atriumdb.windowing.definition_splitter import partition_dataset, merge_intervals
 from atriumdb.write_buffer import WriteBuffer
 
 try:
@@ -474,6 +474,8 @@ class AtriumSDK:
         :param int end_time_n: The end epoch, in `time_units` (default nanoseconds). The end time is not inclusive.
         :param int device_id: The device identifier. If None, device_tag must be provided.
         :param int patient_id: The patient identifier. If None, mrn must be provided.
+            Data is read only from the patient's devices while they were mapped to the patient; with ``time_type=2``
+            whole blocks are returned.
         :param time_type: The type of time returned. Options are:
             - 1: Timestamps (default).
             - 2: Gap array (advanced users only).
@@ -536,6 +538,11 @@ class AtriumSDK:
 
         measure_id = int(measure_id) if measure_id is not None else measure_id
         device_id = int(device_id) if device_id is not None else device_id
+
+        if patient_id is not None and block_info is None:
+            return self._get_patient_data(measure_id, start_time_n, end_time_n, patient_id, time_type, analog,
+                                          time_units, sort, allow_duplicates, return_nan_filled, device_id)
+
         # Determine if we can use the cache
         use_cache = False
         if device_id is not None and measure_id is not None:
@@ -595,6 +602,59 @@ class AtriumSDK:
             r_times, r_values = sort_data(r_times, r_values, headers, start_time_n, end_time_n, allow_duplicates)
 
         # Convert time data from nanoseconds to unit of choice
+        if time_units != 'ns':
+            r_times = r_times / time_unit_options[time_units]
+
+        return headers, r_times, r_values
+
+    def _get_patient_data(self, measure_id, start_time_n, end_time_n, patient_id, time_type, analog, time_units,
+                          sort, allow_duplicates, return_nan_filled, device_id=None):
+        # Read each device (or only device_id) over the times it was mapped to the patient.
+        nan_fill = isinstance(return_nan_filled, np.ndarray) or bool(return_nan_filled)
+        period_ns = (10 ** 18) / self._measures[measure_id]['freq_nhz']
+        # A NaN-filled read puts the sample nearest each slot in it, so it reads from half a period before the start.
+        read_start_n = int(np.ceil(start_time_n - period_ns / 2)) if nan_fill else start_time_n
+        device_time_ranges = defaultdict(list)
+        for mapped_device_id, mapping_start, mapping_end in self.sql_handler.get_device_time_ranges_by_patient(
+                patient_id, end_time_n, read_start_n):
+            start, end = max(mapping_start, read_start_n), min(mapping_end, end_time_n)
+            if start < end and device_id in (None, mapped_device_id):
+                device_time_ranges[mapped_device_id].append((start, end))
+        read_ranges = [(device_id, start, end) for device_id, time_ranges in device_time_ranges.items()
+                       for start, end in merge_intervals(time_ranges)]
+
+        if nan_fill:
+            num_values = int(round((end_time_n - start_time_n) / period_ns))
+            if not isinstance(return_nan_filled, np.ndarray):
+                return_nan_filled = np.full(num_values, np.nan, dtype=np.float64)
+            elif return_nan_filled.size != num_values:
+                raise ValueError("input array must be of size int(round((end_time_n - start_time_n) / period_ns))")
+            headers = []
+            for device_id, start, end in read_ranges:
+                # Place each sample in the slot a single read would use (round half away from zero, as in the C fill).
+                range_headers, times, values = self.get_data(measure_id, start, end, device_id=device_id)
+                headers.extend(range_headers)
+                index = np.floor((times - start_time_n) / period_ns + 0.5).astype(np.int64)
+                in_bounds = (index >= 0) & (index < return_nan_filled.size)
+                return_nan_filled[index[in_bounds]] = values[in_bounds]
+            return headers, return_nan_filled
+
+        results = [self.get_data(measure_id, start, end, device_id=device_id, time_type=time_type, analog=analog,
+                                 allow_duplicates=allow_duplicates) for device_id, start, end in read_ranges]
+        results = [result for result in results if len(result[0]) > 0]
+        if len(results) == 0:
+            return [], np.array([]), np.array([])
+
+        headers = [header for result in results for header in result[0]]
+        r_times = np.concatenate([result[1] for result in results])
+        r_values = np.concatenate([result[2] for result in results])
+        if sort and time_type == 1 and len(results) > 1:
+            if allow_duplicates:
+                order = np.argsort(r_times, kind='stable')
+            else:
+                _, order = np.unique(r_times, return_index=True)
+            r_times, r_values = r_times[order], r_values[order]
+
         if time_units != 'ns':
             r_times = r_times / time_unit_options[time_units]
 
@@ -1054,8 +1114,10 @@ class AtriumSDK:
                         f"The raw value type ({VALUE_TYPES_STR[raw_value_type]}) doesn't match the raw value type "
                         f"({VALUE_TYPES_STR[header[0].v_raw_type]}) of the block you are trying to merge with.")
 
-                # make sure the scale factors match. If they don't then don't merge the blocks
-                if same_type and header[0].scale_m == scale_m and header[0].scale_b == scale_b:
+                # make sure the scale factors and periods match. If they don't then don't merge the blocks, since the
+                # merge reads the old block's times with this write's period
+                if same_type and header[0].scale_m == scale_m and header[0].scale_b == scale_b and \
+                        get_period_ns_from_header(header[0]) == period_ns_for_calc:
                     # if the original time type of the old block is not the same as the time type of the data we are
                     # trying to save, we need to make them the same
                     if header[0].t_raw_type != raw_time_type:
@@ -1095,7 +1157,7 @@ class AtriumSDK:
                                                                        value_data, time_data, time_0,
                                                                        freq_nhz=freq_nhz, period_ns=period_ns)
                 else:
-                    # if the scale factors are not the same don't merge and set old block to none, so we don't delete it
+                    # if the scale factors or periods differ don't merge and set old block to none, so we don't delete it
                     old_block = None
             else:
                 # if this is an end block and the closest block is full don't merge and set old block to none, so we don't delete it
@@ -1317,9 +1379,11 @@ class AtriumSDK:
         elif period is not None:
             period_ns = int(period * time_unit_options[time_units])
             freq_nano = None
-        else:
+        elif measure_info["freq_nhz"]:
             freq_nano = measure_info["freq_nhz"]
             period_ns = None
+        else:
+            raise ValueError(f"Measure {measure_id} has no fixed rate; pass freq or period to write segments.")
 
         self._warn_if_freq_differs_from_measure(measure_info, freq_nano, period_ns)
 
@@ -1359,7 +1423,7 @@ class AtriumSDK:
     @staticmethod
     def _warn_if_freq_differs_from_measure(measure_info, freq_nhz=None, period_ns=None):
         # A mismatch is usually a freq_units mistake, e.g. insert_measure(tag, 125) defaults to 125 nHz.
-        if measure_info is None or (freq_nhz is None and period_ns is None):
+        if measure_info is None or not measure_info['freq_nhz'] or (freq_nhz is None and period_ns is None):
             return
         data_period_ns = 10 ** 18 / freq_nhz if freq_nhz is not None else period_ns
         if not 0.5 <= data_period_ns / measure_info['period_ns'] <= 2:
@@ -2117,7 +2181,8 @@ class AtriumSDK:
             if measure_info:
                 # Add period_ns to API response if not present
                 if 'period_ns' not in measure_info or measure_info['period_ns'] is None:
-                    measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+                    measure_info['period_ns'] = \
+                        10 ** 18 // measure_info['freq_nhz'] if measure_info['freq_nhz'] else None
             return measure_info
 
         # If measure_id is already in the cache, return the cached measure info
@@ -2139,7 +2204,7 @@ class AtriumSDK:
         if stored_period_ns is not None:
             measure_period_ns = stored_period_ns
         else:
-            measure_period_ns = 10 ** 18 // measure_freq_nhz
+            measure_period_ns = 10 ** 18 // measure_freq_nhz if measure_freq_nhz else None
 
         # Create a dictionary containing the measure information
         measure_info = {
@@ -2205,7 +2270,7 @@ class AtriumSDK:
             result = self._request("GET", "measures/", params=params)
             # Add period_ns to each measure in API response
             for measure_id, measure_info in result.items():
-                measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+                measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz'] if measure_info['freq_nhz'] else None
             return result
 
         # Set the default frequency units to "Hz" if not provided
@@ -2286,7 +2351,8 @@ class AtriumSDK:
             # Add period_ns to each measure in API response if not present
             for measure_id, measure_info in result.items():
                 if 'period_ns' not in measure_info or measure_info['period_ns'] is None:
-                    measure_info['period_ns'] = 10 ** 18 // measure_info['freq_nhz']
+                    measure_info['period_ns'] = \
+                        10 ** 18 // measure_info['freq_nhz'] if measure_info['freq_nhz'] else None
             return result
 
         # Get all measures from the SQL handler
@@ -2304,7 +2370,7 @@ class AtriumSDK:
             if stored_period_ns is not None:
                 measure_period_ns = stored_period_ns
             else:
-                measure_period_ns = 10 ** 18 // measure_freq_nhz
+                measure_period_ns = 10 ** 18 // measure_freq_nhz if measure_freq_nhz else None
 
             # Add the measure information to the dictionary
             measure_dict[measure_id] = {
@@ -2479,10 +2545,13 @@ class AtriumSDK:
         else:  # period is not None
             # Convert period to nanoseconds then to equivalent frequency in nanohertz
             period_ns = int(period * time_unit_options[time_units])
-            freq_nhz = 10 ** 18 // period_ns
+            freq_nhz = 10 ** 18 // period_ns if period_ns > 0 else 0
 
         # Force Cast Python integer
         freq_nhz = int(freq_nhz)
+        # 0 marks a measure with no fixed rate. A non-zero rate that rounds to 0 nHz is a units mistake.
+        if freq_nhz < 0 or (freq_nhz == 0 and freq != 0):
+            raise ValueError("A measure's frequency must be 0 (no fixed rate) or at least 1 nHz.")
 
         # Check for id clash
         if measure_id is not None:
@@ -2510,7 +2579,7 @@ class AtriumSDK:
             return inserted_measure_id
 
         # Calculate period_ns from freq_nhz for cache (if not already calculated)
-        if period_ns is None:
+        if period_ns is None and freq_nhz != 0:
             period_ns = 10 ** 18 // freq_nhz
 
         # Add new measure_id into cache
@@ -5106,6 +5175,8 @@ class AtriumSDK:
                            patients or devices over particular time intervals.
         :param int window_duration: Duration of each window in units time_units (default nanoseconds).
         :param int window_slide: Slide duration between consecutive windows in units time_units (default nanoseconds).
+            If the window or slide is not a whole number of samples of a measure, each window starts at that measure's
+            first sample at or after the window start, and some samples can fall between windows. A warning names each such measure.
         :param int gap_tolerance: Tolerance for gaps in definition intervals auto generated by "all", if not already validated
             (optional) in units time_units (default nanoseconds). If None, 1 minute is used.
         :param int num_windows_prefetch: Number of windows you want to get from AtriumDB at a time. Setting this value

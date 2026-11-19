@@ -17,6 +17,7 @@
 
 import random
 import time
+import warnings
 from collections import defaultdict
 from pathlib import Path
 from typing import List
@@ -69,7 +70,7 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
     :param Optional[int] gap_tolerance: A tolerance period for gaps in data, units specified in `time_units` (defaults to 5 minutes if not specified).
         Helps to optimize the waveform transfer by transferring large chunks at a time.
     :param bool | str deidentify: If True or a filename, scrambles patient_ids during the transfer. patient IDs are replaced with randomly generated IDs or according to provided de-identification csv
-        with source ids as column 1 and destination ids as column 2. If the file doesn't exist, then a new one is created with randomly assigned ids. Exported datasets will remain identified with full patient info by default.
+        with source ids as column 1 and destination ids as column 2. If the file doesn't exist, then a new one is created with randomly assigned ids. Patients missing from an existing file are added to it. A destination that already holds de-identified patients only accepts the file it was de-identified with, matched by the `key_id` row written to the file. Exported datasets will remain identified with full patient info by default.
     :param Optional[list] patient_info_to_transfer: Specific patient information fields to transfer. If not provided or set to None, all available information will be considered.
     :param bool include_labels: Specifies whether labels should be included in the transfer process.
     :param Optional[str] measure_tag_match_rule: Determines how to match the measures by tags. One of ['all', 'best'].
@@ -192,6 +193,9 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
             if src_device_id is None:
                 continue
 
+            # Overlapping time ranges would copy the values they share more than once.
+            time_ranges = intervals_union_list([np.array(time_ranges, dtype=np.int64).reshape(-1, 2)]).tolist()
+
             if export_format == "tsc":
                 for src_measure_id, dest_measure_id in measure_id_map.items():
                     seen_block_ids = set()
@@ -216,31 +220,20 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                                 int(src_measure_id), int(start_time_nano), int(end_time_nano), int(src_device_id), None)
                             block_list.sort(key=lambda x: x[6])
 
-                        # Filter out duplicates
-                        filtered_blocks = []
+                        # A block inside this time range is copied once. A block reaching past it is re-encoded for
+                        # each time range it overlaps, keeping only that range's values.
                         for block in block_list:
                             block_id = block["id"] if src_sdk.mode == "api" else block[0]
-                            if block_id not in seen_block_ids:
+                            block_s = block["start_time_n"] if src_sdk.mode == "api" else block[6]
+                            block_e = block["end_time_n"] if src_sdk.mode == "api" else block[7]
+                            inside_range = start_time_nano <= block_s and block_e <= end_time_nano
+                            if inside_range:
+                                if block_id in seen_block_ids:
+                                    continue
                                 seen_block_ids.add(block_id)
-                                filtered_blocks.append(block)
-
-                        # Extend the main list with unique blocks
-                        blocks_to_transfer.extend(filtered_blocks)
-
-                        # Decide which blocks need to be reencoded.
-                        if not reencode_waveforms:
-                            for block in block_list:
-                                block_s = block["start_time_n"] if src_sdk.mode == "api" else block[6]
-                                block_e = block["end_time_n"] if src_sdk.mode == "api" else block[7]
-                                if start_time_nano <= block_s and block_e <= end_time_nano:
-                                    time_range_index_to_transfer.append(-1)
-                                    re_encode_block_bool_list.append(False)
-                                else:
-                                    re_encode_block_bool_list.append(True)
-                        else:
-                            re_encode_block_bool_list.extend([True] * len(block_list))
-
-                        time_range_index_to_transfer.extend([time_range_i] * len(block_list))
+                            blocks_to_transfer.append(block)
+                            re_encode_block_bool_list.append(reencode_waveforms or not inside_range)
+                            time_range_index_to_transfer.append(time_range_i)
 
                         # Grab the interval data for transferring into the new sdk.
                         write_intervals = src_sdk.get_interval_array(
@@ -250,6 +243,14 @@ def transfer_data(src_sdk: AtriumSDK, dest_sdk: AtriumSDK, definition: DatasetDe
                         measure_device_intervals.append(write_intervals)
 
                     if not blocks_to_transfer:
+                        continue
+
+                    # Do not copy a signal twice, e.g. when a transfer is run again into the same destination.
+                    new_intervals = intervals_union_list(measure_device_intervals, gap_tolerance_nano=0) + (time_shift or 0)
+                    if dest_sdk.get_interval_array(dest_measure_id, device_id=dest_device_id, gap_tolerance_nano=0,
+                                                   start=int(new_intervals[0][0]), end=int(new_intervals[-1][1])).size:
+                        warnings.warn(f"Destination already holds data for measure {dest_measure_id} on device "
+                                      f"{dest_device_id} in this time range; skipping it.")
                         continue
 
                     block_start_index = 0

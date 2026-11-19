@@ -29,6 +29,7 @@ MAX_RECORDS = 1
 
 def test_get_interval_arr():
     _test_for_both(DB_NAME, _test_get_interval_arr)
+    _test_for_both(DB_NAME, _test_merge_interval_gap_tolerance)
 
 
 def _test_get_interval_arr(db_type, dataset_location, connection_params):
@@ -121,3 +122,18 @@ def _test_get_interval_arr(db_type, dataset_location, connection_params):
                           np.array([[start_time_nano, end_time_nano]], dtype=np.int64))
 
 
+def _test_merge_interval_gap_tolerance(db_type, dataset_location, connection_params):
+    sdk = AtriumSDK.create_dataset(
+        dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
+    measure_id = sdk.insert_measure("measure_tag_1", 1, freq_units="Hz")
+    device_id = sdk.insert_device("device_tag_1")
+
+    # Two writes 5 s apart join into one interval when written with a 60 s gap tolerance.
+    for start_s in (0, 105):
+        times = (1234567890 + start_s + np.arange(100, dtype=np.int64)) * 10 ** 9
+        sdk.write_data(measure_id, device_id, times, np.zeros(100), 10 ** 9, int(times[0]), raw_time_type=1,
+                       raw_value_type=2, encoded_time_type=2, encoded_value_type=2, gap_tolerance=60 * 10 ** 9,
+                       merge_blocks=False)
+
+    assert np.array_equal(sdk.get_interval_array(measure_id, device_id=device_id),
+                          np.array([[1234567890 * 10 ** 9, (1234567890 + 205) * 10 ** 9]], dtype=np.int64))

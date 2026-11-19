@@ -24,7 +24,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 from atriumdb.windowing.window import Window
 from atriumdb.windowing.dataset_iterator import DatasetIterator
 from atriumdb.windowing.windowing_functions import get_threshold_labels, find_closest_measurement, \
-    _get_patient_info_from_cache, _load_patient_cache
+    _get_patient_info_from_cache, _load_patient_cache, clear_sample_before_start
 
 
 class MappedIterator(DatasetIterator):
@@ -221,11 +221,19 @@ class MappedIterator(DatasetIterator):
             measure_times = (np.arange(measure_expected_count) * period_ns) + window_start_time
             measure_values = np.full(measure_times.shape, np.nan)
             if len(measure_values) > 0:
+                measure_end_time = window_end_time
                 if measure_expected_count != int(round((window_end_time - window_start_time) / period_ns)):
-                    window_end_time = window_start_time + int(round(measure_expected_count * period_ns))
-                self.sdk.get_data(
-                    measure_id, window_start_time, window_end_time, device_id=device_id, patient_id=query_patient_id,
-                    return_nan_filled=measure_values)
+                    measure_end_time = window_start_time + int(round(measure_expected_count * period_ns))
+                # Partial windows are NaN-filled past the end of the source range.
+                data_end_time = min(measure_end_time, source_info['end_time'])
+                num_values = int(round((data_end_time - window_start_time) / period_ns))
+                if num_values > 0:
+                    self.sdk.get_data(
+                        measure_id, window_start_time, data_end_time, device_id=device_id,
+                        patient_id=query_patient_id, return_nan_filled=measure_values[:num_values])
+                    if window_start_time == source_info['start_time']:
+                        clear_sample_before_start(self.sdk, measure_id, window_start_time, period_ns, device_id,
+                                                  query_patient_id, measure_values)
             measure_tag = measure['tag']
             measure_freq_hz = measure['freq_nhz'] / (10 ** 9)
             measure_units = measure['units']
@@ -247,7 +255,8 @@ class MappedIterator(DatasetIterator):
             # Preallocate label matrix
             label_time_series_num_samples = int(self.window_duration_ns // self.lowest_period_ns)
             label_time_series = np.zeros((len(self.label_sets), label_time_series_num_samples), dtype=np.int8)
-            label_timestamp_array = np.arange(window_start_time, window_end_time, self.lowest_period_ns, dtype=np.int64)
+            label_timestamp_array = (window_start_time +
+                                     np.arange(label_time_series_num_samples, dtype=np.int64) * self.lowest_period_ns)
 
             # Populate label matrix
             for idx, label_set_id in enumerate(self.label_sets):
@@ -261,6 +270,7 @@ class MappedIterator(DatasetIterator):
                     out=label_time_series[idx],
                     include_descendants=not self.label_exact_match,
                 )
+            label_time_series[:, label_timestamp_array >= source_info['end_time']] = 0
             label = (np.mean(label_time_series, axis=1) > self.label_threshold).astype(np.int8)
 
         # Create Window object

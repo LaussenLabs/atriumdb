@@ -14,6 +14,8 @@
 #
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import pickle
+
 import pytest
 import numpy as np
 from atriumdb import AtriumSDK
@@ -47,3 +49,8 @@ def _test_nan_filled(db_type, dataset_location, connection_params):
     _, actual_nan_filled = sdk.get_data(measure_id, 1, 10, device_id=device_id, time_units="s", return_nan_filled=True)
 
     assert np.allclose(expected_nan_filled, actual_nan_filled, equal_nan=True)
+
+    # An SDK that has loaded the C library can still be pickled, e.g. for spawned DataLoader workers.
+    _, copy_nan_filled = pickle.loads(pickle.dumps(sdk)).get_data(
+        measure_id, 1, 10, device_id=device_id, time_units="s", return_nan_filled=True)
+    assert np.allclose(expected_nan_filled, copy_nan_filled, equal_nan=True)
