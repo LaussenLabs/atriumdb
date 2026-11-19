@@ -27,26 +27,26 @@ def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None
             all_patients = sdk.get_all_patients()
             mrn_list = [patient_info["mrn"] for patient_info in all_patients.values() if patient_info["mrn"] is not None]
         device_patient_list = \
-            [(None, sdk.get_patient_id(mrn)) for mrn in mrn_list
+            [(None, sdk.get_patient_id(mrn), mrn) for mrn in mrn_list
              if sdk.get_patient_id(mrn) is not None]
     elif patient_id_list is not None:
         if patient_id_list == "all":
             patient_id_list = list(sdk.get_all_patients().keys())
         device_patient_list = \
-            [(None, patient_id) for patient_id in patient_id_list
+            [(None, patient_id, patient_id) for patient_id in patient_id_list
              if sdk.get_patient_info(patient_id) is not None]
     elif device_tag_list is not None:
         if device_tag_list == "all":
             all_devices = sdk.get_all_devices()
             device_tag_list = [device_info['tag'] for device_info in all_devices.values()]
         device_patient_list = \
-            [(sdk.get_device_id(device_tag), None) for device_tag in device_tag_list
+            [(sdk.get_device_id(device_tag), None, device_tag) for device_tag in device_tag_list
              if sdk.get_device_id(device_tag) is not None]
     elif device_id_list is not None:
         if device_id_list == "all":
             device_id_list = list(sdk.get_all_devices().keys())
         device_patient_list = \
-            [(device_id, None) for device_id in device_id_list
+            [(device_id, None, device_id) for device_id in device_id_list
              if sdk.get_device_info(device_id) is not None]
     else:
         raise ValueError("Exactly one of patient_id_list, mrn_list, device_id_list, device_tag_list must be provided.")
@@ -55,7 +55,7 @@ def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None
     source_key = ['patient_ids', 'mrns', 'device_ids', 'device_tags'][source_lists.index(source_list)]
     source_intervals = {'patient_ids': {}, 'mrns': {}, 'device_ids': {}, 'device_tags': {}}
 
-    for device_id, patient_id in device_patient_list:
+    for device_id, patient_id, source_id in device_patient_list:
         interval_list = []
         if measures is not None:
             for measure in measures:
@@ -94,11 +94,7 @@ def build_source_intervals(sdk, measures=None, labels=None, patient_id_list=None
             merged_interval_array = close_gaps(merged_interval_array, gap_tolerance)
             # Convert to list of dictionaries with "start" and "end" keys
             intervals = [{'start': int(start), 'end': int(end)} for start, end in merged_interval_array]
-            # Add these intervals to the correct element in the source_intervals dictionary
-            if patient_id is not None:
-                source_intervals['patient_ids'][patient_id] = intervals
-            elif device_id is not None:
-                source_intervals['device_ids'][device_id] = intervals
+            source_intervals[source_key][source_id] = intervals
 
     return source_intervals
 
