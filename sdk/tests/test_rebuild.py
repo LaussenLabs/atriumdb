@@ -66,14 +66,15 @@ def calculate_continuous_intervals(times, period_ns):
 
 def test_rebuild():
     _test_for_both(DB_NAME, _test_rebuild)
+    _test_for_both(DB_NAME, _test_rebuild, True)
 
 
-def _test_rebuild(db_type, dataset_location, connection_params):
+def _test_rebuild(db_type, dataset_location, connection_params, use_period=False):
     sdk = AtriumSDK.create_dataset(
         dataset_location=dataset_location, database_type=db_type, connection_params=connection_params)
 
     # larger test
-    write_mit_bih_to_dataset(sdk, max_records=2, seed=42)
+    write_mit_bih_to_dataset(sdk, max_records=2, seed=42, use_period=use_period)
 
     # Calculate expected intervals and warn if original intervals differ
     calculated_intervals_dict = {}
