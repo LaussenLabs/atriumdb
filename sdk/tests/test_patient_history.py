@@ -370,7 +370,7 @@ def _test_iterator_patient_history(db_type, dataset_location, connection_params)
     sdk.insert_patient_history(field='weight', value=20, units='kg', time=50, time_units='s', patient_id=patient_id)
 
     # Each window reports the weight recorded at or before its start.
-    for iterator_type in ["iterator", "lightmapped"]:
+    for iterator_type in ["iterator", "mapped"]:
         definition = DatasetDefinition(measures=["test_measure"], patient_ids={patient_id: "all"})
         windows = list(sdk.get_iterator(definition, 10, 10, time_units="s", iterator_type=iterator_type,
                                         patient_history_fields=['weight']))
