@@ -19,11 +19,12 @@ import ipaddress
 import logging
 import pickle
 import socket
+import ssl
 import threading
 import os
 import time
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Union
 from unittest import mock
 
 import pytest
@@ -128,8 +129,10 @@ def mock_api_servers(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple
 
 @pytest.fixture(autouse=True)
 def no_cert_env_var(monkeypatch: pytest.MonkeyPatch):
-    # keep a developer's own ATRIUMDB_API_CERT_FILE from leaking into these tests
+    # Keep a developer's own ATRIUMDB_API_CERT_FILE from leaking into these tests. The sdk reloads ./.env with
+    # override=True whenever cert_file is None, which would put it straight back, so that load is turned off too.
     monkeypatch.delenv("ATRIUMDB_API_CERT_FILE", raising=False)
+    monkeypatch.setattr("atriumdb.atrium_sdk.load_dotenv", lambda *args, **kwargs: False)
 
 
 def _api_sdk(api_url: str, cert_file: Optional[str] = None) -> AtriumSDK:
@@ -196,6 +199,32 @@ def test_missing_cert_file_raises(tmp_path: Path):
                   cert_file=str(missing_cert_path))
 
 
+def test_invalid_pem_raises(tmp_path: Path):
+    not_a_cert_path = tmp_path / "not_a_cert.pem"
+    not_a_cert_path.write_text("this is not a certificate")
+    with pytest.raises(ValueError, match="not_a_cert.pem' could not be loaded"):
+        AtriumSDK(metadata_connection_type="api", api_url="https://127.0.0.1:1", validate_token=False,
+                  cert_file=str(not_a_cert_path))
+
+
+def test_empty_cert_env_var_means_no_cert(monkeypatch: pytest.MonkeyPatch):
+    # `ATRIUMDB_API_CERT_FILE=` left empty in .env is treated as not set, not as a file named ''
+    monkeypatch.setenv("ATRIUMDB_API_CERT_FILE", "")
+    api_sdk = AtriumSDK(metadata_connection_type="api", api_url="https://127.0.0.1:1", validate_token=False)
+    assert api_sdk.cert_file is None and api_sdk.requests_verify is True
+
+
+def test_websocket_cert_error_raised_in_caller(mock_api_servers: tuple[str, str, Path]):
+    https_url, _, _ = mock_api_servers
+
+    # the TLS failure happens in the connect thread, it must reach the caller as a clear error, not a later AttributeError
+    api_sdk = _api_sdk(https_url)
+    with pytest.raises(ConnectionError, match="with no cert_file") as error_info:
+        api_sdk._websocket_connect()
+    assert isinstance(error_info.value.__cause__, ssl.SSLCertVerificationError)
+    assert api_sdk.websock_conn is None
+
+
 PRIVATE_ENDPOINT, PUBLIC_ENDPOINT = "https://private.example", "https://public.example"
 
 
@@ -212,14 +241,22 @@ def cli_in_tmp_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return cert_path
 
 
-def _run_login(cli_args: list[str]) -> tuple[Result, dict[str, Optional[str]], object]:
+AUTH_CONFIG = {"auth0_tenant": "tenant.example", "auth0_client_id": "client", "auth0_audience": "audience",
+               "algorithms": ["RS256"]}
+
+
+def _run_login(cli_args: list[str], auth_status: int = 200) -> tuple[Result, dict[str, Optional[str]], Union[str, bool, None]]:
     """
-    Run `atriumdb <cli_args>` with the /auth/cli/code request mocked to 404, so login stops right after it updates .env.
-    Returns (click result, the saved .env values, the verify value the request was sent with).
+    Run `atriumdb <cli_args>` with the AtriumDB /auth/cli/code request mocked to return auth_status, and the Auth0
+    device code request mocked to fail, so login stops right after the AtriumDB server step.
+    Returns (click result, the saved .env values, the verify value the /auth/cli/code request was sent with, or None if
+    login stopped before sending it).
     """
-    with mock.patch("atriumdb.cli.atriumdb_cli.requests.get", return_value=mock.Mock(status_code=404)) as mock_get:
+    auth_config_response = mock.Mock(status_code=auth_status, json=lambda: AUTH_CONFIG)
+    with mock.patch("atriumdb.cli.atriumdb_cli.requests.get", return_value=auth_config_response) as mock_get, \
+            mock.patch("atriumdb.cli.atriumdb_cli.requests.post", return_value=mock.Mock(status_code=500)):
         result = CliRunner().invoke(cli, cli_args)
-    return result, dotenv_values("./.env"), mock_get.call_args.kwargs["verify"]
+    return result, dotenv_values("./.env"), mock_get.call_args.kwargs["verify"] if mock_get.called else None
 
 
 def test_login_saves_cert_given_on_command_line(cli_in_tmp_dir: Path):
@@ -251,3 +288,26 @@ def test_login_different_endpoint_removes_cert(cli_in_tmp_dir: Path):
     assert "ATRIUMDB_API_CERT_FILE" not in os.environ
     assert verify is True
     assert "Removed the saved cert file" in result.output
+
+
+def test_login_missing_cert_path_saves_nothing(cli_in_tmp_dir: Path):
+    # a typo in --cert-file is a usage error before anything is written, not a traceback and a broken .env
+    result, saved_env, verify = _run_login(["--cert-file", "typo.pem", "login", "--endpoint-url", PRIVATE_ENDPOINT])
+    assert result.exit_code == 2 and "typo.pem' does not exist" in result.output
+    assert saved_env == {} and verify is None
+
+
+def test_login_failed_request_does_not_save_cert(cli_in_tmp_dir: Path):
+    cert_path = cli_in_tmp_dir
+    _, saved_env, verify = _run_login(["--cert-file", str(cert_path), "login", "--endpoint-url", PRIVATE_ENDPOINT],
+                                      auth_status=404)
+    assert verify == str(cert_path)
+    assert "ATRIUMDB_API_CERT_FILE" not in saved_env
+
+
+def test_login_http_endpoint_warns_and_skips_cert(cli_in_tmp_dir: Path):
+    cert_path = cli_in_tmp_dir
+    result, saved_env, verify = _run_login(["--cert-file", str(cert_path), "login", "--endpoint-url", "http://private.example"])
+    assert "does not use https://" in result.output
+    assert "ATRIUMDB_API_CERT_FILE" not in saved_env
+    assert verify is True
