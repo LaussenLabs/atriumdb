@@ -193,7 +193,7 @@ def _test_partial_window_labels(db_type, dataset_location, connection_params):
                                    time_units="s")
     sdk.insert_label("event", 96, 150, device=device_id, time_units="s")
 
-    for iterator_type in ["iterator", "filtered", "lightmapped"]:
+    for iterator_type in ["iterator", "filtered", "mapped"]:
         definition = DatasetDefinition(measures=["test_measure"], patient_ids={first_patient_id: "all"},
                                        labels=["event"])
         windows = list(sdk.get_iterator(definition, 20, 10, time_units="s", iterator_type=iterator_type,

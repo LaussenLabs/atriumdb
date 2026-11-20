@@ -80,7 +80,7 @@ def _test_transfer_start_end(db_type, dataset_location, connection_params):
     # A partial window at the end bound holds no samples from after it.
     definition = DatasetDefinition(measures=["measure"], device_ids={device_id: "all"})
     for window in sdk_1.get_iterator(definition, window_duration_nano, window_slide_nano, time_units="ns",
-                                     start_time=third_time, end_time=second_third_time, iterator_type="lightmapped"):
+                                     start_time=third_time, end_time=second_third_time, iterator_type="mapped"):
         signal = window.signals[("measure", freq_nano / 10 ** 9, 'mV')]
         assert np.all(signal['times'][~np.isnan(signal['values'])] < second_third_time)
 
@@ -177,7 +177,7 @@ def _test_transfer_between_samples(db_type, dataset_location, connection_params)
     sdk.insert_device_patient_data([(device_id, first_patient_id, 0, transfer_time),
                                     (device_id, second_patient_id, transfer_time, 100 * 10 ** 9)])
     definition = DatasetDefinition(measures=["measure"], patient_ids={second_patient_id: "all"})
-    for iterator_type in ["iterator", "lightmapped"]:
+    for iterator_type in ["iterator", "mapped"]:
         window = next(iter(sdk.get_iterator(definition, 10, 10, time_units="s", iterator_type=iterator_type)))
         values = window.signals[("measure", 1.0, "mV")]["values"]
         assert np.isnan(values[0]) and values[1] == 51
