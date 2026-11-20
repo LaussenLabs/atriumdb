@@ -297,8 +297,11 @@ class AtriumSDK:
             self.cert_file = cert_file
             # requests takes a CA bundle path for verify, True means use the default public CA bundle
             self.requests_verify = cert_file if cert_file is not None else True
-            # None lets websockets build its default context for wss://. Building it here also fails early on an unreadable PEM
-            self.ws_ssl_context = ssl.create_default_context(cafile=cert_file) if cert_file is not None else None
+            # Load the cert once now so an invalid PEM fails at init rather than on the first request. The context is not
+            # stored because SSLContext can't be pickled, which would stop the sdk from going to spawned workers, so
+            # _websocket_connect builds its own.
+            if cert_file is not None:
+                ssl.create_default_context(cafile=cert_file)
 
             # make this variable so once connection is made in the thread it is available to the sdk object
             self.websock_conn = None
@@ -5570,8 +5573,12 @@ class AtriumSDK:
         return response.json()
 
     def _websocket_connect(self):
+        # Built here instead of stored on the sdk since SSLContext can't be pickled, and before the thread starts so a
+        # cert error raises in the caller's thread. None lets websockets use its default context for wss://
+        ws_ssl_context = ssl.create_default_context(cafile=self.cert_file) if self.cert_file is not None else None
+
         def conn():
-            self.websock_conn = connect(f"{self.ws_url}/sdk/blocks/ws", compression=None, max_size=None, ssl=self.ws_ssl_context,
+            self.websock_conn = connect(f"{self.ws_url}/sdk/blocks/ws", compression=None, max_size=None, ssl=ws_ssl_context,
                                         additional_headers={"Authorization": "Bearer {}".format(self.token)})
 
         # The websockets lib uses a thread to receive messages. Normally you would call close() after receiving the
