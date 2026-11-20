@@ -20,19 +20,24 @@ import logging
 import pickle
 import socket
 import threading
+import os
 import time
 from pathlib import Path
 from typing import Iterator, Optional
+from unittest import mock
 
 import pytest
 import requests
 import uvicorn
+from click.testing import CliRunner, Result
+from dotenv import dotenv_values
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
 
 from atriumdb.atrium_sdk import AtriumSDK
+from atriumdb.cli.atriumdb_cli import cli
 from tests.mock_api.app import app
 from tests.mock_api.sdk_dependency import get_sdk_instance
 from tests.test_mit_bih import write_mit_bih_to_dataset, assert_mit_bih_to_dataset
@@ -189,3 +194,60 @@ def test_missing_cert_file_raises(tmp_path: Path):
     with pytest.raises(ValueError, match="does_not_exist.pem"):
         AtriumSDK(metadata_connection_type="api", api_url="https://127.0.0.1:1", validate_token=False,
                   cert_file=str(missing_cert_path))
+
+
+PRIVATE_ENDPOINT, PUBLIC_ENDPOINT = "https://private.example", "https://public.example"
+
+
+@pytest.fixture
+def cli_in_tmp_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Run the CLI in an empty folder (so ./.env starts empty) with os.environ restored afterwards. Returns a cert path."""
+    monkeypatch.chdir(tmp_path)
+    # login's load_dotenv writes into os.environ, so give it a throwaway copy that pytest swaps back at teardown
+    monkeypatch.setattr(os, "environ", os.environ.copy())
+    for env_var in ("ATRIUMDB_API_CERT_FILE", "ATRIUMDB_ENDPOINT_URL"):
+        os.environ.pop(env_var, None)
+    cert_path = tmp_path / "ca.pem"
+    cert_path.write_text("not read, requests is mocked")
+    return cert_path
+
+
+def _run_login(cli_args: list[str]) -> tuple[Result, dict[str, Optional[str]], object]:
+    """
+    Run `atriumdb <cli_args>` with the /auth/cli/code request mocked to 404, so login stops right after it updates .env.
+    Returns (click result, the saved .env values, the verify value the request was sent with).
+    """
+    with mock.patch("atriumdb.cli.atriumdb_cli.requests.get", return_value=mock.Mock(status_code=404)) as mock_get:
+        result = CliRunner().invoke(cli, cli_args)
+    return result, dotenv_values("./.env"), mock_get.call_args.kwargs["verify"]
+
+
+def test_login_saves_cert_given_on_command_line(cli_in_tmp_dir: Path):
+    cert_path = cli_in_tmp_dir
+
+    _, saved_env, verify = _run_login(["--cert-file", str(cert_path), "login", "--endpoint-url", PRIVATE_ENDPOINT])
+    assert saved_env["ATRIUMDB_API_CERT_FILE"] == str(cert_path.resolve())
+    assert verify == str(cert_path)
+
+
+def test_login_same_endpoint_keeps_cert(cli_in_tmp_dir: Path):
+    cert_path = cli_in_tmp_dir
+    _run_login(["--cert-file", str(cert_path), "login", "--endpoint-url", PRIVATE_ENDPOINT])
+
+    # logging in again, or refreshing the token, without --cert-file must keep using the saved cert
+    for cli_args in (["login", "--endpoint-url", PRIVATE_ENDPOINT], ["refresh-token"]):
+        _, saved_env, verify = _run_login(cli_args)
+        assert saved_env["ATRIUMDB_API_CERT_FILE"] == str(cert_path.resolve()), cli_args
+        assert verify == str(cert_path.resolve()), cli_args
+
+
+def test_login_different_endpoint_removes_cert(cli_in_tmp_dir: Path):
+    cert_path = cli_in_tmp_dir
+    _run_login(["--cert-file", str(cert_path), "login", "--endpoint-url", PRIVATE_ENDPOINT])
+
+    # a different server without --cert-file drops the old server's cert so its public CA still verifies
+    result, saved_env, verify = _run_login(["login", "--endpoint-url", PUBLIC_ENDPOINT])
+    assert "ATRIUMDB_API_CERT_FILE" not in saved_env
+    assert "ATRIUMDB_API_CERT_FILE" not in os.environ
+    assert verify is True
+    assert "Removed the saved cert file" in result.output

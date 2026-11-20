@@ -24,7 +24,8 @@ import logging
 from tabulate import tabulate
 from pathlib import Path
 from urllib.parse import urlparse
-from dotenv import load_dotenv, set_key, get_key
+from click.core import ParameterSource
+from dotenv import load_dotenv, set_key, get_key, unset_key, dotenv_values
 from atriumdb.atrium_sdk import AtriumSDK
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import parse_metadata_uri
@@ -108,13 +109,29 @@ def login(ctx, endpoint_url):
     # Construct the final endpoint URL
     endpoint_url = f"{base_url}{path}"
 
-    # Write endpoint URL to .env file
+    # Read what the last login saved before overwriting it, so we know if this login is for a different server
     load_dotenv(dotenv_path=dotenv_path)
+    saved_env = dotenv_values(dotenv_path)
+    previous_endpoint_url, saved_cert_file = saved_env.get("ATRIUMDB_ENDPOINT_URL"), saved_env.get("ATRIUMDB_API_CERT_FILE")
+
+    # Write endpoint URL to .env file
     set_key(dotenv_path, "ATRIUMDB_ENDPOINT_URL", endpoint_url)
+
+    # The saved cert belongs to the saved endpoint. Click also fills --cert-file from ATRIUMDB_API_CERT_FILE (loaded from
+    # .env above), so only a value typed on the command line counts as given for this login.
     cert_file = ctx.obj["cert_file"]
-    # save the cert path so later sdk and cli runs verify the server with it automatically, like the token
-    if cert_file is not None:
+    if ctx.find_root().get_parameter_source("cert_file") == ParameterSource.COMMANDLINE:
+        # save the cert path so later sdk and cli runs verify this server with it automatically, like the token
         set_key(dotenv_path, "ATRIUMDB_API_CERT_FILE", str(Path(cert_file).resolve()))
+    elif endpoint_url != previous_endpoint_url:
+        # A different server and no cert given, so drop the old server's cert. A cert file replaces the public CAs, so
+        # keeping it would break a server with a public CA. A login to the same endpoint (e.g. refresh_token) keeps it.
+        if saved_cert_file is not None:
+            unset_key(dotenv_path, "ATRIUMDB_API_CERT_FILE")
+            click.echo(f"Removed the saved cert file '{saved_cert_file}' since it was for '{previous_endpoint_url}', not "
+                       f"'{endpoint_url}'. Pass --cert-file if this server also needs a cert.")
+        os.environ.pop("ATRIUMDB_API_CERT_FILE", None)
+        cert_file = None
     load_dotenv(dotenv_path=dotenv_path, override=True)
 
     # send get request to the atriumdb api to get the info you need to authenticate with Auth0. Only this request
