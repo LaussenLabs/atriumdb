@@ -25,8 +25,7 @@ from tabulate import tabulate
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
-from click.core import ParameterSource
-from dotenv import load_dotenv, set_key, get_key, unset_key, dotenv_values
+from dotenv import load_dotenv, set_key, get_key
 from atriumdb.atrium_sdk import AtriumSDK
 from atriumdb.windowing.definition import DatasetDefinition
 from atriumdb.adb_functions import parse_metadata_uri
@@ -79,7 +78,7 @@ and the Atrium database, please visit the documentation at https://atriumdb.sick
               default=None, help="The endpoint to connect to for a remote AtriumDB server")
 @click.option("--api-token", type=str, envvar="ATRIUMDB_API_TOKEN",
               default=None, help="A token to authorize api access.")
-@click.option("--cert-file", type=click.Path(), envvar="ATRIUMDB_API_CERT_FILE",
+@click.option("--cert-file", type=click.Path(exists=True, dir_okay=False), envvar="ATRIUMDB_API_CERT_FILE",
               default=None, help="Path to the PEM CA certificate used to verify the remote AtriumDB server.")
 @click.pass_context
 def cli(ctx, dataset_location, metadata_uri, database_type, endpoint_url, api_token, cert_file):
@@ -95,8 +94,10 @@ def cli(ctx, dataset_location, metadata_uri, database_type, endpoint_url, api_to
 
 @click.command(help="Endpoint to login with QR code.")
 @click.option("--endpoint-url", type=str, required=True, help="The endpoint to connect to for a remote AtriumDB server")
+@click.option("--cert-file", type=click.Path(exists=True, dir_okay=False), envvar="ATRIUMDB_API_CERT_FILE",
+              default=None, help="Path to the PEM CA certificate used to verify the remote AtriumDB server.")
 @click.pass_context
-def login(ctx, endpoint_url):
+def login(ctx, endpoint_url, cert_file):
     parsed_url = urlparse(endpoint_url)
 
     # Check if a port is included in the URL
@@ -110,39 +111,13 @@ def login(ctx, endpoint_url):
     # Construct the final endpoint URL
     endpoint_url = f"{base_url}{path}"
 
-    # Click also fills --cert-file from ATRIUMDB_API_CERT_FILE (loaded from .env), so only a value typed on the command
-    # line counts as given for this login. Check it before anything is written to .env.
-    cert_file = ctx.obj["cert_file"]
-    cert_given = ctx.find_root().get_parameter_source("cert_file") == ParameterSource.COMMANDLINE
-    if cert_given and parsed_url.scheme != "https":
-        # same choice as the sdk: a cert does nothing without TLS, so warn and carry on without it
-        click.echo(f"Warning: --cert-file '{cert_file}' was given but '{endpoint_url}' does not use https://, so TLS is "
-                   f"not used and the cert is not saved. Use an https:// endpoint to log in with the certificate.", err=True)
-        cert_given, cert_file = False, None
-    if cert_given and not Path(cert_file).is_file():
-        raise click.BadParameter(f"'{cert_file}' does not exist or is not a file. Pass the path to the PEM CA "
-                                 f"certificate for the AtriumDB API server.", param_hint="'--cert-file'")
-
-    # Read what the last login saved before overwriting it, so we know if this login is for a different server
-    load_dotenv(dotenv_path=dotenv_path)
-    saved_env = dotenv_values(dotenv_path)
-    previous_endpoint_url, saved_cert_file = saved_env.get("ATRIUMDB_ENDPOINT_URL"), saved_env.get("ATRIUMDB_API_CERT_FILE")
-
     # Write endpoint URL to .env file
+    load_dotenv(dotenv_path=dotenv_path)
     set_key(dotenv_path, "ATRIUMDB_ENDPOINT_URL", endpoint_url)
-
-    # The saved cert belongs to the saved endpoint, so a different server drops it right away. That keeps the pair
-    # matching even if this login fails. A cert file replaces the public CAs, so keeping it would break a server with a
-    # public CA. A login to the same endpoint (e.g. refresh_token) keeps it.
-    if endpoint_url != previous_endpoint_url:
-        if saved_cert_file is not None:
-            unset_key(dotenv_path, "ATRIUMDB_API_CERT_FILE")
-            if not cert_given:
-                click.echo(f"Removed the saved cert file '{saved_cert_file}' since it was for '{previous_endpoint_url}', "
-                           f"not '{endpoint_url}'. Pass --cert-file if this server also needs a cert.")
-        os.environ.pop("ATRIUMDB_API_CERT_FILE", None)
-        cert_file = cert_file if cert_given else None
     load_dotenv(dotenv_path=dotenv_path, override=True)
+
+    # the cert can be given after login or before it (`atriumdb --cert-file X login ...`)
+    cert_file = cert_file or ctx.obj["cert_file"]
 
     # send get request to the atriumdb api to get the info you need to authenticate with Auth0. Only this request
     # uses the cert file since the Auth0 requests below go to a server with a public CA
@@ -155,12 +130,6 @@ def login(ctx, endpoint_url):
     if auth_conf_res.status_code != 200:
         _LOGGER.error("Something went wrong")
         exit()
-
-    # save the cert path only now that it reached the server, so later sdk and cli runs verify this server with it
-    # automatically, like the token
-    if cert_given:
-        set_key(dotenv_path, "ATRIUMDB_API_CERT_FILE", str(Path(cert_file).resolve()))
-        os.environ["ATRIUMDB_API_CERT_FILE"] = str(Path(cert_file).resolve())
 
     # information returned from atriumdb API
     auth_conf = auth_conf_res.json()

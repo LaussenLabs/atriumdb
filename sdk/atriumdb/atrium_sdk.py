@@ -117,10 +117,10 @@ class AtriumSDK:
     :param AtriumFileHandler storage_handler: Advanced feature. If you implement your own atriumdb file handler you can set it here.
     :param bool auto_upgrade: If True, automatically upgrade the database schema if needed (e.g., adding new columns). This allows the SDK to initialize successfully even if the database schema is outdated. Default is False.
     :param str cert_file: Path to a PEM CA certificate used to verify the API server's certificate over https/wss, for servers whose certificate is signed by a private certificate authority.
-        If not given, it will look for env variable or env file, and an entry in ./.env takes precedence over the same variable set in the shell. Ignored with a warning if api_url is not https://. Only for "api" connection type.
+        If not given, the default public certificate authorities are used. Ignored with a warning if api_url is not https://. Only for "api" connection type.
     :raises ValueError: If no dataset exists at dataset_location in sqlite mode (create one with AtriumSDK.create_dataset),
         if the database schema is outdated and auto_upgrade is False, if metadata_connection_type is not supported,
-        or if cert_file is not an existing file or not a valid PEM certificate.
+        or if cert_file is not an existing file.
 
     Examples:
 
@@ -282,33 +282,19 @@ class AtriumSDK:
             # remove the leading http stuff and replace it with ws, also remove any trailing slashes
             self.ws_url = api_url.replace("https://", "wss://").replace("http://", "ws://").rstrip('/')
 
-            # The API server's cert may be signed by a private CA, so requests and websockets must be given that CA to
-            # verify it. Only AtriumDB server connections use it, Auth0 calls keep the default public CA bundle since
-            # both requests and ssl trust only the given file when one is passed.
-            # an empty value (e.g. `ATRIUMDB_API_CERT_FILE=` left in .env) means no cert, not a file named ''
-            if not cert_file:
-                load_dotenv(dotenv_path="./.env", override=True)
-                cert_file = os.environ.get('ATRIUMDB_API_CERT_FILE') or None
+            # A server whose cert is signed by a private CA can only be verified with that CA. Only AtriumDB server
+            # connections use it, Auth0 calls keep the default public CAs since a cert file replaces them.
             if cert_file is not None and not api_url.startswith("https://"):
                 _LOGGER.warning(f"cert_file '{cert_file}' was given but api_url '{api_url}' does not use https://, so TLS "
                                 f"is not used and the certificate is ignored. Use an https:// api_url to connect with the certificate.")
                 cert_file = None
             if cert_file is not None and not Path(cert_file).is_file():
                 raise ValueError(f"cert_file '{cert_file}' does not exist or is not a file. Pass the path to the PEM CA "
-                                 f"certificate for the AtriumDB API server, or set ATRIUMDB_API_CERT_FILE in your .env file.")
-            self.cert_file = cert_file
-            # requests takes a CA bundle path for verify, True means use the default public CA bundle
-            self.requests_verify = cert_file if cert_file is not None else True
-            # Load the cert once now so an invalid PEM fails at init rather than on the first request. The context is not
-            # stored because SSLContext can't be pickled, which would stop the sdk from going to spawned workers, so
-            # _websocket_connect builds its own.
-            if cert_file is not None:
-                try:
-                    ssl.create_default_context(cafile=cert_file)
-                except ssl.SSLError as cert_error:
-                    raise ValueError(f"cert_file '{cert_file}' could not be loaded as a CA certificate ({cert_error}). "
-                                     f"Pass a PEM file (text starting with '-----BEGIN CERTIFICATE-----') holding the "
-                                     f"CA certificate for the AtriumDB API server.") from cert_error
+                                 f"certificate for the AtriumDB API server.")
+            # absolute so a later change of working directory doesn't break it
+            self.cert_file = str(Path(cert_file).resolve()) if cert_file is not None else None
+            # requests takes a CA bundle path for verify, True means use the default public CAs
+            self.requests_verify = self.cert_file if self.cert_file is not None else True
 
             # make this variable so once connection is made in the thread it is available to the sdk object
             self.websock_conn = None
@@ -5611,8 +5597,8 @@ class AtriumSDK:
             cert_hint = f"using cert_file '{self.cert_file}'" if self.cert_file is not None else "with no cert_file"
             raise ConnectionError(
                 f"Could not open the websocket connection to '{self.ws_url}/sdk/blocks/ws' {cert_hint}: {connect_errors[0]!r}. "
-                f"If this is a certificate verify error, pass cert_file (or set ATRIUMDB_API_CERT_FILE) to the PEM CA "
-                f"certificate that signed the API server's certificate.") from connect_errors[0]
+                f"If this is a certificate verify error, pass cert_file as the path to the PEM CA certificate that "
+                f"signed the API server's certificate.") from connect_errors[0]
 
     def _refresh_token(self):
         if self.websock_conn is not None:
