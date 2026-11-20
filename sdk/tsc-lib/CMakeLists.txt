@@ -20,9 +20,7 @@ if(NOT OpenMP_C_FOUND)
 endif()
 
 if(MSVC)
-    #[[/W3 means show level 1-3 warnings (production quality warnings
-    /WX treats all compiler warnings as errors]]
-    add_compile_options(/W3 /WX)
+    message(FATAL_ERROR "On Windows the library is built with MinGW-w64 gcc, not MSVC (see README.md).")
 elseif(MINGW OR CYGWIN OR WIN32 OR (CMAKE_SYSTEM MATCHES Windows))
     add_compile_options(-W -Wall -fpic)
     #[[Older binutils leave ASLR and DEP off unless asked]]

@@ -11,6 +11,12 @@ cmake.source-dir = "tsc-lib"
 wheel.py-api = "py3"
 sdist.exclude = ["atriumdb/bin", "tsc-lib/Google_tests", "tsc-lib/Functional_Tests", ".env"]
 
+[[tool.scikit-build.overrides]]
+# MinGW-w64 builds the library on Windows, statically linked so the dll has no dependencies to distribute.
+if.platform-system = "win32"
+cmake.args = ["-GNinja"]
+cmake.define.CMAKE_C_COMPILER = "gcc"
+
 [project]
 name = "atriumdb"
 version = "2.6.0"
@@ -140,7 +146,3 @@ environment = { MACOSX_DEPLOYMENT_TARGET = "10.15" }
 select = "*-macosx_arm64"
 inherit.environment = "append"
 environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
-
-[tool.cibuildwheel.windows]
-# MinGW-w64 builds the library, statically linked so the dll has no dependencies to distribute.
-environment = { CMAKE_GENERATOR = "Ninja", CC = "gcc" }
