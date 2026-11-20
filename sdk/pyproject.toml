@@ -19,7 +19,7 @@ cmake.define.CMAKE_C_COMPILER = "gcc"
 
 [project]
 name = "atriumdb"
-version = "2.6.0"
+version = "2.7.0"
 requires-python = ">=3.10"
 description = "Timeseries Database"
 readme = "README.md"
