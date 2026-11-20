@@ -66,6 +66,23 @@ To view your current CLI configuration, including the endpoint URL and API token
 
     atriumdb config
 
+Servers With a Private Certificate Authority
+---------------------------------------------
+
+If the AtriumDB server's certificate is signed by a private certificate authority (CA), pass the CA certificate (a PEM file) with `--cert-file`. Without it, the connection fails with a certificate verify error, because only the public CAs are trusted by default.
+
+.. code-block:: bash
+
+    atriumdb login --endpoint-url "https://example.com/v1" --cert-file /path/to/ca.pem
+
+The cert file is not saved by `login`, so pass `--cert-file` to every command that connects to the server, e.g. `atriumdb --cert-file /path/to/ca.pem refresh-token`. Alternatively, set the `ATRIUMDB_API_CERT_FILE` environment variable (or add it to your `.env` file) to have the CLI use it automatically:
+
+.. code-block:: ini
+
+    ATRIUMDB_API_CERT_FILE=/path/to/ca.pem
+
+The cert file is only used for the AtriumDB server. Requests to the authentication provider still use the public CAs.
+
 Authentication Timeout
 -----------------------
 
@@ -114,6 +131,12 @@ To use the AtriumSDK in remote mode, follow these steps:
     sdk = AtriumSDK(metadata_connection_type="api", api_url="http://example.com/v1")
 
 By setting `metadata_connection_type` to `"api"`, the AtriumSDK will automatically detect and use the API token stored in the `.env` file for remote API calls (alternatively you can specify the token in the `token` parameter).
+
+If the server's certificate is signed by a private certificate authority, also pass the path to the CA certificate with `cert_file`. The SDK does not read it from the `.env` file:
+
+.. code-block:: python
+
+    sdk = AtriumSDK(metadata_connection_type="api", api_url="https://example.com/v1", cert_file="/path/to/ca.pem")
 
 Now, you can use the AtriumSDK's methods to interact with the remote dataset. Here are some examples:
 
@@ -288,6 +311,8 @@ The atriumdb dataset is defined by the following environment variables or corres
 +-------------------+--------------------------------------------------------------------------------------------------------------------+
 | --api-token       | A token to authorize API access.                                                                                   |
 +-------------------+--------------------------------------------------------------------------------------------------------------------+
+| --cert-file       | Path to the PEM CA certificate used to verify a remote AtriumDB server whose certificate is signed by a private CA.|
++-------------------+--------------------------------------------------------------------------------------------------------------------+
 
 
 Login
@@ -312,6 +337,9 @@ Options
 | Option         | Description                                                                            |
 +================+========================================================================================+
 | --endpoint-url | The endpoint to connect to for a remote AtriumDB server. This option is required.      |
++----------------+----------------------------------------------------------------------------------------+
+| --cert-file    | Path to the PEM CA certificate for a server whose certificate is signed by a private   |
+|                | CA. Optional.                                                                          |
 +----------------+----------------------------------------------------------------------------------------+
 
 Refresh Token

@@ -51,6 +51,10 @@ If it's a MariaDB dataset, you will also have to specify the connection paramete
     token = "4e78a93749ead7893"
     sdk = AtriumSDK(api_url=api_url, token=token, metadata_connection_type="api")
 
+    # If the server's certificate is signed by a private certificate authority, pass the CA certificate (PEM file)
+    sdk = AtriumSDK(api_url=api_url, token=token, metadata_connection_type="api",
+                    cert_file="/path/to/ca.pem")
+
 
 Deleting a Dataset
 #######################
@@ -195,6 +199,8 @@ You can then use the `atriumdb` CLI to set the endpoint URL and log in to the re
 .. code-block:: bash
 
     atriumdb login --endpoint-url "https://example.com/v1"
+
+If the server's certificate is signed by a private certificate authority, add `--cert-file /path/to/ca.pem` (see :doc:`cli` for details).
 
 This command, after authenticating your API connection, will save your URL, token, auth expiration time, and connection mode in the `.env`:
 
