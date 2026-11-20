@@ -47,6 +47,7 @@ import atexit
 from pathlib import Path, PurePath
 import sys
 import os
+import ssl
 from typing import Union, List, Tuple, Optional
 import platform
 from ctypes import sizeof
@@ -115,8 +116,10 @@ class AtriumSDK:
     :param bool no_pool: If true disables Mariadb connection pooling, instead using a new connection for each query.
     :param AtriumFileHandler storage_handler: Advanced feature. If you implement your own atriumdb file handler you can set it here.
     :param bool auto_upgrade: If True, automatically upgrade the database schema if needed (e.g., adding new columns). This allows the SDK to initialize successfully even if the database schema is outdated. Default is False.
+    :param str cert_file: Path to a PEM CA certificate used to verify the API server's certificate over https/wss, for servers whose certificate is signed by a private certificate authority. If not given, the ATRIUMDB_API_CERT_FILE environment variable (or ./.env entry) is used. Ignored with a warning if api_url is not https://. Only for "api" connection type.
     :raises ValueError: If no dataset exists at dataset_location in sqlite mode (create one with AtriumSDK.create_dataset),
-        if the database schema is outdated and auto_upgrade is False, or if metadata_connection_type is not supported.
+        if the database schema is outdated and auto_upgrade is False, if metadata_connection_type is not supported,
+        or if cert_file is not an existing file.
 
     Examples:
 
@@ -149,7 +152,8 @@ class AtriumSDK:
     def __init__(self, dataset_location: Union[str, PurePath] = None, metadata_connection_type: str = None,
                  connection_params: dict = None, num_threads: int = 1, api_url: str = None, token: str = None,
                  refresh_token=None, validate_token=True, tsc_file_location: str = None, atriumdb_lib_path: str = None,
-                 no_pool=False, storage_handler: AtriumFileHandler = None, auto_upgrade: bool = False):
+                 no_pool=False, storage_handler: AtriumFileHandler = None, auto_upgrade: bool = False,
+                 cert_file: str = None):
         """
         Connect to an existing dataset. The parameters are described on the class.
         """
@@ -276,6 +280,26 @@ class AtriumSDK:
             self.validate_token = validate_token
             # remove the leading http stuff and replace it with ws, also remove any trailing slashes
             self.ws_url = api_url.replace("https://", "wss://").replace("http://", "ws://").rstrip('/')
+
+            # The API server's cert may be signed by a private CA, so requests and websockets must be given that CA to
+            # verify it. Only AtriumDB server connections use it, Auth0 calls keep the default public CA bundle since
+            # both requests and ssl trust only the given file when one is passed.
+            if cert_file is None:
+                load_dotenv(dotenv_path="./.env", override=True)
+                cert_file = os.environ.get('ATRIUMDB_API_CERT_FILE')
+            if cert_file is not None and not api_url.startswith("https://"):
+                _LOGGER.warning(f"cert_file '{cert_file}' was given but api_url '{api_url}' does not use https://, so TLS "
+                                f"is not used and the certificate is ignored. Use an https:// api_url to connect with the certificate.")
+                cert_file = None
+            if cert_file is not None and not Path(cert_file).is_file():
+                raise ValueError(f"cert_file '{cert_file}' does not exist or is not a file. Pass the path to the PEM CA "
+                                 f"certificate for the AtriumDB API server, or set ATRIUMDB_API_CERT_FILE in your .env file.")
+            self.cert_file = cert_file
+            # requests takes a CA bundle path for verify, True means use the default public CA bundle
+            self.requests_verify = cert_file if cert_file is not None else True
+            # None lets websockets build its default context for wss://. Building it here also fails early on an unreadable PEM
+            self.ws_ssl_context = ssl.create_default_context(cafile=cert_file) if cert_file is not None else None
+
             # make this variable so once connection is made in the thread it is available to the sdk object
             self.websock_conn = None
 
@@ -301,7 +325,7 @@ class AtriumSDK:
 
             if self.validate_token:
                 # send get request to the atriumdb api to get the info you need to validate the API token
-                auth_config_response = requests.get(f'{self.api_url}/auth/cli/code')
+                auth_config_response = requests.get(f'{self.api_url}/auth/cli/code', verify=self.requests_verify)
 
                 if auth_config_response.status_code != 200:
                     raise RuntimeError(f"Something went wrong when getting Auth info from the API. HTTP Error {auth_config_response.status_code}")
@@ -5535,7 +5559,7 @@ class AtriumSDK:
         headers = {'Authorization': f"Bearer {self.token}"}
 
         # Send the API request using the specified method, URL, headers, and any additional arguments.
-        response = requests.request(method, url, headers=headers, **kwargs)
+        response = requests.request(method, url, headers=headers, verify=self.requests_verify, **kwargs)
 
         # Check if the response has a 200 status code. If not, raise an error.
         if response.status_code != 200:
@@ -5547,7 +5571,7 @@ class AtriumSDK:
 
     def _websocket_connect(self):
         def conn():
-            self.websock_conn = connect(f"{self.ws_url}/sdk/blocks/ws", compression=None, max_size=None,
+            self.websock_conn = connect(f"{self.ws_url}/sdk/blocks/ws", compression=None, max_size=None, ssl=self.ws_ssl_context,
                                         additional_headers={"Authorization": "Bearer {}".format(self.token)})
 
         # The websockets lib uses a thread to receive messages. Normally you would call close() after receiving the

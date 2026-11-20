@@ -57,6 +57,8 @@ ATRIUMDB_ENDPOINT_URL (--endpoint-url): This environment variable specifies the 
 
 ATRIUMDB_API_TOKEN (--api-token): This environment variable specifies a token to authorize api access.
 
+ATRIUMDB_API_CERT_FILE (--cert-file): This environment variable specifies the path to a PEM CA certificate used to verify the remote AtriumDB server, for servers whose certificate is signed by a private certificate authority.
+
 You can use command line options in place of the environment variables for a more flexible configuration.
 
 For more information on how to use these subcommands 
@@ -75,12 +77,15 @@ and the Atrium database, please visit the documentation at https://atriumdb.sick
               default=None, help="The endpoint to connect to for a remote AtriumDB server")
 @click.option("--api-token", type=str, envvar="ATRIUMDB_API_TOKEN",
               default=None, help="A token to authorize api access.")
+@click.option("--cert-file", type=click.Path(), envvar="ATRIUMDB_API_CERT_FILE",
+              default=None, help="Path to the PEM CA certificate used to verify the remote AtriumDB server.")
 @click.pass_context
-def cli(ctx, dataset_location, metadata_uri, database_type, endpoint_url, api_token):
+def cli(ctx, dataset_location, metadata_uri, database_type, endpoint_url, api_token, cert_file):
     ctx.ensure_object(dict)
 
     ctx.obj["endpoint_url"] = endpoint_url
     ctx.obj["api_token"] = api_token
+    ctx.obj["cert_file"] = cert_file
     ctx.obj["dataset_location"] = dataset_location
     ctx.obj["metadata_uri"] = metadata_uri
     ctx.obj["database_type"] = database_type
@@ -106,10 +111,15 @@ def login(ctx, endpoint_url):
     # Write endpoint URL to .env file
     load_dotenv(dotenv_path=dotenv_path)
     set_key(dotenv_path, "ATRIUMDB_ENDPOINT_URL", endpoint_url)
+    cert_file = ctx.obj["cert_file"]
+    # save the cert path so later sdk and cli runs verify the server with it automatically, like the token
+    if cert_file is not None:
+        set_key(dotenv_path, "ATRIUMDB_API_CERT_FILE", str(Path(cert_file).resolve()))
     load_dotenv(dotenv_path=dotenv_path, override=True)
 
-    # send get request to the atriumdb api to get the info you need to authenticate with Auth0
-    auth_conf_res = requests.get(f'{endpoint_url}/auth/cli/code')
+    # send get request to the atriumdb api to get the info you need to authenticate with Auth0. Only this request
+    # uses the cert file since the Auth0 requests below go to a server with a public CA
+    auth_conf_res = requests.get(f'{endpoint_url}/auth/cli/code', verify=cert_file if cert_file is not None else True)
 
     if auth_conf_res.status_code == 404:
         _LOGGER.error("Invalid Endpoint URL")
@@ -217,6 +227,7 @@ def config(ctx):
         "Dataset Location": "Not Set" if not ctx.obj.get("dataset_location") else ctx.obj.get("dataset_location"),
         "Metadata URI": "Not Set" if not ctx.obj.get("metadata_uri") else ctx.obj.get("metadata_uri"),
         "Database Type": "Not Set" if not ctx.obj.get("database_type") else ctx.obj.get("database_type"),
+        "Cert File": "Not Set" if not ctx.obj.get("cert_file") else ctx.obj.get("cert_file"),
     }
 
     if config_data["API Token"] != "Not Set":
@@ -280,8 +291,8 @@ def export(ctx, definition_filename, gap_tolerance, deidentify, patient_cols, bl
     metadata_uri = ctx.obj["metadata_uri"]
     database_type = ctx.obj["database_type"]
 
-    src_sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
-    dest_sdk = get_sdk_from_cli_params(dataset_location_out, metadata_uri_out, database_type_out, None, None)
+    src_sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token, ctx.obj["cert_file"])
+    dest_sdk = get_sdk_from_cli_params(dataset_location_out, metadata_uri_out, database_type_out, None, None, None)
 
     if block_size:
         dest_sdk.block.block_size = block_size
@@ -294,14 +305,14 @@ def export(ctx, definition_filename, gap_tolerance, deidentify, patient_cols, bl
                   time_units=time_units)
 
 
-def get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, api_url, api_token):
+def get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, api_url, api_token, cert_file):
     connection_params = None if metadata_uri is None else parse_metadata_uri(metadata_uri)
     if database_type != "api" and not (Path(dataset_location) / "tsc").is_dir():
         return AtriumSDK.create_dataset(dataset_location=dataset_location, database_type=database_type,
                                  connection_params=connection_params)
 
     sdk = AtriumSDK(dataset_location=dataset_location, metadata_connection_type=database_type,
-                    connection_params=connection_params, api_url=api_url, token=api_token)
+                    connection_params=connection_params, api_url=api_url, token=api_token, cert_file=cert_file)
     return sdk
 
 
@@ -326,7 +337,7 @@ def measure_ls(ctx, tag_match, name_match, unit, freq, freq_units, source_id):
     metadata_uri = ctx.obj["metadata_uri"]
     database_type = ctx.obj["database_type"]
 
-    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
+    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token, ctx.obj["cert_file"])
     result = sdk.search_measures(
         tag_match=tag_match, freq=freq, unit=unit, name_match=name_match, freq_units=freq_units)
 
@@ -364,7 +375,7 @@ def device_ls(ctx, tag_match, name_match, manufacturer_match, model_match, bed_i
     metadata_uri = ctx.obj["metadata_uri"]
     database_type = ctx.obj["database_type"]
 
-    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
+    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token, ctx.obj["cert_file"])
     result = sdk.search_devices(tag_match=tag_match, name_match=name_match)
 
     headers = ["Device ID", "Tag", "Name", "Manufacturer", "Model", "Type", "Bed ID", "Source ID"]
@@ -405,7 +416,7 @@ def patient_ls(ctx, skip, limit, age_years_min, age_years_max, gender, source_id
 
     print(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
 
-    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token)
+    sdk = get_sdk_from_cli_params(dataset_location, metadata_uri, database_type, endpoint_url, api_token, ctx.obj["cert_file"])
 
     result = sdk.get_all_patients(skip=skip, limit=limit)
 
